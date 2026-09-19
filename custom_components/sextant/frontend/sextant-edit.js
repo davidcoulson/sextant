@@ -114,9 +114,26 @@ class SextantEdit extends LitElement {
     this._map.setOptions({ labels: true, subzones: true, receiverLabels: true, trails: false });
     this._map.setLocks(this._locks);
     this._syncDraft(true);
+    // A reload or a closed tab would take the draft with it.
+    this._warnUnload = (ev) => { if (this._dirty) { ev.preventDefault(); ev.returnValue = ""; } };
+    window.addEventListener("beforeunload", this._warnUnload);
   }
 
-  disconnectedCallback() { super.disconnectedCallback(); clearTimeout(this._alignTimer); this._map?.destroy(); }
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    clearTimeout(this._alignTimer);
+    window.removeEventListener("beforeunload", this._warnUnload);
+    this._map?.destroy();
+  }
+
+  /** Whether the draft holds changes that are not saved. */
+  get unsaved() { return !!this._dirty; }
+
+  /** Ask before something would throw the draft away (another floor, another
+   * page). True to go ahead. */
+  confirmLeave(what = "Leave") {
+    return !this._dirty || confirmDialog(`${what} without saving? The changes to this floor plan will be lost.`);
+  }
 
   updated(changed) {
     if (!this._map) return;

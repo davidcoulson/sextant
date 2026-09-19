@@ -133,9 +133,17 @@ class SextantPanel extends LitElement {
    * thing's dialog once the destination page has loaded - which is how the
    * Live card's edit button reaches the thing settings without a second
    * copy of the dialog living here. */
+  /** The editor holds an unsaved draft in the page: ask before anything that
+   * would replace it (another floor, another page). True to go ahead. */
+  _mayLeaveEdit(what) {
+    const editor = this.renderRoot?.querySelector("sextant-edit");
+    return !editor?.unsaved || editor.confirmLeave(what);
+  }
+
   _setMode(target) {
     const { mode: wanted, thing } = typeof target === "string" ? { mode: target } : (target || {});
     const mode = this._modes().some(([id]) => id === wanted) ? wanted : "live";
+    if (this._mode === "edit" && mode !== "edit" && !this._mayLeaveEdit(`Leave the floor plan`)) return;
     this._mode = mode;
     this._openThing = mode === "things" ? thing || null : null;
     if (mode !== "edit") this._spots = [];
@@ -204,7 +212,7 @@ class SextantPanel extends LitElement {
       ${floors.length && FLOOR_MODES.has(this._mode) ? html`
         <label class="floor-pick">
           <span class="sr">Floor</span>
-          <select @change=${(e) => { this._floor = e.target.value; }}>
+          <select @change=${(e) => { if (!this._mayLeaveEdit(`Switch to ${e.target.value}`)) { e.target.value = this._floor; return; } this._floor = e.target.value; }}>
             ${sortFloors(floors).map((f) => html`<option value=${f.name} ?selected=${f.name === this._floor}>${f.name}</option>`)}
           </select>
         </label>` : nothing}

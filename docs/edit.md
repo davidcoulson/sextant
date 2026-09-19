@@ -18,6 +18,10 @@ target:
   area_id: "{{ state_attr('sensor.david_sextant_person_location', 'area_id') }}"
 ```
 
+Changes live in the page until **Save**. Switching floor, leaving the Edit
+page, or reloading asks first, so a draft is not lost by accident;
+**Discard** throws it away on purpose.
+
 The same map as an editor. Place proxies from a searchable list of the
 scanners Bermuda knows (a proxy belongs to one floor), drag them, give them
 a mount height. A dragged proxy snaps onto a wall within about 25 cm, a few
