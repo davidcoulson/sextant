@@ -110,6 +110,17 @@ names carry over, so linking a floor is a row of clicks. A pin is green once
 its name exists on another floor, amber while it is on its own, and red if
 it disagrees with the rest.
 
+Under the Pin tool, **Next pin** says which name the next click takes: a
+name another floor is waiting on (the first by default), or **New pin** for
+a point no other floor has yet - the choice holds while you place several.
+**not here** beside a name says that point does not exist on this floor (a
+post only in the basement), so it is no longer offered; **Not on this
+floor** lists those, and a click puts one back. A pin placed under the wrong
+name can be renamed in its panel, or split off with **New pin**. A pin only
+needs to be on the floors it links: each pair of neighbouring floors wants
+three or more shared pins, and a floor lines up with the one it shares pins
+with.
+
 Two shared pins line a floor up. Use four to eight, spread across the plan:
 the extra ones turn into a check. The **Alignment** card says how closely
 the pins agree ("typically within 8 cm; worst is NE corner at 21 cm"), which
