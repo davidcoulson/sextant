@@ -1,6 +1,7 @@
 {
     "domain": "sextant",
     "name": "Sextant (BLE Positioning)",
+    "after_dependencies": ["recorder"],
     "codeowners": ["@davidcoulson", "@maxi1134"],
     "config_flow": true,
     "dependencies": ["http", "panel_custom", "websocket_api"],

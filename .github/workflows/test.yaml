@@ -34,4 +34,5 @@ jobs:
         run: |
           for f in custom_components/sextant/frontend/sextant-*.js; do node --check "$f"; done
       - name: Frontend unit tests
-        run: node --test tests/frontend/
+        # Files, not the directory: Node 22 does not expand a directory for --test.
+        run: node --test tests/frontend/*.test.mjs
