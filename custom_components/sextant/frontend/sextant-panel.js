@@ -634,8 +634,9 @@ class SextantLive extends LitElement {
             <li class="${p.ent === this._selected ? "selected" : ""} ${st.ghost ? "ghost" : ""}" title=${st.ghost ? `Not heard for ${fmtAge(st.age)}: this is where ${this._label(p.ent)} ${this._pn(p.ent).was} last placed` : ""} @click=${() => { this._select(p.ent === this._selected ? null : p.ent); if (p.floor && p.floor !== this.floor) this.dispatchEvent(new CustomEvent("floor-changed", { detail: p.floor })); }}>
               ${this._avatar(p.ent)}
               <span class="name">${this._label(p.ent)}</span>
-              <span class="where">${this._roomIcon(p.floor, p.zone) ? html`<ha-icon class="roomicon" icon=${this._roomIcon(p.floor, p.zone)}></ha-icon>` : nothing}${p.zone}${p.sub_zone && p.sub_zone !== "unknown" ? ` · ${p.sub_zone}` : ""}</span>
+              <span class="where">${this._roomIcon(p.floor, p.zone) ? html`<ha-icon class="roomicon" icon=${this._roomIcon(p.floor, p.zone)}></ha-icon>` : nothing}${p.zone}</span>
               <span class="muted small">${st.ghost ? html`<ha-icon class="ghosticon" icon="mdi:ghost-outline"></ha-icon>seen ${shortAge(st.age)} ago · ` : nothing}${p.floor}</span>
+              ${p.sub_zone && p.sub_zone !== "unknown" ? html`<span class="spot muted small">${p.sub_zone}</span>` : nothing}
               ${p.ent === this._selected ? html`<div class="quickin" @click=${(e) => e.stopPropagation()}>${this._renderQuick(p)}</div>` : nothing}
             </li>`;
   }
@@ -934,6 +935,8 @@ class SextantLive extends LitElement {
     .list li.selected { outline: 2px solid var(--primary-color); }
     .list .name { font-weight: 600; grid-column: 2; }
     .list .where { grid-column: 3; text-align: right; font-size: 12px; }
+    /* The spot sits under its room, the way the floor sits under the name. */
+    .list .spot { grid-column: 3; text-align: right; }
     .list li.ghost { opacity: 0.55; }
     .list li.ghost .avatar { filter: grayscale(0.6); outline: 1px dashed var(--secondary-text-color); outline-offset: 1px; }
     .ghosticon { --mdc-icon-size: 14px; vertical-align: -2px; margin-right: 2px; }
@@ -960,7 +963,8 @@ class SextantLive extends LitElement {
     .blend input { flex: 1; min-width: 90px; }
     .truth { margin-top: 6px; }
     .heat { align-items: center; gap: 8px; flex-wrap: wrap; }
-    .roomicon { --mdc-icon-size: 16px; margin-right: 3px; vertical-align: -3px; color: var(--secondary-text-color); }
+    /* Centred on the text's own middle, not dropped below its baseline. */
+    .roomicon { --mdc-icon-size: 16px; margin-right: 3px; vertical-align: -0.18em; color: var(--secondary-text-color); }
     .list li .quickin { grid-column: 1 / -1; cursor: default; padding-top: 6px; }
     .list li.group { display: flex; align-items: center; gap: 6px; padding: 8px 4px 4px; margin-top: 4px; border-top: 1px solid var(--divider-color, #e0e0e0); border-radius: 0; font-weight: 500; }
     .list li.group:first-child { border-top: none; margin-top: 0; }
