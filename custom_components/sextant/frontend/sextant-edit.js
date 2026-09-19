@@ -659,7 +659,7 @@ class SextantEdit extends LitElement {
           ${this._measure?.b ? html`${uiField({ label: `Distance between the two points (${lenUnit(this.hass)})`, type: "number", step: 0.01, min: 0.1, onChange: (v) => { this._metres = v; }, style: "width: 240px" })} ${uiButton({ label: "Set scale", kind: "primary", onClick: () => this._applyMeasure(this._metres) })}`
             : this._measure ? "Click the second point." : `Click two points a known distance apart. Current scale: ${fmtScale(f?.scale, this.hass)}`}
         </div>` : nothing}
-        ${this._tool === "pin" ? html`<div class="hint">Click a point you can find on every floor: an outside corner, a stair post, a chimney. It lands on a room corner when one is near (Alt places it freely). Then switch floor and pin the same points - the names carry over in order.</div>${this._renderNextPin()}` : nothing}
+        ${this._tool === "pin" ? html`<div class="hint">Click a point you can find on every floor: an outside corner, a stair post, a chimney. It lands on a room corner when one is near (Alt places it freely). Then switch floor and pin the same points - the names carry over in order.${this._renderNextPin()}</div>` : nothing}
         ${["zone", "subzone", "nogo"].includes(this._tool) ? html`<div class="hint">Click to add corners; click the first corner or double-click to close. An edge close to horizontal, vertical or 45° snaps exact (orange); hold Alt to place a corner freely. ${uiButton({ label: "Cancel", kind: "text", onClick: () => { this._map.cancelDraft(); } })}</div>` : nothing}
       </div>
       <aside class="side">
@@ -866,8 +866,9 @@ class SextantEdit extends LitElement {
     .family { display: inline-flex; gap: 1px; padding: 2px; border: 1.5px solid var(--divider-color); border-radius: 11px; }
     /* Sized so both family rings sit on one line of the 320px side panel. */
     .proxypick { display: flex; flex-wrap: wrap; gap: 4px; margin: 2px 0 4px; }
-    .next-pin { margin-top: 6px; }
-    .next-pin { flex-wrap: wrap; gap: 6px; align-items: center; }
+    /* Inside the hint, which floats over the canvas: a row in the stage's own
+       flow would add height, and the canvas is sized to the stage. */
+    .hint .next-pin { flex-basis: 100%; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 2px; }
     .next-pin .pair { display: inline-flex; }
     .next-pin .pair .chip:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
     .next-pin .pair .chip.skip { border-left: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; color: var(--secondary-text-color); }

@@ -4,4 +4,4 @@
 // the version Home Assistant STARTED with, while the files it serves are
 // whatever is on disk now, so after an update a plain reload already runs the
 // new frontend.
-export const VERSION = "3.17.38";
+export const VERSION = "3.17.39";
