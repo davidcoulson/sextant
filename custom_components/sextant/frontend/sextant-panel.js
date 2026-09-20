@@ -657,12 +657,23 @@ class SextantLive extends LitElement {
     return html`
             <li class="${p.ent === this._selected ? "selected" : ""} ${st.ghost ? "ghost" : ""}" title=${st.ghost ? `Not heard for ${fmtAge(st.age)}: this is where ${this._label(p.ent)} ${this._pn(p.ent).was} last placed` : ""} @click=${() => { this._select(p.ent === this._selected ? null : p.ent); if (p.floor && p.floor !== this.floor) this.dispatchEvent(new CustomEvent("floor-changed", { detail: p.floor })); }}>
               ${this._avatar(p.ent)}
-              <span class="name">${this._label(p.ent)}</span>
+              <span class="name">${this._label(p.ent)}${this._speaksFor(p.ent)
+                ? html`<ha-icon class="viaicon" icon="mdi:map-marker-account" title=${`Where ${this._speaksFor(p.ent)} is read from right now`}></ha-icon>` : nothing}</span>
               <span class="where">${this._roomIcon(p.floor, p.zone) ? html`<ha-icon class="roomicon" icon=${this._roomIcon(p.floor, p.zone)}></ha-icon>` : nothing}${p.zone}</span>
               <span class="muted small floorline">${st.ghost ? html`<ha-icon class="ghosticon" icon="mdi:ghost-outline"></ha-icon>seen ${shortAge(st.age)} ago · ` : nothing}${p.floor}</span>
               ${p.sub_zone && p.sub_zone !== "unknown" ? html`<span class="spot muted small">${p.sub_zone}</span>` : nothing}
               ${p.ent === this._selected ? html`<div class="quickin" @click=${(e) => e.stopPropagation()}>${this._renderQuick(p)}</div>` : nothing}
             </li>`;
+  }
+
+  /** The person this thing is speaking for right now, or null: the owner's
+   * location sensor names the thing it read (via). */
+  _speaksFor(ent) {
+    const person = this.data?.layout?.thing_owners?.[ent];
+    if (!person) return null;
+    const st = this.hass?.states?.[`sensor.${person.split(".")[1]}_sextant_person_location`];
+    if (st?.attributes?.via !== ent) return null;
+    return this.hass?.states?.[person]?.attributes?.friendly_name || person.split(".")[1];
   }
 
   /** The icon of the Home Assistant area a room is linked to, or null. */
@@ -965,6 +976,8 @@ class SextantLive extends LitElement {
     .list li:hover, .list li.selected { background: var(--secondary-background-color); }
     .list li.selected { outline: 2px solid var(--primary-color); }
     .list .name { font-weight: 600; grid-column: 2; }
+    /* The thing its owner's location is read from right now. */
+    .list .name .viaicon { --mdc-icon-size: 15px; margin-left: 4px; vertical-align: -2px; color: var(--primary-color, #03a9f4); }
     /* A flex row so the icon centres on the text instead of sitting on its baseline. */
     .list .where { grid-column: 3; display: flex; align-items: center; justify-content: flex-end; gap: 4px; text-align: right; font-size: 12px; }
     /* The spot sits under its room, the way the floor sits under the name.
