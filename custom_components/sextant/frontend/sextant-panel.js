@@ -642,8 +642,10 @@ class SextantLive extends LitElement {
       const v = f[key];
       if (!v || ["unknown", "unavailable"].includes(v.state)) return null;
       const n = Number(v.state);
+      // Whole numbers throughout: a proxy at 77.7 % says nothing 78 does not,
+      // and a drop rate to the tenth of a percent is noise.
       const text = Number.isFinite(n) && v.state.trim() !== ""
-        ? fmtNum(n, Number.isInteger(n) || Math.abs(n) >= 100 ? 0 : 1)
+        ? fmtNum(n, 0)
         : v.state.split(" (")[0];
       return unit === false ? text : `${text}${v.unit ? ` ${v.unit}` : ""}`;
     };
