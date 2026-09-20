@@ -892,17 +892,22 @@ async def ws_proxy_info(hass, connection, msg):
         return _error(connection, msg, f"No proxy called {slug} is placed")
     address = str(rx.get("address") or "").lower()
 
-    facts, seen = {}, {}
+    # Its own entities, found through its device: a proxy's entity ids are
+    # not always named after it (a Shelly running ESPHome publishes its
+    # version as ble_<name>_esphome_version), but they all hang off the same
+    # device. Anything named after it counts too, for proxies with no device.
+    device = _proxy_device(hass, slug, address)
+    candidates = set(device.pop("entity_ids", ()))
+    facts = {}
     for state in hass.states.async_all():
         eid = state.entity_id
-        if slug not in eid:
+        if eid not in candidates and slug not in eid:
             continue
         for key, suffix in PROXY_FACTS:
             if eid.endswith(suffix) and key not in facts:
                 facts[key] = {"entity_id": eid, "state": state.state,
                               "unit": state.attributes.get("unit_of_measurement"),
                               "name": state.attributes.get("friendly_name")}
-        seen[eid] = state.state
 
     # How many things it hears: the readings Bermuda has for it right now,
     # judged by the same staleness gate the solver uses.
@@ -926,7 +931,7 @@ async def ws_proxy_info(hass, connection, msg):
         "height": rx.get("height"),
         "facts": facts,
         "heard": heard,
-        "device": _proxy_device(hass, slug, address),
+        "device": device,
     })
 
 
@@ -939,15 +944,20 @@ def _proxy_device(hass, slug, address):
 
     devices, entities = dr.async_get(hass), er.async_get(hass)
     out = {}
-    entry = next((e for e in entities.entities.values() if slug in e.entity_id and e.device_id), None)
-    node = devices.async_get(entry.device_id) if entry else None
+    # The Bluetooth address Bermuda tracks belongs to a device of its own,
+    # which carries the chip and points at the node that owns it.
+    scanner = next((d for d in devices.devices.values()
+                    if any(kind == "bluetooth" and str(v).lower() == address for kind, v in d.connections)), None)
+    node = devices.async_get(scanner.via_device_id) if scanner and scanner.via_device_id else None
+    if node is None:
+        entry = next((e for e in entities.entities.values() if slug in e.entity_id and e.device_id), None)
+        node = devices.async_get(entry.device_id) if entry else None
+    if scanner:
+        out["chip"] = scanner.model
     if node:
         out.update(board=node.model, maker=node.manufacturer, firmware=node.sw_version,
-                   wifi_mac=next((v for kind, v in node.connections if kind == "mac"), None))
-    for dev in devices.devices.values():
-        if any(kind == "bluetooth" and str(v).lower() == address for kind, v in dev.connections):
-            out["chip"] = dev.model
-            break
+                   wifi_mac=next((v for kind, v in node.connections if kind == "mac"), None),
+                   entity_ids=[e.entity_id for e in er.async_entries_for_device(entities, node.id, True)])
     return out
 
 
