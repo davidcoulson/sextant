@@ -80,7 +80,9 @@ thing in two or three rooms.
 
 A pin inside a spot is also evidence of being in that spot: a fix is the
 weighted blend of the pins and proxies it matched, and the share of that
-blend sitting inside the spot counts the way a proxy on the spot does.
+blend sitting inside the spot counts the way a proxy on the spot does - but
+only for a thing whose own fix is on or beside that spot, since pins are
+shared by a class and a cat across the room still matches the couch's.
 This is what gets a cat onto a couch - lying on it, the cat's own body
 makes the couch's outlets read about twice too far, while the pins still
 match.

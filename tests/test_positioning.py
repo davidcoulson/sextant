@@ -1383,10 +1383,17 @@ def test_subzone_holds_while_the_zone_is_locked_and_follows_the_zone():
     t = 1000.0
     for dt in (0, 10, 30, 31):
         _sub("e", (300, 250), t + dt)
-    # The thing is declared still by the zone election: even a fix that
-    # wandered off keeps the sub-zone.
-    assert _sub("e", (300, 600), t + 100, locked=True) == ("Sofa", "Living")
-    assert _sub("e", (300, 600), t + 200, locked=True) == ("Sofa", "Living")
+    # The thing is declared still by the zone election: a fix that wobbles
+    # just outside (within subzone_unlock_margin) keeps the sub-zone.
+    assert _sub("e", (300, 350), t + 100, locked=True) == ("Sofa", "Living")
+    assert _sub("e", (300, 380), t + 200, locked=True) == ("Sofa", "Living")
+    # But the room lock holds the ROOM, not the sofa: a fix three metres away
+    # with nothing to say it is still there leaves, once the smoothed
+    # membership has fallen and the dwell has passed. (Leela crossed the Great
+    # Room while the couch's pins still matched her; she stayed on the couch.)
+    for dt in (300, 320, 340, 360, 380, 400, 420):
+        got = _sub("e", (300, 900), t + dt, locked=True)
+    assert got == ("unknown", "Living")
     # A different elected zone: its sub-zones only, state starts over.
     assert _sub("e", (300, 250), t + 300, zone="Hall") == ("unknown", "Hall")
     # A zone with no sub-zones at all publishes unknown immediately.
@@ -1989,6 +1996,24 @@ def test_a_room_linked_to_an_area_publishes_its_area_and_floor_ids():
     _state, attrs = sextant._location_state("Hall", "Peninsula", "Kitchen", "Ground Floor", layout)
     assert attrs["room"] == "Kitchen" and attrs["area_id"] == "kitchen" and attrs["floor_id"] == "ground"
 
+
+
+def test_a_pin_speaks_only_for_a_thing_that_is_there():
+    """Pins are shared by a class, so a cat across the room matches the couch
+    pins too - without this it would be held on a couch it had left."""
+    from shapely.geometry import Polygon
+    couch = Polygon([(0, 0), (300, 0), (300, 300), (0, 300)])   # 100 px per metre
+    pins = {"mark:1": ("Ground", 150.0, 150.0)}
+    refs = [("mark:1", 0.5)]
+    ev = lambda at: sextant.spot_pin_evidence({"refs": refs}, "Ground", couch, pins, at=at, margin_px=100.0)  # noqa: E731
+    assert ev((150.0, 150.0)) == 1.0          # on the couch
+    assert ev((320.0, 150.0)) == 0.8          # 0.2 m outside, nearly all of it
+    assert ev((350.0, 150.0)) == 0.5          # half a metre outside, half
+    assert ev((450.0, 150.0)) == 0.0          # a metre and a half away: nothing
+    # Leela's case: 2.86 m from the couch while its pins still match.
+    assert ev((586.0, 150.0)) == 0.0
+    # No position given: the old behaviour, evidence wherever the match is.
+    assert sextant.spot_pin_evidence({"refs": refs}, "Ground", couch, pins) == 1.0
 
 
 def test_pins_inside_a_spot_are_evidence_of_being_in_it():

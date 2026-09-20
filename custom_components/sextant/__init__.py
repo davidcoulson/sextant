@@ -3405,7 +3405,7 @@ def _pin_positions():
             for m in _truth_marks if m.get("id") is not None}
 
 
-def spot_pin_evidence(fp, floor_name, poly, pins=None):
+def spot_pin_evidence(fp, floor_name, poly, pins=None, at=None, margin_px=0.0):
     """How much of a fingerprint fix came from pins inside this spot, 0..1.
 
     A fix is the weighted mean of its best matching references (weight
@@ -3414,10 +3414,21 @@ def spot_pin_evidence(fp, floor_name, poly, pins=None):
     readings look like the times you said it was here" - evidence a proxy on
     the spot cannot give when the thing lying on it blocks that proxy (a cat
     on a couch reads the couch's own outlets twice too far).
+
+    It only speaks for a thing whose fix is on or beside the spot (``at``,
+    fading to nothing ``margin_px`` outside): pins of a class are shared, so
+    a cat across the room still matches the pins on the couch, and without
+    this it would be held on a couch it had left.
     """
     refs = (fp or {}).get("refs") or ()
     if not refs or poly is None:
         return 0.0
+    near = 1.0
+    if at is not None:
+        away = poly.distance(Point(at[0], at[1]))
+        near = 1.0 if away <= 0 else (max(0.0, 1.0 - away / margin_px) if margin_px > 0 else 0.0)
+        if near <= 0:
+            return 0.0
     if pins is None:
         pins = _pin_positions()
     inside = total = 0.0
@@ -3430,7 +3441,7 @@ def spot_pin_evidence(fp, floor_name, poly, pins=None):
         at = pins.get(slug)
         if at and at[0] == floor_name and poly.contains(Point(at[1], at[2])):
             inside += w
-    return (inside / total) if total > 0 else 0.0
+    return (inside / total) * near if total > 0 else 0.0
 
 
 def _spot_proxies(sub):
@@ -3631,11 +3642,13 @@ def _elect_subzone(entity, floor_name, zone, zone_locked, point, kf_state, sub_p
     # the spot's share to at least that, taking the rest proportionally.
     settings = _spot_settings(layout, floor_name)
     pins = _pin_positions() if fp else None
+    margin_px = _tuning(layout, "subzone_unlock_margin") * (scale if isinstance(scale, (int, float)) and scale > 0 else 0.0)
     for sid, _parent, _poly in polys:
         p = _spot_proxy_evidence(layout, (settings.get(sid) or {}).get("proxies"))
-        # Pins inside the spot are evidence of their own (see spot_pin_evidence).
+        # Pins on the spot are evidence of their own, for a thing that is
+        # there or just beside it (see spot_pin_evidence).
         if pins:
-            p = max(p, spot_pin_evidence(fp, floor_name, _poly, pins))
+            p = max(p, spot_pin_evidence(fp, floor_name, _poly, pins, at=center, margin_px=margin_px))
         old = shares.get(sid, 0.0)
         if p > old:
             keep = (1.0 - p) / (1.0 - old) if old < 1.0 else 0.0
@@ -3657,18 +3670,19 @@ def _elect_subzone(entity, floor_name, zone, zone_locked, point, kf_state, sub_p
     contenders = {s: p for s, p in probs.items() if s != "unknown"}
     best = max(contenders, key=contenders.get) if contenders else None
 
-    if current != "unknown" and zone_locked:
+    cur_poly = next((poly for sid, _p, poly in polys if sid == current), None) if current != "unknown" else None
+    still_near = cur_poly is not None and cur_poly.distance(Point(*center)) <= margin_px
+    if current != "unknown" and zone_locked and still_near:
         st["pending"] = None
-        return st["value"]  # a still thing stays on its couch / table / hook
+        # A still thing stays on its couch / table / hook - but only while it
+        # is still there. The room lock holds the ROOM; a cat that crossed the
+        # room is not on the couch any more.
+        return st["value"]
 
     if current != "unknown":
-        cur_poly = next((poly for sid, _p, poly in polys if sid == current), None)
         if cur_poly is None:
             candidate = ("unknown", zone)  # the sub-zone was deleted or renamed
         else:
-            pt = Point(*center)
-            margin_px = _tuning(layout, "subzone_unlock_margin") * (scale if isinstance(scale, (int, float)) and scale > 0 else 0.0)
-            still_near = cur_poly.distance(pt) <= margin_px
             if best is not None and best != current and contenders[best] >= enter_for(best) and contenders[best] > probs.get(current, 0.0):
                 candidate = (best, zone)
             elif still_near or probs.get(current, 0.0) >= enter_for(current):
