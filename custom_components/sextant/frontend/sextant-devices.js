@@ -89,6 +89,9 @@ class SextantDevices extends LitElement {
    * heights out of the layout. Announcing it back lets the panel forget the
    * request, so returning here later does not reopen it. */
   updated() {
+    // One updated() only: this class had two, and the later definition
+    // silently replaced this one, so everything below had never run.
+    if (this._wizard?.crop) this._drawCropper();
     // Wait for the Bermuda fetch as well as the layout. The six calls behind
     // _refresh are still in flight when this page mounts, so a request that
     // arrived with the page used to be answered with no address at all - and
@@ -348,10 +351,6 @@ class SextantDevices extends LitElement {
       w.crop = null;
       this.requestUpdate();
     }, "image/png");
-  }
-
-  updated() {
-    if (this._wizard?.crop) this._drawCropper();
   }
 
   async _saveWizard() {
