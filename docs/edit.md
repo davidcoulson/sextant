@@ -66,8 +66,9 @@ trims any part that pokes through that room's walls, and a spot dragged
 wholly into another room moves to that room. A selected spot can be limited to the thing classes it
 takes — pick phone, watch and keys on a bedside table, cat on a cat bed —
 and nothing else will be placed there; pick none and it takes anything.
-Person also takes a man, a woman or a child and Pet also takes the dog or
-the cat, shown outlined in the picker so the spot's reach is visible.
+Person also takes a man, a woman or a child, Pet also takes the dog or the
+cat, and Bag also takes a backpack, a purse or luggage — shown outlined in
+the picker so the spot's reach is visible.
 Undo holds fifty steps. **Adjust rooms** squares
 near-rectangles, snaps neighbours to shared walls and removes overlaps
 with a live preview. Nothing is written until Save.

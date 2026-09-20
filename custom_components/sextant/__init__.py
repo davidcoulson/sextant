@@ -837,22 +837,27 @@ def _median_distance(reading, window_secs, min_samples):
 def _select_receivers(entries, max_receivers, max_range, near_always):
     """Cap the receivers that feed one floor's solve.
 
-    ``entries`` are ``(distance_m, point)`` pairs. Keeps every receiver within
-    ``near_always`` metres plus the ``max_receivers`` nearest (0 = all), and
-    drops anything beyond ``max_range`` (0 = no cap) once three points are
-    already kept, so a floor can never be starved below the solver's minimum
-    by the cap alone. Returns the points nearest-first.
+    ``entries`` are ``(distance_m, point)`` pairs, or ``(distance_m, point,
+    name)`` triples. Keeps every receiver within ``near_always`` metres plus
+    the ``max_receivers`` nearest (0 = all), and drops anything beyond
+    ``max_range`` (0 = no cap) once three points are already kept, so a floor
+    can never be starved below the solver's minimum by the cap alone. Returns
+    ``(points, heard)`` nearest-first, ``heard`` being the (name, distance)
+    pairs behind those points - which proxy said what, for the floor-election
+    telemetry, since the points themselves are anonymous coordinates.
     """
     entries = sorted(entries, key=lambda e: e[0])
     limit = max(int(max_receivers), 3) if max_receivers else 0
-    kept = []
-    for i, (distance, point) in enumerate(entries):
+    kept, heard = [], []
+    for i, entry in enumerate(entries):
+        distance, point = entry[0], entry[1]
         if limit and i >= limit and distance > near_always:
             continue
         if max_range and distance > max_range and len(kept) >= 3:
             continue
         kept.append(point)
-    return kept
+        heard.append((entry[2] if len(entry) > 2 else None, round(float(distance), 2)))
+    return kept, heard
 
 
 def _thing_height(data, entity=None):
@@ -2259,6 +2264,7 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
 
         jobs.append({
             "floor": floor_name, "weighted": weighted, "bounds": floor_bounds,
+            "heard": cand.get("heard") or [],
             "min_wr": min_wr, "stable_hint": stable_hint, "scale": scale,
             "zone_polys": zone_polys,
             "fingerprint": None if not thing_vec or floor_name not in refs_by_floor else {
@@ -2295,6 +2301,7 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
         solved[floor_name] = {
             "fix": fix,
             "weighted": weighted,
+            "heard": job.get("heard") or [],   # (proxy, metres) behind this floor's solve
             "bounds": floor_bounds,
             "zone_polys": zone_polys,
             "scale": scale,
@@ -2378,6 +2385,11 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
             "prox": round(prox_scores[f], 4),
             "bias": round(biases[f], 4),
             "score": round(scores[f], 4),
+            # Which proxies said what, per floor. The scores alone cannot tell
+            # a floor that lost from a floor that was not listening: Meg's
+            # catwalk went from eight receivers to three and the floor below
+            # won on what was left, and no telemetry said so.
+            "heard": [[name, metres] for name, metres in (solved[f].get("heard") or [])],
         }
         for f in scores
     }
@@ -3123,16 +3135,17 @@ def extract_candidate_floors(new_global_data, tmpentity):
                 entries.append((distance, (
                     receiver["cords"]["x"], receiver["cords"]["y"],
                     receiver["cords"]["r"], distance * floor["scale"], float(quality),
-                )))
+                ), receiver.get("entity_id")))
             # Nearest-K cap: with thirty receivers on a floor, the far ones
             # contribute mostly noise, and 1/r^2 does not zero them out.
-            cords = _select_receivers(entries, max_receivers, max_range, near_always)
+            cords, heard = _select_receivers(entries, max_receivers, max_range, near_always)
             nearest = min((e[0] for e in entries), default=float("inf"))
             ranked = sorted(e[0] for e in entries)[:prox_k]
             if cords:
                 candidates.append({
                     "name": floor["name"],
                     "cords": cords,
+                    "heard": heard,
                     "nearest_m": nearest,
                     # Mean of the floor_proximity_k nearest slants: what the
                     # proximity term compares across floors.
@@ -4211,6 +4224,12 @@ def thing_class(layout, entity) -> str:
 CLASS_FAMILIES = {
     "person": frozenset({"person", "man", "woman", "child"}),
     "paw": frozenset({"paw", "dog", "cat"}),
+    # A backpack, a purse and a suitcase are all bags, and a spot meant for
+    # one - the hook by the door, the shelf in the closet - takes any of them.
+    # They are separate classes because they are not interchangeable to a
+    # person reading the Live page: luggage sitting in the hall means
+    # something a purse on the counter does not.
+    "bag": frozenset({"bag", "backpack", "purse", "luggage"}),
 }
 
 

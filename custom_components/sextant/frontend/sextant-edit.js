@@ -24,6 +24,7 @@ const TOOLS = [
   ["nogo", "No-go", "mdi:cancel", "Draw an area things can never be in (a void, a wall)"],
   ["measure", "Scale", "mdi:ruler", "Set the map scale from a known distance"],
   ["pin", "Anchor", "mdi:crosshairs-gps", "Anchor a point that lines up through the house - an outside corner, a stair post. The same name on another floor says how the floors stack. It lands on a room corner when one is near; hold Alt to place it freely"],
+  ["remark", "Note", "mdi:note-text-outline", "Leave a note on the plan - where a proxy is going, what to check, what a room is really called. Notes are for people; nothing about positioning reads them"],
 ];
 // Layers that can be locked against selection and dragging, so a finished
 // room layout is not nudged while proxies are being moved (and vice versa).
@@ -142,7 +143,7 @@ class SextantEdit extends LitElement {
     if (changed.has("hass")) this._map.setAreas(this.hass?.areas);
     if (changed.has("floor") || changed.has("data")) this._loadBiasView();
     if (changed.has("spots") || changed.has("floor")) this._map.setSuggestions((this.spots || []).filter((s) => s.floor === this.floor).map((s) => ({ x: s.x, y: s.y, label: `add a proxy here · ${s.room}` })));
-    if (changed.has("_tool")) { this._map.setTool(["measure", "receiver", "pin"].includes(this._tool) ? "select" : this._tool); }
+    if (changed.has("_tool")) { this._map.setTool(["measure", "receiver", "pin", "remark"].includes(this._tool) ? "select" : this._tool); }
   }
 
   _syncDraft(replace) {
@@ -262,6 +263,25 @@ class SextantEdit extends LitElement {
     this.requestUpdate();
   }
 
+  /** A note on the plan, where the click was. Notes carry no geometry and no
+   * name of their own - nothing but a person reads them - so placing one is
+   * just a point and an empty line of text waiting in the inspector. */
+  _placeRemark(e) {
+    const f = this._floorObj();
+    if (!f || this._map.hover?.kind === "remark") return;   // a click on a note selects it
+    const p = this._mapPoint(e);
+    this._snapshot();
+    f.remarks = f.remarks || [];
+    f.remarks.push({ remark_id: uid("remark"), text: "", cords: { x: Math.round(p.x * 1000) / 1000, y: Math.round(p.y * 1000) / 1000 } });
+    this._dirty = true;
+    this._selection = { kind: "remark", index: f.remarks.length - 1 };
+    this._map.setSelection(this._selection);
+    this.requestUpdate();
+    // Straight into typing: a note placed and then lost because the text box
+    // was never found is worse than no note.
+    this.updateComplete.then(() => this.renderRoot?.querySelector(".remark-text input, .remark-text textarea")?.focus());
+  }
+
   /** The draft as it should be stored: without the marks the map draws with.
    * Both save paths go through here - adding a floor posts the draft too, and
    * used to send `unmatched`, `label` and the pin marks along with it. */
@@ -274,7 +294,7 @@ class SextantEdit extends LitElement {
     return draft;
   }
 
-  _listFor(kind, f) { return kind === "receiver" ? f.receivers : kind === "zone" ? f.zones : kind === "pin" ? f.pins : f.subzones; }
+  _listFor(kind, f) { return kind === "receiver" ? f.receivers : kind === "zone" ? f.zones : kind === "pin" ? f.pins : kind === "remark" ? f.remarks : f.subzones; }
 
   // --- tools -------------------------------------------------------------------
 
@@ -282,7 +302,7 @@ class SextantEdit extends LitElement {
     this._tool = tool;
     this._measure = null;
     if (tool !== "receiver") this._placing = null;
-    if (["receiver", "measure", "pin"].includes(tool)) this._map.setTool("select");
+    if (["receiver", "measure", "pin", "remark"].includes(tool)) this._map.setTool("select");
     if (tool === "pin" && this._locks.pin) this._setLock("pin", false);   // you are placing pins: they must be reachable
   }
 
@@ -291,6 +311,7 @@ class SextantEdit extends LitElement {
     if (this._tool === "receiver" && this._placing) this._placeReceiver(e);
     else if (this._tool === "measure") this._measureClick(e);
     else if (this._tool === "pin") this._placePin(e);
+    else if (this._tool === "remark") this._placeRemark(e);
   }
 
   _mapPoint(e) {
@@ -539,7 +560,10 @@ class SextantEdit extends LitElement {
     if (!sel || !f) return;
     const list = this._listFor(sel.kind, f);
     const item = list[sel.index];
-    if (!confirmDialog(`Delete ${sel.kind === "receiver" ? "proxy" : sel.kind === "zone" ? "room" : sel.kind === "pin" ? "anchor" : "spot"} "${item.entity_id ?? item.name}"?`)) return;
+    const what = { receiver: "proxy", zone: "room", pin: "anchor", remark: "note" }[sel.kind] || "spot";
+    // An empty note has nothing to name and nothing to lose: no dialog for it.
+    const named = item.entity_id ?? item.name ?? item.text;
+    if (named && !confirmDialog(`Delete ${what} "${named}"?`)) return;
     this._snapshot();
     list.splice(sel.index, 1);
     if (sel.kind === "pin") this._refreshAlignment();
@@ -780,6 +804,14 @@ class SextantEdit extends LitElement {
     const list = this._listFor(sel.kind, f);
     const item = list?.[sel.index];
     if (!item) return nothing;
+    if (sel.kind === "remark") {
+      return html`<div class="card">
+        <h4>Note</h4>
+        <div class="row remark-text">${uiField({ label: "Note", value: item.text || "", onChange: (v) => this._edit("text", String(v || "")), style: "flex: 1" })}</div>
+        <div class="muted small">For people only - the solver, the rooms and the spots all ignore it. x ${fmtNum(item.cords?.x, 0)}, y ${fmtNum(item.cords?.y, 0)}</div>
+        <div class="row"><span class="grow"></span>${uiButton({ label: "Delete", kind: "danger", onClick: () => this._deleteSelection() })}</div>
+      </div>`;
+    }
     if (sel.kind === "pin") {
       const others = [...new Set((this._draft?.floor || []).filter((fl) => fl !== f).flatMap((fl) => (fl.pins || []).map((q) => q.name)))].filter(Boolean);
       const taken = new Set((f.pins || []).filter((q) => q !== item).map((q) => q.name));
