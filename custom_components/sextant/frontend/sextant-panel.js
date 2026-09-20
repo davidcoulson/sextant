@@ -656,9 +656,17 @@ class SextantLive extends LitElement {
     const pct = Number(f.wifi_signal?.state);
     const dbm = Number.isFinite(pct) ? pct / 2 - 100 : null;
     const grade = wired ? "good" : !Number.isFinite(pct) ? "" : pct >= 80 ? "good" : pct >= 66 ? "fair" : "poor";
+    // What the link is, in as few words as carry information: the band when
+    // it is the interesting part (5 GHz is the rare one), else the 802.11
+    // generation the proxy negotiated, else just Wi-Fi.
+    const band = val("band", false);
+    const generation = (val("generation", false) || "").split(" (")[0];
+    const linkText = wired ? "Ethernet"
+      : band && band.startsWith("5") ? `Wi-Fi ${band}`
+      : generation || "Wi-Fi";
     const linkTitle = wired ? "Wired to the network"
-      : dbm == null ? "On Wi-Fi"
-      : `Wi-Fi ${fmtNum(pct, 0)} % (${fmtNum(dbm, 0)} dBm)`;
+      : [dbm == null ? "On Wi-Fi" : `Wi-Fi ${fmtNum(pct, 0)} % (${fmtNum(dbm, 0)} dBm)`,
+         band, val("generation", false), val("channel") ? `channel ${val("channel")}` : null].filter(Boolean).join(" · ");
     const rows = [
       ["ESPHome release", val("esphome_version", false)],
       // The board name is ESPHome's project name, so it belongs with the version.
@@ -669,7 +677,7 @@ class SextantLive extends LitElement {
       ["Adverts forwarded", val("adverts_forwarded")],
       ["Adverts ignored", [val("adverts_dropped"), val("drop_rate") ? `(${val("drop_rate")})` : null].filter(Boolean).join(" ") || null],
       ["IRKs installed", val("irks_loaded")],
-      ["Wi-Fi", [val("wifi_signal"), val("ssid", false)].filter(Boolean).join(" · ") || null],
+      ["Wi-Fi", [val("wifi_signal"), val("ssid", false), val("channel") ? `ch ${val("channel")}` : null].filter(Boolean).join(" · ") || null],
       ["Chip", [d.chip, val("temperature")].filter(Boolean).join(" · ") || null],
       // What HA records for the node is whichever link it is on: a proxy that
       // reports a Wi-Fi signal is on Wi-Fi, one that does not is wired.
@@ -679,7 +687,7 @@ class SextantLive extends LitElement {
     ].filter(([, v]) => v);
     return html`<div class="proxycard" @click=${(e) => e.stopPropagation()}>
       <h4>${proxyName(this.data, p.slug)}${p.loading || p.error ? nothing : html`<span class="link ${grade}" title=${linkTitle}>
-        <ha-icon icon=${wired ? "mdi:ethernet" : "mdi:wifi"}></ha-icon>${wired ? "Ethernet" : "Wi-Fi"}</span>`}</h4>
+        <ha-icon icon=${wired ? "mdi:ethernet" : "mdi:wifi"}></ha-icon>${linkText}</span>`}</h4>
       ${p.loading ? html`<div class="muted small">Asking…</div>`
         : p.error ? html`<div class="warn small">${p.error}</div>`
         : rows.length ? html`<dl>${rows.map(([k, v]) => html`<dt>${k}</dt><dd>${v}</dd>`)}</dl>`

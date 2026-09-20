@@ -10,7 +10,9 @@ anchored to if any, and every proxy that hears it with the distance. Click
 a **proxy** instead and a card says what it is and what it is doing: its
 ESPHome release and project version, uptime, how many things it is hearing,
 how many adverts it forwarded and ignored (and the IRKs behind that, where
-the BLE filter publishes them), its Wi-Fi, its chip and board, and its
+the BLE filter publishes them), its Wi-Fi - with the
+band, channel and the 802.11 generation it negotiated, where the proxy
+publishes them - its chip and board, and its
 MACs - the Bluetooth one Bermuda tracks, the one it talks on (Wi-Fi, or
 Ethernet on a wired proxy), and the chip's own where it publishes it. Whatever it publishes is what the card shows; a
 **Details** disclosure holds the floor odds, spot shares, confidence,
