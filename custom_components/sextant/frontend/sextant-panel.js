@@ -1015,9 +1015,9 @@ class SextantLive extends LitElement {
     /* One pin per row: what and where, when underneath, Forget on the right. */
     .pinlist li { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 0 10px; padding: 5px 0; border-bottom: 1px solid var(--divider-color); }
     .pinlist li:last-child { border-bottom: 0; }
-    .pinlist .pinid { font-size: 13px; }
-    .pinlist .pinwhen { grid-column: 1; }
-    .pinlist .forget { grid-row: 1 / 3; align-self: center; display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border: 1px solid var(--divider-color); border-radius: 8px; background: transparent; color: var(--secondary-text-color); cursor: pointer; }
+    .pinlist .pinid { grid-column: 1; grid-row: 1; font-size: 13px; }
+    .pinlist .pinwhen { grid-column: 1; grid-row: 2; }
+    .pinlist .forget { grid-column: 2; grid-row: 1 / 3; align-self: center; display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border: 1px solid var(--divider-color); border-radius: 8px; background: transparent; color: var(--secondary-text-color); cursor: pointer; }
     .pinlist .forget ha-icon { --mdc-icon-size: 18px; }
     .pinlist .forget:hover { color: var(--error-color, #c62828); border-color: var(--error-color, #c62828); }
     .quick { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 6px; margin: 2px 0 4px; }
