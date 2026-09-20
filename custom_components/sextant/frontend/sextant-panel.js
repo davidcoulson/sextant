@@ -700,7 +700,7 @@ class SextantLive extends LitElement {
       ["labels", "Labels", "Room and thing names", "mdi:label-outline"],
       ["trails", "Trails", "Each thing's recent path", "mdi:shoe-print"],
       ["subzones", "Spots", "Draw the spots (a couch, a desk, a bedside table)", "mdi:sofa-outline"],
-      ["receiverLabels", "Proxy names", "Name every proxy on the map, not just the one under the pointer", "mdi:tag-text-outline"],
+      ["receiverLabels", "Proxy names", "Name every proxy on the map, not just the one under the pointer", "mdi:access-point"],
       ["circles", "Range circles", "The distance each proxy measured, as a circle: the fix is where they meet", "mdi:radar"],
       ["fingerprint", "Fingerprint fix", "Where the fingerprint estimator alone would put each thing (dashed), next to the published fix", "mdi:fingerprint"],
     ];
