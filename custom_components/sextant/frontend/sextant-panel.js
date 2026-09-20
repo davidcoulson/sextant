@@ -722,6 +722,7 @@ class SextantLive extends LitElement {
           <span class="wide-only">${fitButton}</span>
           <button class="iconbtn narrow-only" title="Map options" @click=${() => { this._optionsOpen = !this._optionsOpen; }}><ha-icon icon="mdi:tune-variant"></ha-icon></button>
           <span class="narrow-only">${fitButton}</span>
+          <button class="iconbtn narrow-only" title="Hide the map" aria-label="Hide the map" @click=${() => { this._mapOpen = false; }}><ha-icon icon="mdi:map-minus"></ha-icon></button>
         </div>
         ${this._optionsOpen ? html`
           <div class="opts-backdrop narrow-only" @click=${() => { this._optionsOpen = false; }}></div>
@@ -1013,6 +1014,10 @@ class SextantLive extends LitElement {
       :host { display: flex; flex-direction: column; }
       .quick-actions { order: 0; display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px; background: var(--card-background-color); border-bottom: 1px solid var(--divider-color); }
       .side { order: 1; flex: 1 1 auto; min-height: 0; overflow: auto; border-left: 0; border-top: 1px solid var(--divider-color); max-height: none; }
+      /* Things, and with it Hide map, stays reachable however far the list
+         is scrolled - it used to scroll away and leave no way to close a map
+         taking half the screen. */
+      .side h3 { position: sticky; top: 0; z-index: 2; margin: 0; padding: 8px 0; background: var(--card-background-color); }
       .stage { order: 2; flex: 0 0 48vh; }
       .stage.collapsed { display: none; }
       .wide-only { display: none; }
