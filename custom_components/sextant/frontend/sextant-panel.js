@@ -656,9 +656,10 @@ class SextantLive extends LitElement {
     const st = staleness(p, this._staleAfter());
     return html`
             <li class="${p.ent === this._selected ? "selected" : ""} ${st.ghost ? "ghost" : ""}" title=${st.ghost ? `Not heard for ${fmtAge(st.age)}: this is where ${this._label(p.ent)} ${this._pn(p.ent).was} last placed` : ""} @click=${() => { this._select(p.ent === this._selected ? null : p.ent); if (p.floor && p.floor !== this.floor) this.dispatchEvent(new CustomEvent("floor-changed", { detail: p.floor })); }}>
-              ${this._avatar(p.ent)}
-              <span class="name">${this._label(p.ent)}${this._speaksFor(p.ent)
-                ? html`<ha-icon class="viaicon" icon="mdi:map-marker-account" title=${`Where ${this._speaksFor(p.ent)} is read from right now`}></ha-icon>` : nothing}</span>
+              ${(() => { const who = this._speaksFor(p.ent); return who
+                ? html`<span class="avslot" title=${`Where ${who} is read from right now`}>${this._avatar(p.ent)}<ha-icon class="viabadge" icon="mdi:map-marker"></ha-icon></span>`
+                : this._avatar(p.ent); })()}
+              <span class="name">${this._label(p.ent)}</span>
               <span class="where">${this._roomIcon(p.floor, p.zone) ? html`<ha-icon class="roomicon" icon=${this._roomIcon(p.floor, p.zone)}></ha-icon>` : nothing}${p.zone}</span>
               <span class="muted small floorline">${st.ghost ? html`<ha-icon class="ghosticon" icon="mdi:ghost-outline"></ha-icon>seen ${shortAge(st.age)} ago · ` : nothing}${p.floor}</span>
               ${p.sub_zone && p.sub_zone !== "unknown" ? html`<span class="spot muted small">${p.sub_zone}</span>` : nothing}
@@ -976,8 +977,9 @@ class SextantLive extends LitElement {
     .list li:hover, .list li.selected { background: var(--secondary-background-color); }
     .list li.selected { outline: 2px solid var(--primary-color); }
     .list .name { font-weight: 600; grid-column: 2; }
-    /* The thing its owner's location is read from right now. */
-    .list .name .viaicon { --mdc-icon-size: 15px; margin-left: 4px; vertical-align: -2px; color: var(--primary-color, #03a9f4); }
+    /* A badge on the disc of the thing its owner's location is read from. */
+    .list .avslot { grid-row: 1 / 3; position: relative; display: inline-flex; }
+    .list .avslot .viabadge { position: absolute; right: -3px; bottom: -3px; --mdc-icon-size: 13px; width: 17px; height: 17px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--primary-color, #03a9f4); color: var(--text-primary-color, #fff); box-shadow: 0 0 0 2px var(--card-background-color, #fff); }
     /* A flex row so the icon centres on the text instead of sitting on its baseline. */
     .list .where { grid-column: 3; display: flex; align-items: center; justify-content: flex-end; gap: 4px; text-align: right; font-size: 12px; }
     /* The spot sits under its room, the way the floor sits under the name.
