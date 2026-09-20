@@ -27,25 +27,44 @@ import math
 DEFAULT_MAX_AGE_SECS = 300.0
 
 
-def _clean(value, depth=0):
-    """JSON of a state dict: numbers, strings, bools, and lists of them.
+# "There is no value here", as distinct from a value of None. A state dict is
+# full of meaningful Nones - no challenger, not moving since, nothing pending -
+# and dropping those keys hands the elections a dict they index by name and
+# cannot read: the first st["still_since"] then throws the thing back to a cold
+# start, which is the whole thing this module exists to avoid.
+_DROP = object()
 
-    Anything else - a numpy array, an object - is dropped rather than risk a
-    store that cannot be written or read back.
+
+def _clean(value, depth=0):
+    """JSON of a state dict: numbers, strings, bools, None, and lists of them.
+
+    Anything else - a numpy array, an object, a NaN - is dropped rather than
+    risk a store that cannot be written or read back.
     """
     if value is None or isinstance(value, (str, bool)):
         return value
     if isinstance(value, (int, float)):
-        return value if math.isfinite(value) else None
+        return value if math.isfinite(value) else _DROP
     if depth >= 4:
-        return None
+        return _DROP
     if isinstance(value, dict):
-        return {str(k): _clean(v, depth + 1) for k, v in value.items() if _clean(v, depth + 1) is not None}
+        out = {}
+        for k, v in value.items():
+            cleaned = _clean(v, depth + 1)
+            if cleaned is not _DROP:
+                out[str(k)] = cleaned
+        return out
     if isinstance(value, (list, tuple)):
-        return [_clean(v, depth + 1) for v in value]
+        return [None if (c := _clean(v, depth + 1)) is _DROP else c for v in value]
     if hasattr(value, "tolist"):          # numpy
         return _clean(value.tolist(), depth + 1)
-    return None
+    return _DROP
+
+
+def _json(value):
+    """``_clean`` for a caller that wants None rather than the sentinel."""
+    cleaned = _clean(value)
+    return None if cleaned is _DROP else cleaned
 
 
 def _matrix(value, size):
@@ -82,20 +101,20 @@ def snapshot(now, kf=None, zones=None, spots=None, arrivals=None, rows=None):
         return things.setdefault(str(entity), {})
 
     for entity, state in (kf or {}).items():
-        x, P = _clean(state.get("x")), _clean(state.get("P"))
+        x, P = _json(state.get("x")), _json(state.get("P"))
         if _vector(x, 4) is None or _matrix(P, 4) is None:
             continue
         slot(entity)["kf"] = {"x": x, "P": P, "ts": state.get("ts"), "floor": state.get("floor")}
     for entity, state in (zones or {}).items():
-        slot(entity)["zone"] = _clean(state)
+        slot(entity)["zone"] = _json(state)
     for entity, state in (spots or {}).items():
-        slot(entity)["spot"] = _clean(state)
+        slot(entity)["spot"] = _json(state)
     for entity, state in (arrivals or {}).items():
-        slot(entity)["arrived"] = _clean(state)
+        slot(entity)["arrived"] = _json(state)
     for row in rows or []:
         if not isinstance(row, dict) or not row.get("ent"):
             continue
-        cords = _clean(row.get("cords"))
+        cords = _json(row.get("cords"))
         slot(row["ent"])["last"] = {
             "zone": row.get("zone"), "spot": row.get("sub_zone"), "floor": row.get("floor"),
             "updated": row.get("updated"),

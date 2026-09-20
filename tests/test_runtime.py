@@ -91,6 +91,22 @@ def test_nothing_unwritable_reaches_the_store():
     assert "nan" not in snap["things"]["phone"]["zone"]
 
 
+def test_a_none_is_a_value_not_a_missing_key():
+    """"No challenger", "not moving since" and "nothing pending" are Nones the
+    elections index by name. Dropping those keys was a restore that raised on
+    the first cycle and threw every thing back to a cold start."""
+    snap = runtime.snapshot(1000.0, zones={"phone": {"zone": "Kitchen", "challenge": None,
+                                                     "still_since": None, "moving_since": None,
+                                                     "away_since": None, "outvoted_since": None}},
+                            spots={"phone": {"value": ["Peninsula", "Kitchen"], "pending": None}})
+    back = runtime.restore(snap, 1000.0 + 10)
+    assert back["zone"]["phone"]["challenge"] is None
+    assert back["zone"]["phone"]["still_since"] is None
+    assert back["spot"]["phone"]["pending"] is None
+    assert set(back["zone"]["phone"]) == {"zone", "challenge", "still_since", "moving_since",
+                                          "away_since", "outvoted_since"}
+
+
 def test_a_thing_with_no_sighting_still_keeps_its_election():
     snap = runtime.snapshot(1000.0, zones={"watch": {"zone": "Office"}})
     back = runtime.restore(snap, 1000.0 + 10)
@@ -139,12 +155,16 @@ def test_the_live_dicts_go_out_and_come_back(monkeypatch):
         sextant._kf_position_state[entity] = {"x": np.array(kf["x"]), "P": np.array(kf["P"]),
                                               "ts": kf["ts"], "floor": kf["floor"]}
     for entity, state in back["zone"].items():
-        sextant._zone_state[entity] = dict(state)
+        sextant._zone_state[entity] = {**sextant._new_zone_state(state.get("floor"), now), **state}
     for entity, state in back["spot"].items():
         value = state.get("value")
-        sextant._subzone_state[entity] = {**state, "value": tuple(value) if isinstance(value, list) else value}
+        state = {**state, "value": tuple(value) if isinstance(value, list) else value}
+        sextant._subzone_state[entity] = {**sextant._new_subzone_state(state.get("floor"), state.get("zone"), now), **state}
     sextant._arrivals.update(back["arrivals"])
 
+    # Every key the elections index by name, or the first cycle raises.
+    assert set(sextant._zone_state["watch"]) >= set(sextant._new_zone_state("Second Floor", now))
+    assert set(sextant._subzone_state["watch"]) >= set(sextant._new_subzone_state("Second Floor", "Master Bedroom", now))
     assert sextant._zone_state["watch"]["zone"] == "Master Bedroom"
     assert sextant._zone_state["watch"]["locked"] is True
     # The spot election compares this against its own answer, so it has to be

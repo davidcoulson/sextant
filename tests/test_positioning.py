@@ -983,6 +983,44 @@ def test_stationary_lock_releases_when_the_thing_keeps_moving():
     assert (zone, locked) == ("Kitchen", False)
 
 
+def test_a_zone_election_survives_a_trip_through_the_restart_store():
+    """The election carries on from a restored state, rather than raising on it.
+
+    Every None in that dict - no challenger, not moving since - used to be
+    dropped on the way to disk, and the first st["still_since"] after a restart
+    raised KeyError inside a handler that logged at INFO. Every thing went back
+    to a cold start and nothing said so.
+    """
+    import json
+
+    sextant._zone_state.clear()
+    for t in (0.0, 10.0, 20.0, 30.0):
+        zone, locked = _elect("e", 90, t)
+    assert (zone, locked) == ("Kitchen", True)
+    since, born = sextant._zone_state["e"]["since"], sextant._zone_state["e"]["born"]
+
+    def round_trip(at, now):
+        saved = json.loads(json.dumps(sextant.runtime_mod.snapshot(at, zones=sextant._zone_state)))
+        back = sextant.runtime_mod.restore(saved, now)
+        sextant._zone_state.clear()
+        for entity, state in back["zone"].items():
+            sextant._zone_state[entity] = {**sextant._new_zone_state(state.get("floor"), now), **state}
+
+    round_trip(30.0, 40.0)
+    # Back on its shelf 10 cm from the boundary, still locked, still since then.
+    assert _elect("e", 90, 50.0) == ("Kitchen", True)
+    assert sextant._zone_state["e"]["since"] == since and sextant._zone_state["e"]["born"] == born
+
+    # And the other way round: carried through the door when the snapshot was
+    # taken, put down after the restart. That is the case that actually broke -
+    # a thing on the move has no still_since to write.
+    sextant._zone_state.clear()
+    _elect("e", 50, 100.0, vx=100.0)
+    _elect("e", 50, 110.0, vx=100.0)
+    round_trip(110.0, 120.0)
+    assert _elect("e", 50, 130.0)[0] == "Kitchen"
+
+
 def test_zone_election_resets_on_floor_change_and_prune():
     sextant._zone_state.clear()
     _elect("e", 50, 0.0)

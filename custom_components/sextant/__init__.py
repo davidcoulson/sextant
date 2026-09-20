@@ -334,6 +334,30 @@ _kf_position_state = {}
 # on prune, like the Kalman state.
 _zone_state = {}
 _subzone_state = {}
+
+
+def _new_zone_state(floor_name, now):
+    """A thing's room election, before it has any evidence.
+
+    The elections index these dicts by name, so every key has to be here
+    whether or not it has a value yet. It doubles as the shape a restored
+    state is filled out against (see _restore_runtime): a snapshot written by
+    an older release, or one whose keys a later release added to, then comes
+    back readable instead of raising on the first cycle.
+    """
+    return {
+        "floor": floor_name, "zone": None, "since": now, "probs": {},
+        "challenge": None, "still_since": None, "moving_since": None,
+        "away_since": None, "outvoted_since": None, "locked": False, "born": now,
+    }
+
+
+def _new_subzone_state(floor_name, zone, now):
+    """A thing's spot election, before it has any evidence (see _new_zone_state)."""
+    return {"floor": floor_name, "zone": zone, "value": ("unknown", zone), "probs": {},
+            "pending": None, "since": now}
+
+
 # Near-field anchor per thing: {"slug", "floor", "since", "pending": (slug, since) | None}
 _anchor_state = {}
 
@@ -1167,6 +1191,13 @@ def cleanup_legacy_sextant_registry_and_states(hass: HomeAssistant):
         _LOGGER.info("Removing legacy Sextant state: %s", entity_id)
         hass.states.async_remove(entity_id)
 
+# The last cycle failure and how many times it has repeated, so a persistent
+# one is logged every so often instead of every fifteen seconds.
+_cycle_error_last = None
+_cycle_error_count = 0
+CYCLE_ERROR_REPEAT_EVERY = 40   # roughly every ten minutes at a 15 s cycle
+
+
 async def update_tracked_entities(hass):
     """Update tracked_entities with the result of the Jinja code once per second."""
     global tracked_entities, new_global_data
@@ -1278,8 +1309,23 @@ async def update_tracked_entities(hass):
             await process_entities(hass, new_global_data)
             async_dispatcher_send(hass, SIGNAL_BPS_UPDATE, _push_payload(hass))
 
-        except Exception as e:
-            _LOGGER.info(f"Error executing Jinja code: {e}")
+        except Exception as e:  # noqa: BLE001 - one bad cycle must not end the loop
+            # Loudly, and with the traceback. This used to log "Error executing
+            # Jinja code" at INFO, where the recorder's WARNING+ log file never
+            # showed it: a cycle that raised every fifteen seconds looked
+            # exactly like a cycle that ran, and a restore that crashed the
+            # elections was invisible for a day. Repeats of the same failure
+            # are counted rather than repeated, so a persistent one does not
+            # bury the log.
+            global _cycle_error_last, _cycle_error_count
+            message = f"{type(e).__name__}: {e}"
+            if message == _cycle_error_last:
+                _cycle_error_count += 1
+                if _cycle_error_count % CYCLE_ERROR_REPEAT_EVERY == 0:
+                    _LOGGER.error("Positioning cycle still failing (%d times): %s", _cycle_error_count, message)
+            else:
+                _cycle_error_last, _cycle_error_count = message, 1
+                _LOGGER.exception("Positioning cycle failed: %s", message)
 
         await asyncio.sleep(secToUpdate)  # Run every X seconds, set timer in global variables
 
@@ -2847,14 +2893,17 @@ async def _restore_runtime(hass):
             "x": np.array(kf["x"], dtype=float), "P": np.array(kf["P"], dtype=float),
             "ts": kf["ts"], "floor": kf["floor"],
         }
+    now = time.time()
     for entity, state in back["zone"].items():
-        _zone_state[entity] = dict(state)
+        # Filled out against the live shape: a key the snapshot predates (or
+        # never carried) has to read as "no value", not raise mid-election.
+        _zone_state[entity] = {**_new_zone_state(state.get("floor"), now), **state}
     for entity, state in back["spot"].items():
         # The election stores its answer as a tuple; JSON made it a list.
         value = state.get("value")
         if isinstance(value, list) and len(value) == 2:
             state = {**state, "value": tuple(value)}
-        _subzone_state[entity] = dict(state)
+        _subzone_state[entity] = {**_new_subzone_state(state.get("floor"), state.get("zone"), now), **state}
     _arrivals.update(back["arrivals"])
     if back["age"] is None:
         _LOGGER.info("No saved state to resume from; starting cold")
@@ -3344,11 +3393,7 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
 
     st = _zone_state.get(entity)
     if st is None or st["floor"] != floor_name or (st["zone"] is not None and st["zone"] not in valid):
-        st = _zone_state[entity] = {
-            "floor": floor_name, "zone": None, "since": now, "probs": {},
-            "challenge": None, "still_since": None, "moving_since": None,
-            "away_since": None, "outvoted_since": None, "locked": False, "born": now,
-        }
+        st = _zone_state[entity] = _new_zone_state(floor_name, now)
 
     # 1. Membership, smoothed.
     center = (point.x, point.y) if isinstance(point, Point) else (point[0], point[1])
@@ -3728,10 +3773,7 @@ def _elect_subzone(entity, floor_name, zone, zone_locked, point, kf_state, sub_p
              if parent == zone and spot_accepts(allowed, cls)]
     st = _subzone_state.get(entity)
     if st is None or st.get("floor") != floor_name or st.get("zone") != zone:
-        st = _subzone_state[entity] = {
-            "floor": floor_name, "zone": zone, "value": ("unknown", zone), "probs": {}, "pending": None,
-            "since": now,
-        }
+        st = _subzone_state[entity] = _new_subzone_state(floor_name, zone, now)
     if not polys:
         if st["value"] != ("unknown", zone):
             st["since"] = now
