@@ -937,8 +937,8 @@ class SextantLive extends LitElement {
     /* A flex row so the icon centres on the text instead of sitting on its baseline. */
     .list .where { grid-column: 3; display: flex; align-items: center; justify-content: flex-end; gap: 4px; text-align: right; font-size: 12px; }
     /* The spot sits under its room, the way the floor sits under the name.
-       Beats `.list .small { grid-column: 2 / 4 }` below, which would span it
-       across both columns and push it onto a third row. */
+       The .small rule below spans columns 2 to 4; this must beat it, or the
+       spot spans both columns and lands on a third row. */
     .list .small.spot { grid-column: 3; text-align: right; }
     .list li.ghost { opacity: 0.55; }
     .list li.ghost .avatar { filter: grayscale(0.6); outline: 1px dashed var(--secondary-text-color); outline-offset: 1px; }
