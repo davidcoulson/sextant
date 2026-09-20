@@ -634,7 +634,9 @@ class SextantLive extends LitElement {
       live.push({
         ent,
         away: true,
-        updated: loc ? Date.parse(loc.last_changed) / 1000 : null,
+        // Only a sensor that still names a place knows when that was; after a
+        // restart an unknown one carries the restart's own timestamp.
+        updated: known_where ? Date.parse(loc.last_changed) / 1000 : null,
         zone: known_where ? (loc.attributes?.room || loc.state) : null,
         sub_zone: known_where ? loc.attributes?.spot : null,
         floor: floor && !["unknown", "unavailable"].includes(floor.state) ? floor.state : null,
