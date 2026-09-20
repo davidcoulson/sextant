@@ -13,7 +13,7 @@
  */
 import { LitElement, html, css, nothing } from "./lit.js";
 import { SextantMap, thingColor, thingHue, staleness, shortAge, heatCells } from "./sextant-map.js";
-import { sharedStyles, widgetStyles, fmtAge, fmtNum, toast, confirmDialog, ensureHaComponents, uiSwitch, uiSelect, uiButton, callWS, sortFloors, thingName, proxyName, fmtLen, fmtSpeed, classIcon, pronounsFor } from "./sextant-ui.js";
+import { sharedStyles, widgetStyles, fmtAge, fmtNum, toast, confirmDialog, ensureHaComponents, uiSelect, uiButton, callWS, sortFloors, thingName, proxyName, fmtLen, fmtSpeed, classIcon, pronounsFor } from "./sextant-ui.js";
 
 // What this page is running: the version of the files it was loaded from
 // (sextant-version.js), not the one in its URL - see that file.
@@ -696,14 +696,19 @@ class SextantLive extends LitElement {
     const sel = rows.find((p) => p.ent === this._selected);
     const h = this._history;
     const switches = [
-      ["image", "Map image", "Show or hide the floor-plan drawing behind the rooms"],
-      ["labels", "Labels", "Room and thing names"],
-      ["trails", "Trails", "Each thing's recent path"],
-      ["subzones", "Spots", "Draw the spots (a couch, a desk, a bedside table)"],
-      ["receiverLabels", "Proxy names", "Name every proxy on the map, not just the one under the pointer"],
-      ["circles", "Range circles", "The distance each proxy measured, as a circle: the fix is where they meet"],
-      ["fingerprint", "Fingerprint fix", "Where the fingerprint estimator alone would put each thing (dashed), next to the published fix"],
+      ["image", "Map image", "Show or hide the floor-plan drawing behind the rooms", "mdi:floor-plan"],
+      ["labels", "Labels", "Room and thing names", "mdi:label-outline"],
+      ["trails", "Trails", "Each thing's recent path", "mdi:shoe-print"],
+      ["subzones", "Spots", "Draw the spots (a couch, a desk, a bedside table)", "mdi:sofa-outline"],
+      ["receiverLabels", "Proxy names", "Name every proxy on the map, not just the one under the pointer", "mdi:tag-text-outline"],
+      ["circles", "Range circles", "The distance each proxy measured, as a circle: the fix is where they meet", "mdi:radar"],
+      ["fingerprint", "Fingerprint fix", "Where the fingerprint estimator alone would put each thing (dashed), next to the published fix", "mdi:fingerprint"],
     ];
+    // The map's own switches, as the pressed buttons the Edit tools and a
+    // thing's quick actions use: an icon with its word under it.
+    const optBtn = ([k, label, tip, icon]) => html`<button class="qa opt ${this._options[k] ? "on" : ""}" title=${tip}
+      aria-label=${label} aria-pressed=${!!this._options[k]} @click=${() => this._setOption(k, !this._options[k])}>
+      <ha-icon icon=${icon}></ha-icon><span>${label}</span></button>`;
     const gridPicker = uiSelect({ label: "Grid", value: this._options.grid, options: [{ value: "off", label: "No grid" }, { value: "m", label: "Metres" }, { value: "ft", label: "Feet" }], onChange: (v) => this._setOption("grid", v), style: "min-width: 120px" });
     const fitButton = uiButton({ label: "Fit map", kind: "text", icon: "mdi:fit-to-screen", onClick: () => this._map.fit() });
     return html`
@@ -715,9 +720,7 @@ class SextantLive extends LitElement {
       </div>
       <div class="stage ${this._mapOpen ? "" : "collapsed"}"><canvas></canvas>
         <div class="overlay">
-          <div class="chips wide-only" title="A switch and its label share a border: the word is on the right of its switch.">
-            ${switches.map(([k, l, tip]) => html`<span title=${tip} class="chipwrap">${uiSwitch({ label: l, checked: !!this._options[k], onChange: (v) => this._setOption(k, v) })}</span>`)}
-          </div>
+          <div class="chips wide-only">${switches.map(optBtn)}</div>
           <span class="wide-only">${gridPicker}</span>
           <span class="wide-only">${fitButton}</span>
           <button class="iconbtn narrow-only" title="Map options" @click=${() => { this._optionsOpen = !this._optionsOpen; }}><ha-icon icon="mdi:tune-variant"></ha-icon></button>
@@ -728,9 +731,7 @@ class SextantLive extends LitElement {
           <div class="opts-backdrop narrow-only" @click=${() => { this._optionsOpen = false; }}></div>
           <div class="opts-sheet narrow-only">
             <h3>Map options</h3>
-            <div class="chips" title="A switch and its label share a border: the word is on the right of its switch.">
-              ${switches.map(([k, l, tip]) => html`<span title=${tip} class="chipwrap">${uiSwitch({ label: l, checked: !!this._options[k], onChange: (v) => this._setOption(k, v) })}</span>`)}
-            </div>
+            <div class="chips optgrid">${switches.map(optBtn)}</div>
             ${gridPicker}
             ${uiButton({ label: "Done", kind: "primary", onClick: () => { this._optionsOpen = false; } })}
           </div>` : nothing}
@@ -986,7 +987,13 @@ class SextantLive extends LitElement {
     .quick .qa { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0; padding: 6px 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border: 1px solid var(--divider-color, #ddd); border-radius: 10px; background: var(--ha-card-background, var(--card-background-color, #fff)); color: var(--primary-text-color); font: inherit; font-size: 11px; cursor: pointer; }
     .quick .qa:hover { filter: brightness(0.97); }
     .quick .qa ha-icon { --mdc-icon-size: 22px; }
-    .quick .qa.on { background: var(--primary-color, #03a9f4); border-color: var(--primary-color, #03a9f4); color: var(--text-primary-color, #fff); }
+    .quick .qa.on, .qa.opt.on { background: var(--primary-color, #03a9f4); border-color: var(--primary-color, #03a9f4); color: var(--text-primary-color, #fff); }
+    /* The map's switches: the same button as a thing's quick actions. */
+    .qa.opt { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 66px; padding: 5px 8px; border: 1px solid var(--divider-color, #ddd); border-radius: 10px; background: var(--ha-card-background, var(--card-background-color, #fff)); color: var(--primary-text-color); font: inherit; font-size: 11px; line-height: 1.1; white-space: nowrap; cursor: pointer; }
+    .qa.opt ha-icon { --mdc-icon-size: 20px; }
+    .qa.opt:hover { filter: brightness(0.97); }
+    .qa.opt:focus-visible { outline: 2px solid var(--primary-color, #03a9f4); outline-offset: 2px; }
+    .optgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); gap: 6px; }
     .quick .qa:focus-visible { outline: 2px solid var(--primary-color, #03a9f4); outline-offset: 2px; }
     .marking .zoomto { display: flex; flex-wrap: wrap; gap: 2px 6px; margin: 4px 0; }
     .marking { background: var(--warning-color, #c77800); color: #fff; padding: 6px 8px; border-radius: 6px; font-size: 13px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
@@ -994,7 +1001,7 @@ class SextantLive extends LitElement {
     ul.plain { list-style: none; padding: 0; margin: 4px 0; font-size: 12px; }
     .opts-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.35); z-index: 9; }
     .opts-sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; background: var(--card-background-color); border-radius: 14px 14px 0 0; padding: 14px 16px max(14px, env(safe-area-inset-bottom)); box-shadow: 0 -2px 12px rgba(0,0,0,0.25); display: flex; flex-direction: column; gap: 10px; max-height: 70vh; overflow: auto; }
-    .opts-sheet .chips { flex-direction: column; align-items: stretch; }
+    .opts-sheet .chips.optgrid { flex-direction: row; align-items: stretch; }
     .opts-sheet .chipwrap { justify-content: space-between; }
     .opts-sheet .chipwrap > ha-formfield, .opts-sheet .chipwrap > label.inline { width: 100%; justify-content: space-between; }
     /* Small buttons a phone user reaches for right away: jump straight to
