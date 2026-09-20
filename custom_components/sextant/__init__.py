@@ -2701,7 +2701,11 @@ async def update_apitricords(hass, new_data):
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN]["apitricords"] = new_data
     now = time.time()
-    if now - _runtime_saved_at >= RUNTIME_SAVE_EVERY_S:
+    if not _runtime_saved_at:
+        # The first cycle after a start has one thing in it; there is nothing
+        # worth writing yet, and a clean stop writes whatever is current.
+        _runtime_saved_at = now
+    elif now - _runtime_saved_at >= RUNTIME_SAVE_EVERY_S:
         _runtime_saved_at = now
         await _save_runtime(hass)
 
