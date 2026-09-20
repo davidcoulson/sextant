@@ -678,8 +678,11 @@ class SextantLive extends LitElement {
   /** The person this thing is speaking for right now, or null: the owner's
    * location sensor names the thing it read (via). */
   _speaksFor(ent) {
-    const person = this.data?.layout?.thing_owners?.[ent];
-    if (!person) return null;
+    const owners = this.data?.layout?.thing_owners || {};
+    const person = owners[ent];
+    // Only where there is a choice to report: a pet owns its own tag, so its
+    // person sensor only ever reads that tag back.
+    if (!person || Object.values(owners).filter((o) => o === person).length < 2) return null;
     const st = this.hass?.states?.[`sensor.${person.split(".")[1]}_sextant_person_location`];
     if (st?.attributes?.via !== ent) return null;
     return this.hass?.states?.[person]?.attributes?.friendly_name || person.split(".")[1];
@@ -988,7 +991,7 @@ class SextantLive extends LitElement {
     /* A badge on the disc of the thing its owner's location is read from. */
     .list .avslot { grid-row: 1 / 3; position: relative; display: inline-flex; }
     .list .avslot .viabadge.ghostbadge { background: var(--secondary-background-color, #666); color: var(--secondary-text-color); }
-    .list .avslot .viabadge { position: absolute; right: -3px; bottom: -3px; --mdc-icon-size: 13px; width: 17px; height: 17px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--primary-color, #03a9f4); color: var(--text-primary-color, #fff); box-shadow: 0 0 0 2px var(--card-background-color, #fff); }
+    .list .avslot .viabadge { position: absolute; right: -3px; top: -3px; --mdc-icon-size: 13px; width: 17px; height: 17px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--primary-color, #03a9f4); color: var(--text-primary-color, #fff); box-shadow: 0 0 0 2px var(--card-background-color, #fff); }
     /* A flex row so the icon centres on the text instead of sitting on its baseline. */
     .list .where { grid-column: 3; display: flex; align-items: center; justify-content: flex-end; gap: 4px; text-align: right; font-size: 12px; }
     /* The spot sits under its room, the way the floor sits under the name.

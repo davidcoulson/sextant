@@ -3648,12 +3648,15 @@ def _elect_subzone(entity, floor_name, zone, zone_locked, point, kf_state, sub_p
     settings = _spot_settings(layout, floor_name)
     pins = _pin_positions() if fp else None
     margin_px = _tuning(layout, "subzone_unlock_margin") * (scale if isinstance(scale, (int, float)) and scale > 0 else 0.0)
+    # Pins reach as far as the lock does: a watch on a bedside table sits one
+    # to two metres off its own spot, and its pins are what get it back on.
+    pin_reach_px = _tuning(layout, "subzone_lock_release_m") * (scale if isinstance(scale, (int, float)) and scale > 0 else 0.0)
     for sid, _parent, _poly in polys:
         p = _spot_proxy_evidence(layout, (settings.get(sid) or {}).get("proxies"))
         # Pins on the spot are evidence of their own, for a thing that is
         # there or just beside it (see spot_pin_evidence).
         if pins:
-            p = max(p, spot_pin_evidence(fp, floor_name, _poly, pins, at=center, margin_px=margin_px))
+            p = max(p, spot_pin_evidence(fp, floor_name, _poly, pins, at=center, margin_px=pin_reach_px))
         old = shares.get(sid, 0.0)
         if p > old:
             keep = (1.0 - p) / (1.0 - old) if old < 1.0 else 0.0
