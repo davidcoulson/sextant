@@ -89,11 +89,15 @@ def _vector(value, size):
     return out if len(out) == size else None
 
 
-def snapshot(now, kf=None, zones=None, spots=None, arrivals=None, rows=None):
+def snapshot(now, kf=None, zones=None, spots=None, arrivals=None, rows=None, floors=None):
     """The state worth keeping, as JSON.
 
     ``rows`` are the published positions (ent, zone, sub_zone, floor, updated,
     cords): their last sighting is kept even when the rest is not.
+    ``floors`` are the floor elections: {ent: {"name", "since", "probs"}}.
+    Without them a restart elects every thing's floor from one cold cycle,
+    and a floor that comes out differently discards the room and spot
+    elections that were just restored - the floor change is what clears them.
     """
     things = {}
 
@@ -111,6 +115,8 @@ def snapshot(now, kf=None, zones=None, spots=None, arrivals=None, rows=None):
         slot(entity)["spot"] = _json(state)
     for entity, state in (arrivals or {}).items():
         slot(entity)["arrived"] = _json(state)
+    for entity, state in (floors or {}).items():
+        slot(entity)["floor"] = _json(state)
     for row in rows or []:
         if not isinstance(row, dict) or not row.get("ent"):
             continue
@@ -124,13 +130,13 @@ def snapshot(now, kf=None, zones=None, spots=None, arrivals=None, rows=None):
 
 
 def restore(data, now, max_age=DEFAULT_MAX_AGE_SECS):
-    """``{"kf", "zone", "spot", "arrivals", "last", "age"}`` from a snapshot.
+    """``{"kf", "zone", "spot", "arrivals", "floors", "last", "age"}`` from a snapshot.
 
     Everything comes back after a short gap; after a long one only ``last``,
     so the Live page can still say where a thing was and when. A snapshot
     from the future (the clock moved) is treated as a long gap.
     """
-    out = {"kf": {}, "zone": {}, "spot": {}, "arrivals": {}, "last": {}, "age": None}
+    out = {"kf": {}, "zone": {}, "spot": {}, "arrivals": {}, "floors": {}, "last": {}, "age": None}
     if not isinstance(data, dict):
         return out
     saved_at = data.get("saved_at")
@@ -154,7 +160,8 @@ def restore(data, now, max_age=DEFAULT_MAX_AGE_SECS):
             ts, floor = kf.get("ts"), kf.get("floor")
             if x and P and isinstance(ts, (int, float)) and isinstance(floor, str):
                 out["kf"][entity] = {"x": x, "P": P, "ts": float(ts), "floor": floor}
-        for key, target in (("zone", "zone"), ("spot", "spot"), ("arrived", "arrivals")):
+        for key, target in (("zone", "zone"), ("spot", "spot"), ("arrived", "arrivals"),
+                            ("floor", "floors")):
             value = state.get(key)
             if isinstance(value, dict) and value:
                 out[target][entity] = value

@@ -2905,6 +2905,13 @@ async def _restore_runtime(hass):
             state = {**state, "value": tuple(value)}
         _subzone_state[entity] = {**_new_subzone_state(state.get("floor"), state.get("zone"), now), **state}
     _arrivals.update(back["arrivals"])
+    # The floor election, and with it the fact that this thing's floor is not
+    # NEW. A cycle that finds no incumbent floor for a thing treats the one it
+    # elects as a change, and a floor change clears the Kalman filter and the
+    # room and spot elections - which is exactly what used to happen to every
+    # restored thing on the first cycle after a restart, a second after the
+    # restore had put it all back.
+    _restore_floor_elections(back["floors"])
     if back["age"] is None:
         _LOGGER.info("No saved state to resume from; starting cold")
     elif back["kf"] or back["zone"]:
@@ -2913,12 +2920,51 @@ async def _restore_runtime(hass):
         _LOGGER.info("Down for %.0f s: too long to resume, keeping %d last sightings", back["age"], len(back["last"]))
 
 
+def _thing_floors():
+    """``update_trilateration_and_zone.last_floor``, which the cycle creates lazily.
+
+    The restore runs before the first cycle, so it has to be ready to make it.
+    """
+    if not hasattr(update_trilateration_and_zone, "last_floor"):
+        update_trilateration_and_zone.last_floor = {}
+    return update_trilateration_and_zone.last_floor
+
+
+def _restore_floor_elections(saved):
+    """Put back each thing's elected floor, its tenure and its probabilities."""
+    last_floor = _thing_floors()
+    for entity, state in (saved or {}).items():
+        if not isinstance(state, dict):
+            continue
+        name, since, probs = state.get("name"), state.get("since"), state.get("probs")
+        if isinstance(name, str):
+            last_floor[entity] = name
+        if isinstance(since, (int, float)):
+            _floor_since[entity] = float(since)
+        if isinstance(probs, dict):
+            kept = {f: float(p) for f, p in probs.items() if isinstance(p, (int, float))}
+            if kept:
+                _floor_probability[entity] = kept
+
+
+def _floor_elections():
+    """Each thing's elected floor, when it was elected, and its smoothed
+    probabilities: {ent: {"name", "since", "probs"}}, for the snapshot."""
+    last_floor = _thing_floors()
+    return {
+        entity: {"name": last_floor.get(entity), "since": _floor_since.get(entity),
+                 "probs": _floor_probability.get(entity)}
+        for entity in set(last_floor) | set(_floor_since) | set(_floor_probability)
+    }
+
+
 async def _save_runtime(hass):
     """Write the state a restart would otherwise lose."""
     try:
         rows = [r for r in (hass.data.get(DOMAIN, {}).get("apitricords") or []) if isinstance(r, dict)]
         data = runtime_mod.snapshot(time.time(), kf=_kf_position_state, zones=_zone_state,
-                                    spots=_subzone_state, arrivals=_arrivals, rows=rows)
+                                    spots=_subzone_state, arrivals=_arrivals, rows=rows,
+                                    floors=_floor_elections())
         await save_runtime(hass, data)
     except Exception as e:  # noqa: BLE001
         _LOGGER.warning("Could not save the runtime state: %s", e)

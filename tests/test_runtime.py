@@ -107,6 +107,32 @@ def test_a_none_is_a_value_not_a_missing_key():
                                           "away_since", "outvoted_since"}
 
 
+def test_the_floor_election_comes_back_so_the_floor_is_not_new():
+    """A thing whose floor the first cycle elects from scratch reads as having
+    CHANGED floor, and a floor change clears the filter and the room and spot
+    elections - the restore undone a second after it ran."""
+    import json
+
+    import sextant
+
+    sextant._floor_since.clear(); sextant._floor_probability.clear()
+    sextant._thing_floors().clear()
+    sextant._thing_floors()["watch"] = "Second Floor"
+    sextant._floor_since["watch"] = 4100.0
+    sextant._floor_probability["watch"] = {"Second Floor": 0.96, "Ground Floor": 0.04}
+
+    saved = json.loads(json.dumps(runtime.snapshot(5000.0, floors=sextant._floor_elections())))
+    back = runtime.restore(saved, 5030.0)
+
+    sextant._floor_since.clear(); sextant._floor_probability.clear()
+    sextant._thing_floors().clear()
+    sextant._restore_floor_elections(back["floors"])
+
+    assert sextant._thing_floors()["watch"] == "Second Floor"      # not a floor change
+    assert sextant._floor_since["watch"] == 4100.0                 # keeps its tenure
+    assert sextant._floor_probability["watch"]["Second Floor"] == 0.96
+
+
 def test_a_thing_with_no_sighting_still_keeps_its_election():
     snap = runtime.snapshot(1000.0, zones={"watch": {"zone": "Office"}})
     back = runtime.restore(snap, 1000.0 + 10)
