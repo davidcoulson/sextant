@@ -679,7 +679,7 @@ class SextantLive extends LitElement {
     ].filter(([, v]) => v);
     return html`<div class="proxycard" @click=${(e) => e.stopPropagation()}>
       <h4>${proxyName(this.data, p.slug)}${p.loading || p.error ? nothing : html`<span class="link ${grade}" title=${linkTitle}>
-        <ha-icon icon=${wired ? "mdi:ethernet-cable" : "mdi:wifi"}></ha-icon>${wired ? "Ethernet" : "Wi-Fi"}</span>`}</h4>
+        <ha-icon icon=${wired ? "mdi:ethernet" : "mdi:wifi"}></ha-icon>${wired ? "Ethernet" : "Wi-Fi"}</span>`}</h4>
       ${p.loading ? html`<div class="muted small">Asking…</div>`
         : p.error ? html`<div class="warn small">${p.error}</div>`
         : rows.length ? html`<dl>${rows.map(([k, v]) => html`<dt>${k}</dt><dd>${v}</dd>`)}</dl>`
