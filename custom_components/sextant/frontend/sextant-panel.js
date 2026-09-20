@@ -636,10 +636,16 @@ class SextantLive extends LitElement {
     const p = this._proxy;
     if (!p) return nothing;
     const f = p.facts || {};
+    // Numbers as a person would write them, and firmware without the build
+    // stamp ESPHome appends.
     const val = (key, unit) => {
       const v = f[key];
       if (!v || ["unknown", "unavailable"].includes(v.state)) return null;
-      return unit === false ? v.state : `${v.state}${v.unit ? ` ${v.unit}` : ""}`;
+      const n = Number(v.state);
+      const text = Number.isFinite(n) && v.state.trim() !== ""
+        ? fmtNum(n, Math.abs(n) >= 100 ? 0 : 1)
+        : v.state.split(" (")[0];
+      return unit === false ? text : `${text}${v.unit ? ` ${v.unit}` : ""}`;
     };
     const rows = [
       ["Firmware", val("esphome_version", false)],
