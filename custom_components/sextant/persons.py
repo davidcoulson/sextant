@@ -43,7 +43,8 @@ MOVE_CONFIRM_SECS = 120.0
 CARRY_PRIORITY = {"cat": 4, "dog": 4, "paw": 4, "watch": 3, "phone": 2, "headphones": 1}
 # Classes whose place is their owner's place, unless the thing says otherwise
 # (thing_locates_owner). Headphones, keys, a bag go with you some of the time;
-# where they are is not where you are.
+# where they are is not where you are. A purse and a backpack are no different:
+# they are in the hall far more of the day than they are on a shoulder.
 LOCATES_BY_DEFAULT = {"watch", "phone", "person", "man", "woman", "child", "cat", "dog", "paw"}
 # The sensors each person gets: (suffix, label).
 PERSON_SENSOR_KINDS = [

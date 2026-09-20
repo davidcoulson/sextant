@@ -4224,6 +4224,12 @@ def thing_class(layout, entity) -> str:
 CLASS_FAMILIES = {
     "person": frozenset({"person", "man", "woman", "child"}),
     "paw": frozenset({"paw", "dog", "cat"}),
+    # A backpack, a purse and a suitcase are all bags, and a spot meant for
+    # one - the hook by the door, the shelf in the closet - takes any of them.
+    # They are separate classes because they are not interchangeable to a
+    # person reading the Live page: luggage sitting in the hall means
+    # something a purse on the counter does not.
+    "bag": frozenset({"bag", "backpack", "purse", "luggage"}),
 }
 
 

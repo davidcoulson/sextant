@@ -1716,8 +1716,15 @@ def test_a_specific_class_is_not_satisfied_by_the_family():
     assert sextant.spot_accepts(frozenset({"paw"}), "cat") is True
     assert sextant.spot_accepts(frozenset({"cat"}), "paw") is False
     assert sextant.spot_accepts(frozenset({"person"}), "cat") is False
-    # The families are exactly the two documented ones.
-    assert set(sextant.CLASS_FAMILIES) == {"person", "paw"}
+    # A hook or a shelf drawn for Bag takes the backpack, the purse and the
+    # suitcase; a spot drawn for Luggage takes only luggage.
+    assert sextant.spot_accepts(frozenset({"bag"}), "purse") is True
+    assert sextant.spot_accepts(frozenset({"bag"}), "luggage") is True
+    assert sextant.spot_accepts(frozenset({"bag"}), "backpack") is True
+    assert sextant.spot_accepts(frozenset({"luggage"}), "bag") is False
+    assert sextant.spot_accepts(frozenset({"bag"}), "keys") is False
+    # The families are exactly the three documented ones.
+    assert set(sextant.CLASS_FAMILIES) == {"person", "paw", "bag"}
 
 
 def test_spot_class_helpers():

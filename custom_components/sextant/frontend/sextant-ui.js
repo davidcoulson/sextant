@@ -274,6 +274,9 @@ export const THING_CLASSES = [
   ["keys", "Keys", "mdi:key-chain-variant"],
   ["wallet", "Wallet", "mdi:wallet"],
   ["bag", "Bag", "mdi:bag-personal"],
+  ["backpack", "Backpack", "mdi:bag-personal-outline"],
+  ["purse", "Purse", "mdi:purse"],
+  ["luggage", "Luggage", "mdi:bag-suitcase"],
   ["tag", "Tag / Tile", "mdi:tag"],
   ["car", "Car", "mdi:car"],
   ["bike", "Bike", "mdi:bike"],
@@ -285,4 +288,8 @@ export { PRONOUNS, pronounKey, pronounsFor } from "./sextant-pronouns.js";
 /** Classes that stand for a family rather than one kind of thing: a spot that
  * takes a Person takes a man, a woman or a child too (see CLASS_FAMILIES in
  * __init__.py, which decides it). */
-export const CLASS_FAMILIES = { person: ["man", "woman", "child"], paw: ["dog", "cat"] };
+export const CLASS_FAMILIES = {
+  person: ["man", "woman", "child"],
+  paw: ["dog", "cat"],
+  bag: ["backpack", "purse", "luggage"],
+};

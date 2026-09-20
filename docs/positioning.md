@@ -121,8 +121,9 @@ to certain [classes](things.md) — a bedside table to a phone, a watch and
 keys, a cat bed to the cat — and is then not a candidate for anything else
 at all, so the cat bed never competes for the phone. A spot with no classes
 set takes any thing, which is how every spot drawn before this behaves.
-Two of the classes stand for a family: **Person** also takes a man, a woman
-or a child, and **Pet** also takes the dog or the cat. The picker shows the
+Three of the classes stand for a family: **Person** also takes a man, a woman
+or a child, **Pet** also takes the dog or the cat, and **Bag** also takes a
+backpack, a purse or a piece of luggage. The picker shows the
 members of a family you have picked outlined, so a spot's real reach is on
 the screen. It does not work the other way round — a spot asking for Man is
 not satisfied by something classed merely Person.
