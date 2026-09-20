@@ -863,6 +863,7 @@ PROXY_FACTS = (
     ("wifi_signal", "_wifi_signal"),
     ("temperature", "_internal_temperature"),
     ("reset_reason", "_reset_reason"),
+    ("chip_mac", "_esp_mac_address"),
     ("adverts_forwarded", "_ble_adverts_forwarded"),
     ("adverts_dropped", "_ble_adverts_dropped"),
     ("drop_rate", "_ble_advert_drop_rate"),

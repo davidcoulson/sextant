@@ -659,8 +659,11 @@ class SextantLive extends LitElement {
       ["IRKs installed", val("irks_loaded")],
       ["Wi-Fi", [val("wifi_signal"), val("ssid", false)].filter(Boolean).join(" · ") || null],
       ["Chip", [d.chip, val("temperature")].filter(Boolean).join(" · ") || null],
+      // What HA records for the node is whichever link it is on: a proxy that
+      // reports a Wi-Fi signal is on Wi-Fi, one that does not is wired.
       ["Bluetooth MAC", p.address || null],
-      ["Wi-Fi MAC", d.wifi_mac || null],
+      [val("wifi_signal") ? "Wi-Fi MAC" : "Ethernet MAC", d.wifi_mac || null],
+      ["Chip MAC", val("chip_mac", false)],
     ].filter(([, v]) => v);
     return html`<div class="proxycard" @click=${(e) => e.stopPropagation()}>
       <h4>${proxyName(this.data, p.slug)}${uiButton({ label: "Close", kind: "text", onClick: () => { this._proxy = null; } })}</h4>
