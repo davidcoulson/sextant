@@ -97,7 +97,11 @@ class SextantDevices extends LitElement {
     // had already picked.
     if (!this.openThing || !this.data?.layout || !this._loaded) return;
     const slug = this.openThing;
-    const address = (this._tracked || []).find((r) => r.slug === slug)?.address
+    // _tracked is a map keyed by address, as every other reader of it treats
+    // it - this one asked it for .find and threw a TypeError instead, every
+    // time, which is why the dialog never opened and the request was never
+    // cleared either.
+    const address = Object.entries(this._tracked || {}).find(([, d]) => d.slug === slug)?.[0]
       || (this.data?.entities || {})[slug]
       || null;
     this._openWizard(slug, address);
