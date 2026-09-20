@@ -944,14 +944,20 @@ def _proxy_device(hass, slug, address):
 
     devices, entities = dr.async_get(hass), er.async_get(hass)
     out = {}
-    # The Bluetooth address Bermuda tracks belongs to a device of its own,
-    # which carries the chip and points at the node that owns it.
-    scanner = next((d for d in devices.devices.values()
-                    if any(kind == "bluetooth" and str(v).lower() == address for kind, v in d.connections)), None)
-    node = devices.async_get(scanner.via_device_id) if scanner and scanner.via_device_id else None
+    # Home Assistant's bluetooth integration gives the address Bermuda tracks
+    # a device of its own, carrying the chip and pointing at the node that
+    # owns it. Some nodes claim that address too, so the chip is only read
+    # from a device that hangs off another - never from the node itself.
+    matches = [d for d in devices.devices.values()
+               if any(kind == "bluetooth" and str(v).lower() == address for kind, v in d.connections)]
+    scanner = next((d for d in matches if d.via_device_id), None)
+    node = devices.async_get(scanner.via_device_id) if scanner else next((d for d in matches if not d.via_device_id), None)
     if node is None:
         entry = next((e for e in entities.entities.values() if slug in e.entity_id and e.device_id), None)
         node = devices.async_get(entry.device_id) if entry else None
+    if scanner is None and node is not None:
+        scanner = next((d for d in devices.devices.values()
+                        if d.via_device_id == node.id and any(kind == "bluetooth" for kind, _ in d.connections)), None)
     if scanner:
         out["chip"] = scanner.model
     if node:
