@@ -47,6 +47,10 @@ own timer on the [Tuning](tuning.md) page:
 | Late | nothing heard for `stale_after_secs` (2 min) | a ghost: faint, dashed, *3m ago* under it | an hourglass badge and when it was last heard |
 | Away | nothing heard for `away_after_secs` (15 min) | gone after `position_timeout` (5 min) | faded, a ghost badge, *since* when and where it was last seen |
 
+A sighting is remembered across restarts, and a thing that went quiet
+before Sextant last started is dated from the position history, so *since*
+survives an update rather than resetting to it.
+
 What you see while a thing is late or away is where it *was*; its room and
 spot sensors still say the same, because nothing has contradicted them yet.
 Every thing Sextant knows stays in the list, so a phone that left the house
