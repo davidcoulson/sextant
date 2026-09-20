@@ -847,9 +847,10 @@ export class SextantMap {
     ctx.fillRect(0, 0, size.w, size.h);
     if (this.image && this.options.image !== false) {
       // A floor plan is black on white. On a dark theme that is a lamp in a
-      // dark room, so it is inverted to white on black; the hue rotation
-      // puts any colour in the drawing back where it was.
-      if (this.dark) { ctx.save(); ctx.filter = "invert(1) hue-rotate(180deg)"; }
+      // dark room, so it is inverted to white on black; the hue rotation puts
+      // any colour in the drawing back where it was, and the walls are taken
+      // down to a grey that reads as a drawing rather than a light source.
+      if (this.dark) { ctx.save(); ctx.filter = "invert(1) hue-rotate(180deg) brightness(0.62)"; ctx.globalAlpha = 0.85; }
       ctx.drawImage(this.image, 0, 0, size.w, size.h);
       if (this.dark) ctx.restore();
     }
