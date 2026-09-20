@@ -934,7 +934,8 @@ class SextantLive extends LitElement {
     .list li:hover, .list li.selected { background: var(--secondary-background-color); }
     .list li.selected { outline: 2px solid var(--primary-color); }
     .list .name { font-weight: 600; grid-column: 2; }
-    .list .where { grid-column: 3; text-align: right; font-size: 12px; }
+    /* A flex row so the icon centres on the text instead of sitting on its baseline. */
+    .list .where { grid-column: 3; display: flex; align-items: center; justify-content: flex-end; gap: 4px; text-align: right; font-size: 12px; }
     /* The spot sits under its room, the way the floor sits under the name. */
     .list .spot { grid-column: 3; text-align: right; }
     .list li.ghost { opacity: 0.55; }
@@ -963,8 +964,7 @@ class SextantLive extends LitElement {
     .blend input { flex: 1; min-width: 90px; }
     .truth { margin-top: 6px; }
     .heat { align-items: center; gap: 8px; flex-wrap: wrap; }
-    /* Centred on the text's own middle, not dropped below its baseline. */
-    .roomicon { --mdc-icon-size: 16px; margin-right: 3px; vertical-align: -0.18em; color: var(--secondary-text-color); }
+    .roomicon { --mdc-icon-size: 16px; flex: none; color: var(--secondary-text-color); }
     .list li .quickin { grid-column: 1 / -1; cursor: default; padding-top: 6px; }
     .list li.group { display: flex; align-items: center; gap: 6px; padding: 8px 4px 4px; margin-top: 4px; border-top: 1px solid var(--divider-color, #e0e0e0); border-radius: 0; font-weight: 500; }
     .list li.group:first-child { border-top: none; margin-top: 0; }
