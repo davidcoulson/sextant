@@ -220,6 +220,51 @@ def test_elect_hysteresis_and_dwell():
     assert floor == "b" and ch is None
 
 
+def _solved(**counts):
+    """A solve per floor, carrying only what the thin test reads."""
+    return {floor: {"weighted": [None] * n} for floor, n in counts.items()}
+
+
+def test_a_floor_heard_by_three_of_its_usual_eight_is_not_evidence():
+    """Meg on the catwalk, 2026-09-20: the upstairs receivers went from eight
+    to three for a couple of minutes, twice in a night, and the floor below won
+    on what was left - then held it for seventeen and twenty-eight minutes."""
+    sextant._floor_evidence.clear()
+    for _ in range(10):
+        sextant._note_floor_evidence("meg", _solved(second=8, ground=5))
+    assert sextant._floor_is_thin("meg", "second", _solved(second=8), 0.75) is False
+    assert sextant._floor_is_thin("meg", "second", _solved(second=6), 0.75) is False
+    assert sextant._floor_is_thin("meg", "second", _solved(second=5), 0.75) is True
+    assert sextant._floor_is_thin("meg", "second", _solved(second=3), 0.75) is True
+    # A floor that only ever has four proxies is not a degraded one that has eight.
+    assert sextant._floor_is_thin("meg", "ground", _solved(ground=4), 0.75) is False
+
+
+def test_a_receiver_that_is_really_gone_stops_counting_as_a_blackout():
+    """The hold must not outlive the dropout: a proxy taken off the wall lowers
+    what "usual" means within a window, and the floor competes on what is left."""
+    sextant._floor_evidence.clear()
+    for _ in range(20):
+        sextant._note_floor_evidence("meg", _solved(second=8))
+    assert sextant._floor_is_thin("meg", "second", _solved(second=4), 0.75) is True
+    for _ in range(sextant.FLOOR_EVIDENCE_WINDOW):        # gone, cycle after cycle
+        sextant._note_floor_evidence("meg", _solved(second=4))
+    assert sextant._floor_is_thin("meg", "second", _solved(second=4), 0.75) is False
+
+
+def test_the_thin_hold_needs_history_and_can_be_turned_off():
+    sextant._floor_evidence.clear()
+    sextant._note_floor_evidence("meg", _solved(second=8))
+    # One or two cycles say nothing about what is usual.
+    assert sextant._floor_is_thin("meg", "second", _solved(second=3), 0.75) is False
+    for _ in range(5):
+        sextant._note_floor_evidence("meg", _solved(second=8))
+    assert sextant._floor_is_thin("meg", "second", _solved(second=3), 0.75) is True
+    assert sextant._floor_is_thin("meg", "second", _solved(second=3), 0.0) is False
+    # A floor with no solve this cycle is the dark grace's business, not this one.
+    assert sextant._floor_is_thin("meg", "second", {}, 0.75) is False
+
+
 # --------------------------------------------------------------------------- #
 # Receiver leave-one-out self-localization (run_selftest)
 # --------------------------------------------------------------------------- #

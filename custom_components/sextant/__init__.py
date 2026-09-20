@@ -23,8 +23,10 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 import logging
 import asyncio
+import collections
 import math
 import os
+import statistics
 import json
 import re
 import copy
@@ -294,6 +296,11 @@ FLOOR_SWITCH_MARGIN = 0.05   # probability lead that starts/keeps a challenge
 # live; this is the fallback when _elect_floor is called without one.
 FLOOR_SWITCH_SECS = 60.0
 FLOOR_DARK_GRACE_CYCLES = 3  # cycles a dark incumbent holds everything frozen
+# How many recent cycles' receiver counts decide what "normal" is for a thing
+# on a floor. Long enough that a blackout of a few cycles cannot move the
+# median, short enough that a proxy which has genuinely gone leaves within a
+# couple of minutes and the floor competes on the evidence that remains.
+FLOOR_EVIDENCE_WINDOW = 20
 FLOOR_RESIDUAL_SCALE_M = 2.0 # weighted RMS residual (m) at which fit quality = 0.5
 COVERAGE_TARGET_N = 5.0      # heard receivers at which the coverage term saturates
 
@@ -324,6 +331,11 @@ _floor_challenge = {}
 _floor_dark_cycles = {}
 # When the incumbent floor was elected (wall clock), for the tenure bonus.
 _floor_since = {}
+# How many receivers each floor's solve has had lately, per thing:
+# entity -> {floor: deque of the last FLOOR_EVIDENCE_WINDOW counts}. What
+# "enough evidence to rule a floor out" means is not a fixed number - it is
+# how much that thing is normally heard by on that floor (see _floor_is_thin).
+_floor_evidence = {}
 
 # Per-thing Kalman state: entity -> {"x": np.array(4), "P": np.array(4,4),
 # "ts": float, "floor": str}. Reset on floor change, long gap, or prune.
@@ -425,6 +437,10 @@ TUNING_SPEC = {
     "floor_switch_secs": (FLOOR_SWITCH_SECS, float, 0.0, 3600.0),
     "floor_tenure_bonus": (0.05, float, 0.0, 0.5),      # extra margin at full tenure
     "floor_tenure_full_secs": (600.0, float, 1.0, 86400.0),
+    # A cycle that heard the incumbent floor by fewer than this fraction of the
+    # receivers it usually gets there is no news, not a move: the elections are
+    # held still for it (see _floor_is_thin). 0 turns the hold off.
+    "floor_thin_fraction": (0.75, float, 0.0, 1.0),
     # How much a floor's confidence is scaled by how near its nearest receiver
     # is, relative to the nearest receiver on any competing floor (see
     # _proximity_weighted_scores). 0 = pure fit-quality election.
@@ -2323,6 +2339,7 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
         _floor_probability.pop(entity, None)
         _floor_challenge.pop(entity, None)
         _floor_dark_cycles.pop(entity, None)
+        _floor_evidence.pop(entity, None)
         _floor_since.pop(entity, None)
         update_trilateration_and_zone.last_floor.pop(entity, None)
         incumbent = None
@@ -2343,6 +2360,18 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
             return
         incumbent = None  # dark beyond grace: incumbency lapses
     _floor_dark_cycles.pop(entity, None)
+
+    # Thin-incumbent hold: the same argument as the grace above, for a floor
+    # that is still just solvable. Three receivers out of the eight that
+    # normally hear the thing there is not evidence it left - it is the
+    # receivers that place it having gone quiet - so the cycle is no news:
+    # probabilities stand and no challenger's dwell advances on it. Unlike
+    # the dark grace this needs no cycle limit; the window the "usual" count
+    # is taken over does the same job (see _floor_is_thin).
+    _note_floor_evidence(entity, solved)
+    if incumbent is not None and incumbent in solved \
+            and _floor_is_thin(entity, incumbent, solved, _tuning(layout, "floor_thin_fraction")):
+        return
     # Fit quality alone cannot separate floors joined by an open space: a
     # phone in the office below a catwalk is explained about as well by the
     # upstairs receivers around the void as by the office ones (measured
@@ -2728,6 +2757,7 @@ async def prune_stale_positions(hass):
         _floor_probability.pop(ent, None)
         _floor_challenge.pop(ent, None)
         _floor_dark_cycles.pop(ent, None)
+        _floor_evidence.pop(ent, None)
         _floor_since.pop(ent, None)
         getattr(update_trilateration_and_zone, "last_floor", {}).pop(ent, None)
         getattr(update_trilateration_and_zone, "last_r_values", {}).pop(ent, None)
@@ -3325,6 +3355,40 @@ def _update_floor_probabilities(entity, scores, valid_floors=None):
         for floor in probs:
             probs[floor] /= norm
     return dict(probs)
+
+
+def _note_floor_evidence(entity, solved):
+    """Record how many receivers each floor's solve had this cycle."""
+    seen = _floor_evidence.setdefault(entity, {})
+    for floor, result in solved.items():
+        counts = seen.get(floor)
+        if counts is None:
+            counts = seen[floor] = collections.deque(maxlen=FLOOR_EVIDENCE_WINDOW)
+        counts.append(len(result.get("weighted") or ()))
+
+
+def _floor_is_thin(entity, floor, solved, fraction):
+    """Whether this cycle heard ``floor`` far less than it usually does.
+
+    A floor's solve needs three receivers; a thing that is normally heard by
+    eight on that floor and is heard by three this cycle has a solve that
+    still *works* and means almost nothing - the receivers that place it are
+    the ones that went quiet. Meg lying on the catwalk went from eight to
+    three for a couple of minutes twice in a night, and each time the floor
+    below won on what was left and held it for half an hour.
+
+    "Usually" is this thing's own recent median on that floor, not a constant:
+    a floor with four proxies is not a degraded floor with eight. The median
+    also makes this self-limiting - a proxy that has genuinely gone takes the
+    median down with it within a window, and the floor is then judged on the
+    evidence it really has rather than frozen forever.
+    """
+    counts = (_floor_evidence.get(entity) or {}).get(floor)
+    result = solved.get(floor)
+    if not counts or len(counts) < 3 or result is None:
+        return False
+    usual = statistics.median(counts)
+    return len(result.get("weighted") or ()) < fraction * usual
 
 
 def _elect_floor(probs, incumbent, solved, challenge, now=None,
