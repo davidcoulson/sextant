@@ -594,8 +594,10 @@ export class SextantMap {
       this.invalidate();
       return;
     }
-    if (hit && hit.kind === "thing" && e.button === 0 && this.mode !== "edit") {
-      this.selection = hit;
+    if (hit && e.button === 0 && this.mode !== "edit" && (hit.kind === "thing" || hit.kind === "receiver")) {
+      // A proxy is worth a click outside the editor too: the host shows what
+      // it is and what it is doing.
+      this.selection = hit.kind === "thing" ? hit : null;
       if (this.host.onSelect) this.host.onSelect(hit);
     } else if (this.mode !== "edit" && this.host.onSelect && !hit) {
       this.selection = null;

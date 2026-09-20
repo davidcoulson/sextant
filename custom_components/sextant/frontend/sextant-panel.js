@@ -66,7 +66,6 @@ class SextantPanel extends LitElement {
     _mode: { state: true },
     _data: { state: true },
     _positions: { state: true },
-    _proxy: { state: true },       // the proxy card, opened by clicking one on the map
     _now: { state: true },        // ticks every second, for the countdown
     _floor: { state: true },
     _error: { state: true },
@@ -336,6 +335,7 @@ class SextantLive extends LitElement {
     _scrub: { state: true },
     _links: { state: true },
     _marking: { state: true },
+    _proxy: { state: true },       // the proxy card, opened by clicking one on the map
     _heat: { state: true },
     _folded: { state: true },
     _truth: { state: true },
