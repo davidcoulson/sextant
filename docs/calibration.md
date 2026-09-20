@@ -41,7 +41,7 @@ stored with the layout; with `calibration_target: bermuda` the correction
 lives inside Bermuda's distances and is not faded.
 
 Re-run calibration after changing a floor's scale, whether by hand or from
-its [alignment pins](edit.md#lining-the-floors-up): the corrections were
+its [alignment anchors](edit.md#lining-the-floors-up): the corrections were
 learned against distances measured at the old scale.
 
 How the solve works, and how a factor maps onto a Bermuda RSSI offset, is in

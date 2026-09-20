@@ -58,8 +58,10 @@ list scrolls, or the button on the map itself. Picking a thing opens it
 again, under that thing's details. Editing the floor plan itself is still
 a desktop job.
 
-Each row carries the thing's name and floor on the left, and on the right
-the room it is in with its Home Assistant area's icon, the spot underneath.
+Each row carries the thing's name and floor on the left, with how long it
+has been in that room or spot beside the floor (the exact time on hover),
+and on the right the room it is in with its Home Assistant area's icon, the
+spot underneath.
 A small badge on the disc says what is special about it: a location marker
 for the thing its owner's location is being read from, an hourglass while
 it is late, a ghost once it is away.

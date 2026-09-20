@@ -612,6 +612,16 @@ class SextantLive extends LitElement {
    * One thing is enough for a section - a person is tracked as a person -
    * except a pet whose one thing is its own tag (Meg over Meg says nothing).
    */
+  /** How long a thing has been where it is, from its own location sensor
+   * (which changes when its room or spot does), as (short, exact) or null. */
+  _hereFor(ent) {
+    const st = this.hass?.states?.[`sensor.${ent}_sextant_location`];
+    if (!st || ["unknown", "unavailable"].includes(st.state)) return null;
+    const at = Date.parse(st.last_changed) / 1000;
+    if (!at) return null;
+    return [shortAge(Math.max(0, Date.now() / 1000 - at)), this._since(at)];
+  }
+
   /** When a thing was last heard, written as a point in time: the clock for
    * today, the date for longer ago, the year only past one. */
   _since(at) {
@@ -723,8 +733,13 @@ class SextantLive extends LitElement {
               })()}
               <span class="name">${this._label(p.ent)}</span>
               <span class="where">${p.zone ? html`${this._roomIcon(p.floor, p.zone) ? html`<ha-icon class="roomicon" icon=${this._roomIcon(p.floor, p.zone)}></ha-icon>` : nothing}${p.zone}` : html`<span class="muted">away</span>`}</span>
-              <span class="muted small floorline">${st.away && this._since(p.updated) ? html`since ${this._since(p.updated)}${p.floor ? " · " : ""}`
-                : st.ghost && st.age ? html`seen ${shortAge(st.age)} ago${p.floor ? " · " : ""}` : nothing}${p.floor || (st.ghost ? nothing : "")}</span>
+              ${(() => {
+                const here = st.away || st.ghost ? null : this._hereFor(p.ent);
+                return html`<span class="muted small floorline" title=${here ? `Here since ${here[1]}` : ""}>${
+                  st.away && this._since(p.updated) ? html`since ${this._since(p.updated)}${p.floor ? " · " : ""}`
+                  : st.ghost && st.age ? html`seen ${shortAge(st.age)} ago${p.floor ? " · " : ""}` : nothing}${p.floor || (st.ghost ? nothing : "")}${
+                  here ? html` · ${here[0]}` : nothing}</span>`;
+              })()}
               ${p.sub_zone && p.sub_zone !== "unknown" ? html`<span class="spot muted small">${p.sub_zone}</span>` : nothing}
               ${p.ent === this._selected ? html`<div class="quickin" @click=${(e) => e.stopPropagation()}>${this._renderQuick(p)}</div>` : nothing}
             </li>`;
