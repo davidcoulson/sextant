@@ -650,15 +650,15 @@ class SextantLive extends LitElement {
     const d = p.device || {};
     const rows = [
       ["ESPHome release", val("esphome_version", false)],
-      ["Project", [val("project_name", false), val("project_version", false)].filter(Boolean).join(" ") || null],
+      // The board name is ESPHome's project name, so it belongs with the version.
+      ["Project", [val("project_name", false) || d.board, val("project_version", false)].filter(Boolean).join(" ") || null],
       ["Uptime", val("uptime", false)],
       ["Hearing", p.heard == null ? null : `${p.heard} thing${p.heard === 1 ? "" : "s"}`],
       ["Adverts forwarded", val("adverts_forwarded")],
       ["Adverts ignored", [val("adverts_dropped"), val("drop_rate") ? `(${val("drop_rate")})` : null].filter(Boolean).join(" ") || null],
       ["IRKs installed", val("irks_loaded")],
       ["Wi-Fi", [val("wifi_signal"), val("ssid", false)].filter(Boolean).join(" · ") || null],
-      // The chip is what it runs on; the board is what David called it.
-      ["Chip", [d.chip, d.board, val("temperature")].filter(Boolean).join(" · ") || null],
+      ["Chip", [d.chip, val("temperature")].filter(Boolean).join(" · ") || null],
       ["Bluetooth MAC", p.address || null],
       ["Wi-Fi MAC", d.wifi_mac || null],
     ].filter(([, v]) => v);
