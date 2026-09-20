@@ -48,12 +48,14 @@ class SextantDevices extends LitElement {
     _wizard: { state: true },
     _findmyWizard: { state: true },
     _addWizard: { state: true },
+    _loaded: { state: true },
   };
 
   constructor() {
     super();
     this.section = "things";
     this.openThing = null;   // a thing another page asked us to open the dialog for
+    this._loaded = false;    // whether the first Bermuda fetch has come back
     this._tracked = null;
     this._candidates = null;
     this._tiles = null;
@@ -87,7 +89,13 @@ class SextantDevices extends LitElement {
    * heights out of the layout. Announcing it back lets the panel forget the
    * request, so returning here later does not reopen it. */
   updated() {
-    if (!this.openThing || !this.data?.layout) return;
+    // Wait for the Bermuda fetch as well as the layout. The six calls behind
+    // _refresh are still in flight when this page mounts, so a request that
+    // arrived with the page used to be answered with no address at all - and
+    // answered once, because the request is cleared either way. The click on
+    // Live's Edit then dropped you in the full list to hunt for the thing you
+    // had already picked.
+    if (!this.openThing || !this.data?.layout || !this._loaded) return;
     const slug = this.openThing;
     const address = (this._tracked || []).find((r) => r.slug === slug)?.address
       || (this.data?.entities || {})[slug]
@@ -99,7 +107,10 @@ class SextantDevices extends LitElement {
   get _hasApi() { return (this.data?.features || []).includes("device_management"); }
 
   async _refresh() {
-    if (!this.hass) return;
+    // No hass yet (connectedCallback can beat the property being set): try
+    // again rather than leaving _loaded false forever, which would strand a
+    // pending openThing request.
+    if (!this.hass) { setTimeout(() => this._refresh(), 100); return; }
     const [tracked, candidates, tiles, findmy, options, identities] = await Promise.all([
       this.hass.callWS({ type: "sextant/bermuda/tracked" }).catch(() => null),
       this.hass.callWS({ type: "sextant/bermuda/candidates" }).catch(() => null),
@@ -114,6 +125,7 @@ class SextantDevices extends LitElement {
     this._identities = identities?.identities ?? null;
     this._findmy = findmy?.accessories ?? null;
     this._options = options?.options ?? null;
+    this._loaded = true;
     this._openPendingTrack();
   }
 
