@@ -1348,10 +1348,52 @@ def _sofa_polys():
             ("Hook", "Hall", Polygon([(0, 0), (10, 0), (10, 10)]), frozenset())]
 
 
-def _sub(entity, point, now, *, zone="Living", locked=False, layout=None, scale=100.0):
+def _sub(entity, point, now, *, zone="Living", locked=False, layout=None, scale=100.0, fp=None):
     from shapely.geometry import Point
     layout = layout or {"tuning": {"subzone_switch_secs": 20.0, "zone_prob_smoothing": 0.6}}
-    return sextant._elect_subzone(entity, "F", zone, locked, Point(*point), None, _sofa_polys(), scale, layout, now=now)
+    return sextant._elect_subzone(entity, "F", zone, locked, Point(*point), None, _sofa_polys(), scale, layout, now=now, fp=fp)
+
+
+# The two ways a spot went wrong on 2026-09-19, end to end through the
+# election rather than one helper at a time.
+
+def test_a_still_thing_keeps_a_small_spot_while_its_fix_wanders():
+    """David's watch on a 0.7 x 0.5 m bedside table: the fix wandered one to
+    two metres all night, and 3.17.49 dropped it off the spot."""
+    sextant._subzone_state.clear()
+    t = 1000.0
+    # The watch's real spread on 2026-09-20: 1.0 to 2.4 m from a spot 0.7 m wide.
+    wander = [(300, 250), (250, 380), (380, 450), (300, 540), (120, 260), (300, 250),
+              (500, 180), (260, 520), (300, 300), (350, 480)]
+    for i in range(4):                        # put on the table: fixes land on it
+        _sub("w", (300, 250), t + i * 10)
+    assert _sub("w", (300, 250), t + 60) == ("Sofa", "Living")
+    for i, pt in enumerate(wander * 3):       # half an hour of lying there
+        got = _sub("w", pt, t + 100 + i * 20, locked=True)
+        assert got == ("Sofa", "Living"), f"left the spot at {pt}"
+
+
+def test_a_pin_in_a_spot_gets_a_blocked_thing_in_but_not_one_across_the_room():
+    """A cat on the couch blocks the couch's own proxies, so its pins carry
+    it in; the same pins must not hold another cat that walked away."""
+    sextant._subzone_state.clear()
+    t = 2000.0
+    # One pin in the middle of the sofa, matched perfectly.
+    sextant._set_truth_marks([{"id": 7, "entity": "cat", "floor": "F", "x": 300.0, "y": 250.0,
+                               "samples": [{"t": 1.0, "gain": 1.0, "estimator": "fingerprint",
+                                            "thing_vec": {"aa": 2.0}, "raw_vec": {"aa": 2.0}, "floors": {}}] * 3}])
+    try:
+        fp = {"refs": [("mark:7", 0.4)]}
+        # On the sofa, weak membership: the pin is what gets it in.
+        for dt in (0, 20, 40, 60):
+            got = _sub("cat", (300, 250), t + dt, fp=fp)
+        assert got == ("Sofa", "Living")
+        # Three metres away, still matching that pin: it must not be held.
+        for dt in (100, 120, 140, 160, 180, 200, 220):
+            got = _sub("cat", (300, 900), t + dt, fp=fp)
+        assert got == ("unknown", "Living")
+    finally:
+        sextant._set_truth_marks([])
 
 
 def test_subzone_needs_smoothed_membership_and_dwell_to_enter():

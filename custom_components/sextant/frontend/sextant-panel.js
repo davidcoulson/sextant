@@ -612,6 +612,16 @@ class SextantLive extends LitElement {
    * One thing is enough for a section - a person is tracked as a person -
    * except a pet whose one thing is its own tag (Meg over Meg says nothing).
    */
+  /** When a thing was last heard, written as a point in time: the clock for
+   * today, the date for longer ago, the year only past one. */
+  _since(at) {
+    if (!at) return null;
+    const d = new Date(at * 1000), ago = Date.now() / 1000 - at;
+    if (ago < 86400) return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    if (ago < 365 * 86400) return d.toLocaleDateString(undefined, { month: "numeric", day: "numeric" });
+    return d.toLocaleDateString(undefined, { month: "numeric", day: "numeric", year: "2-digit" });
+  }
+
   /** How long before a thing not heard from is called away rather than late. */
   _awayAfter() {
     const own = this.data?.layout?.tuning?.away_after_secs;
@@ -678,14 +688,15 @@ class SextantLive extends LitElement {
       this._folded = next;
       try { localStorage.setItem("sextant.live.folded", JSON.stringify([...next])); } catch { /* ignore */ }
     };
-    const header = (key, title, extra) => html`<li class="group" @click=${() => fold(key)} role="button" aria-expanded=${!folded.has(key)}>
+    const header = (key, title, extra) => html`<li class="group ${extra.away ? "away" : ""}" @click=${() => fold(key)} role="button" aria-expanded=${!folded.has(key)}>
       <ha-icon class="chev" icon=${folded.has(key) ? "mdi:chevron-right" : "mdi:chevron-down"}></ha-icon>${extra.avatar || nothing}
       <span class="gtext"><span class="gname">${title}</span>${extra.where ? html`<span class="gwhere small">${extra.where}</span>` : nothing}</span></li>`;
     return html`${groups.map((g) => {
       const st = this.hass?.states?.[g.person], pic = st?.attributes?.entity_picture;
       const where = this.hass?.states?.[`sensor.${g.person.slice(7)}_sextant_person_location`]?.state;
       const avatar = html`<span class="gavatar">${pic ? html`<img src=${pic} alt="">` : g.name.slice(0, 2).toUpperCase()}</span>`;
-      return html`${header(g.person, g.name, { avatar, where: where && where !== "unknown" ? where : "" })}
+      return html`${header(g.person, g.name, { avatar, where: where && where !== "unknown" ? where : "",
+        away: g.list.every((p) => this._state(p).away) })}
         ${folded.has(g.person) ? nothing : g.list.map((p) => this._renderRow(p))}`;
     })}
     ${pets.length ? html`${header("_pets", "Pets", { avatar: html`<span class="gavatar"><ha-icon icon="mdi:paw"></ha-icon></span>` })}${folded.has("_pets") ? nothing : pets.map((p) => this._renderRow(p))}` : nothing}
@@ -712,7 +723,8 @@ class SextantLive extends LitElement {
               })()}
               <span class="name">${this._label(p.ent)}</span>
               <span class="where">${p.zone ? html`${this._roomIcon(p.floor, p.zone) ? html`<ha-icon class="roomicon" icon=${this._roomIcon(p.floor, p.zone)}></ha-icon>` : nothing}${p.zone}` : html`<span class="muted">away</span>`}</span>
-              <span class="muted small floorline">${st.ghost && st.age ? html`seen ${shortAge(st.age)} ago${p.floor ? " · " : ""}` : nothing}${p.floor || (st.ghost ? nothing : "")}</span>
+              <span class="muted small floorline">${st.away && this._since(p.updated) ? html`since ${this._since(p.updated)}${p.floor ? " · " : ""}`
+                : st.ghost && st.age ? html`seen ${shortAge(st.age)} ago${p.floor ? " · " : ""}` : nothing}${p.floor || (st.ghost ? nothing : "")}</span>
               ${p.sub_zone && p.sub_zone !== "unknown" ? html`<span class="spot muted small">${p.sub_zone}</span>` : nothing}
               ${p.ent === this._selected ? html`<div class="quickin" @click=${(e) => e.stopPropagation()}>${this._renderQuick(p)}</div>` : nothing}
             </li>`;
@@ -1046,6 +1058,7 @@ class SextantLive extends LitElement {
     .list .small.floorline { grid-column: 2; }
     .list li.ghost { opacity: 0.7; }
     .list li.away { opacity: 0.45; }
+    .list li.group.away { opacity: 0.5; }
     .list li.ghost .avatar { filter: grayscale(0.6); outline: 1px dashed var(--secondary-text-color); outline-offset: 1px; }
     .ghosticon { --mdc-icon-size: 14px; vertical-align: -2px; margin-right: 2px; }
     details.timeline { margin: 8px 0; }
