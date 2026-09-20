@@ -63,6 +63,13 @@ and **Edit**, which opens the thing on the Things page.
 
 ## Location pins
 
+Every thing Sextant knows is listed, not only the ones heard this cycle.
+A thing heard recently reads plainly; one not heard for `stale_after_secs`
+wears an hourglass and says when it was last heard; and past
+`away_after_secs` it is **away** - faded, with a ghost badge, still showing
+where it was last seen. A phone that left the house stays in its owner's
+group instead of vanishing from the list.
+
 When a thing sits in the wrong place, select it on the Live page, click
 **It's actually here…** and tap the spot on the map where it really is.
 On a phone, pinch to zoom, or tap one of the floor's spots listed under

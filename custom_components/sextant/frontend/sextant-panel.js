@@ -612,6 +612,44 @@ class SextantLive extends LitElement {
    * One thing is enough for a section - a person is tracked as a person -
    * except a pet whose one thing is its own tag (Meg over Meg says nothing).
    */
+  /** How long before a thing not heard from is called away rather than late. */
+  _awayAfter() {
+    const own = this.data?.layout?.tuning?.away_after_secs;
+    const dflt = this.data?.tuning_spec?.away_after_secs?.default;
+    return typeof own === "number" ? own : typeof dflt === "number" ? dflt : 900;
+  }
+
+  /** Every thing Sextant knows, not only the ones heard this cycle: a phone
+   * that left the house still belongs in the list, shown where it was last
+   * seen. The missing ones come from their own sensors. */
+  _allRows() {
+    const live = (this.positions?.positions || []).slice();
+    const seen = new Set(live.map((p) => p.ent));
+    const known = Object.keys(this.data?.layout?.thing_classes || {});
+    for (const ent of known) {
+      if (seen.has(ent)) continue;
+      const loc = this.hass?.states?.[`sensor.${ent}_sextant_location`];
+      const floor = this.hass?.states?.[`sensor.${ent}_sextant_floor`];
+      const known_where = loc && !["unknown", "unavailable"].includes(loc.state);
+      live.push({
+        ent,
+        away: true,
+        updated: loc ? Date.parse(loc.last_changed) / 1000 : null,
+        zone: known_where ? (loc.attributes?.room || loc.state) : null,
+        sub_zone: known_where ? loc.attributes?.spot : null,
+        floor: floor && !["unknown", "unavailable"].includes(floor.state) ? floor.state : null,
+      });
+    }
+    return live.sort((a, b) => this._label(a.ent).localeCompare(this._label(b.ent)));
+  }
+
+  /** live, waiting (heard, but not lately) or away (long gone, or not heard at all). */
+  _state(p) {
+    const st = staleness(p, this._staleAfter());
+    if (p.away || (this._awayAfter() > 0 && st.age > this._awayAfter())) return { ...st, away: true, ghost: true };
+    return { ...st, away: false };
+  }
+
   _renderGroupedRows(rows) {
     const owners = this.data?.layout?.thing_owners || {};
     const byOwner = new Map();
@@ -653,23 +691,26 @@ class SextantLive extends LitElement {
   }
 
   _renderRow(p) {
-    const st = staleness(p, this._staleAfter());
+    const st = this._state(p);
+    const name = this._label(p.ent), pn = this._pn(p.ent);
+    const lastSeen = st.age ? `Not heard for ${fmtAge(st.age)}: this is where ${name} ${pn.was} last placed` : `${name} has not been heard from`;
     return html`
-            <li class="${p.ent === this._selected ? "selected" : ""} ${st.ghost ? "ghost" : ""}" title=${st.ghost ? `Not heard for ${fmtAge(st.age)}: this is where ${this._label(p.ent)} ${this._pn(p.ent).was} last placed` : ""} @click=${() => { this._select(p.ent === this._selected ? null : p.ent); if (p.floor && p.floor !== this.floor) this.dispatchEvent(new CustomEvent("floor-changed", { detail: p.floor })); }}>
+            <li class="${p.ent === this._selected ? "selected" : ""} ${st.ghost ? "ghost" : ""} ${st.away ? "away" : ""}" title=${st.ghost ? lastSeen : ""} @click=${() => { this._select(p.ent === this._selected ? null : p.ent); if (p.floor && p.floor !== this.floor) this.dispatchEvent(new CustomEvent("floor-changed", { detail: p.floor })); }}>
               ${(() => {
                 const who = this._speaksFor(p.ent);
-                // A ghost is not being heard, so it cannot also be what its
-                // owner's location is read from: one badge, never two.
-                const badge = st.ghost
-                  ? html`<ha-icon class="viabadge ghostbadge" icon="mdi:ghost-outline"></ha-icon>`
+                // Three states, one badge: away (long gone), waiting (heard,
+                // but not lately), or the thing its owner is read from. A
+                // thing not being heard cannot be any owner's source.
+                const badge = st.away ? html`<ha-icon class="viabadge ghostbadge" icon="mdi:ghost-outline"></ha-icon>`
+                  : st.ghost ? html`<ha-icon class="viabadge waitbadge" icon="mdi:timer-sand"></ha-icon>`
                   : who ? html`<ha-icon class="viabadge" icon="mdi:map-marker"></ha-icon>` : nothing;
                 if (badge === nothing) return this._avatar(p.ent);
-                const why = st.ghost ? `Not heard for ${fmtAge(st.age)}: this is where ${this._label(p.ent)} ${this._pn(p.ent).was} last placed` : `Where ${who} is read from right now`;
+                const why = st.away ? lastSeen : st.ghost ? `Last heard ${fmtAge(st.age)} ago` : `Where ${who} is read from right now`;
                 return html`<span class="avslot" title=${why}>${this._avatar(p.ent)}${badge}</span>`;
               })()}
               <span class="name">${this._label(p.ent)}</span>
-              <span class="where">${this._roomIcon(p.floor, p.zone) ? html`<ha-icon class="roomicon" icon=${this._roomIcon(p.floor, p.zone)}></ha-icon>` : nothing}${p.zone}</span>
-              <span class="muted small floorline">${st.ghost ? html`<ha-icon class="ghosticon" icon="mdi:ghost-outline"></ha-icon>seen ${shortAge(st.age)} ago · ` : nothing}${p.floor}</span>
+              <span class="where">${p.zone ? html`${this._roomIcon(p.floor, p.zone) ? html`<ha-icon class="roomicon" icon=${this._roomIcon(p.floor, p.zone)}></ha-icon>` : nothing}${p.zone}` : html`<span class="muted">away</span>`}</span>
+              <span class="muted small floorline">${st.ghost && st.age ? html`seen ${shortAge(st.age)} ago${p.floor ? " · " : ""}` : nothing}${p.floor || (st.ghost ? nothing : "")}</span>
               ${p.sub_zone && p.sub_zone !== "unknown" ? html`<span class="spot muted small">${p.sub_zone}</span>` : nothing}
               ${p.ent === this._selected ? html`<div class="quickin" @click=${(e) => e.stopPropagation()}>${this._renderQuick(p)}</div>` : nothing}
             </li>`;
@@ -739,7 +780,7 @@ class SextantLive extends LitElement {
   }
 
   render() {
-    const rows = (this.positions?.positions || []).slice().sort((a, b) => this._label(a.ent).localeCompare(this._label(b.ent)));
+    const rows = this._allRows();
     const sel = rows.find((p) => p.ent === this._selected);
     const h = this._history;
     const switches = [
@@ -990,6 +1031,7 @@ class SextantLive extends LitElement {
     .list .name { font-weight: 600; grid-column: 2; }
     /* A badge on the disc of the thing its owner's location is read from. */
     .list .avslot { grid-row: 1 / 3; position: relative; display: inline-flex; }
+    .list .avslot .viabadge.waitbadge { background: var(--warning-color, #e6a100); color: #23272e; }
     .list .avslot .viabadge.ghostbadge { background: var(--secondary-background-color, #666); color: var(--secondary-text-color); }
     .list .avslot .viabadge { position: absolute; right: -3px; top: -3px; --mdc-icon-size: 13px; width: 17px; height: 17px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--primary-color, #03a9f4); color: var(--text-primary-color, #fff); box-shadow: 0 0 0 2px var(--card-background-color, #fff); }
     /* A flex row so the icon centres on the text instead of sitting on its baseline. */
@@ -1000,7 +1042,8 @@ class SextantLive extends LitElement {
     .list .small.spot { grid-column: 3; text-align: right; }
     /* The floor keeps to its own column, so the spot can sit beside it. */
     .list .small.floorline { grid-column: 2; }
-    .list li.ghost { opacity: 0.55; }
+    .list li.ghost { opacity: 0.7; }
+    .list li.away { opacity: 0.45; }
     .list li.ghost .avatar { filter: grayscale(0.6); outline: 1px dashed var(--secondary-text-color); outline-offset: 1px; }
     .ghosticon { --mdc-icon-size: 14px; vertical-align: -2px; margin-right: 2px; }
     details.timeline { margin: 8px 0; }

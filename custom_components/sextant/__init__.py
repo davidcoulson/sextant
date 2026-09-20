@@ -468,6 +468,10 @@ TUNING_SPEC = {
     # nothing about positioning changes, and position_timeout still decides
     # when the thing leaves the map altogether.
     "stale_after_secs": (120.0, float, 15.0, 3600.0),
+    # When the Live list stops waiting for a thing and calls it away: a phone
+    # that left the house, a tag in a drawer. Between stale_after_secs and
+    # this it is still expected back, and shown where it was last seen.
+    "away_after_secs": (900.0, float, 60.0, 86400.0),
     # Hours of position history kept per thing: the history scrubber, the
     # timeline and Activity reach back this far. Applied on the next
     # cycle; an explicit top-level history_max_age (seconds) still wins.
