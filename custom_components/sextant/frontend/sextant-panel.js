@@ -643,22 +643,24 @@ class SextantLive extends LitElement {
       if (!v || ["unknown", "unavailable"].includes(v.state)) return null;
       const n = Number(v.state);
       const text = Number.isFinite(n) && v.state.trim() !== ""
-        ? fmtNum(n, Math.abs(n) >= 100 ? 0 : 1)
+        ? fmtNum(n, Number.isInteger(n) || Math.abs(n) >= 100 ? 0 : 1)
         : v.state.split(" (")[0];
       return unit === false ? text : `${text}${v.unit ? ` ${v.unit}` : ""}`;
     };
+    const d = p.device || {};
     const rows = [
-      ["Firmware", val("esphome_version", false)],
+      ["ESPHome release", val("esphome_version", false)],
       ["Project", [val("project_name", false), val("project_version", false)].filter(Boolean).join(" ") || null],
-      ["Up for", val("uptime", false)],
+      ["Uptime", val("uptime", false)],
       ["Hearing", p.heard == null ? null : `${p.heard} thing${p.heard === 1 ? "" : "s"}`],
-      ["Adverts kept", val("adverts_forwarded")],
-      ["Adverts dropped", [val("adverts_dropped"), val("drop_rate") ? `(${val("drop_rate")})` : null].filter(Boolean).join(" ") || null],
-      ["Private addresses dropped", val("rpas_dropped")],
-      ["Keys loaded", val("irks_loaded")],
+      ["Adverts forwarded", val("adverts_forwarded")],
+      ["Adverts ignored", [val("adverts_dropped"), val("drop_rate") ? `(${val("drop_rate")})` : null].filter(Boolean).join(" ") || null],
+      ["IRKs installed", val("irks_loaded")],
       ["Wi-Fi", [val("wifi_signal"), val("ssid", false)].filter(Boolean).join(" · ") || null],
-      ["Chip", val("temperature")],
-      ["Address", p.address || null],
+      // The chip is what it runs on; the board is what David called it.
+      ["Chip", [d.chip, d.board, val("temperature")].filter(Boolean).join(" · ") || null],
+      ["Bluetooth MAC", p.address || null],
+      ["Wi-Fi MAC", d.wifi_mac || null],
     ].filter(([, v]) => v);
     return html`<div class="proxycard" @click=${(e) => e.stopPropagation()}>
       <h4>${proxyName(this.data, p.slug)}${uiButton({ label: "Close", kind: "text", onClick: () => { this._proxy = null; } })}</h4>

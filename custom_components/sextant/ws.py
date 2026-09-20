@@ -926,7 +926,29 @@ async def ws_proxy_info(hass, connection, msg):
         "height": rx.get("height"),
         "facts": facts,
         "heard": heard,
+        "device": _proxy_device(hass, slug, address),
     })
+
+
+def _proxy_device(hass, slug, address):
+    """What the device registry knows: the board and firmware of the node
+    itself, its Wi-Fi MAC, and the chip, which ESPHome records on the separate
+    device it creates for the Bluetooth address Bermuda tracks.
+    """
+    from homeassistant.helpers import device_registry as dr, entity_registry as er  # noqa: PLC0415
+
+    devices, entities = dr.async_get(hass), er.async_get(hass)
+    out = {}
+    entry = next((e for e in entities.entities.values() if slug in e.entity_id and e.device_id), None)
+    node = devices.async_get(entry.device_id) if entry else None
+    if node:
+        out.update(board=node.model, maker=node.manufacturer, firmware=node.sw_version,
+                   wifi_mac=next((v for kind, v in node.connections if kind == "mac"), None))
+    for dev in devices.devices.values():
+        if any(kind == "bluetooth" and str(v).lower() == address for kind, v in dev.connections):
+            out["chip"] = dev.model
+            break
+    return out
 
 
 @websocket_api.websocket_command({vol.Required("type"): "sextant/scanner_linking"})

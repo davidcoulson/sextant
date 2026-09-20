@@ -8,10 +8,10 @@ focus it: everything else fades, it grows a halo, the panel switches to its
 floor, and the side panel shows its room, spot, floor, the proxy it is
 anchored to if any, and every proxy that hears it with the distance. Click
 a **proxy** instead and a card says what it is and what it is doing: its
-firmware and project version, how long it has been up, how many things it
-is hearing, how many adverts it kept and dropped (and the private addresses
-and keys behind that, where the BLE filter publishes them), its Wi-Fi and
-chip temperature. Whatever it publishes is what the card shows; a
+ESPHome release and project version, uptime, how many things it is hearing,
+how many adverts it forwarded and ignored (and the IRKs behind that, where
+the BLE filter publishes them), its Wi-Fi, its chip and board, and both
+MACs - the Bluetooth one Bermuda tracks and the Wi-Fi one it talks on. Whatever it publishes is what the card shows; a
 **Details** disclosure holds the floor odds, spot shares, confidence,
 estimator telemetry, trust and speed. **Edit** (administrators) opens the
 thing's dialog on the Things page - name, class, colour, photo, height -
