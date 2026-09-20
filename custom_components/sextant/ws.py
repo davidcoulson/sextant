@@ -851,6 +851,84 @@ async def ws_selftest(hass, connection, msg):
     connection.send_result(msg["id"], {"result": result, "state": state, "summary": attrs, "breakdown": core.selftest_breakdown(result)})
 
 
+# What a proxy's own entities are called, whatever the integration prefixes
+# them with: (key, suffix) pairs matched against the entity id.
+PROXY_FACTS = (
+    ("esphome_version", "_esphome_version"),
+    ("project_version", "_project_version"),
+    ("project_name", "_project_name"),
+    ("uptime", "_uptime"),
+    ("ip", "_ip"),
+    ("ssid", "_ssid"),
+    ("wifi_signal", "_wifi_signal"),
+    ("temperature", "_internal_temperature"),
+    ("reset_reason", "_reset_reason"),
+    ("adverts_forwarded", "_ble_adverts_forwarded"),
+    ("adverts_dropped", "_ble_adverts_dropped"),
+    ("drop_rate", "_ble_advert_drop_rate"),
+    ("irks_loaded", "_ble_irks_loaded"),
+    ("rpas_dropped", "_ble_rpas_dropped"),
+    ("uuid_allowed", "_ble_service_uuid_allowed"),
+)
+
+
+@websocket_api.websocket_command({vol.Required("type"): "sextant/proxy/info", vol.Required("proxy"): str})
+@websocket_api.async_response
+async def ws_proxy_info(hass, connection, msg):
+    """What one proxy is and what it is doing: its own sensors, and how many
+    things it is hearing right now.
+
+    A proxy's entities are named after it but prefixed differently by each
+    integration (esphome names some for the area too), so they are found by
+    matching the proxy's slug and a known suffix rather than by guessing a
+    whole entity id.
+    """
+    core = _core()
+    slug = str(msg["proxy"])
+    layout = get_layout(hass) or {}
+    rx = next((r for f in layout.get("floor", []) for r in f.get("receivers", [])
+               if r.get("entity_id") == slug), None)
+    if rx is None:
+        return _error(connection, msg, f"No proxy called {slug} is placed")
+    address = str(rx.get("address") or "").lower()
+
+    facts, seen = {}, {}
+    for state in hass.states.async_all():
+        eid = state.entity_id
+        if slug not in eid:
+            continue
+        for key, suffix in PROXY_FACTS:
+            if eid.endswith(suffix) and key not in facts:
+                facts[key] = {"entity_id": eid, "state": state.state,
+                              "unit": state.attributes.get("unit_of_measurement"),
+                              "name": state.attributes.get("friendly_name")}
+        seen[eid] = state.state
+
+    # How many things it hears: the readings Bermuda has for it right now,
+    # judged by the same staleness gate the solver uses.
+    max_age = core._reading_max_age(layout)
+    heard = 0
+    for (_ent, key), reading in ((bermuda_source.async_get_readings_by_address(hass) or {})).items():
+        if key == address and isinstance(reading, dict):
+            age = reading.get("age")
+            if age is None or age <= max_age:
+                heard += 1
+    by_slug = bermuda_source.async_get_readings(hass) or {}
+    for (_ent, key), reading in by_slug.items():
+        if key == slug and isinstance(reading, dict):
+            age = reading.get("age")
+            if age is None or age <= max_age:
+                heard += 1
+
+    connection.send_result(msg["id"], {
+        "proxy": slug,
+        "address": address,
+        "height": rx.get("height"),
+        "facts": facts,
+        "heard": heard,
+    })
+
+
 @websocket_api.websocket_command({vol.Required("type"): "sextant/scanner_linking"})
 @websocket_api.async_response
 async def ws_scanner_linking(hass, connection, msg):
@@ -1402,6 +1480,7 @@ COMMANDS = (
     ws_layout_get, ws_layout_save, ws_tuning_set, ws_thing_tune,
     ws_history_index, ws_history_get, ws_history_timeline, ws_history_clear, ws_thing_readings, ws_floor_bias_map,
     ws_calibration_status, ws_calibration_action, ws_selftest, ws_scanner_linking, ws_receivers, ws_beacon_links,
+    ws_proxy_info,
     ws_adjust_zones, ws_registration, ws_scanner_ignore, ws_kpi, ws_kpi_baselines, ws_kpi_baseline_save, ws_kpi_baseline_delete,
     ws_truth_mark, ws_truth_list, ws_truth_delete, ws_truth_evaluate, ws_truth_apply,
     ws_bermuda_candidates, ws_bermuda_tracked, ws_bermuda_track, ws_bermuda_findmy, ws_bermuda_findmy_add,

@@ -66,6 +66,7 @@ class SextantPanel extends LitElement {
     _mode: { state: true },
     _data: { state: true },
     _positions: { state: true },
+    _proxy: { state: true },       // the proxy card, opened by clicking one on the map
     _now: { state: true },        // ticks every second, for the countdown
     _floor: { state: true },
     _error: { state: true },
@@ -385,7 +386,11 @@ class SextantLive extends LitElement {
   firstUpdated() {
     this._map = new SextantMap(this.renderRoot.querySelector("canvas"), {
       fetch: (url) => this.hass.fetchWithAuth(url),
-      onSelect: (hit) => { this._select(hit?.kind === "thing" ? hit.ent : null); },
+      onSelect: (hit) => {
+        if (hit?.kind === "receiver") return this._openProxy(hit.index);
+        this._proxy = null;
+        this._select(hit?.kind === "thing" ? hit.ent : null);
+      },
       onMapClick: (m) => this._placeMark(m),
       isPlacing: () => this._marking,
     });
@@ -612,6 +617,52 @@ class SextantLive extends LitElement {
    * One thing is enough for a section - a person is tracked as a person -
    * except a pet whose one thing is its own tag (Meg over Meg says nothing).
    */
+  /** Click a proxy on the map: what it is and what it is doing. */
+  async _openProxy(index) {
+    const f = (this.data?.layout?.floor || []).find((x) => x.name === this.floor);
+    const rx = (f?.receivers || [])[index];
+    if (!rx?.entity_id) return;
+    this._proxy = { slug: rx.entity_id, loading: true };
+    try {
+      const info = await callWS(this, this.hass, { type: "sextant/proxy/info", proxy: rx.entity_id });
+      if (this._proxy?.slug === rx.entity_id) this._proxy = { ...info, slug: rx.entity_id };
+    } catch (e) {
+      this._proxy = { slug: rx.entity_id, error: e?.message || String(e) };
+    }
+  }
+
+  /** The proxy card: what it is, how it is, and what it is filtering out. */
+  _renderProxyCard() {
+    const p = this._proxy;
+    if (!p) return nothing;
+    const f = p.facts || {};
+    const val = (key, unit) => {
+      const v = f[key];
+      if (!v || ["unknown", "unavailable"].includes(v.state)) return null;
+      return unit === false ? v.state : `${v.state}${v.unit ? ` ${v.unit}` : ""}`;
+    };
+    const rows = [
+      ["Firmware", val("esphome_version", false)],
+      ["Project", [val("project_name", false), val("project_version", false)].filter(Boolean).join(" ") || null],
+      ["Up for", val("uptime", false)],
+      ["Hearing", p.heard == null ? null : `${p.heard} thing${p.heard === 1 ? "" : "s"}`],
+      ["Adverts kept", val("adverts_forwarded")],
+      ["Adverts dropped", [val("adverts_dropped"), val("drop_rate") ? `(${val("drop_rate")})` : null].filter(Boolean).join(" ") || null],
+      ["Private addresses dropped", val("rpas_dropped")],
+      ["Keys loaded", val("irks_loaded")],
+      ["Wi-Fi", [val("wifi_signal"), val("ssid", false)].filter(Boolean).join(" · ") || null],
+      ["Chip", val("temperature")],
+      ["Address", p.address || null],
+    ].filter(([, v]) => v);
+    return html`<div class="proxycard" @click=${(e) => e.stopPropagation()}>
+      <h4>${proxyName(this.data, p.slug)}${uiButton({ label: "Close", kind: "text", onClick: () => { this._proxy = null; } })}</h4>
+      ${p.loading ? html`<div class="muted small">Asking…</div>`
+        : p.error ? html`<div class="warn small">${p.error}</div>`
+        : rows.length ? html`<dl>${rows.map(([k, v]) => html`<dt>${k}</dt><dd>${v}</dd>`)}</dl>`
+        : html`<div class="muted small">This proxy publishes nothing about itself.</div>`}
+    </div>`;
+  }
+
   /** How long a thing has been where it is, from its own location sensor
    * (which changes when its room or spot does), as (short, exact) or null. */
   _hereFor(ent) {
@@ -835,7 +886,7 @@ class SextantLive extends LitElement {
           ${uiButton({ label: "New thing", kind: "outline", icon: "mdi:plus-circle-outline", onClick: () => this._goto("things") })}
           ${uiButton({ label: "Calibrate", kind: "outline", icon: "mdi:tune-vertical", onClick: () => this._goto("calibration") })}` : nothing}
       </div>
-      <div class="stage ${this._mapOpen ? "" : "collapsed"}"><canvas></canvas>
+      <div class="stage ${this._mapOpen ? "" : "collapsed"}"><canvas></canvas>${this._renderProxyCard()}
         <div class="overlay">
           <div class="chips wide-only">${switches.map(optBtn)}</div>
           <span class="wide-only">${gridPicker}</span>
@@ -1120,6 +1171,12 @@ class SextantLive extends LitElement {
     .pinlist .forget { grid-column: 2; grid-row: 1 / 3; align-self: center; display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border: 1px solid var(--divider-color); border-radius: 8px; background: transparent; color: var(--secondary-text-color); cursor: pointer; }
     .pinlist .forget ha-icon { --mdc-icon-size: 18px; }
     .pinlist .forget:hover { color: var(--error-color, #c62828); border-color: var(--error-color, #c62828); }
+    /* Clicked on the map: floats over the plan's top-left, out of the way. */
+    .proxycard { position: absolute; left: 10px; top: 64px; z-index: 3; max-width: 320px; max-height: 60%; overflow: auto; padding: 10px 12px; border-radius: 10px; background: var(--card-background-color); box-shadow: var(--ha-card-box-shadow, 0 2px 8px rgba(0,0,0,0.3)); }
+    .proxycard h4 { margin: 0 0 6px; display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+    .proxycard dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 0; font-size: 13px; }
+    .proxycard dt { color: var(--secondary-text-color); }
+    .proxycard dd { margin: 0; font-variant-numeric: tabular-nums; }
     .quick { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 6px; margin: 2px 0 4px; }
     .quick .qa { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0; padding: 6px 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border: 1px solid var(--divider-color, #ddd); border-radius: 10px; background: var(--ha-card-background, var(--card-background-color, #fff)); color: var(--primary-text-color); font: inherit; font-size: 11px; cursor: pointer; }
     .quick .qa:hover { filter: brightness(0.97); }

@@ -6,7 +6,12 @@ The floor plan with every tracked thing drawn as an avatar in its own colour, th
 same colour as its row in the list. Click a thing (row or avatar) to
 focus it: everything else fades, it grows a halo, the panel switches to its
 floor, and the side panel shows its room, spot, floor, the proxy it is
-anchored to if any, and every proxy that hears it with the distance; a
+anchored to if any, and every proxy that hears it with the distance. Click
+a **proxy** instead and a card says what it is and what it is doing: its
+firmware and project version, how long it has been up, how many things it
+is hearing, how many adverts it kept and dropped (and the private addresses
+and keys behind that, where the BLE filter publishes them), its Wi-Fi and
+chip temperature. Whatever it publishes is what the card shows; a
 **Details** disclosure holds the floor odds, spot shares, confidence,
 estimator telemetry, trust and speed. **Edit** (administrators) opens the
 thing's dialog on the Things page - name, class, colour, photo, height -
@@ -26,17 +31,22 @@ one was when a cycle is late. A history scrubber under
 the map replays where a thing has been over the retention window, with a
 room band, playback and a jump-to-time picker.
 
-**Heard, late, away.** A thing nothing has heard for `stale_after_secs`
-(two minutes unless you change it on the Tuning page) is drawn as a ghost:
-faint, with a dashed outline and *3m ago* under it, and its row wears an
-hourglass. What you are looking at is where it *was*; the room and spot
-sensors still say the same, because nothing has contradicted them yet. It
-leaves the map after `position_timeout` (five minutes by default), and past
-`away_after_secs` (fifteen minutes) the list calls it **away**: faded, with
-a ghost badge, saying since when and where it was last seen. Every thing
-Sextant knows stays in the list, so a phone that left the house sits in its
-owner's group instead of vanishing, and a person whose things are all away
-fades with them. The dashboard card draws ghosts the same way.
+**Heard, late, away.** A thing moves through three states, each with its
+own timer on the [Tuning](tuning.md) page:
+
+| State | When | On the map | In the list |
+| --- | --- | --- | --- |
+| Heard | a fix this cycle | drawn plainly | plainly, with how long it has been there |
+| Late | nothing heard for `stale_after_secs` (2 min) | a ghost: faint, dashed, *3m ago* under it | an hourglass badge and when it was last heard |
+| Away | nothing heard for `away_after_secs` (15 min) | gone after `position_timeout` (5 min) | faded, a ghost badge, *since* when and where it was last seen |
+
+What you see while a thing is late or away is where it *was*; its room and
+spot sensors still say the same, because nothing has contradicted them yet.
+Every thing Sextant knows stays in the list, so a phone that left the house
+sits in its owner's group instead of vanishing, and a person whose things
+are all away fades with them. `stale_after_secs` also decides which
+readings the solver will use at all, so raising it makes Sextant patient in
+both senses. The dashboard card draws ghosts the same way.
 
 **How long it has been there, and where it has been.** The focused thing's
 card says how long it has been where it is - *Meg's Cafe for 1h 12m, since
