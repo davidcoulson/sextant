@@ -840,22 +840,28 @@ def test_tuning_reads_validated_values_and_falls_back():
 
 
 def _entries(*distances):
-    return [(d, ("pt", d)) for d in distances]
+    return [(d, ("pt", d), f"proxy_{d}") for d in distances]
 
 
 def test_select_receivers_keeps_near_plus_nearest_k_and_drops_far():
-    kept = sextant._select_receivers(_entries(1, 2, 2.5, 4, 5, 6, 7, 9, 14, 20), 4, 12.0, 3.0)
+    kept, heard = sextant._select_receivers(_entries(1, 2, 2.5, 4, 5, 6, 7, 9, 14, 20), 4, 12.0, 3.0)
     assert [p[1] for p in kept] == [1, 2, 2.5, 4]           # near-always + nearest 4
-    kept = sextant._select_receivers(_entries(0.5, 2.9, 2.95, 4, 5, 6), 3, 12.0, 3.0)
+    kept, heard = sextant._select_receivers(_entries(0.5, 2.9, 2.95, 4, 5, 6), 3, 12.0, 3.0)
     assert [p[1] for p in kept] == [0.5, 2.9, 2.95]          # K coincides with the near set
-    kept = sextant._select_receivers(_entries(9, 14, 20, 30), 8, 12.0, 3.0)
+    kept, heard = sextant._select_receivers(_entries(9, 14, 20, 30), 8, 12.0, 3.0)
     assert [p[1] for p in kept] == [9, 14, 20]               # never starved below three
-    kept = sextant._select_receivers(_entries(1, 2, 3, 14, 20), 8, 12.0, 3.0)
+    kept, heard = sextant._select_receivers(_entries(1, 2, 3, 14, 20), 8, 12.0, 3.0)
     assert [p[1] for p in kept] == [1, 2, 3]                 # beyond range dropped once 3 kept
-    kept = sextant._select_receivers(_entries(5, 4, 3, 2, 1), 0, 0.0, 0.0)
+    kept, heard = sextant._select_receivers(_entries(5, 4, 3, 2, 1), 0, 0.0, 0.0)
     assert [p[1] for p in kept] == [1, 2, 3, 4, 5]           # 0 = unlimited, sorted nearest-first
-    kept = sextant._select_receivers(_entries(1, 2, 3, 4, 5), 1, 0.0, 0.0)
+    kept, heard = sextant._select_receivers(_entries(1, 2, 3, 4, 5), 1, 0.0, 0.0)
     assert [p[1] for p in kept] == [1, 2, 3]                 # K clamps to the solver minimum
+    # Which proxy said what rides along with the points it kept, nearest-first:
+    # the points are anonymous coordinates, and a floor election that goes
+    # wrong is diagnosed by who stopped being heard.
+    assert heard == [("proxy_1", 1.0), ("proxy_2", 2.0), ("proxy_3", 3.0)]
+    kept, heard = sextant._select_receivers([(2.0, ("pt", 2.0))], 0, 0.0, 0.0)
+    assert heard == [(None, 2.0)]                            # a pair with no name still works
 
 
 def test_extract_candidate_floors_applies_the_cap_and_carries_quality():
