@@ -6,7 +6,15 @@ The floor plan with every tracked thing drawn as an avatar in its own colour, th
 same colour as its row in the list. Click a thing (row or avatar) to
 focus it: everything else fades, it grows a halo, the panel switches to its
 floor, and the side panel shows its room, spot, floor, the proxy it is
-anchored to if any, and every proxy that hears it with the distance; a
+anchored to if any, and every proxy that hears it with the distance. Click
+a **proxy** instead and a card says what it is and what it is doing: its
+ESPHome release and project version, uptime, how many things it is hearing,
+how many adverts it forwarded and ignored (and the IRKs behind that, where
+the BLE filter publishes them), its Wi-Fi - with the
+band, channel and the 802.11 generation it negotiated, where the proxy
+publishes them - its chip and board, and its
+MACs - the Bluetooth one Bermuda tracks, the one it talks on (Wi-Fi, or
+Ethernet on a wired proxy), and the chip's own where it publishes it. Whatever it publishes is what the card shows; a
 **Details** disclosure holds the floor odds, spot shares, confidence,
 estimator telemetry, trust and speed. **Edit** (administrators) opens the
 thing's dialog on the Things page - name, class, colour, photo, height -
@@ -14,18 +22,42 @@ without hunting for it in the list. A **blend slider** from geometric to
 fingerprint sets how this thing's position is estimated (the two ends
 are drawn on the map when the fingerprint switch is on), and **It's
 actually here…** records a [location pin](live.md#location-pins). A thing with no fix shows *seen 40s
-ago* rather than a blank. Switches draw the solver's distance circles, the
-fingerprint fix, a trail, and hide the plan image. A history scrubber under
+ago* rather than a blank. A row of buttons over the map draws or hides the
+plan image, the labels, the trails, the spots, the proxies, the solver's
+distance circles and the fingerprint fix; each lights up while it is on.
+Labels names the rooms and the things (and whichever proxy you point at),
+while Proxies draws the proxies themselves, which a busy plan is often
+better without. In the corner, a countdown says how many seconds until the
+next positioning cycle - measured from the gap between cycles, so it
+follows whatever Bermuda is doing - and falls back to how long ago the last
+one was when a cycle is late. A history scrubber under
 the map replays where a thing has been over the retention window, with a
 room band, playback and a jump-to-time picker.
 
-**Ghosts.** A thing nothing has heard for `stale_after_secs` (two minutes
-unless you change it on the Tuning page) is drawn as a ghost: faint, with a
-dashed outline and *3m ago* under it, and its row in the list fades with a
-ghost icon. What you are looking at is where it *was*; the room and spot
-sensors still say the same, because nothing has contradicted them yet. It
-leaves the map altogether after `position_timeout` (five minutes by
-default). The dashboard card draws ghosts the same way.
+The map follows the theme: on a dark one the floor plan is inverted, so a
+drawing that is black on white becomes white on black, and the labels take
+a dark plate. Nothing to set - it reads the page's own background.
+
+**Heard, late, away.** A thing moves through three states, each with its
+own timer on the [Tuning](tuning.md) page:
+
+| State | When | On the map | In the list |
+| --- | --- | --- | --- |
+| Heard | a fix this cycle | drawn plainly | plainly, with how long it has been there |
+| Late | nothing heard for `stale_after_secs` (2 min) | a ghost: faint, dashed, *3m ago* under it | an hourglass badge and when it was last heard |
+| Away | nothing heard for `away_after_secs` (15 min) | gone after `position_timeout` (5 min) | faded, a ghost badge, *since* when and where it was last seen |
+
+A sighting is remembered across restarts, and a thing that went quiet
+before Sextant last started is dated from the position history, so *since*
+survives an update rather than resetting to it.
+
+What you see while a thing is late or away is where it *was*; its room and
+spot sensors still say the same, because nothing has contradicted them yet.
+Every thing Sextant knows stays in the list, so a phone that left the house
+sits in its owner's group instead of vanishing, and a person whose things
+are all away fades with them. `stale_after_secs` also decides which
+readings the solver will use at all, so raising it makes Sextant patient in
+both senses. The dashboard card draws ghosts the same way.
 
 **How long it has been there, and where it has been.** The focused thing's
 card says how long it has been where it is - *Meg's Cafe for 1h 12m, since
@@ -37,13 +69,23 @@ means the stay began before the start of what history keeps, so it is at
 least that long. Stays come from the position history, which records a
 point on every room and spot change.
 
-On a phone the map switches (labels, trails, the grid and so on) collapse
-behind a single options button so they never force sideways scrolling, the
-floor picker and the cycle-age clock move to a bar under the page, and a
-row of **quick actions** — self-test, and for an administrator, adding a
+On a phone those buttons collapse behind a single options button so they
+never force sideways scrolling, the floor picker and the countdown move to
+a bar under the page, and a row of **quick actions** — self-test, and for an administrator, adding a
 thing and starting calibration — jumps straight to the right page
-without hunting through the tabs. Editing the floor plan itself is still
+without hunting through the tabs. The map takes about half the screen and
+can be put away: **Hide map** in the Things heading, which stays put as the
+list scrolls, or the button on the map itself. Picking a thing opens it
+again, under that thing's details. Editing the floor plan itself is still
 a desktop job.
+
+Each row carries the thing's name and floor on the left, with how long it
+has been in that room or spot beside the floor (the exact time on hover),
+and on the right the room it is in with its Home Assistant area's icon, the
+spot underneath.
+A small badge on the disc says what is special about it: a location marker
+for the thing its owner's location is being read from, an hourglass while
+it is late, a ghost once it is away.
 
 ## Grouped by person
 
@@ -80,7 +122,9 @@ thing in two or three rooms.
 
 A pin inside a spot is also evidence of being in that spot: a fix is the
 weighted blend of the pins and proxies it matched, and the share of that
-blend sitting inside the spot counts the way a proxy on the spot does.
+blend sitting inside the spot counts the way a proxy on the spot does - but
+only for a thing whose own fix is on or beside that spot, since pins are
+shared by a class and a cat across the room still matches the couch's.
 This is what gets a cat onto a couch - lying on it, the cat's own body
 makes the couch's outlets read about twice too far, while the pins still
 match.
@@ -98,6 +142,9 @@ cats share one another's pins, a phone's pin helps the other phones -
 and nothing else: a pin records how one device looks from one place, and
 a watch on a wrist does not look like a phone in a hand
 (`fingerprint_marks_scope`: `own`, `class` or `all`).
+
+A selected thing lists its own pins - which pin, its floor, when it was
+placed and over how many cycles - each with a bin to forget it.
 
 Pins stay, with their samples, in `.storage/sextant_truth`, and do two
 more jobs. The Tuning page's **Accuracy** card re-solves every pin under

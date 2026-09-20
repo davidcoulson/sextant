@@ -12,7 +12,7 @@ from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import device_registry as dr
-from homeassistant.const import UnitOfLength
+from homeassistant.const import EVENT_HOMEASSISTANT_FINAL_WRITE, EVENT_HOMEASSISTANT_STOP, UnitOfLength
 from homeassistant.util.unit_conversion import DistanceConverter
 from homeassistant.util import slugify
 import numpy as np
@@ -60,8 +60,10 @@ from .storage import (
     get_layout_version,
     load_fp_gains,
     load_layout,
+    load_runtime,
     load_truth,
     save_fp_gains,
+    save_runtime,
     migrate_from_bps,
     migrate_legacy,
     save_layout,
@@ -74,6 +76,7 @@ from . import floor_field
 from . import registration
 from . import truth as truth_mod
 from . import persons as persons_mod
+from . import runtime as runtime_mod
 from .zone_adjust import adjust_zones, adjust_subzones
 
 _LOGGER = logging.getLogger(__name__)
@@ -331,6 +334,30 @@ _kf_position_state = {}
 # on prune, like the Kalman state.
 _zone_state = {}
 _subzone_state = {}
+
+
+def _new_zone_state(floor_name, now):
+    """A thing's room election, before it has any evidence.
+
+    The elections index these dicts by name, so every key has to be here
+    whether or not it has a value yet. It doubles as the shape a restored
+    state is filled out against (see _restore_runtime): a snapshot written by
+    an older release, or one whose keys a later release added to, then comes
+    back readable instead of raising on the first cycle.
+    """
+    return {
+        "floor": floor_name, "zone": None, "since": now, "probs": {},
+        "challenge": None, "still_since": None, "moving_since": None,
+        "away_since": None, "outvoted_since": None, "locked": False, "born": now,
+    }
+
+
+def _new_subzone_state(floor_name, zone, now):
+    """A thing's spot election, before it has any evidence (see _new_zone_state)."""
+    return {"floor": floor_name, "zone": zone, "value": ("unknown", zone), "probs": {},
+            "pending": None, "since": now}
+
+
 # Near-field anchor per thing: {"slug", "floor", "since", "pending": (slug, since) | None}
 _anchor_state = {}
 
@@ -380,6 +407,11 @@ TUNING_SPEC = {
     # how far (m) outside its polygon the fix must sit before it is left.
     "subzone_enter_prob": (0.5, float, 0.1, 0.95),
     "subzone_unlock_margin": (1.0, float, 0.0, 5.0),
+    # How far a still thing's fix must leave its spot before the room lock
+    # stops holding it there. A watch on a 0.7 x 0.5 m bedside table wanders
+    # 1-2 m while it lies there, so the ordinary margin would drop it every
+    # night; a cat that crossed the room is metres away and should be let go.
+    "subzone_lock_release_m": (2.5, float, 0.5, 20.0),
     # A spot with a proxy on it (a bedside table, a desk): the proxy hearing the
     # thing close, and clearly closer than every other proxy, counts as the thing
     # being in the spot - direct evidence, where the position estimate is as
@@ -463,6 +495,13 @@ TUNING_SPEC = {
     # nothing about positioning changes, and position_timeout still decides
     # when the thing leaves the map altogether.
     "stale_after_secs": (120.0, float, 15.0, 3600.0),
+    # How long a restart may take and still be resumed rather than started
+    # cold (see runtime.py). Past it only each thing's last sighting is kept.
+    "restore_state_secs": (runtime_mod.DEFAULT_MAX_AGE_SECS, float, 0.0, 86400.0),
+    # When the Live list stops waiting for a thing and calls it away: a phone
+    # that left the house, a tag in a drawer. Between stale_after_secs and
+    # this it is still expected back, and shown where it was last seen.
+    "away_after_secs": (900.0, float, 60.0, 86400.0),
     # Hours of position history kept per thing: the history scrubber, the
     # timeline and Activity reach back this far. Applied on the next
     # cycle; an explicit top-level history_max_age (seconds) still wins.
@@ -1152,6 +1191,13 @@ def cleanup_legacy_sextant_registry_and_states(hass: HomeAssistant):
         _LOGGER.info("Removing legacy Sextant state: %s", entity_id)
         hass.states.async_remove(entity_id)
 
+# The last cycle failure and how many times it has repeated, so a persistent
+# one is logged every so often instead of every fifteen seconds.
+_cycle_error_last = None
+_cycle_error_count = 0
+CYCLE_ERROR_REPEAT_EVERY = 40   # roughly every ten minutes at a 15 s cycle
+
+
 async def update_tracked_entities(hass):
     """Update tracked_entities with the result of the Jinja code once per second."""
     global tracked_entities, new_global_data
@@ -1263,8 +1309,23 @@ async def update_tracked_entities(hass):
             await process_entities(hass, new_global_data)
             async_dispatcher_send(hass, SIGNAL_BPS_UPDATE, _push_payload(hass))
 
-        except Exception as e:
-            _LOGGER.info(f"Error executing Jinja code: {e}")
+        except Exception as e:  # noqa: BLE001 - one bad cycle must not end the loop
+            # Loudly, and with the traceback. This used to log "Error executing
+            # Jinja code" at INFO, where the recorder's WARNING+ log file never
+            # showed it: a cycle that raised every fifteen seconds looked
+            # exactly like a cycle that ran, and a restore that crashed the
+            # elections was invisible for a day. Repeats of the same failure
+            # are counted rather than repeated, so a persistent one does not
+            # bury the log.
+            global _cycle_error_last, _cycle_error_count
+            message = f"{type(e).__name__}: {e}"
+            if message == _cycle_error_last:
+                _cycle_error_count += 1
+                if _cycle_error_count % CYCLE_ERROR_REPEAT_EVERY == 0:
+                    _LOGGER.error("Positioning cycle still failing (%d times): %s", _cycle_error_count, message)
+            else:
+                _cycle_error_last, _cycle_error_count = message, 1
+                _LOGGER.exception("Positioning cycle failed: %s", message)
 
         await asyncio.sleep(secToUpdate)  # Run every X seconds, set timer in global variables
 
@@ -2422,6 +2483,10 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
                 "zone": zone,
                 "zone_raw": instant_zone,
                 "zone_locked": zone_locked,
+                # When this room and this spot were entered: kept across a
+                # restart, where the sensors' own timestamps are not.
+                "since": (_zone_state.get(entity) or {}).get("since"),
+                "spot_since": (_subzone_state.get(entity) or {}).get("since"),
                 "sub_zone": sub_zone,
                 # Smoothed sub-zone membership shares (name -> share, plus
                 # "unknown"), the sub-zone counterpart of "floors" below.
@@ -2674,10 +2739,33 @@ async def prune_stale_positions(hass):
         update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_spot", "unknown", {"room": "unknown"})
         update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_location", *_location_state("unknown", "unknown", "unknown", "unknown"))
 
+# How often the state a restart would lose is written out. On a clean stop
+# it is written again anyway; this is for the power cut that is not clean.
+RUNTIME_SAVE_EVERY_S = 60.0
+_runtime_saved_at = 0.0
+
+
 async def update_apitricords(hass, new_data):
     """Update apitricords in hass.data"""
+    global _runtime_saved_at
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN]["apitricords"] = new_data
+    # Remember where each thing was last heard, so a thing that goes quiet
+    # can still say where and when (see runtime.py).
+    for row in new_data or []:
+        if isinstance(row, dict) and row.get("ent") and isinstance(row.get("updated"), (int, float)):
+            _last_seen[row["ent"]] = {
+                "zone": row.get("zone"), "spot": row.get("sub_zone"), "floor": row.get("floor"),
+                "updated": row["updated"], "cords": row.get("cords"),
+            }
+    now = time.time()
+    if not _runtime_saved_at:
+        # The first cycle after a start has one thing in it; there is nothing
+        # worth writing yet, and a clean stop writes whatever is current.
+        _runtime_saved_at = now
+    elif now - _runtime_saved_at >= RUNTIME_SAVE_EVERY_S:
+        _runtime_saved_at = now
+        await _save_runtime(hass)
 
 
 def _sensor_is_live(hass, entity_id):
@@ -2771,6 +2859,132 @@ async def process_entities(hass, new_global_data):
 # thing -> {"floor", "x", "y", "since", "away"}: where an owned thing has
 # stayed (within persons.STAY_RADIUS_M) and since when, for persons.pick.
 _arrivals = {}
+# Where each thing was last heard, kept across restarts: {ent: last dict}.
+# The Live page reads it to say "away since 5:32 PM" for a thing nothing is
+# hearing, which the sensors cannot answer after a restart.
+_last_seen = {}
+
+
+async def _restore_runtime(hass):
+    """Carry the last cycle's state over a restart (see runtime.py)."""
+    # The restore has to happen before the first cycle, which puts it ahead of
+    # the setup step that fills the layout cache - so it loads the layout
+    # itself rather than reading an empty one. Its own window
+    # (restore_state_secs) is a tuning key IN that layout: read too early, a
+    # window David had set to twenty minutes was silently the five-minute
+    # default, and a reboot that took five minutes ten seconds resumed nothing.
+    layout = get_layout(hass)
+    if not isinstance(layout, dict):
+        layout = await load_layout(hass)
+    if not isinstance(layout, dict):
+        layout = {}
+    try:
+        data = await load_runtime(hass)
+    except Exception as e:  # noqa: BLE001
+        _LOGGER.warning("Saved runtime state not loaded: %s", e)
+        return
+    back = runtime_mod.restore(data, time.time(), _tuning(layout, "restore_state_secs"))
+    _last_seen.update(back["last"])
+    # Anything the snapshot never knew, but the position history did: the
+    # store outlives any restart, so its last point is a real sighting.
+    try:
+        hist = get_position_history(hass)
+        for entity in hist.entities():
+            if entity in _last_seen:
+                continue
+            span = hist.retained(entity)
+            if span and isinstance(span.get("to"), (int, float)):
+                _last_seen[entity] = {"zone": None, "spot": None, "floor": None,
+                                      "updated": span["to"], "cords": None}
+    except Exception as e:  # noqa: BLE001
+        _LOGGER.debug("No history to date the last sighting from: %s", e)
+    for entity, kf in back["kf"].items():
+        _kf_position_state[entity] = {
+            "x": np.array(kf["x"], dtype=float), "P": np.array(kf["P"], dtype=float),
+            "ts": kf["ts"], "floor": kf["floor"],
+        }
+    now = time.time()
+    for entity, state in back["zone"].items():
+        # Filled out against the live shape: a key the snapshot predates (or
+        # never carried) has to read as "no value", not raise mid-election.
+        _zone_state[entity] = {**_new_zone_state(state.get("floor"), now), **state}
+    for entity, state in back["spot"].items():
+        # The election stores its answer as a tuple; JSON made it a list.
+        value = state.get("value")
+        if isinstance(value, list) and len(value) == 2:
+            state = {**state, "value": tuple(value)}
+        _subzone_state[entity] = {**_new_subzone_state(state.get("floor"), state.get("zone"), now), **state}
+    _arrivals.update(back["arrivals"])
+    # The floor election, and with it the fact that this thing's floor is not
+    # NEW. A cycle that finds no incumbent floor for a thing treats the one it
+    # elects as a change, and a floor change clears the Kalman filter and the
+    # room and spot elections - which is exactly what used to happen to every
+    # restored thing on the first cycle after a restart, a second after the
+    # restore had put it all back.
+    _restore_floor_elections(back["floors"])
+    if back["age"] is None:
+        _LOGGER.info("No saved state to resume from; starting cold")
+    elif back["kf"] or back["zone"]:
+        _LOGGER.info("Resumed %d things after %.0f s down", len(back["zone"] or back["kf"]), back["age"])
+    else:
+        # A warning, not an info: state was thrown away, and the line says by
+        # how much the window was missed - which is the one thing you want to
+        # know when every thing comes back reading "here for 0 minutes".
+        _LOGGER.warning(
+            "Down for %.0f s, past the %.0f s restore window (restore_state_secs): "
+            "elections start cold, keeping %d last sightings",
+            back["age"], _tuning(layout, "restore_state_secs"), len(back["last"]),
+        )
+
+
+def _thing_floors():
+    """``update_trilateration_and_zone.last_floor``, which the cycle creates lazily.
+
+    The restore runs before the first cycle, so it has to be ready to make it.
+    """
+    if not hasattr(update_trilateration_and_zone, "last_floor"):
+        update_trilateration_and_zone.last_floor = {}
+    return update_trilateration_and_zone.last_floor
+
+
+def _restore_floor_elections(saved):
+    """Put back each thing's elected floor, its tenure and its probabilities."""
+    last_floor = _thing_floors()
+    for entity, state in (saved or {}).items():
+        if not isinstance(state, dict):
+            continue
+        name, since, probs = state.get("name"), state.get("since"), state.get("probs")
+        if isinstance(name, str):
+            last_floor[entity] = name
+        if isinstance(since, (int, float)):
+            _floor_since[entity] = float(since)
+        if isinstance(probs, dict):
+            kept = {f: float(p) for f, p in probs.items() if isinstance(p, (int, float))}
+            if kept:
+                _floor_probability[entity] = kept
+
+
+def _floor_elections():
+    """Each thing's elected floor, when it was elected, and its smoothed
+    probabilities: {ent: {"name", "since", "probs"}}, for the snapshot."""
+    last_floor = _thing_floors()
+    return {
+        entity: {"name": last_floor.get(entity), "since": _floor_since.get(entity),
+                 "probs": _floor_probability.get(entity)}
+        for entity in set(last_floor) | set(_floor_since) | set(_floor_probability)
+    }
+
+
+async def _save_runtime(hass):
+    """Write the state a restart would otherwise lose."""
+    try:
+        rows = [r for r in (hass.data.get(DOMAIN, {}).get("apitricords") or []) if isinstance(r, dict)]
+        data = runtime_mod.snapshot(time.time(), kf=_kf_position_state, zones=_zone_state,
+                                    spots=_subzone_state, arrivals=_arrivals, rows=rows,
+                                    floors=_floor_elections())
+        await save_runtime(hass, data)
+    except Exception as e:  # noqa: BLE001
+        _LOGGER.warning("Could not save the runtime state: %s", e)
 
 
 def _history_arrival(hass, ent, floor, x, y, now):
@@ -3242,11 +3456,7 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
 
     st = _zone_state.get(entity)
     if st is None or st["floor"] != floor_name or (st["zone"] is not None and st["zone"] not in valid):
-        st = _zone_state[entity] = {
-            "floor": floor_name, "zone": None, "since": now, "probs": {},
-            "challenge": None, "still_since": None, "moving_since": None,
-            "away_since": None, "outvoted_since": None, "locked": False, "born": now,
-        }
+        st = _zone_state[entity] = _new_zone_state(floor_name, now)
 
     # 1. Membership, smoothed.
     center = (point.x, point.y) if isinstance(point, Point) else (point[0], point[1])
@@ -3405,7 +3615,7 @@ def _pin_positions():
             for m in _truth_marks if m.get("id") is not None}
 
 
-def spot_pin_evidence(fp, floor_name, poly, pins=None):
+def spot_pin_evidence(fp, floor_name, poly, pins=None, at=None, margin_px=0.0):
     """How much of a fingerprint fix came from pins inside this spot, 0..1.
 
     A fix is the weighted mean of its best matching references (weight
@@ -3414,10 +3624,21 @@ def spot_pin_evidence(fp, floor_name, poly, pins=None):
     readings look like the times you said it was here" - evidence a proxy on
     the spot cannot give when the thing lying on it blocks that proxy (a cat
     on a couch reads the couch's own outlets twice too far).
+
+    It only speaks for a thing whose fix is on or beside the spot (``at``,
+    fading to nothing ``margin_px`` outside): pins of a class are shared, so
+    a cat across the room still matches the pins on the couch, and without
+    this it would be held on a couch it had left.
     """
     refs = (fp or {}).get("refs") or ()
     if not refs or poly is None:
         return 0.0
+    near = 1.0
+    if at is not None:
+        away = poly.distance(Point(at[0], at[1]))
+        near = 1.0 if away <= 0 else (max(0.0, 1.0 - away / margin_px) if margin_px > 0 else 0.0)
+        if near <= 0:
+            return 0.0
     if pins is None:
         pins = _pin_positions()
     inside = total = 0.0
@@ -3430,7 +3651,7 @@ def spot_pin_evidence(fp, floor_name, poly, pins=None):
         at = pins.get(slug)
         if at and at[0] == floor_name and poly.contains(Point(at[1], at[2])):
             inside += w
-    return (inside / total) if total > 0 else 0.0
+    return (inside / total) * near if total > 0 else 0.0
 
 
 def _spot_proxies(sub):
@@ -3615,10 +3836,10 @@ def _elect_subzone(entity, floor_name, zone, zone_locked, point, kf_state, sub_p
              if parent == zone and spot_accepts(allowed, cls)]
     st = _subzone_state.get(entity)
     if st is None or st.get("floor") != floor_name or st.get("zone") != zone:
-        st = _subzone_state[entity] = {
-            "floor": floor_name, "zone": zone, "value": ("unknown", zone), "probs": {}, "pending": None,
-        }
+        st = _subzone_state[entity] = _new_subzone_state(floor_name, zone, now)
     if not polys:
+        if st["value"] != ("unknown", zone):
+            st["since"] = now
         st["value"], st["pending"] = ("unknown", zone), None
         return st["value"]
     center = (point.x, point.y) if isinstance(point, Point) else (float(point[0]), float(point[1]))
@@ -3631,11 +3852,16 @@ def _elect_subzone(entity, floor_name, zone, zone_locked, point, kf_state, sub_p
     # the spot's share to at least that, taking the rest proportionally.
     settings = _spot_settings(layout, floor_name)
     pins = _pin_positions() if fp else None
+    margin_px = _tuning(layout, "subzone_unlock_margin") * (scale if isinstance(scale, (int, float)) and scale > 0 else 0.0)
+    # Pins reach as far as the lock does: a watch on a bedside table sits one
+    # to two metres off its own spot, and its pins are what get it back on.
+    pin_reach_px = _tuning(layout, "subzone_lock_release_m") * (scale if isinstance(scale, (int, float)) and scale > 0 else 0.0)
     for sid, _parent, _poly in polys:
         p = _spot_proxy_evidence(layout, (settings.get(sid) or {}).get("proxies"))
-        # Pins inside the spot are evidence of their own (see spot_pin_evidence).
+        # Pins on the spot are evidence of their own, for a thing that is
+        # there or just beside it (see spot_pin_evidence).
         if pins:
-            p = max(p, spot_pin_evidence(fp, floor_name, _poly, pins))
+            p = max(p, spot_pin_evidence(fp, floor_name, _poly, pins, at=center, margin_px=pin_reach_px))
         old = shares.get(sid, 0.0)
         if p > old:
             keep = (1.0 - p) / (1.0 - old) if old < 1.0 else 0.0
@@ -3657,18 +3883,23 @@ def _elect_subzone(entity, floor_name, zone, zone_locked, point, kf_state, sub_p
     contenders = {s: p for s, p in probs.items() if s != "unknown"}
     best = max(contenders, key=contenders.get) if contenders else None
 
-    if current != "unknown" and zone_locked:
+    cur_poly = next((poly for sid, _p, poly in polys if sid == current), None) if current != "unknown" else None
+    away_px = cur_poly.distance(Point(*center)) if cur_poly is not None else None
+    still_near = away_px is not None and away_px <= margin_px
+    release_px = _tuning(layout, "subzone_lock_release_m") * (scale if isinstance(scale, (int, float)) and scale > 0 else 0.0)
+    if current != "unknown" and zone_locked and away_px is not None and away_px <= release_px:
         st["pending"] = None
-        return st["value"]  # a still thing stays on its couch / table / hook
+        # A still thing stays on its couch / table / hook: its fix wanders
+        # about while it lies there and the spot is often smaller than that
+        # wander. Only a fix well away (subzone_lock_release_m) means it has
+        # really left - the room lock holds the ROOM, and a cat that crossed
+        # the room is not on the couch any more.
+        return st["value"]
 
     if current != "unknown":
-        cur_poly = next((poly for sid, _p, poly in polys if sid == current), None)
         if cur_poly is None:
             candidate = ("unknown", zone)  # the sub-zone was deleted or renamed
         else:
-            pt = Point(*center)
-            margin_px = _tuning(layout, "subzone_unlock_margin") * (scale if isinstance(scale, (int, float)) and scale > 0 else 0.0)
-            still_near = cur_poly.distance(pt) <= margin_px
             if best is not None and best != current and contenders[best] >= enter_for(best) and contenders[best] > probs.get(current, 0.0):
                 candidate = (best, zone)
             elif still_near or probs.get(current, 0.0) >= enter_for(current):
@@ -3689,7 +3920,7 @@ def _elect_subzone(entity, floor_name, zone, zone_locked, point, kf_state, sub_p
         st["pending"] = (candidate, now)
         return st["value"]
     if now - pending[1] >= _tuning(layout, "subzone_switch_secs"):
-        st["value"], st["pending"] = candidate, None
+        st["value"], st["pending"], st["since"] = candidate, None, now
         return candidate
     return st["value"]
 
@@ -4402,6 +4633,16 @@ async def async_setup(hass, config):
 
     hass.data["sextant_initialized"] = True  # Set flag
 
+    # A clean stop writes the state one last time, so a restart resumes from
+    # the moment it went down rather than from the last periodic save. STOP
+    # comes first and FINAL_WRITE last, which is where Home Assistant expects
+    # its stores to be written; taking both costs one extra write.
+    async def _on_stop(_event):
+        await _save_runtime(hass)
+
+    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _on_stop)
+    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_FINAL_WRITE, _on_stop)
+
     async def initialize_sextant():
         """Initialize the Sextant component"""
         _LOGGER.info("Initializing Sextant...")
@@ -4621,6 +4862,7 @@ async def async_setup_entry(hass, entry):
         _restore_fp_gains(await load_fp_gains(hass))
     except Exception as e:  # noqa: BLE001
         _LOGGER.warning("Truth marks or learned gains not loaded: %s", e)
+    await _restore_runtime(hass)
     cleanup_legacy_sextant_registry_and_states(hass)
     await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
     entry.async_on_unload(entry.add_update_listener(async_update_options))

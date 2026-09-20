@@ -94,10 +94,29 @@ moves, or when the locked room has kept under a tenth of the evidence for
 twice `zone_unlock_secs`: the lock holds through jitter on a boundary, not
 through the thing being somewhere else.
 
+**Across a restart.** A cycle's state - each thing's filter, its room and
+spot elections with their smoothed probabilities and timers, and when it
+arrived where it is - is written to `.storage/sextant_runtime` every two
+minutes and again on a clean stop. A restart reads it back and carries on,
+as a starting point the next readings can disagree with, so a thing keeps
+its room and its spot instead of re-earning them and a person does not
+follow whichever of their things settles first. Past `restore_state_secs`
+(five minutes) the elections are stale and only each thing's last sighting
+is kept, which is what the Live page shows as *away since*.
+
 **Spots.** The same election scaled down: the share of the ellipse inside
 each spot of the elected room, entered at `subzone_enter_prob`, left at
 `subzone_unlock_margin` outside, every change waiting
-`subzone_switch_secs`. A locked room keeps its spot. A spot can be limited
+`subzone_switch_secs`. Two things speak beside that share, each lifting it
+to at least their own strength: a [proxy on the spot](edit.md) that hears
+the thing close and clearly nearest, and the share of a fingerprint fix
+that came from [pins](live.md#location-pins) inside the spot. The pins
+matter where the proxies cannot help - a cat lying on a couch makes the
+couch's own outlets read about twice too far - and only speak for a thing
+on or beside the spot, since pins are shared by a class. A locked room
+keeps its spot while the fix stays within `subzone_lock_release_m` of it:
+a still thing's fix wanders, often further than a bedside table is wide,
+but a pet that crossed the room has really left. A spot can be limited
 to certain [classes](things.md) — a bedside table to a phone, a watch and
 keys, a cat bed to the cat — and is then not a candidate for anything else
 at all, so the cat bed never competes for the phone. A spot with no classes

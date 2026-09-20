@@ -983,6 +983,44 @@ def test_stationary_lock_releases_when_the_thing_keeps_moving():
     assert (zone, locked) == ("Kitchen", False)
 
 
+def test_a_zone_election_survives_a_trip_through_the_restart_store():
+    """The election carries on from a restored state, rather than raising on it.
+
+    Every None in that dict - no challenger, not moving since - used to be
+    dropped on the way to disk, and the first st["still_since"] after a restart
+    raised KeyError inside a handler that logged at INFO. Every thing went back
+    to a cold start and nothing said so.
+    """
+    import json
+
+    sextant._zone_state.clear()
+    for t in (0.0, 10.0, 20.0, 30.0):
+        zone, locked = _elect("e", 90, t)
+    assert (zone, locked) == ("Kitchen", True)
+    since, born = sextant._zone_state["e"]["since"], sextant._zone_state["e"]["born"]
+
+    def round_trip(at, now):
+        saved = json.loads(json.dumps(sextant.runtime_mod.snapshot(at, zones=sextant._zone_state)))
+        back = sextant.runtime_mod.restore(saved, now)
+        sextant._zone_state.clear()
+        for entity, state in back["zone"].items():
+            sextant._zone_state[entity] = {**sextant._new_zone_state(state.get("floor"), now), **state}
+
+    round_trip(30.0, 40.0)
+    # Back on its shelf 10 cm from the boundary, still locked, still since then.
+    assert _elect("e", 90, 50.0) == ("Kitchen", True)
+    assert sextant._zone_state["e"]["since"] == since and sextant._zone_state["e"]["born"] == born
+
+    # And the other way round: carried through the door when the snapshot was
+    # taken, put down after the restart. That is the case that actually broke -
+    # a thing on the move has no still_since to write.
+    sextant._zone_state.clear()
+    _elect("e", 50, 100.0, vx=100.0)
+    _elect("e", 50, 110.0, vx=100.0)
+    round_trip(110.0, 120.0)
+    assert _elect("e", 50, 130.0)[0] == "Kitchen"
+
+
 def test_zone_election_resets_on_floor_change_and_prune():
     sextant._zone_state.clear()
     _elect("e", 50, 0.0)
@@ -1348,10 +1386,52 @@ def _sofa_polys():
             ("Hook", "Hall", Polygon([(0, 0), (10, 0), (10, 10)]), frozenset())]
 
 
-def _sub(entity, point, now, *, zone="Living", locked=False, layout=None, scale=100.0):
+def _sub(entity, point, now, *, zone="Living", locked=False, layout=None, scale=100.0, fp=None):
     from shapely.geometry import Point
     layout = layout or {"tuning": {"subzone_switch_secs": 20.0, "zone_prob_smoothing": 0.6}}
-    return sextant._elect_subzone(entity, "F", zone, locked, Point(*point), None, _sofa_polys(), scale, layout, now=now)
+    return sextant._elect_subzone(entity, "F", zone, locked, Point(*point), None, _sofa_polys(), scale, layout, now=now, fp=fp)
+
+
+# The two ways a spot went wrong on 2026-09-19, end to end through the
+# election rather than one helper at a time.
+
+def test_a_still_thing_keeps_a_small_spot_while_its_fix_wanders():
+    """David's watch on a 0.7 x 0.5 m bedside table: the fix wandered one to
+    two metres all night, and 3.17.49 dropped it off the spot."""
+    sextant._subzone_state.clear()
+    t = 1000.0
+    # The watch's real spread on 2026-09-20: 1.0 to 2.4 m from a spot 0.7 m wide.
+    wander = [(300, 250), (250, 380), (380, 450), (300, 540), (120, 260), (300, 250),
+              (500, 180), (260, 520), (300, 300), (350, 480)]
+    for i in range(4):                        # put on the table: fixes land on it
+        _sub("w", (300, 250), t + i * 10)
+    assert _sub("w", (300, 250), t + 60) == ("Sofa", "Living")
+    for i, pt in enumerate(wander * 3):       # half an hour of lying there
+        got = _sub("w", pt, t + 100 + i * 20, locked=True)
+        assert got == ("Sofa", "Living"), f"left the spot at {pt}"
+
+
+def test_a_pin_in_a_spot_gets_a_blocked_thing_in_but_not_one_across_the_room():
+    """A cat on the couch blocks the couch's own proxies, so its pins carry
+    it in; the same pins must not hold another cat that walked away."""
+    sextant._subzone_state.clear()
+    t = 2000.0
+    # One pin in the middle of the sofa, matched perfectly.
+    sextant._set_truth_marks([{"id": 7, "entity": "cat", "floor": "F", "x": 300.0, "y": 250.0,
+                               "samples": [{"t": 1.0, "gain": 1.0, "estimator": "fingerprint",
+                                            "thing_vec": {"aa": 2.0}, "raw_vec": {"aa": 2.0}, "floors": {}}] * 3}])
+    try:
+        fp = {"refs": [("mark:7", 0.4)]}
+        # On the sofa, weak membership: the pin is what gets it in.
+        for dt in (0, 20, 40, 60):
+            got = _sub("cat", (300, 250), t + dt, fp=fp)
+        assert got == ("Sofa", "Living")
+        # Three metres away, still matching that pin: it must not be held.
+        for dt in (100, 120, 140, 160, 180, 200, 220):
+            got = _sub("cat", (300, 900), t + dt, fp=fp)
+        assert got == ("unknown", "Living")
+    finally:
+        sextant._set_truth_marks([])
 
 
 def test_subzone_needs_smoothed_membership_and_dwell_to_enter():
@@ -1383,10 +1463,20 @@ def test_subzone_holds_while_the_zone_is_locked_and_follows_the_zone():
     t = 1000.0
     for dt in (0, 10, 30, 31):
         _sub("e", (300, 250), t + dt)
-    # The thing is declared still by the zone election: even a fix that
-    # wandered off keeps the sub-zone.
-    assert _sub("e", (300, 600), t + 100, locked=True) == ("Sofa", "Living")
-    assert _sub("e", (300, 600), t + 200, locked=True) == ("Sofa", "Living")
+    # The thing is declared still by the zone election: a fix that wobbles
+    # just outside (within subzone_unlock_margin) keeps the sub-zone.
+    assert _sub("e", (300, 350), t + 100, locked=True) == ("Sofa", "Living")
+    assert _sub("e", (300, 380), t + 200, locked=True) == ("Sofa", "Living")
+    # A fix that wanders further, but not far (a watch on a bedside table
+    # wanders a metre or two while it lies there), still keeps the spot.
+    assert _sub("e", (300, 500), t + 250, locked=True) == ("Sofa", "Living")
+    # But the room lock holds the ROOM, not the sofa: a fix well away
+    # (subzone_lock_release_m) leaves, once the smoothed membership has fallen
+    # and the dwell has passed. (Leela crossed the Great Room while the
+    # couch's pins still matched her; she stayed on the couch.)
+    for dt in (300, 320, 340, 360, 380, 400, 420):
+        got = _sub("e", (300, 900), t + dt, locked=True)
+    assert got == ("unknown", "Living")
     # A different elected zone: its sub-zones only, state starts over.
     assert _sub("e", (300, 250), t + 300, zone="Hall") == ("unknown", "Hall")
     # A zone with no sub-zones at all publishes unknown immediately.
@@ -1991,6 +2081,24 @@ def test_a_room_linked_to_an_area_publishes_its_area_and_floor_ids():
 
 
 
+def test_a_pin_speaks_only_for_a_thing_that_is_there():
+    """Pins are shared by a class, so a cat across the room matches the couch
+    pins too - without this it would be held on a couch it had left."""
+    from shapely.geometry import Polygon
+    couch = Polygon([(0, 0), (300, 0), (300, 300), (0, 300)])   # 100 px per metre
+    pins = {"mark:1": ("Ground", 150.0, 150.0)}
+    refs = [("mark:1", 0.5)]
+    ev = lambda at: sextant.spot_pin_evidence({"refs": refs}, "Ground", couch, pins, at=at, margin_px=100.0)  # noqa: E731
+    assert ev((150.0, 150.0)) == 1.0          # on the couch
+    assert ev((320.0, 150.0)) == 0.8          # 0.2 m outside, nearly all of it
+    assert ev((350.0, 150.0)) == 0.5          # half a metre outside, half
+    assert ev((450.0, 150.0)) == 0.0          # a metre and a half away: nothing
+    # Leela's case: 2.86 m from the couch while its pins still match.
+    assert ev((586.0, 150.0)) == 0.0
+    # No position given: the old behaviour, evidence wherever the match is.
+    assert sextant.spot_pin_evidence({"refs": refs}, "Ground", couch, pins) == 1.0
+
+
 def test_pins_inside_a_spot_are_evidence_of_being_in_it():
     """A cat on a couch blocks the couch's own proxies; the pins do not care."""
     from shapely.geometry import Polygon
@@ -2012,3 +2120,24 @@ def test_pins_inside_a_spot_are_evidence_of_being_in_it():
     assert sextant.spot_pin_evidence(None, "Ground", couch, pins) == 0.0
     assert sextant.spot_pin_evidence({"refs": []}, "Ground", couch, pins) == 0.0
     assert sextant.spot_pin_evidence({"refs": [("mark:1", "bad")]}, "Ground", couch, pins) == 0.0
+
+
+def test_a_spot_remembers_when_it_was_entered():
+    """The Live list says how long a thing has been where it is, and that has
+    to survive a restart - so it comes from the election, not a sensor."""
+    sextant._subzone_state.clear()
+    t = 6000.0
+    for i in range(4):
+        _sub("e", (300, 250), t + i * 10)
+    assert _sub("e", (300, 250), t + 60) == ("Sofa", "Living")
+    entered = sextant._subzone_state["e"]["since"]
+    assert t <= entered <= t + 60
+    # Still there a while later: the time it arrived does not move.
+    for dt in (100, 200, 300):
+        _sub("e", (300, 250), t + dt)
+    assert sextant._subzone_state["e"]["since"] == entered
+    # Off the sofa, and it is a new answer with a new time.
+    for dt in (400, 420, 440, 460, 480, 500):
+        got = _sub("e", (300, 900), t + dt)
+    assert got == ("unknown", "Living")
+    assert sextant._subzone_state["e"]["since"] > entered

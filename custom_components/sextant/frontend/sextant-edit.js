@@ -111,7 +111,7 @@ class SextantEdit extends LitElement {
       onContextMenu: (hit) => this._context(hit),
     });
     this._map.setMode("edit");
-    this._map.setOptions({ labels: true, subzones: true, receiverLabels: true, trails: false });
+    this._map.setOptions({ labels: true, subzones: true, receivers: true, trails: false });
     this._map.setLocks(this._locks);
     this._syncDraft(true);
     // A reload or a closed tab would take the draft with it.

@@ -408,6 +408,7 @@ export class SextantMap {
     this.offline = new Set();
     this.marks = [];   // location pins of the focused thing on this floor: [{x, y, label}]
     this.heat = null;  // where the focused thing has been: {size, max, cells: [{x, y, secs}]} in map px
+    this.dark = false;      // set from the page's own background before each draw
     this.areaIcons = {};  // Home Assistant area id -> its mdi icon, for rooms linked to an area
     this.biasMap = null;  // this floor's election prior against another's: {size, cells: [[x, y, ratio]]} in map px
     this.suggestions = [];  // advised proxy spots on this floor: [{x, y, label}]
@@ -594,10 +595,14 @@ export class SextantMap {
       this.invalidate();
       return;
     }
-    if (hit && hit.kind === "thing" && e.button === 0 && this.mode !== "edit") {
-      this.selection = hit;
+    if (hit && e.button === 0 && this.mode !== "edit" && (hit.kind === "thing" || hit.kind === "receiver")) {
+      // A proxy is worth a click outside the editor too: the host shows what
+      // it is and what it is doing.
+      this.selection = hit.kind === "thing" ? hit : null;
       if (this.host.onSelect) this.host.onSelect(hit);
-    } else if (this.mode !== "edit" && this.host.onSelect && !hit) {
+    } else if (this.mode !== "edit" && this.host.onSelect && (!hit || e.button === 0)) {
+      // Outside the editor a room or a spot is not something to select, so a
+      // click on one means the same as a click on the floor: nothing here.
       this.selection = null;
       this.host.onSelect(null);
     } else if (this.mode === "edit" && !hit) {
@@ -837,9 +842,18 @@ export class SextantMap {
     ctx.translate(v.tx, v.ty);
     ctx.scale(v.k, v.k);
     const size = this._mapSize();
+    this._readTheme();
     ctx.fillStyle = this._css("--sextant-map-bg", "#ffffff");
     ctx.fillRect(0, 0, size.w, size.h);
-    if (this.image && this.options.image !== false) ctx.drawImage(this.image, 0, 0, size.w, size.h);
+    if (this.image && this.options.image !== false) {
+      // A floor plan is black on white. On a dark theme that is a lamp in a
+      // dark room, so it is inverted to white on black; the hue rotation puts
+      // any colour in the drawing back where it was, and the walls are taken
+      // down to a grey that reads as a drawing rather than a light source.
+      if (this.dark) { ctx.save(); ctx.filter = "invert(1) hue-rotate(180deg) brightness(0.62)"; ctx.globalAlpha = 0.85; }
+      ctx.drawImage(this.image, 0, 0, size.w, size.h);
+      if (this.dark) ctx.restore();
+    }
     this._drawGrid(ctx, size);
     this._drawPolygons(ctx, f.zones || [], "zone");
     if (this.options.subzones) this._drawPolygons(ctx, f.subzones || [], "subzone");
@@ -847,7 +861,9 @@ export class SextantMap {
     if (this.heat && this.mode !== "edit") this._drawHeat(ctx);
     this._drawDraft(ctx);
     if (this._snap) this._drawSnap(ctx);
-    this._drawReceivers(ctx, f.receivers || []);
+    // "Proxies" off hides them entirely: a plan with dozens of them is busy,
+    // and most of the time you are looking at the things, not the proxies.
+    if (this.options.receivers !== false || this.mode === "edit") this._drawReceivers(ctx, f.receivers || []);
     if (this.mode === "edit") this._drawPins(ctx, f.pins || []);
     if (this.suggestions.length) {
       // A house plan is busy: walls, room fills, dozens of proxies. Fade all
@@ -863,6 +879,25 @@ export class SextantMap {
     }
     if (this.mode !== "edit") { this._drawThings(ctx); this._drawMarks(ctx); }
     ctx.restore();
+  }
+
+  /** Whether the page this map is drawn on is dark, from its own background:
+   * the theme is the user's, and the map follows it rather than a switch.
+   * Hex and rgb() are what a theme resolves to; anything else reads light. */
+  _readTheme() {
+    const bg = String(this._css("--sextant-map-bg", "#ffffff")).trim();
+    let rgb = null;
+    const hex = /^#([0-9a-f]{3,8})$/i.exec(bg);
+    if (hex) {
+      const h = hex[1].length <= 4 ? [...hex[1]].map((c) => c + c).join("") : hex[1];
+      rgb = [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
+    } else {
+      const fn = /^rgba?\(([^)]+)\)$/i.exec(bg);
+      if (fn) rgb = fn[1].split(/[ ,/]+/).slice(0, 3).map((v) => parseFloat(v));
+    }
+    if (!rgb || rgb.some((v) => !Number.isFinite(v))) { this.dark = bg.toLowerCase() === "black"; return; }
+    const [r, g, b] = rgb;
+    this.dark = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 < 0.5;
   }
 
   _css(name, fallback) {
@@ -959,16 +994,18 @@ export class SextantMap {
   /** A label on its white plate; `glyph` (a 24-unit MDI Path2D) sits before the text. */
   _label(ctx, text, x, y, px, alpha = 0.9, glyph = null) {
     const k = this.view.k;
+    const plate = this.dark ? "18,22,28" : "255,255,255";
+    const ink = this.dark ? "235,240,246" : "20,24,32";
     const size = px / k;
     ctx.font = `600 ${size}px system-ui, sans-serif`;
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
     const w = ctx.measureText(text).width;
     const gs = glyph ? size * 1.15 : 0, gap = glyph ? size * 0.3 : 0;   // glyph size and its gap
     const total = w + gs + gap;
-    ctx.fillStyle = `rgba(255,255,255,${alpha * 0.85})`;
+    ctx.fillStyle = `rgba(${plate},${alpha * 0.85})`;
     const pad = 4 / k;
     ctx.fillRect(x - total / 2 - pad, y - size / 2 - pad / 2, total + pad * 2, size + pad);
-    ctx.fillStyle = `rgba(20,24,32,${alpha})`;
+    ctx.fillStyle = `rgba(${ink},${alpha})`;
     if (glyph) {
       ctx.save();
       ctx.translate(x - total / 2, y - gs / 2);
@@ -1000,7 +1037,7 @@ export class SextantMap {
       ctx.fillRect(-s / 2, -s / 2, s, s);
       ctx.strokeRect(-s / 2, -s / 2, s, s);
       ctx.restore();
-      if (this.options.labels && (edit || hovered || selected || this.options.receiverLabels)) {
+      if (this.options.labels && (edit || hovered || selected)) {
         this._label(ctx, r.label || r.entity_id, r.cords.x, r.cords.y + (base + 9) / k, 10, 0.8);
       }
     });

@@ -13,7 +13,7 @@
  */
 import { LitElement, html, css, nothing } from "./lit.js";
 import { SextantMap, thingColor, thingHue, staleness, shortAge, heatCells } from "./sextant-map.js";
-import { sharedStyles, widgetStyles, fmtAge, fmtNum, toast, confirmDialog, ensureHaComponents, uiSwitch, uiSelect, uiButton, callWS, sortFloors, thingName, proxyName, fmtLen, fmtSpeed, classIcon, pronounsFor } from "./sextant-ui.js";
+import { sharedStyles, widgetStyles, fmtAge, fmtNum, toast, confirmDialog, ensureHaComponents, uiSelect, uiButton, callWS, sortFloors, thingName, proxyName, fmtLen, fmtSpeed, classIcon, pronounsFor } from "./sextant-ui.js";
 
 // What this page is running: the version of the files it was loaded from
 // (sextant-version.js), not the one in its URL - see that file.
@@ -66,6 +66,7 @@ class SextantPanel extends LitElement {
     _mode: { state: true },
     _data: { state: true },
     _positions: { state: true },
+    _now: { state: true },        // ticks every second, for the countdown
     _floor: { state: true },
     _error: { state: true },
   };
@@ -76,6 +77,8 @@ class SextantPanel extends LitElement {
     if (!MODES.some(([id]) => id === this._mode)) this._mode = "live";
     this._data = null;
     this._positions = { positions: [], offline_receivers: [], stamp: 0 };
+    this._now = Date.now() / 1000;
+    this._cycleSecs = null;       // measured from the gap between cycles
     this._floor = null;
     this._unsub = null;
     this._error = null;
@@ -88,10 +91,12 @@ class SextantPanel extends LitElement {
     ensureHaComponents().then(() => this.requestUpdate());
     this._load();
     this._subscribe();
+    this._clock = setInterval(() => { this._now = Date.now() / 1000; }, 1000);
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
+    clearInterval(this._clock);
     if (this._unsub) { this._unsub.then((u) => u()).catch(() => {}); this._unsub = null; }
   }
 
@@ -119,7 +124,14 @@ class SextantPanel extends LitElement {
   _subscribe() {
     if (!this.hass?.connection || this._unsub) return;
     this._unsub = this.hass.connection.subscribeMessage(
-      (payload) => { this._positions = payload; },
+      (payload) => {
+        // The gap between cycles is what the countdown counts down from:
+        // Bermuda's interval is not ours to read, so it is measured here.
+        const gap = payload?.stamp - this._positions?.stamp;
+        if (gap > 1 && gap < 300) this._cycleSecs = this._cycleSecs ? this._cycleSecs * 0.5 + gap * 0.5 : gap;
+        this._positions = payload;
+        this._now = Date.now() / 1000;
+      },
       { type: "sextant/subscribe" },
     );
     this._unsub.catch((e) => { this._unsub = null; this._error = `live updates: ${e?.message || e}`; });
@@ -216,8 +228,20 @@ class SextantPanel extends LitElement {
             ${sortFloors(floors).map((f) => html`<option value=${f.name} ?selected=${f.name === this._floor}>${f.name}</option>`)}
           </select>
         </label>` : nothing}
-      <span class="stamp" title="Time since the last positioning cycle"><ha-icon icon="mdi:update"></ha-icon>${this._positions.stamp ? fmtAge(Date.now() / 1000 - this._positions.stamp) : "—"}</span>
+      ${this._renderStamp()}
     `;
+  }
+
+  /** Seconds until the next positioning cycle, once two cycles have shown how
+   * far apart they are; the age of the last one until then, and while a cycle
+   * is overdue (a proxy went quiet, the house is asleep). */
+  _renderStamp() {
+    const stamp = this._positions.stamp;
+    const age = stamp ? this._now - stamp : null;
+    const left = this._cycleSecs && age != null ? Math.ceil(this._cycleSecs - age) : null;
+    const counting = left != null && left >= 0;
+    return html`<span class="stamp" title=${counting ? "Seconds until the next positioning cycle" : "Time since the last positioning cycle"}>
+      <ha-icon icon=${counting ? "mdi:timer-sand" : "mdi:update"}></ha-icon>${age == null ? "—" : counting ? `${left}s` : fmtAge(age)}</span>`;
   }
 
   _renderMode() {
@@ -311,6 +335,7 @@ class SextantLive extends LitElement {
     _scrub: { state: true },
     _links: { state: true },
     _marking: { state: true },
+    _proxy: { state: true },       // the proxy card, opened by clicking one on the map
     _heat: { state: true },
     _folded: { state: true },
     _truth: { state: true },
@@ -333,7 +358,7 @@ class SextantLive extends LitElement {
     this._truth = null;     // the last mark's evaluation {mark, rows, current_weight}
     this._marks = [];       // the selected thing's marks
     this._blend = null;     // slider value while it is being dragged (0..100)
-    this._options = { circles: false, fingerprint: false, trails: true, grid: "off", labels: true, subzones: true, receiverLabels: false, image: true };
+    this._options = { circles: false, fingerprint: false, trails: true, grid: "off", labels: true, subzones: true, receivers: true, image: true };
     try { Object.assign(this._options, JSON.parse(localStorage.getItem("sextant.live.options") || "{}")); } catch { /* ignore */ }
     this._history = null; // {ent, from, to, points:[{t,x,y,f}] }
     this._timeline = null; // {ent, at, stays:[{start,end,floor,room,spot,unheard?,partial?}], last_heard}
@@ -361,7 +386,11 @@ class SextantLive extends LitElement {
   firstUpdated() {
     this._map = new SextantMap(this.renderRoot.querySelector("canvas"), {
       fetch: (url) => this.hass.fetchWithAuth(url),
-      onSelect: (hit) => { this._select(hit?.kind === "thing" ? hit.ent : null); },
+      onSelect: (hit) => {
+        if (hit?.kind === "receiver") return this._openProxy(hit.index);
+        this._proxy = null;
+        this._select(hit?.kind === "thing" ? hit.ent : null);
+      },
       onMapClick: (m) => this._placeMark(m),
       isPlacing: () => this._marking,
     });
@@ -588,6 +617,158 @@ class SextantLive extends LitElement {
    * One thing is enough for a section - a person is tracked as a person -
    * except a pet whose one thing is its own tag (Meg over Meg says nothing).
    */
+  /** Click a proxy on the map: what it is and what it is doing. */
+  async _openProxy(index) {
+    const f = (this.data?.layout?.floor || []).find((x) => x.name === this.floor);
+    const rx = (f?.receivers || [])[index];
+    if (!rx?.entity_id) return;
+    this._proxy = { slug: rx.entity_id, loading: true };
+    try {
+      const info = await callWS(this, this.hass, { type: "sextant/proxy/info", proxy: rx.entity_id });
+      if (this._proxy?.slug === rx.entity_id) this._proxy = { ...info, slug: rx.entity_id };
+    } catch (e) {
+      this._proxy = { slug: rx.entity_id, error: e?.message || String(e) };
+    }
+  }
+
+  /** The proxy card: what it is, how it is, and what it is filtering out. */
+  _renderProxyCard() {
+    const p = this._proxy;
+    if (!p) return nothing;
+    const f = p.facts || {};
+    // Numbers as a person would write them, and firmware without the build
+    // stamp ESPHome appends.
+    const val = (key, unit) => {
+      const v = f[key];
+      if (!v || ["unknown", "unavailable"].includes(v.state)) return null;
+      const n = Number(v.state);
+      // Whole numbers throughout: a proxy at 77.7 % says nothing 78 does not,
+      // and a drop rate to the tenth of a percent is noise.
+      const text = Number.isFinite(n) && v.state.trim() !== ""
+        ? fmtNum(n, 0)
+        : v.state.split(" (")[0];
+      return unit === false ? text : `${text}${v.unit ? ` ${v.unit}` : ""}`;
+    };
+    const d = p.device || {};
+    // No Wi-Fi signal to report means it is wired.
+    const wired = !f.wifi_signal;
+    // The proxies report the percentage ESPHome makes from dBm:
+    // pct = clamp(2 * (dBm + 100)), so 80 % is -60 dBm and 66 % is -67, the
+    // usual line between reliable and not. Wired is always good.
+    const pct = Number(f.wifi_signal?.state);
+    const dbm = Number.isFinite(pct) ? pct / 2 - 100 : null;
+    const grade = wired ? "good" : !Number.isFinite(pct) ? "" : pct >= 80 ? "good" : pct >= 66 ? "fair" : "poor";
+    // What the link is, in as few words as carry information: the band when
+    // it is the interesting part (5 GHz is the rare one), else the 802.11
+    // generation the proxy negotiated, else just Wi-Fi.
+    // 2.4 GHz is channels 1-14 and 5 GHz starts at 32, so the channel says
+    // which band it is; no proxy needs a sensor for that.
+    const channel = Number(f.channel?.state);
+    const band = Number.isFinite(channel) && channel > 0 ? (channel > 14 ? "5GHz" : "2.4GHz") : null;
+    const generation = (val("generation", false) || "").split(" (")[0];
+    const linkText = wired ? "Ethernet"
+      : band && band.startsWith("5") ? `Wi-Fi ${band}`
+      : generation || "Wi-Fi";
+    const linkTitle = wired ? "Wired to the network"
+      : [dbm == null ? "On Wi-Fi" : `Wi-Fi ${fmtNum(pct, 0)} % (${fmtNum(dbm, 0)} dBm)`,
+         band, val("generation", false), val("channel") ? `channel ${val("channel")}` : null].filter(Boolean).join(" · ");
+    const rows = [
+      ["ESPHome release", val("esphome_version", false)],
+      // The board name is ESPHome's project name, so it belongs with the version.
+      // The version joins its parts with +; a space lets the ble half wrap.
+      ["Project", [val("project_name", false) || d.board, (val("project_version", false) || "").replace(/\+/g, " ")].filter(Boolean).join(" ") || null],
+      ["Uptime", val("uptime", false)],
+      ["Hearing", p.heard == null ? null : `${p.heard} thing${p.heard === 1 ? "" : "s"}`],
+      ["Adverts forwarded", val("adverts_forwarded")],
+      ["Adverts ignored", [val("adverts_dropped"), val("drop_rate") ? `(${val("drop_rate")})` : null].filter(Boolean).join(" ") || null],
+      ["IRKs installed", val("irks_loaded")],
+      ["Wi-Fi", [val("wifi_signal"), val("ssid", false), val("channel") ? `ch ${val("channel")}` : null].filter(Boolean).join(" · ") || null],
+      ["Chip", [d.chip, val("temperature")].filter(Boolean).join(" · ") || null],
+      // What HA records for the node is whichever link it is on: a proxy that
+      // reports a Wi-Fi signal is on Wi-Fi, one that does not is wired.
+      ["Bluetooth MAC", p.address || null],
+      [val("wifi_signal") ? "Wi-Fi MAC" : "Ethernet MAC", d.wifi_mac || null],
+      ["Chip MAC", val("chip_mac", false)],
+    ].filter(([, v]) => v);
+    return html`<div class="proxycard" @click=${(e) => e.stopPropagation()}>
+      <h4>${proxyName(this.data, p.slug)}${p.loading || p.error ? nothing : html`<span class="link ${grade}" title=${linkTitle}>
+        <ha-icon icon=${wired ? "mdi:ethernet" : "mdi:wifi"}></ha-icon>${linkText}</span>`}</h4>
+      ${p.loading ? html`<div class="muted small">Asking…</div>`
+        : p.error ? html`<div class="warn small">${p.error}</div>`
+        : rows.length ? html`<dl>${rows.map(([k, v]) => html`<dt>${k}</dt><dd>${v}</dd>`)}</dl>`
+        : html`<div class="muted small">This proxy publishes nothing about itself.</div>`}
+    </div>`;
+  }
+
+  /** How long a thing has been where it is, from its own location sensor
+   * (which changes when its room or spot does), as (short, exact) or null. */
+  _hereFor(p) {
+    // Sextant's own answer first: it survives a restart, where the sensor's
+    // last_changed is the restart itself. The spot when it is in one.
+    const own = p.sub_zone && p.sub_zone !== "unknown" ? (p.spot_since ?? p.since) : p.since;
+    let at = typeof own === "number" ? own : null;
+    if (at == null) {
+      const st = this.hass?.states?.[`sensor.${p.ent}_sextant_location`];
+      if (!st || ["unknown", "unavailable"].includes(st.state)) return null;
+      at = Date.parse(st.last_changed) / 1000;
+    }
+    if (!at) return null;
+    return [shortAge(Math.max(0, Date.now() / 1000 - at)), this._since(at)];
+  }
+
+  /** When a thing was last heard, written as a point in time: the clock for
+   * today, the date for longer ago, the year only past one. */
+  _since(at) {
+    if (!at) return null;
+    const d = new Date(at * 1000), ago = Date.now() / 1000 - at;
+    if (ago < 86400) return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    if (ago < 365 * 86400) return d.toLocaleDateString(undefined, { month: "numeric", day: "numeric" });
+    return d.toLocaleDateString(undefined, { month: "numeric", day: "numeric", year: "2-digit" });
+  }
+
+  /** How long before a thing not heard from is called away rather than late. */
+  _awayAfter() {
+    const own = this.data?.layout?.tuning?.away_after_secs;
+    const dflt = this.data?.tuning_spec?.away_after_secs?.default;
+    return typeof own === "number" ? own : typeof dflt === "number" ? dflt : 900;
+  }
+
+  /** Every thing Sextant knows, not only the ones heard this cycle: a phone
+   * that left the house still belongs in the list, shown where it was last
+   * seen. The missing ones come from their own sensors. */
+  _allRows() {
+    const live = (this.positions?.positions || []).slice();
+    const seen = new Set(live.map((p) => p.ent));
+    const known = Object.keys(this.data?.layout?.thing_classes || {});
+    for (const ent of known) {
+      if (seen.has(ent)) continue;
+      const loc = this.hass?.states?.[`sensor.${ent}_sextant_location`];
+      const floor = this.hass?.states?.[`sensor.${ent}_sextant_floor`];
+      const known_where = loc && !["unknown", "unavailable"].includes(loc.state);
+      // Sextant remembers the last sighting across restarts, which the
+      // sensors cannot: after one they read unknown, and their timestamp is
+      // the restart, not a sighting. So that is the first answer, and the
+      // sensors fill in for anything it has never heard.
+      const last = this.data?.last_seen?.[ent];
+      live.push({
+        ent,
+        away: true,
+        updated: last?.updated ?? (known_where ? Date.parse(loc.last_changed) / 1000 : null),
+        zone: last?.zone ?? (known_where ? (loc.attributes?.room || loc.state) : null),
+        sub_zone: last?.spot ?? (known_where ? loc.attributes?.spot : null),
+        floor: last?.floor ?? (floor && !["unknown", "unavailable"].includes(floor.state) ? floor.state : null),
+      });
+    }
+    return live.sort((a, b) => this._label(a.ent).localeCompare(this._label(b.ent)));
+  }
+
+  /** live, waiting (heard, but not lately) or away (long gone, or not heard at all). */
+  _state(p) {
+    const st = staleness(p, this._staleAfter());
+    if (p.away || (this._awayAfter() > 0 && st.age > this._awayAfter())) return { ...st, away: true, ghost: true };
+    return { ...st, away: false };
+  }
+
   _renderGroupedRows(rows) {
     const owners = this.data?.layout?.thing_owners || {};
     const byOwner = new Map();
@@ -614,14 +795,15 @@ class SextantLive extends LitElement {
       this._folded = next;
       try { localStorage.setItem("sextant.live.folded", JSON.stringify([...next])); } catch { /* ignore */ }
     };
-    const header = (key, title, extra) => html`<li class="group" @click=${() => fold(key)} role="button" aria-expanded=${!folded.has(key)}>
+    const header = (key, title, extra) => html`<li class="group ${extra.away ? "away" : ""}" @click=${() => fold(key)} role="button" aria-expanded=${!folded.has(key)}>
       <ha-icon class="chev" icon=${folded.has(key) ? "mdi:chevron-right" : "mdi:chevron-down"}></ha-icon>${extra.avatar || nothing}
       <span class="gtext"><span class="gname">${title}</span>${extra.where ? html`<span class="gwhere small">${extra.where}</span>` : nothing}</span></li>`;
     return html`${groups.map((g) => {
       const st = this.hass?.states?.[g.person], pic = st?.attributes?.entity_picture;
       const where = this.hass?.states?.[`sensor.${g.person.slice(7)}_sextant_person_location`]?.state;
       const avatar = html`<span class="gavatar">${pic ? html`<img src=${pic} alt="">` : g.name.slice(0, 2).toUpperCase()}</span>`;
-      return html`${header(g.person, g.name, { avatar, where: where && where !== "unknown" ? where : "" })}
+      return html`${header(g.person, g.name, { avatar, where: where && where !== "unknown" ? where : "",
+        away: g.list.every((p) => this._state(p).away) })}
         ${folded.has(g.person) ? nothing : g.list.map((p) => this._renderRow(p))}`;
     })}
     ${pets.length ? html`${header("_pets", "Pets", { avatar: html`<span class="gavatar"><ha-icon icon="mdi:paw"></ha-icon></span>` })}${folded.has("_pets") ? nothing : pets.map((p) => this._renderRow(p))}` : nothing}
@@ -629,16 +811,48 @@ class SextantLive extends LitElement {
   }
 
   _renderRow(p) {
-    const st = staleness(p, this._staleAfter());
+    const st = this._state(p);
+    const name = this._label(p.ent), pn = this._pn(p.ent);
+    const lastSeen = st.age ? `Not heard for ${fmtAge(st.age)}: this is where ${name} ${pn.was} last placed` : `${name} has not been heard from`;
     return html`
-            <li class="${p.ent === this._selected ? "selected" : ""} ${st.ghost ? "ghost" : ""}" title=${st.ghost ? `Not heard for ${fmtAge(st.age)}: this is where ${this._label(p.ent)} ${this._pn(p.ent).was} last placed` : ""} @click=${() => { this._select(p.ent === this._selected ? null : p.ent); if (p.floor && p.floor !== this.floor) this.dispatchEvent(new CustomEvent("floor-changed", { detail: p.floor })); }}>
-              ${this._avatar(p.ent)}
+            <li class="${p.ent === this._selected ? "selected" : ""} ${st.ghost ? "ghost" : ""} ${st.away ? "away" : ""}" title=${st.ghost ? lastSeen : ""} @click=${() => { this._select(p.ent === this._selected ? null : p.ent); if (p.floor && p.floor !== this.floor) this.dispatchEvent(new CustomEvent("floor-changed", { detail: p.floor })); }}>
+              ${(() => {
+                const who = this._speaksFor(p.ent);
+                // Three states, one badge: away (long gone), waiting (heard,
+                // but not lately), or the thing its owner is read from. A
+                // thing not being heard cannot be any owner's source.
+                const badge = st.away ? html`<ha-icon class="viabadge ghostbadge" icon="mdi:ghost-outline"></ha-icon>`
+                  : st.ghost ? html`<ha-icon class="viabadge waitbadge" icon="mdi:timer-sand"></ha-icon>`
+                  : who ? html`<ha-icon class="viabadge" icon="mdi:map-marker"></ha-icon>` : nothing;
+                if (badge === nothing) return this._avatar(p.ent);
+                const why = st.away ? lastSeen : st.ghost ? `Last heard ${fmtAge(st.age)} ago` : `Where ${who} is read from right now`;
+                return html`<span class="avslot" title=${why}>${this._avatar(p.ent)}${badge}</span>`;
+              })()}
               <span class="name">${this._label(p.ent)}</span>
-              <span class="where">${this._roomIcon(p.floor, p.zone) ? html`<ha-icon class="roomicon" icon=${this._roomIcon(p.floor, p.zone)}></ha-icon>` : nothing}${p.zone}</span>
-              <span class="muted small">${st.ghost ? html`<ha-icon class="ghosticon" icon="mdi:ghost-outline"></ha-icon>seen ${shortAge(st.age)} ago · ` : nothing}${p.floor}</span>
+              <span class="where">${p.zone ? html`${this._roomIcon(p.floor, p.zone) ? html`<ha-icon class="roomicon" icon=${this._roomIcon(p.floor, p.zone)}></ha-icon>` : nothing}${p.zone}` : html`<span class="muted">away</span>`}</span>
+              ${(() => {
+                const here = st.away || st.ghost ? null : this._hereFor(p);
+                return html`<span class="muted small floorline" title=${here ? `Here since ${here[1]}` : ""}>${
+                  st.away && this._since(p.updated) ? html`since ${this._since(p.updated)}${p.floor ? " · " : ""}`
+                  : st.ghost && st.age ? html`seen ${shortAge(st.age)} ago${p.floor ? " · " : ""}` : nothing}${p.floor || (st.ghost ? nothing : "")}${
+                  here ? html` · ${here[0]}` : nothing}</span>`;
+              })()}
               ${p.sub_zone && p.sub_zone !== "unknown" ? html`<span class="spot muted small">${p.sub_zone}</span>` : nothing}
               ${p.ent === this._selected ? html`<div class="quickin" @click=${(e) => e.stopPropagation()}>${this._renderQuick(p)}</div>` : nothing}
             </li>`;
+  }
+
+  /** The person this thing is speaking for right now, or null: the owner's
+   * location sensor names the thing it read (via). */
+  _speaksFor(ent) {
+    const owners = this.data?.layout?.thing_owners || {};
+    const person = owners[ent];
+    // Only where there is a choice to report: a pet owns its own tag, so its
+    // person sensor only ever reads that tag back.
+    if (!person || Object.values(owners).filter((o) => o === person).length < 2) return null;
+    const st = this.hass?.states?.[`sensor.${person.split(".")[1]}_sextant_person_location`];
+    if (st?.attributes?.via !== ent) return null;
+    return this.hass?.states?.[person]?.attributes?.friendly_name || person.split(".")[1];
   }
 
   /** The icon of the Home Assistant area a room is linked to, or null. */
@@ -692,18 +906,23 @@ class SextantLive extends LitElement {
   }
 
   render() {
-    const rows = (this.positions?.positions || []).slice().sort((a, b) => this._label(a.ent).localeCompare(this._label(b.ent)));
+    const rows = this._allRows();
     const sel = rows.find((p) => p.ent === this._selected);
     const h = this._history;
     const switches = [
-      ["image", "Map image", "Show or hide the floor-plan drawing behind the rooms"],
-      ["labels", "Labels", "Room and thing names"],
-      ["trails", "Trails", "Each thing's recent path"],
-      ["subzones", "Spots", "Draw the spots (a couch, a desk, a bedside table)"],
-      ["receiverLabels", "Proxy names", "Name every proxy on the map, not just the one under the pointer"],
-      ["circles", "Range circles", "The distance each proxy measured, as a circle: the fix is where they meet"],
-      ["fingerprint", "Fingerprint fix", "Where the fingerprint estimator alone would put each thing (dashed), next to the published fix"],
+      ["image", "Map image", "Show or hide the floor-plan drawing behind the rooms", "mdi:floor-plan"],
+      ["labels", "Labels", "Room and thing names", "mdi:label-outline"],
+      ["trails", "Trails", "Each thing's recent path", "mdi:shoe-print"],
+      ["subzones", "Spots", "Draw the spots (a couch, a desk, a bedside table)", "mdi:sofa-outline"],
+      ["receivers", "Proxies", "Draw the proxies. Whichever one you point at is named; Labels names the rooms and things", "mdi:access-point"],
+      ["circles", "Range circles", "The distance each proxy measured, as a circle: the fix is where they meet", "mdi:radar"],
+      ["fingerprint", "Fingerprint fix", "Where the fingerprint estimator alone would put each thing (dashed), next to the published fix", "mdi:fingerprint"],
     ];
+    // The map's own switches, as the pressed buttons the Edit tools and a
+    // thing's quick actions use: an icon with its word under it.
+    const optBtn = ([k, label, tip, icon]) => html`<button class="qa opt ${this._options[k] ? "on" : ""}" title=${tip}
+      aria-label=${label} aria-pressed=${!!this._options[k]} @click=${() => this._setOption(k, !this._options[k])}>
+      <ha-icon icon=${icon}></ha-icon><span>${label}</span></button>`;
     const gridPicker = uiSelect({ label: "Grid", value: this._options.grid, options: [{ value: "off", label: "No grid" }, { value: "m", label: "Metres" }, { value: "ft", label: "Feet" }], onChange: (v) => this._setOption("grid", v), style: "min-width: 120px" });
     const fitButton = uiButton({ label: "Fit map", kind: "text", icon: "mdi:fit-to-screen", onClick: () => this._map.fit() });
     return html`
@@ -713,23 +932,20 @@ class SextantLive extends LitElement {
           ${uiButton({ label: "New thing", kind: "outline", icon: "mdi:plus-circle-outline", onClick: () => this._goto("things") })}
           ${uiButton({ label: "Calibrate", kind: "outline", icon: "mdi:tune-vertical", onClick: () => this._goto("calibration") })}` : nothing}
       </div>
-      <div class="stage ${this._mapOpen ? "" : "collapsed"}"><canvas></canvas>
+      <div class="stage ${this._mapOpen ? "" : "collapsed"}"><canvas></canvas>${this._renderProxyCard()}
         <div class="overlay">
-          <div class="chips wide-only" title="A switch and its label share a border: the word is on the right of its switch.">
-            ${switches.map(([k, l, tip]) => html`<span title=${tip} class="chipwrap">${uiSwitch({ label: l, checked: !!this._options[k], onChange: (v) => this._setOption(k, v) })}</span>`)}
-          </div>
+          <div class="chips wide-only">${switches.map(optBtn)}</div>
           <span class="wide-only">${gridPicker}</span>
           <span class="wide-only">${fitButton}</span>
           <button class="iconbtn narrow-only" title="Map options" @click=${() => { this._optionsOpen = !this._optionsOpen; }}><ha-icon icon="mdi:tune-variant"></ha-icon></button>
           <span class="narrow-only">${fitButton}</span>
+          <button class="iconbtn narrow-only" title="Hide the map" aria-label="Hide the map" @click=${() => { this._mapOpen = false; }}><ha-icon icon="mdi:map-minus"></ha-icon></button>
         </div>
         ${this._optionsOpen ? html`
           <div class="opts-backdrop narrow-only" @click=${() => { this._optionsOpen = false; }}></div>
           <div class="opts-sheet narrow-only">
             <h3>Map options</h3>
-            <div class="chips" title="A switch and its label share a border: the word is on the right of its switch.">
-              ${switches.map(([k, l, tip]) => html`<span title=${tip} class="chipwrap">${uiSwitch({ label: l, checked: !!this._options[k], onChange: (v) => this._setOption(k, v) })}</span>`)}
-            </div>
+            <div class="chips optgrid">${switches.map(optBtn)}</div>
             ${gridPicker}
             ${uiButton({ label: "Done", kind: "primary", onClick: () => { this._optionsOpen = false; } })}
           </div>` : nothing}
@@ -887,7 +1103,12 @@ class SextantLive extends LitElement {
         <p class="muted small">Error is the mean distance from the pin; Room is how often the fix landed in the pin's room. One pin can overfit: pin ${this._pn(ent).obj} in another room too.</p>` : html`<p class="muted small">Nothing could be re-solved for this mark.</p>`}
         <div class="row">${uiButton({ label: "Close", kind: "text", onClick: () => { this._truth = null; } })}${uiButton({ label: "Forget pin", kind: "text", onClick: () => this._deleteMark(t.mark.id) })}</div>
       </div>` : nothing}
-      ${!t && this._marks.length ? html`<details class="marks"><summary>Pins</summary><ul class="plain">${this._marks.map((m) => html`<li>pin ${m.id} · ${m.floor} · ${m.samples} cycles · ${new Date(m.t * 1000).toLocaleString()} ${uiButton({ label: "Forget", kind: "text", onClick: () => this._deleteMark(m.id) })}</li>`)}</ul></details>` : nothing}
+      ${!t && this._marks.length ? html`<details class="marks"><summary>Pins</summary>
+        <ul class="plain pinlist">${this._marks.map((m) => html`<li>
+          <span class="pinid">Pin ${m.id} <span class="muted">· ${m.floor}</span></span>
+          <button class="forget" title="Forget pin ${m.id}" aria-label="Forget pin ${m.id}" @click=${() => this._deleteMark(m.id)}><ha-icon icon="mdi:trash-can-outline"></ha-icon></button>
+          <span class="muted small pinwhen">${new Date(m.t * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} · ${m.samples} cycles</span>
+        </li>`)}</ul></details>` : nothing}
     </div>`;
   }
 
@@ -902,7 +1123,7 @@ class SextantLive extends LitElement {
     const recs = everything.filter((r) => placedSlugs.has(r.scanner) || placedAddr.has(String(addrOf(r.scanner) || "").toLowerCase()));
     const dropped = everything.length - recs.length;
     return html`<details open class="links">
-      <summary>Heard by ${recs.length} placed proxy${recs.length === 1 ? "" : "ies"}${dropped ? html` <span class="muted small">(+${dropped} unplaced and ignored)</span>` : nothing}</summary>
+      <summary>Heard by ${recs.length} placed ${recs.length === 1 ? "proxy" : "proxies"}${dropped ? html` <span class="muted small">(+${dropped} unplaced and ignored)</span>` : nothing}</summary>
       <table class="small"><tr><th>Proxy</th><th class="num">Distance</th></tr>
         ${recs.slice(0, 16).map((r) => html`<tr><td>${proxyName(this.data, r.scanner)}</td><td class="num">${fmtLen(r.distance, this.hass)}</td></tr>`)}
         ${recs.length > 16 ? html`<tr><td class="muted" colspan="2">and ${recs.length - 16} more</td></tr>` : nothing}
@@ -934,11 +1155,22 @@ class SextantLive extends LitElement {
     .list li:hover, .list li.selected { background: var(--secondary-background-color); }
     .list li.selected { outline: 2px solid var(--primary-color); }
     .list .name { font-weight: 600; grid-column: 2; }
+    /* A badge on the disc of the thing its owner's location is read from. */
+    .list .avslot { grid-row: 1 / 3; position: relative; display: inline-flex; }
+    .list .avslot .viabadge.waitbadge { background: var(--warning-color, #e6a100); color: #23272e; }
+    .list .avslot .viabadge.ghostbadge { background: var(--secondary-background-color, #666); color: var(--secondary-text-color); }
+    .list .avslot .viabadge { position: absolute; right: -3px; top: -3px; --mdc-icon-size: 13px; width: 17px; height: 17px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--primary-color, #03a9f4); color: var(--text-primary-color, #fff); box-shadow: 0 0 0 2px var(--card-background-color, #fff); }
     /* A flex row so the icon centres on the text instead of sitting on its baseline. */
     .list .where { grid-column: 3; display: flex; align-items: center; justify-content: flex-end; gap: 4px; text-align: right; font-size: 12px; }
-    /* The spot sits under its room, the way the floor sits under the name. */
-    .list .spot { grid-column: 3; text-align: right; }
-    .list li.ghost { opacity: 0.55; }
+    /* The spot sits under its room, the way the floor sits under the name.
+       The .small rule below spans columns 2 to 4; this must beat it, or the
+       spot spans both columns and lands on a third row. */
+    .list .small.spot { grid-column: 3; text-align: right; }
+    /* The floor keeps to its own column, so the spot can sit beside it. */
+    .list .small.floorline { grid-column: 2; }
+    .list li.ghost { opacity: 0.7; }
+    .list li.away { opacity: 0.45; }
+    .list li.group.away { opacity: 0.5; }
     .list li.ghost .avatar { filter: grayscale(0.6); outline: 1px dashed var(--secondary-text-color); outline-offset: 1px; }
     .ghosticon { --mdc-icon-size: 14px; vertical-align: -2px; margin-right: 2px; }
     details.timeline { margin: 8px 0; }
@@ -977,11 +1209,36 @@ class SextantLive extends LitElement {
     .list li.group .gtext { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
     .list li.group .gname, .list li.group .gwhere { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .list li.group .gwhere { font-weight: 400; color: var(--secondary-text-color); }
+    /* One pin per row: what and where, when underneath, Forget on the right. */
+    .pinlist li { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 0 10px; padding: 5px 0; border-bottom: 1px solid var(--divider-color); }
+    .pinlist li:last-child { border-bottom: 0; }
+    .pinlist .pinid { grid-column: 1; grid-row: 1; font-size: 13px; }
+    .pinlist .pinwhen { grid-column: 1; grid-row: 2; }
+    .pinlist .forget { grid-column: 2; grid-row: 1 / 3; align-self: center; display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border: 1px solid var(--divider-color); border-radius: 8px; background: transparent; color: var(--secondary-text-color); cursor: pointer; }
+    .pinlist .forget ha-icon { --mdc-icon-size: 18px; }
+    .pinlist .forget:hover { color: var(--error-color, #c62828); border-color: var(--error-color, #c62828); }
+    /* Clicked on the map: floats over the plan's top-left, out of the way. */
+    .proxycard { position: absolute; left: 10px; top: 64px; z-index: 3; max-width: 320px; max-height: 60%; overflow: auto; padding: 10px 12px; border-radius: 10px; background: var(--card-background-color); box-shadow: var(--ha-card-box-shadow, 0 2px 8px rgba(0,0,0,0.3)); }
+    .proxycard h4 { margin: 0 0 6px; display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+    .proxycard .link { display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px; border-radius: 999px; background: var(--secondary-background-color); color: var(--secondary-text-color); font-size: 11px; font-weight: 500; white-space: nowrap; }
+    .proxycard .link ha-icon { --mdc-icon-size: 14px; }
+    .proxycard .link.good { background: var(--success-color, #2e7d32); color: #fff; }
+    .proxycard .link.fair { background: var(--warning-color, #e6a100); color: #23272e; }
+    .proxycard .link.poor { background: var(--error-color, #c62828); color: #fff; }
+    .proxycard dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 0; font-size: 13px; }
+    .proxycard dt { color: var(--secondary-text-color); }
+    .proxycard dd { margin: 0; font-variant-numeric: tabular-nums; }
     .quick { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 6px; margin: 2px 0 4px; }
     .quick .qa { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0; padding: 6px 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border: 1px solid var(--divider-color, #ddd); border-radius: 10px; background: var(--ha-card-background, var(--card-background-color, #fff)); color: var(--primary-text-color); font: inherit; font-size: 11px; cursor: pointer; }
     .quick .qa:hover { filter: brightness(0.97); }
     .quick .qa ha-icon { --mdc-icon-size: 22px; }
-    .quick .qa.on { background: var(--primary-color, #03a9f4); border-color: var(--primary-color, #03a9f4); color: var(--text-primary-color, #fff); }
+    .quick .qa.on, .qa.opt.on { background: var(--primary-color, #03a9f4); border-color: var(--primary-color, #03a9f4); color: var(--text-primary-color, #fff); }
+    /* The map's switches: the same button as a thing's quick actions. */
+    .qa.opt { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 66px; padding: 5px 8px; border: 1px solid var(--divider-color, #ddd); border-radius: 10px; background: var(--ha-card-background, var(--card-background-color, #fff)); color: var(--primary-text-color); font: inherit; font-size: 11px; line-height: 1.1; white-space: nowrap; cursor: pointer; }
+    .qa.opt ha-icon { --mdc-icon-size: 20px; }
+    .qa.opt:hover { filter: brightness(0.97); }
+    .qa.opt:focus-visible { outline: 2px solid var(--primary-color, #03a9f4); outline-offset: 2px; }
+    .optgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); gap: 6px; }
     .quick .qa:focus-visible { outline: 2px solid var(--primary-color, #03a9f4); outline-offset: 2px; }
     .marking .zoomto { display: flex; flex-wrap: wrap; gap: 2px 6px; margin: 4px 0; }
     .marking { background: var(--warning-color, #c77800); color: #fff; padding: 6px 8px; border-radius: 6px; font-size: 13px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
@@ -989,7 +1246,7 @@ class SextantLive extends LitElement {
     ul.plain { list-style: none; padding: 0; margin: 4px 0; font-size: 12px; }
     .opts-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.35); z-index: 9; }
     .opts-sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; background: var(--card-background-color); border-radius: 14px 14px 0 0; padding: 14px 16px max(14px, env(safe-area-inset-bottom)); box-shadow: 0 -2px 12px rgba(0,0,0,0.25); display: flex; flex-direction: column; gap: 10px; max-height: 70vh; overflow: auto; }
-    .opts-sheet .chips { flex-direction: column; align-items: stretch; }
+    .opts-sheet .chips.optgrid { flex-direction: row; align-items: stretch; }
     .opts-sheet .chipwrap { justify-content: space-between; }
     .opts-sheet .chipwrap > ha-formfield, .opts-sheet .chipwrap > label.inline { width: 100%; justify-content: space-between; }
     /* Small buttons a phone user reaches for right away: jump straight to
@@ -1009,6 +1266,10 @@ class SextantLive extends LitElement {
       :host { display: flex; flex-direction: column; }
       .quick-actions { order: 0; display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px; background: var(--card-background-color); border-bottom: 1px solid var(--divider-color); }
       .side { order: 1; flex: 1 1 auto; min-height: 0; overflow: auto; border-left: 0; border-top: 1px solid var(--divider-color); max-height: none; }
+      /* Things, and with it Hide map, stays reachable however far the list
+         is scrolled - it used to scroll away and leave no way to close a map
+         taking half the screen. */
+      .side h3 { position: sticky; top: 0; z-index: 2; margin: 0; padding: 8px 0; background: var(--card-background-color); }
       .stage { order: 2; flex: 0 0 48vh; }
       .stage.collapsed { display: none; }
       .wide-only { display: none; }

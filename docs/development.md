@@ -2,6 +2,14 @@
 
 # Data and development
 
+## Versions
+
+Releases are dated: `YYYY.MM.DD.N`, with `N` counting that day's releases
+from 1 and starting again the next day - the same scheme as the proxies'
+firmware and Strimmer. A version
+says when something shipped, which is the only thing a running house needs
+to know; the numbers before it (up to 3.17.76) were sequential.
+
 ## Where the data lives
 
 | What | Where |

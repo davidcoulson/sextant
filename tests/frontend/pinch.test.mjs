@@ -124,3 +124,21 @@ test("a room linked to an area gets that area's icon; others do not", () => {
   map.setAreas(null);
   assert.deepEqual(map.areaIcons, {});
 });
+
+test("the map reads light or dark from the page's own background", () => {
+  const map = new SextantMap(fakeCanvas(), {});
+  const bg = { value: "#ffffff" };
+  map._css = (name, fallback) => (name === "--sextant-map-bg" ? bg.value : fallback);
+  map._readTheme();
+  assert.equal(map.dark, false, "white is light");
+  for (const dark of ["#101418", "#000", "rgb(24, 26, 30)", "rgba(16,18,22,1)"]) {
+    bg.value = dark;
+    map._readTheme();
+    assert.equal(map.dark, true, `${dark} is dark`);
+  }
+  for (const light of ["#fafafa", "rgb(240, 240, 235)"]) {
+    bg.value = light;
+    map._readTheme();
+    assert.equal(map.dark, false, `${light} is light`);
+  }
+});

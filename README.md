@@ -64,7 +64,7 @@ Sextant side by side) and [Data and development](docs/development.md).
 4. On **Things**, pick what to track. Positions appear on **Live**
    within a cycle.
 5. With more than one floor, give each an elevation and line them up with
-   [alignment pins](docs/edit.md#lining-the-floors-up).
+   [alignment anchors](docs/edit.md#lining-the-floors-up).
 
 [Getting started](docs/getting-started.md) walks through all of it.
 
@@ -79,13 +79,13 @@ token, in Home Assistant's own theme and unit system. Eight pages:
 
 | Page | For |
 |---|---|
-| [Live](docs/live.md) | every tracked thing on the plan; focus one for its room, spot, floor and proxies; blend slider and truth marks |
+| [Live](docs/live.md) | every tracked thing on the plan; focus one for its room, spot, floor and proxies; blend slider and location pins |
 | [Edit](docs/edit.md) | place proxies, draw rooms, spots and no-go areas, set the scale and floor levels |
 | [Things](docs/things.md) | what is tracked and everything Bermuda hears; name, class, colour, photo, height and estimator per thing |
 | [Bermuda](docs/bermuda.md) | Bermuda's global options, Find My accessories, Tiles |
 | [Proxies](docs/proxies.md) | proxy health by floor and room, what each proxy hears, the self-test |
 | [Calibration](docs/calibration.md) | proxies calibrate each other; apply into Sextant or into Bermuda |
-| [Tuning](docs/tuning.md) | the stability KPI, accuracy from truth marks, every knob live |
+| [Tuning](docs/tuning.md) | the stability KPI, accuracy from location pins, every knob live |
 | [Advice](docs/advice.md) | which rooms the proxies serve worst and where one more would help |
 
 ## What Sextant adds to Bermuda
@@ -97,11 +97,11 @@ token, in Home Assistant's own theme and unit system. Eight pages:
 - Floor election by competition between floors, scaled by proximity and a
   per-floor bias that can vary across the plan (a bias field), for landings
   and double-height rooms where both floors hear a thing equally.
-- Alignment pins that say how the floors stack, with an elevation per
+- Alignment anchors that say how the floors stack, with an elevation per
   floor: shared named points on every plan, fitted into one house frame,
   with misplaced pins found and named and each floor's scale audited.
 - Proxy calibration with 3D heights, written into Bermuda if you like.
-- Truth marks: say where a thing really is and Sextant finds the settings
+- Location pins: say where a thing really is and Sextant finds the settings
   that fit it, and reports accuracy in metres.
 - Bermuda management from the panel: track, untrack, Find My accessories,
   Tiles followed across address rotation (with the fork).
