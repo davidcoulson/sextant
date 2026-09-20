@@ -28,7 +28,7 @@ distances in metres.
 | `fingerprint_missing_m` | 12 | how far "not heard" counts as |
 | `fingerprint_ref_gain` | 1.0 | probe beacons hotter (<1) or cooler (>1) than things |
 | `fingerprint_auto_gain` | true | learn the rest of that gain from the things |
-| `fingerprint_marks` | true | truth marks double as fingerprint references |
+| `fingerprint_marks` | true | location pins double as fingerprint references |
 | `distance_estimator` | `bermuda` | `bermuda` or `median` |
 | `median_window_secs` | 15 | samples newer than this feed the median |
 | `median_min_samples` | 3 | fewer falls back to Bermuda's distance |
@@ -63,7 +63,7 @@ distances in metres.
 | `correction_close_fade` | on | fade a proxy's calibration stretch out at close range (see [calibration](calibration.md#close-range)) |
 | `correction_fade_near_m` | 1.0 | a reading this close gets none of the stretch |
 | `correction_fade_far_m` | 2.5 | from this far the stretch applies in full |
-| `fingerprint_marks_scope` | `class` | whose truth marks place a thing: `own`, `class` (also things of its class) or `all` |
+| `fingerprint_marks_scope` | `class` | whose location pins place a thing: `own`, `class` (also things of its class) or `all` |
 | `history_hours` | 6 | hours of position history kept (scrubber, timeline, Activity), 1 to 168 |
 | `history_admin_only` | off | only administrators may read where things have been (scrubber, timeline, Activity) |
 | `stale_after_secs` | 120 | unheard this long, a thing is drawn as a ghost on Live (display only) |

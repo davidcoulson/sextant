@@ -100,64 +100,64 @@ differently, and this is a one-way trip.
 Each floor is its own drawing, at its own resolution, cropped its own way,
 so out of the box Sextant has no idea how they stack: it cannot tell
 whether a spot on the Second Floor plan is above the foyer or above the
-garage. **Pins** fix that.
+garage. **Anchors** fix that.
 
 Pick points that run straight up through the house and that you can find on
 every plan: outside corners, a stair post, a stair opening, a chimney
 breast. Avoid interior room corners: interior walls move between storeys,
 so the corner of a room upstairs is often not above the corner of the room
-below, even when the plans make it look that way. With the **Pin**
-tool, click each one. A pin lands exactly on a room corner when one is near
+below, even when the plans make it look that way. With the **Anchor**
+tool, click each one. An anchor lands exactly on a room corner when one is near
 (hold Alt to place it freely), which is both easier than aiming and more
 accurate. Then switch floor and click the same points in the same order: the
-names carry over, so linking a floor is a row of clicks. A pin is green once
+names carry over, so linking a floor is a row of clicks. An anchor is green once
 its name exists on another floor, amber while it is on its own, and red if
 it disagrees with the rest.
 
-Under the Pin tool, **Next pin** says which name the next click takes: a
-name another floor is waiting on (the first by default), or **New pin** for
+Under the Anchor tool, **Next anchor** says which name the next click takes: a
+name another floor is waiting on (the first by default), or **New anchor** for
 a point no other floor has yet - the choice holds while you place several.
 **not here** beside a name says that point does not exist on this floor (a
 post only in the basement), so it is no longer offered; **Not on this
-floor** lists those, and a click puts one back. A pin placed under the wrong
-name can be renamed in its panel, or split off with **New pin**. A pin only
+floor** lists those, and a click puts one back. An anchor placed under the wrong
+name can be renamed in its panel, or split off with **New anchor**. An anchor only
 needs to be on the floors it links: each pair of neighbouring floors wants
-three or more shared pins, and a floor lines up with the one it shares pins
+three or more shared anchors, and a floor lines up with the one it shares anchors
 with.
 
-Two shared pins line a floor up. Use four to eight, spread across the plan:
+Two shared anchors line a floor up. Use four to eight, spread across the plan:
 the extra ones turn into a check. The **Alignment** card says how closely
-the pins agree ("typically within 8 cm; worst is NE corner at 21 cm"), which
-pin to look at first when they do not, and what scale the pins themselves
-imply. With well-spread pins that figure is usually better than the single
+the anchors agree ("typically within 8 cm; worst is NE corner at 21 cm"), which
+anchor to look at first when they do not, and what scale the anchors themselves
+imply. With well-spread anchors that figure is usually better than the single
 tape measurement behind the floor's scale, and one button adopts it. The fit
 deliberately does not absorb a scale error on its own: floors that lined up
 while every distance on one of them stayed 3 % wrong would be worse than
 floors that visibly disagree.
 
-A pin on the wrong corner is the usual mistake, and an easy one: the room
+An anchor on the wrong corner is the usual mistake, and an easy one: the room
 upstairs runs a few metres longer than the room under it, or its wall is set
 in from the wall below, and the "same" corner is not the same point. The fit
-looks for the smallest set of pins whose removal leaves the rest agreeing,
-sets those aside and names them, rather than letting two bad pins drag every
+looks for the smallest set of anchors whose removal leaves the rest agreeing,
+sets those aside and names them, rather than letting two bad anchors drag every
 good one a metre off. On the plan, a grey ring marks where the *other*
-floors put each pin; a pin that disagrees is joined to its ring by a red
+floors put each anchor; an anchor that disagrees is joined to its ring by a red
 line, so a wrong corner shows as a long red line rather than a number. Move
-the pin to its ring's corner, or to whatever point really is straight above
-- or delete it, which is usually the better answer: a pin does not have to
+the anchor to its ring's corner, or to whatever point really is straight above
+- or delete it, which is usually the better answer: an anchor does not have to
 exist on every floor, it only links the floors that carry it.
-Pins sit on corners, where proxies and walls also are, so they have their
+Anchors sit on corners, where proxies and walls also are, so they have their
 own padlock in the toolbar: lock them to reach a proxy underneath one.
-With fewer than five shared pins nothing can be set aside with any
+With fewer than five shared anchors nothing can be set aside with any
 confidence, which is one more reason to place more than two.
 
-The pins' scale is only offered when at least four pins agree with each
+The anchors' scale is only offered when at least four anchors agree with each
 other, and only when it differs from the floor's by 1 % or more; below that
-the difference is smaller than the pins' own placement error. A scale read
-out of pins that disagree is noise with two decimals. After adopting it,
+the difference is smaller than the anchors' own placement error. A scale read
+out of anchors that disagree is noise with two decimals. After adopting it,
 re-run [calibration](calibration.md) on that floor.
 
-Pins cannot give the vertical leg. **Elevation** is how far this floor's
+Anchors cannot give the vertical leg. **Elevation** is how far this floor's
 finished floor sits above the ground floor's: the ceiling height below it
 plus the floor structure, usually about 30 cm (a foot). Left blank, a storey
 is taken as 3 m.

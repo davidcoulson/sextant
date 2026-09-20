@@ -106,12 +106,12 @@ in the wrong room:
 - **Calibrate.** On **Calibration**, turn **Auto calibration** on and
   leave it for an hour. The proxies range each other at known distances
   and each gets a correction for how loudly it hears.
-- **Mark the truth.** Select the thing, **It's actually here…**, click
+- **Pin the truth.** Select the thing, **It's actually here…**, click
   where it really is. On a phone, tap the spot's name to zoom to it first,
   or pinch. Sextant re-solves the last few minutes under every setting and
-  offers the ones that would have put it there, and the mark becomes a
+  offers the ones that would have put it there, and the pin becomes a
   reference for placing that thing there again
-  ([Truth marks](live.md#truth-marks)).
+  ([Location pins](live.md#location-pins)).
 - **See where it has been.** **Activity** colours the plan by where
   the selected thing spent the last hours - a quick check that the
   couch it sat on all evening is where the colour is. History keeps 6 hours

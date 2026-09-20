@@ -488,7 +488,7 @@ class SextantLive extends LitElement {
       const r = await callWS(this, this.hass, { type: "sextant/truth/mark", entity: ent, floor: this.floor, x: m.x, y: m.y });
       if (!r) return;
       this._truth = r;
-      toast(this, `Mark ${r.mark.id} recorded from ${r.mark.samples} cycles`);
+      toast(this, `Pin ${r.mark.id} recorded from ${r.mark.samples} cycles`);
       this._loadMarks(ent);
       this.dispatchEvent(new CustomEvent("layout-changed"));
     })();
@@ -496,7 +496,7 @@ class SextantLive extends LitElement {
   }
 
   async _deleteMark(id) {
-    if (!confirmDialog(`Forget mark ${id}?`)) return;
+    if (!confirmDialog(`Forget pin ${id}?`)) return;
     const r = await callWS(this, this.hass, { type: "sextant/truth/delete", mark_id: id });
     if (r) { if (this._truth?.mark?.id === id) this._truth = null; this._loadMarks(this._selected); }
   }
@@ -877,17 +877,17 @@ class SextantLive extends LitElement {
     return html`<div class="truth">
       ${this._marking ? nothing
         : html`<div class="row">${uiButton({ label: `${this._label(ent)} is actually here…`, icon: "mdi:map-marker-check", onClick: () => { this._marking = true; }, title: `Tell Sextant where ${this._label(ent)} really is; Sextant re-solves the last few minutes under every setting and shows which fits best` })}
-            ${this._marks.length ? html`<span class="muted small">${this._marks.length} mark${this._marks.length === 1 ? "" : "s"}</span>` : nothing}</div>`}
+            ${this._marks.length ? html`<span class="muted small">${this._marks.length} pin${this._marks.length === 1 ? "" : "s"}</span>` : nothing}</div>`}
       ${t ? html`<div class="card inner">
         <h4>Mark ${t.mark.id} <span class="muted small">${t.mark.samples} cycles re-solved · now ${Math.round((t.current_weight ?? 0) * 100)}% fingerprint</span></h4>
         ${rows.length ? html`<table class="small"><tr><th>Estimator</th><th class="num">Gain</th><th class="num">Error</th><th class="num">Room</th><th></th></tr>
           ${rows.map((r) => html`<tr><td>${r.estimator}${r.estimator === "fused" ? ` ${Math.round(r.weight * 100)}%` : ""}</td><td class="num">×${fmtNum(r.gain, 1)}</td><td class="num">${fmtLen(r.mean_m, this.hass)}</td><td class="num">${Math.round(r.room_ok * 100)}%</td>
             <td>${uiButton({ label: "Apply", kind: "text", onClick: () => this._applyRow(ent, r) })}</td></tr>`)}
         </table>
-        <p class="muted small">Error is the mean distance from the mark; Room is how often the fix landed in the mark's room. One mark can overfit: mark ${this._pn(ent).obj} in another room too.</p>` : html`<p class="muted small">Nothing could be re-solved for this mark.</p>`}
-        <div class="row">${uiButton({ label: "Close", kind: "text", onClick: () => { this._truth = null; } })}${uiButton({ label: "Forget mark", kind: "text", onClick: () => this._deleteMark(t.mark.id) })}</div>
+        <p class="muted small">Error is the mean distance from the pin; Room is how often the fix landed in the pin's room. One pin can overfit: pin ${this._pn(ent).obj} in another room too.</p>` : html`<p class="muted small">Nothing could be re-solved for this mark.</p>`}
+        <div class="row">${uiButton({ label: "Close", kind: "text", onClick: () => { this._truth = null; } })}${uiButton({ label: "Forget pin", kind: "text", onClick: () => this._deleteMark(t.mark.id) })}</div>
       </div>` : nothing}
-      ${!t && this._marks.length ? html`<details class="marks"><summary>Marks</summary><ul class="plain">${this._marks.map((m) => html`<li>mark ${m.id} · ${m.floor} · ${m.samples} cycles · ${new Date(m.t * 1000).toLocaleString()} ${uiButton({ label: "Forget", kind: "text", onClick: () => this._deleteMark(m.id) })}</li>`)}</ul></details>` : nothing}
+      ${!t && this._marks.length ? html`<details class="marks"><summary>Pins</summary><ul class="plain">${this._marks.map((m) => html`<li>pin ${m.id} · ${m.floor} · ${m.samples} cycles · ${new Date(m.t * 1000).toLocaleString()} ${uiButton({ label: "Forget", kind: "text", onClick: () => this._deleteMark(m.id) })}</li>`)}</ul></details>` : nothing}
     </div>`;
   }
 

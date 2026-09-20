@@ -13,7 +13,7 @@ thing's dialog on the Things page - name, class, colour, photo, height -
 without hunting for it in the list. A **blend slider** from geometric to
 fingerprint sets how this thing's position is estimated (the two ends
 are drawn on the map when the fingerprint switch is on), and **It's
-actually here…** records a [truth mark](live.md#truth-marks). A thing with no fix shows *seen 40s
+actually here…** records a [location pin](live.md#location-pins). A thing with no fix shows *seen 40s
 ago* rather than a blank. Switches draw the solver's distance circles, the
 fingerprint fix, a trail, and hide the plan image. A history scrubber under
 the map replays where a thing has been over the retention window, with a
@@ -57,47 +57,47 @@ next under **Pets**, and the rest follow under **Everything else**.
 ## Quick actions
 
 Selecting a thing opens a row of buttons inside its row in the list:
-**It's here** (a truth mark, with the floor's spots to zoom to),
+**It's here** (a location pin, with the floor's spots to zoom to),
 **Activity** (where it has spent its time; again to hide it), **History** (scrub it),
 and **Edit**, which opens the thing on the Things page.
 
-## Truth marks
+## Location pins
 
 When a thing sits in the wrong place, select it on the Live page, click
 **It's actually here…** and tap the spot on the map where it really is.
 On a phone, pinch to zoom, or tap one of the floor's spots listed under
 the prompt to fill the screen with just that spot (a bedside table
-becomes phone-sized); **Whole floor** zooms back out. The mark goes down
+becomes phone-sized); **Whole floor** zooms back out. The pin goes down
 when your finger lifts without moving, so panning or pinching never
 places one.
 Sextant keeps the solver inputs of the last few minutes for every
 thing, so it re-solves those cycles under every blend of geometric fit
 and fingerprint match and every reference gain, and shows how far each
-lands from your mark and how often it gets the room right. **Apply** on a
+lands from your pin and how often it gets the room right. **Apply** on a
 row makes those the thing's settings (its blend weight, and a gain
-multiplier folded into its learned gain). One mark can overfit, so mark a
+multiplier folded into its learned gain). One pin can overfit, so pin a
 thing in two or three rooms.
 
-A mark keeps the readings as Bermuda gave them, before calibration and
+A pin keeps the readings as Bermuda gave them, before calibration and
 per-thing trims, and applies whatever corrections are in force each time
 it is used, so re-running calibration or changing the close-range fade
-never leaves a mark describing yesterday's corrections. Marks made before
+never leaves a pin describing yesterday's corrections. Pins made before
 3.17.7 have the correction then in force divided back out, assumed to be
-the one in force now: re-mark a spot that matters if calibration has
+the one in force now: re-pin a spot that matters if calibration has
 changed since.
 
-A mark guides the thing that made it and things of the same class - the
-cats share one another's marks, a phone's mark helps the other phones -
-and nothing else: a mark records how one device looks from one place, and
+A pin guides the thing that made it and things of the same class - the
+cats share one another's pins, a phone's pin helps the other phones -
+and nothing else: a pin records how one device looks from one place, and
 a watch on a wrist does not look like a phone in a hand
 (`fingerprint_marks_scope`: `own`, `class` or `all`).
 
-Marks stay, with their samples, in `.storage/sextant_truth`, and do two
-more jobs. The Tuning page's **Accuracy** card re-solves every mark under
+Pins stay, with their samples, in `.storage/sextant_truth`, and do two
+more jobs. The Tuning page's **Accuracy** card re-solves every pin under
 the settings in force and reports, per thing, the mean error in metres
 and the share of cycles in the right room: the accuracy figure the
-stability KPI cannot give. And each mark becomes a fingerprint reference
-at the marked point, in the marking thing's own scale, so rooms with no
+stability KPI cannot give. And each pin becomes a fingerprint reference
+at the pinned point, in the pinning thing's own scale, so rooms with no
 probe nearby get a reference too (`fingerprint_marks` turns that off).
 
 ## Activity
