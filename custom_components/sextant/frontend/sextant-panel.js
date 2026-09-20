@@ -659,7 +659,10 @@ class SextantLive extends LitElement {
     // What the link is, in as few words as carry information: the band when
     // it is the interesting part (5 GHz is the rare one), else the 802.11
     // generation the proxy negotiated, else just Wi-Fi.
-    const band = val("band", false);
+    // 2.4 GHz is channels 1-14 and 5 GHz starts at 32, so the channel says
+    // which band it is; no proxy needs a sensor for that.
+    const channel = Number(f.channel?.state);
+    const band = Number.isFinite(channel) && channel > 0 ? (channel > 14 ? "5GHz" : "2.4GHz") : null;
     const generation = (val("generation", false) || "").split(" (")[0];
     const linkText = wired ? "Ethernet"
       : band && band.startsWith("5") ? `Wi-Fi ${band}`
