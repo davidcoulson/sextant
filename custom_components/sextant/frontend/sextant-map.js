@@ -847,7 +847,9 @@ export class SextantMap {
     if (this.heat && this.mode !== "edit") this._drawHeat(ctx);
     this._drawDraft(ctx);
     if (this._snap) this._drawSnap(ctx);
-    this._drawReceivers(ctx, f.receivers || []);
+    // "Proxies" off hides them entirely: a plan with dozens of them is busy,
+    // and most of the time you are looking at the things, not the proxies.
+    if (this.options.receivers !== false || this.mode === "edit") this._drawReceivers(ctx, f.receivers || []);
     if (this.mode === "edit") this._drawPins(ctx, f.pins || []);
     if (this.suggestions.length) {
       // A house plan is busy: walls, room fills, dozens of proxies. Fade all
@@ -1000,7 +1002,7 @@ export class SextantMap {
       ctx.fillRect(-s / 2, -s / 2, s, s);
       ctx.strokeRect(-s / 2, -s / 2, s, s);
       ctx.restore();
-      if (this.options.labels && (edit || hovered || selected || this.options.receiverLabels)) {
+      if (this.options.labels && (edit || hovered || selected)) {
         this._label(ctx, r.label || r.entity_id, r.cords.x, r.cords.y + (base + 9) / k, 10, 0.8);
       }
     });
