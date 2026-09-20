@@ -197,6 +197,11 @@ async def ws_layout_get(hass, connection, msg):
         # running: installed but not running needs a restart; running but
         # newer than the page only needs a reload.
         "app_version": await hass.async_add_executor_job(_manifest_version),
+        # Where each thing was last heard, kept across restarts: what the Live
+        # page says for a thing nothing is hearing, which its sensors cannot
+        # answer after a restart (see runtime.py).
+        "last_seen": {ent: last for ent, last in (getattr(core, "_last_seen", None) or {}).items()
+                      if isinstance(last, dict)},
         "running_version": RUNNING_VERSION,
         "restart_needed": RUNNING_CODE is not None and await hass.async_add_executor_job(code_signature) != RUNNING_CODE,
         "scanners": {

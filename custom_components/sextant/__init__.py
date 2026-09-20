@@ -2700,6 +2700,14 @@ async def update_apitricords(hass, new_data):
     global _runtime_saved_at
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN]["apitricords"] = new_data
+    # Remember where each thing was last heard, so a thing that goes quiet
+    # can still say where and when (see runtime.py).
+    for row in new_data or []:
+        if isinstance(row, dict) and row.get("ent") and isinstance(row.get("updated"), (int, float)):
+            _last_seen[row["ent"]] = {
+                "zone": row.get("zone"), "spot": row.get("sub_zone"), "floor": row.get("floor"),
+                "updated": row["updated"], "cords": row.get("cords"),
+            }
     now = time.time()
     if not _runtime_saved_at:
         # The first cycle after a start has one thing in it; there is nothing
@@ -2817,6 +2825,19 @@ async def _restore_runtime(hass):
         return
     back = runtime_mod.restore(data, time.time(), _tuning(layout, "restore_state_secs"))
     _last_seen.update(back["last"])
+    # Anything the snapshot never knew, but the position history did: the
+    # store outlives any restart, so its last point is a real sighting.
+    try:
+        hist = get_position_history(hass)
+        for entity in hist.entities():
+            if entity in _last_seen:
+                continue
+            span = hist.retained(entity)
+            if span and isinstance(span.get("to"), (int, float)):
+                _last_seen[entity] = {"zone": None, "spot": None, "floor": None,
+                                      "updated": span["to"], "cords": None}
+    except Exception as e:  # noqa: BLE001
+        _LOGGER.debug("No history to date the last sighting from: %s", e)
     for entity, kf in back["kf"].items():
         _kf_position_state[entity] = {
             "x": np.array(kf["x"], dtype=float), "P": np.array(kf["P"], dtype=float),

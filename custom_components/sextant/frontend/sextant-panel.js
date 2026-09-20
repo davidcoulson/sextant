@@ -739,15 +739,18 @@ class SextantLive extends LitElement {
       const loc = this.hass?.states?.[`sensor.${ent}_sextant_location`];
       const floor = this.hass?.states?.[`sensor.${ent}_sextant_floor`];
       const known_where = loc && !["unknown", "unavailable"].includes(loc.state);
+      // Sextant remembers the last sighting across restarts, which the
+      // sensors cannot: after one they read unknown, and their timestamp is
+      // the restart, not a sighting. So that is the first answer, and the
+      // sensors fill in for anything it has never heard.
+      const last = this.data?.last_seen?.[ent];
       live.push({
         ent,
         away: true,
-        // Only a sensor that still names a place knows when that was; after a
-        // restart an unknown one carries the restart's own timestamp.
-        updated: known_where ? Date.parse(loc.last_changed) / 1000 : null,
-        zone: known_where ? (loc.attributes?.room || loc.state) : null,
-        sub_zone: known_where ? loc.attributes?.spot : null,
-        floor: floor && !["unknown", "unavailable"].includes(floor.state) ? floor.state : null,
+        updated: last?.updated ?? (known_where ? Date.parse(loc.last_changed) / 1000 : null),
+        zone: last?.zone ?? (known_where ? (loc.attributes?.room || loc.state) : null),
+        sub_zone: last?.spot ?? (known_where ? loc.attributes?.spot : null),
+        floor: last?.floor ?? (floor && !["unknown", "unavailable"].includes(floor.state) ? floor.state : null),
       });
     }
     return live.sort((a, b) => this._label(a.ent).localeCompare(this._label(b.ent)));
