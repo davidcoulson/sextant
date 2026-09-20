@@ -599,7 +599,9 @@ export class SextantMap {
       // it is and what it is doing.
       this.selection = hit.kind === "thing" ? hit : null;
       if (this.host.onSelect) this.host.onSelect(hit);
-    } else if (this.mode !== "edit" && this.host.onSelect && !hit) {
+    } else if (this.mode !== "edit" && this.host.onSelect && (!hit || e.button === 0)) {
+      // Outside the editor a room or a spot is not something to select, so a
+      // click on one means the same as a click on the floor: nothing here.
       this.selection = null;
       this.host.onSelect(null);
     } else if (this.mode === "edit" && !hit) {
