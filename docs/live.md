@@ -78,6 +78,13 @@ row makes those the thing's settings (its blend weight, and a gain
 multiplier folded into its learned gain). One pin can overfit, so pin a
 thing in two or three rooms.
 
+A pin inside a spot is also evidence of being in that spot: a fix is the
+weighted blend of the pins and proxies it matched, and the share of that
+blend sitting inside the spot counts the way a proxy on the spot does.
+This is what gets a cat onto a couch - lying on it, the cat's own body
+makes the couch's outlets read about twice too far, while the pins still
+match.
+
 A pin keeps the readings as Bermuda gave them, before calibration and
 per-thing trims, and applies whatever corrections are in force each time
 it is used, so re-running calibration or changing the close-range fade

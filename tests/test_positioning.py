@@ -1989,3 +1989,26 @@ def test_a_room_linked_to_an_area_publishes_its_area_and_floor_ids():
     _state, attrs = sextant._location_state("Hall", "Peninsula", "Kitchen", "Ground Floor", layout)
     assert attrs["room"] == "Kitchen" and attrs["area_id"] == "kitchen" and attrs["floor_id"] == "ground"
 
+
+
+def test_pins_inside_a_spot_are_evidence_of_being_in_it():
+    """A cat on a couch blocks the couch's own proxies; the pins do not care."""
+    from shapely.geometry import Polygon
+    couch = Polygon([(0, 0), (300, 0), (300, 300), (0, 300)])   # pixels
+    pins = {"mark:1": ("Ground", 150.0, 150.0), "mark:2": ("Ground", 900.0, 900.0),
+            "mark:3": ("Second", 150.0, 150.0)}
+    ev = lambda refs: sextant.spot_pin_evidence({"refs": refs}, "Ground", couch, pins)  # noqa: E731
+    # The only match is a pin on the couch: all of the fix came from it.
+    assert ev([("mark:1", 0.5)]) == 1.0
+    # A proxy of the same quality alongside it: about half.
+    assert 0.45 < ev([("mark:1", 0.5), ("great_room_rrn00", 0.5)]) < 0.55
+    # A closer match counts for more (weights go as 1/(score + 0.05)^2).
+    assert ev([("mark:1", 0.3), ("great_room_rrn00", 0.9)]) > 0.85
+    assert ev([("mark:1", 0.9), ("great_room_rrn00", 0.3)]) < 0.15
+    # Pins elsewhere, on another floor, or no pins at all say nothing.
+    assert ev([("mark:2", 0.3)]) == 0.0
+    assert ev([("mark:3", 0.3)]) == 0.0
+    assert ev([("great_room_rrn00", 0.3)]) == 0.0
+    assert sextant.spot_pin_evidence(None, "Ground", couch, pins) == 0.0
+    assert sextant.spot_pin_evidence({"refs": []}, "Ground", couch, pins) == 0.0
+    assert sextant.spot_pin_evidence({"refs": [("mark:1", "bad")]}, "Ground", couch, pins) == 0.0

@@ -2412,6 +2412,7 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
         sub_zone, parent_zone = _elect_subzone(
             entity, lowest_floor_name, zone, zone_locked, test_point, kf_for_election,
             _floor_sub_zone_polygons(hass, new_global_data, entity, lowest_floor_name), scale, layout, now=now,
+            fp=elected.get("fp"),
         )
         apitricords = update_or_add_entry(
             apitricords,
@@ -3398,6 +3399,40 @@ def _spot_proxy_evidence(layout, proxies):
     return best
 
 
+def _pin_positions():
+    """slug -> (floor, x, y) for every location pin, in that floor's pixels."""
+    return {f"mark:{m.get('id')}": (m.get("floor"), float(m.get("x", 0.0)), float(m.get("y", 0.0)))
+            for m in _truth_marks if m.get("id") is not None}
+
+
+def spot_pin_evidence(fp, floor_name, poly, pins=None):
+    """How much of a fingerprint fix came from pins inside this spot, 0..1.
+
+    A fix is the weighted mean of its best matching references (weight
+    1/(score+0.05)**2, see fingerprint.match), and a pin is a place the user
+    pointed at. So the share of that weight sitting inside the spot says "the
+    readings look like the times you said it was here" - evidence a proxy on
+    the spot cannot give when the thing lying on it blocks that proxy (a cat
+    on a couch reads the couch's own outlets twice too far).
+    """
+    refs = (fp or {}).get("refs") or ()
+    if not refs or poly is None:
+        return 0.0
+    if pins is None:
+        pins = _pin_positions()
+    inside = total = 0.0
+    for slug, score in refs:
+        try:
+            w = 1.0 / (float(score) + 0.05) ** 2
+        except (TypeError, ValueError):
+            continue
+        total += w
+        at = pins.get(slug)
+        if at and at[0] == floor_name and poly.contains(Point(at[1], at[2])):
+            inside += w
+    return (inside / total) if total > 0 else 0.0
+
+
 def _spot_proxies(sub):
     """The proxies a spot names as sitting on it: ``proxy`` is one name or a list."""
     raw = sub.get("proxy")
@@ -3552,7 +3587,7 @@ def _subzone_probs(entity):
     return {name: round(p, 3) for name, p in probs.items()}
 
 
-def _elect_subzone(entity, floor_name, zone, zone_locked, point, kf_state, sub_polys, scale, layout, now=None):
+def _elect_subzone(entity, floor_name, zone, zone_locked, point, kf_state, sub_polys, scale, layout, now=None, fp=None):
     """The (sub_zone, parent_zone) pair to publish. parent_zone is always the
     elected main zone; sub_zone is one of its sub-zones or "unknown".
 
@@ -3595,8 +3630,12 @@ def _elect_subzone(entity, floor_name, zone, zone_locked, point, kf_state, sub_p
     # A proxy on the spot is evidence of its own, as strong as it is: it lifts
     # the spot's share to at least that, taking the rest proportionally.
     settings = _spot_settings(layout, floor_name)
+    pins = _pin_positions() if fp else None
     for sid, _parent, _poly in polys:
         p = _spot_proxy_evidence(layout, (settings.get(sid) or {}).get("proxies"))
+        # Pins inside the spot are evidence of their own (see spot_pin_evidence).
+        if pins:
+            p = max(p, spot_pin_evidence(fp, floor_name, _poly, pins))
         old = shares.get(sid, 0.0)
         if p > old:
             keep = (1.0 - p) / (1.0 - old) if old < 1.0 else 0.0
