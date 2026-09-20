@@ -913,7 +913,12 @@ class SextantLive extends LitElement {
         <p class="muted small">Error is the mean distance from the pin; Room is how often the fix landed in the pin's room. One pin can overfit: pin ${this._pn(ent).obj} in another room too.</p>` : html`<p class="muted small">Nothing could be re-solved for this mark.</p>`}
         <div class="row">${uiButton({ label: "Close", kind: "text", onClick: () => { this._truth = null; } })}${uiButton({ label: "Forget pin", kind: "text", onClick: () => this._deleteMark(t.mark.id) })}</div>
       </div>` : nothing}
-      ${!t && this._marks.length ? html`<details class="marks"><summary>Pins</summary><ul class="plain">${this._marks.map((m) => html`<li>pin ${m.id} · ${m.floor} · ${m.samples} cycles · ${new Date(m.t * 1000).toLocaleString()} ${uiButton({ label: "Forget", kind: "text", onClick: () => this._deleteMark(m.id) })}</li>`)}</ul></details>` : nothing}
+      ${!t && this._marks.length ? html`<details class="marks"><summary>Pins</summary>
+        <ul class="plain pinlist">${this._marks.map((m) => html`<li>
+          <span class="pinid">Pin ${m.id} <span class="muted">· ${m.floor}</span></span>
+          <button class="forget" title="Forget pin ${m.id}" aria-label="Forget pin ${m.id}" @click=${() => this._deleteMark(m.id)}><ha-icon icon="mdi:trash-can-outline"></ha-icon></button>
+          <span class="muted small pinwhen">${new Date(m.t * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} · ${m.samples} cycles</span>
+        </li>`)}</ul></details>` : nothing}
     </div>`;
   }
 
@@ -928,7 +933,7 @@ class SextantLive extends LitElement {
     const recs = everything.filter((r) => placedSlugs.has(r.scanner) || placedAddr.has(String(addrOf(r.scanner) || "").toLowerCase()));
     const dropped = everything.length - recs.length;
     return html`<details open class="links">
-      <summary>Heard by ${recs.length} placed proxy${recs.length === 1 ? "" : "ies"}${dropped ? html` <span class="muted small">(+${dropped} unplaced and ignored)</span>` : nothing}</summary>
+      <summary>Heard by ${recs.length} placed ${recs.length === 1 ? "proxy" : "proxies"}${dropped ? html` <span class="muted small">(+${dropped} unplaced and ignored)</span>` : nothing}</summary>
       <table class="small"><tr><th>Proxy</th><th class="num">Distance</th></tr>
         ${recs.slice(0, 16).map((r) => html`<tr><td>${proxyName(this.data, r.scanner)}</td><td class="num">${fmtLen(r.distance, this.hass)}</td></tr>`)}
         ${recs.length > 16 ? html`<tr><td class="muted" colspan="2">and ${recs.length - 16} more</td></tr>` : nothing}
@@ -1007,6 +1012,14 @@ class SextantLive extends LitElement {
     .list li.group .gtext { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
     .list li.group .gname, .list li.group .gwhere { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .list li.group .gwhere { font-weight: 400; color: var(--secondary-text-color); }
+    /* One pin per row: what and where, when underneath, Forget on the right. */
+    .pinlist li { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 0 10px; padding: 5px 0; border-bottom: 1px solid var(--divider-color); }
+    .pinlist li:last-child { border-bottom: 0; }
+    .pinlist .pinid { font-size: 13px; }
+    .pinlist .pinwhen { grid-column: 1; }
+    .pinlist .forget { grid-row: 1 / 3; align-self: center; display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border: 1px solid var(--divider-color); border-radius: 8px; background: transparent; color: var(--secondary-text-color); cursor: pointer; }
+    .pinlist .forget ha-icon { --mdc-icon-size: 18px; }
+    .pinlist .forget:hover { color: var(--error-color, #c62828); border-color: var(--error-color, #c62828); }
     .quick { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 6px; margin: 2px 0 4px; }
     .quick .qa { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0; padding: 6px 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border: 1px solid var(--divider-color, #ddd); border-radius: 10px; background: var(--ha-card-background, var(--card-background-color, #fff)); color: var(--primary-text-color); font: inherit; font-size: 11px; cursor: pointer; }
     .quick .qa:hover { filter: brightness(0.97); }
