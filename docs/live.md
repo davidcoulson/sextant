@@ -14,18 +14,29 @@ without hunting for it in the list. A **blend slider** from geometric to
 fingerprint sets how this thing's position is estimated (the two ends
 are drawn on the map when the fingerprint switch is on), and **It's
 actually here…** records a [location pin](live.md#location-pins). A thing with no fix shows *seen 40s
-ago* rather than a blank. Switches draw the solver's distance circles, the
-fingerprint fix, a trail, and hide the plan image. A history scrubber under
+ago* rather than a blank. A row of buttons over the map draws or hides the
+plan image, the labels, the trails, the spots, the proxies, the solver's
+distance circles and the fingerprint fix; each lights up while it is on.
+Labels names the rooms and the things (and whichever proxy you point at),
+while Proxies draws the proxies themselves, which a busy plan is often
+better without. In the corner, a countdown says how many seconds until the
+next positioning cycle - measured from the gap between cycles, so it
+follows whatever Bermuda is doing - and falls back to how long ago the last
+one was when a cycle is late. A history scrubber under
 the map replays where a thing has been over the retention window, with a
 room band, playback and a jump-to-time picker.
 
-**Ghosts.** A thing nothing has heard for `stale_after_secs` (two minutes
-unless you change it on the Tuning page) is drawn as a ghost: faint, with a
-dashed outline and *3m ago* under it, and its row in the list fades with a
-ghost icon. What you are looking at is where it *was*; the room and spot
+**Heard, late, away.** A thing nothing has heard for `stale_after_secs`
+(two minutes unless you change it on the Tuning page) is drawn as a ghost:
+faint, with a dashed outline and *3m ago* under it, and its row wears an
+hourglass. What you are looking at is where it *was*; the room and spot
 sensors still say the same, because nothing has contradicted them yet. It
-leaves the map altogether after `position_timeout` (five minutes by
-default). The dashboard card draws ghosts the same way.
+leaves the map after `position_timeout` (five minutes by default), and past
+`away_after_secs` (fifteen minutes) the list calls it **away**: faded, with
+a ghost badge, saying since when and where it was last seen. Every thing
+Sextant knows stays in the list, so a phone that left the house sits in its
+owner's group instead of vanishing, and a person whose things are all away
+fades with them. The dashboard card draws ghosts the same way.
 
 **How long it has been there, and where it has been.** The focused thing's
 card says how long it has been where it is - *Meg's Cafe for 1h 12m, since
@@ -37,13 +48,21 @@ means the stay began before the start of what history keeps, so it is at
 least that long. Stays come from the position history, which records a
 point on every room and spot change.
 
-On a phone the map switches (labels, trails, the grid and so on) collapse
-behind a single options button so they never force sideways scrolling, the
-floor picker and the cycle-age clock move to a bar under the page, and a
-row of **quick actions** — self-test, and for an administrator, adding a
+On a phone those buttons collapse behind a single options button so they
+never force sideways scrolling, the floor picker and the countdown move to
+a bar under the page, and a row of **quick actions** — self-test, and for an administrator, adding a
 thing and starting calibration — jumps straight to the right page
-without hunting through the tabs. Editing the floor plan itself is still
+without hunting through the tabs. The map takes about half the screen and
+can be put away: **Hide map** in the Things heading, which stays put as the
+list scrolls, or the button on the map itself. Picking a thing opens it
+again, under that thing's details. Editing the floor plan itself is still
 a desktop job.
+
+Each row carries the thing's name and floor on the left, and on the right
+the room it is in with its Home Assistant area's icon, the spot underneath.
+A small badge on the disc says what is special about it: a location marker
+for the thing its owner's location is being read from, an hourglass while
+it is late, a ghost once it is away.
 
 ## Grouped by person
 
@@ -62,13 +81,6 @@ Selecting a thing opens a row of buttons inside its row in the list:
 and **Edit**, which opens the thing on the Things page.
 
 ## Location pins
-
-Every thing Sextant knows is listed, not only the ones heard this cycle.
-A thing heard recently reads plainly; one not heard for `stale_after_secs`
-wears an hourglass and says when it was last heard; and past
-`away_after_secs` it is **away** - faded, with a ghost badge, still showing
-where it was last seen. A phone that left the house stays in its owner's
-group instead of vanishing from the list.
 
 When a thing sits in the wrong place, select it on the Live page, click
 **It's actually here…** and tap the spot on the map where it really is.
@@ -107,6 +119,9 @@ cats share one another's pins, a phone's pin helps the other phones -
 and nothing else: a pin records how one device looks from one place, and
 a watch on a wrist does not look like a phone in a hand
 (`fingerprint_marks_scope`: `own`, `class` or `all`).
+
+A selected thing lists its own pins - which pin, its floor, when it was
+placed and over how many cycles - each with a bin to forget it.
 
 Pins stay, with their samples, in `.storage/sextant_truth`, and do two
 more jobs. The Tuning page's **Accuracy** card re-solves every pin under

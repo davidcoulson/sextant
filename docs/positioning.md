@@ -97,7 +97,16 @@ through the thing being somewhere else.
 **Spots.** The same election scaled down: the share of the ellipse inside
 each spot of the elected room, entered at `subzone_enter_prob`, left at
 `subzone_unlock_margin` outside, every change waiting
-`subzone_switch_secs`. A locked room keeps its spot. A spot can be limited
+`subzone_switch_secs`. Two things speak beside that share, each lifting it
+to at least their own strength: a [proxy on the spot](edit.md) that hears
+the thing close and clearly nearest, and the share of a fingerprint fix
+that came from [pins](live.md#location-pins) inside the spot. The pins
+matter where the proxies cannot help - a cat lying on a couch makes the
+couch's own outlets read about twice too far - and only speak for a thing
+on or beside the spot, since pins are shared by a class. A locked room
+keeps its spot while the fix stays within `subzone_lock_release_m` of it:
+a still thing's fix wanders, often further than a bedside table is wide,
+but a pet that crossed the room has really left. A spot can be limited
 to certain [classes](things.md) — a bedside table to a phone, a watch and
 keys, a cat bed to the cat — and is then not a candidate for anything else
 at all, so the cat bed never competes for the phone. A spot with no classes

@@ -63,6 +63,7 @@ distances in metres.
 | `correction_close_fade` | on | fade a proxy's calibration stretch out at close range (see [calibration](calibration.md#close-range)) |
 | `correction_fade_near_m` | 1.0 | a reading this close gets none of the stretch |
 | `correction_fade_far_m` | 2.5 | from this far the stretch applies in full |
+| `subzone_lock_release_m` | 2.5 | how far a still thing's fix must leave its spot before the room lock stops holding it there |
 | `away_after_secs` | 900 | when the Live list stops waiting for a thing and calls it away |
 | `fingerprint_marks_scope` | `class` | whose location pins place a thing: `own`, `class` (also things of its class) or `all` |
 | `history_hours` | 6 | hours of position history kept (scrubber, timeline, Activity), 1 to 168 |
