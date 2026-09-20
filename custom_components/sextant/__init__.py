@@ -2867,7 +2867,17 @@ _last_seen = {}
 
 async def _restore_runtime(hass):
     """Carry the last cycle's state over a restart (see runtime.py)."""
-    layout = get_layout(hass) or {}
+    # The restore has to happen before the first cycle, which puts it ahead of
+    # the setup step that fills the layout cache - so it loads the layout
+    # itself rather than reading an empty one. Its own window
+    # (restore_state_secs) is a tuning key IN that layout: read too early, a
+    # window David had set to twenty minutes was silently the five-minute
+    # default, and a reboot that took five minutes ten seconds resumed nothing.
+    layout = get_layout(hass)
+    if not isinstance(layout, dict):
+        layout = await load_layout(hass)
+    if not isinstance(layout, dict):
+        layout = {}
     try:
         data = await load_runtime(hass)
     except Exception as e:  # noqa: BLE001
@@ -2917,7 +2927,14 @@ async def _restore_runtime(hass):
     elif back["kf"] or back["zone"]:
         _LOGGER.info("Resumed %d things after %.0f s down", len(back["zone"] or back["kf"]), back["age"])
     else:
-        _LOGGER.info("Down for %.0f s: too long to resume, keeping %d last sightings", back["age"], len(back["last"]))
+        # A warning, not an info: state was thrown away, and the line says by
+        # how much the window was missed - which is the one thing you want to
+        # know when every thing comes back reading "here for 0 minutes".
+        _LOGGER.warning(
+            "Down for %.0f s, past the %.0f s restore window (restore_state_secs): "
+            "elections start cold, keeping %d last sightings",
+            back["age"], _tuning(layout, "restore_state_secs"), len(back["last"]),
+        )
 
 
 def _thing_floors():
