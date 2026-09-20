@@ -55,6 +55,7 @@ class SextantDevices extends LitElement {
     super();
     this.section = "things";
     this.openThing = null;   // a thing another page asked us to open the dialog for
+    this._handledThing = null;  // the request already answered (not reactive, on purpose)
     this._loaded = false;    // whether the first Bermuda fetch has come back
     this._tracked = null;
     this._candidates = null;
@@ -100,6 +101,12 @@ class SextantDevices extends LitElement {
     // had already picked.
     if (!this.openThing || !this.data?.layout || !this._loaded) return;
     const slug = this.openThing;
+    // Once per request, and never again: opening the dialog sets _wizard,
+    // which schedules another update, which re-enters this method with
+    // openThing still set - the panel clears it a tick later. Without this
+    // guard that is an endless render loop, and the page locks up.
+    if (this._handledThing === slug) return;
+    this._handledThing = slug;
     // _tracked is a map keyed by address, as every other reader of it treats
     // it - this one asked it for .find and threw a TypeError instead, every
     // time, which is why the dialog never opened and the request was never
