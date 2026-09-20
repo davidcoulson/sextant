@@ -34,6 +34,10 @@ one was when a cycle is late. A history scrubber under
 the map replays where a thing has been over the retention window, with a
 room band, playback and a jump-to-time picker.
 
+The map follows the theme: on a dark one the floor plan is inverted, so a
+drawing that is black on white becomes white on black, and the labels take
+a dark plate. Nothing to set - it reads the page's own background.
+
 **Heard, late, away.** A thing moves through three states, each with its
 own timer on the [Tuning](tuning.md) page:
 
