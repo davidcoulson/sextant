@@ -17,6 +17,7 @@ const RECEIVER_SIZE = 10;
 const RECEIVER_SIZE_EDIT = 13;   // proxies are the things people drag: give them a target
 const VERTEX_SIZE = 6;
 const PIN_SIZE = 11;
+const REMARK_SIZE = 9;           // the note's dot; its text hangs off to the right
 const HIT_SLOP = 8;
 // Closest zoom: 20 screen px per map px, enough for a bedside table to fill a phone.
 const MAX_ZOOM = 20;
@@ -533,7 +534,7 @@ export class SextantMap {
     // No image yet: size to the content so an image-less floor still renders.
     let maxX = 0, maxY = 0;
     const f = this.floor || {};
-    for (const r of [...(f.receivers || []), ...(f.pins || [])]) { maxX = Math.max(maxX, r.cords?.x || 0); maxY = Math.max(maxY, r.cords?.y || 0); }
+    for (const r of [...(f.receivers || []), ...(f.pins || []), ...(f.remarks || [])]) { maxX = Math.max(maxX, r.cords?.x || 0); maxY = Math.max(maxY, r.cords?.y || 0); }
     for (const list of [f.zones || [], f.subzones || []]) for (const z of list) for (const p of z.cords || []) { maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y); }
     return { w: maxX ? maxX * 1.05 : 1000, h: maxY ? maxY * 1.05 : 700 };
   }
@@ -619,6 +620,7 @@ export class SextantMap {
       const f = this.floor, hit = d.hit;
       if (hit.kind === "receiver") f.receivers[hit.index].cords = { ...d.origin[0] };
       else if (hit.kind === "pin") f.pins[hit.index].cords = { ...d.origin[0] };
+      else if (hit.kind === "remark") f.remarks[hit.index].cords = { ...d.origin[0] };
       else (hit.kind === "zone" ? f.zones : f.subzones)[hit.index].cords = d.origin.map((q) => ({ ...q }));
     }
     // The first finger of a pinch is not a corner.
@@ -638,6 +640,7 @@ export class SextantMap {
     const f = this.floor;
     if (hit.kind === "receiver") { const r = f.receivers[hit.index]; return [{ x: r.cords.x, y: r.cords.y }]; }
     if (hit.kind === "pin") { const q = f.pins[hit.index]; return [{ x: q.cords.x, y: q.cords.y }]; }
+    if (hit.kind === "remark") { const q = f.remarks[hit.index]; return [{ x: q.cords.x, y: q.cords.y }]; }
     const list = hit.kind === "zone" ? f.zones : f.subzones;
     return (list[hit.index].cords || []).map((q) => ({ x: q.x, y: q.y }));
   }
@@ -782,6 +785,16 @@ export class SextantMap {
       }
     }
     const edit = this.mode === "edit";
+    if (edit) {
+      // Notes before everything: a note is deliberately placed ON the thing it
+      // is about - the proxy that is going here, the spot to check - so it has
+      // to be reachable there. The radius is tight, and a note is the one
+      // thing on the plan that can be dragged aside without consequence.
+      for (let i = (f.remarks || []).length - 1; i >= 0; i--) {
+        const q = f.remarks[i].cords;
+        if (q && Math.hypot(q.x - m.x, q.y - m.y) <= REMARK_SIZE / this.view.k) return { kind: "remark", index: i, id: f.remarks[i].remark_id };
+      }
+    }
     if (edit && !this.locks.pin) {
       // Pins first: they sit on corners, where walls and proxies also are,
       // and a pin under a proxy would otherwise be unreachable. The reverse
@@ -865,6 +878,9 @@ export class SextantMap {
     // and most of the time you are looking at the things, not the proxies.
     if (this.options.receivers !== false || this.mode === "edit") this._drawReceivers(ctx, f.receivers || []);
     if (this.mode === "edit") this._drawPins(ctx, f.pins || []);
+    // Notes draw in both modes: one is written while planning and read while
+    // standing in the room with the Live page open, which is the whole point.
+    this._drawRemarks(ctx, f.remarks || []);
     if (this.suggestions.length) {
       // A house plan is busy: walls, room fills, dozens of proxies. Fade all
       // of it back behind a scrim of the page's own background so the advised
@@ -1049,6 +1065,46 @@ export class SextantMap {
    * pin disagrees with the others (`miss`, metres, set by the editor). */
   /** Where the other floors say this floor's pins are, in this floor's px. */
   setPinGhosts(ghosts) { this.pinGhosts = ghosts || []; this.invalidate(); }
+
+  /** Notes: a small dot where the click was, the text on a plate beside it.
+   *
+   * Deliberately the quietest thing on the plan - a dashed ring, no fill, and
+   * the text at the size of a caption - because a note is about something
+   * else on the map and must not outshine it. An empty one still draws: it is
+   * a note being written, and it has to be findable to be finished. */
+  _drawRemarks(ctx, remarks) {
+    const k = this.view.k;
+    const edit = this.mode === "edit";
+    remarks.forEach((note, index) => {
+      if (!note.cords) return;
+      const selected = edit && this.selection?.kind === "remark" && this.selection.index === index;
+      const hovered = edit && this.hover?.kind === "remark" && this.hover.index === index;
+      const r = (selected || hovered ? REMARK_SIZE * 1.25 : REMARK_SIZE) / k;
+      const colour = selected ? "#ffd166" : this.dark ? "#9fb3c8" : "#5b6b7c";
+      ctx.save();
+      ctx.globalAlpha = edit ? 1 : 0.75;
+      ctx.lineWidth = 3 / k;
+      ctx.strokeStyle = this.dark ? "rgba(18,22,28,0.9)" : "rgba(255,255,255,0.9)";
+      ctx.beginPath(); ctx.arc(note.cords.x, note.cords.y, r, 0, Math.PI * 2); ctx.stroke();
+      ctx.setLineDash([4 / k, 3 / k]);
+      ctx.strokeStyle = colour; ctx.lineWidth = 1.8 / k;
+      ctx.beginPath(); ctx.arc(note.cords.x, note.cords.y, r, 0, Math.PI * 2); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = colour;
+      ctx.beginPath(); ctx.arc(note.cords.x, note.cords.y, 2.2 / k, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+      const text = (note.text || "").trim();
+      if (text) {
+        ctx.save();
+        ctx.font = `600 ${10 / k}px system-ui, sans-serif`;
+        const w = ctx.measureText(text).width;
+        ctx.restore();
+        this._label(ctx, text, note.cords.x + r + 4 / k + w / 2, note.cords.y, 10, edit ? 0.95 : 0.7);
+      } else if (edit) {
+        this._label(ctx, "note", note.cords.x + r + 4 / k + 12 / k, note.cords.y, 9, 0.55);
+      }
+    });
+  }
 
   _drawPins(ctx, pins) {
     const k = this.view.k;
