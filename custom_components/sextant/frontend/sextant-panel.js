@@ -648,6 +648,8 @@ class SextantLive extends LitElement {
       return unit === false ? text : `${text}${v.unit ? ` ${v.unit}` : ""}`;
     };
     const d = p.device || {};
+    // No Wi-Fi signal to report means it is wired.
+    const wired = !f.wifi_signal;
     const rows = [
       ["ESPHome release", val("esphome_version", false)],
       // The board name is ESPHome's project name, so it belongs with the version.
@@ -667,7 +669,8 @@ class SextantLive extends LitElement {
       ["Chip MAC", val("chip_mac", false)],
     ].filter(([, v]) => v);
     return html`<div class="proxycard" @click=${(e) => e.stopPropagation()}>
-      <h4>${proxyName(this.data, p.slug)}${uiButton({ label: "Close", kind: "text", onClick: () => { this._proxy = null; } })}</h4>
+      <h4>${proxyName(this.data, p.slug)}${p.loading || p.error ? nothing : html`<span class="link" title=${wired ? "Wired to the network" : "On Wi-Fi"}>
+        <ha-icon icon=${wired ? "mdi:ethernet-cable" : "mdi:wifi"}></ha-icon>${wired ? "Ethernet" : "Wi-Fi"}</span>`}</h4>
       ${p.loading ? html`<div class="muted small">Asking…</div>`
         : p.error ? html`<div class="warn small">${p.error}</div>`
         : rows.length ? html`<dl>${rows.map(([k, v]) => html`<dt>${k}</dt><dd>${v}</dd>`)}</dl>`
@@ -1186,6 +1189,8 @@ class SextantLive extends LitElement {
     /* Clicked on the map: floats over the plan's top-left, out of the way. */
     .proxycard { position: absolute; left: 10px; top: 64px; z-index: 3; max-width: 320px; max-height: 60%; overflow: auto; padding: 10px 12px; border-radius: 10px; background: var(--card-background-color); box-shadow: var(--ha-card-box-shadow, 0 2px 8px rgba(0,0,0,0.3)); }
     .proxycard h4 { margin: 0 0 6px; display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+    .proxycard .link { display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px; border-radius: 999px; background: var(--secondary-background-color); color: var(--secondary-text-color); font-size: 11px; font-weight: 500; white-space: nowrap; }
+    .proxycard .link ha-icon { --mdc-icon-size: 14px; }
     .proxycard dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 0; font-size: 13px; }
     .proxycard dt { color: var(--secondary-text-color); }
     .proxycard dd { margin: 0; font-variant-numeric: tabular-nums; }
