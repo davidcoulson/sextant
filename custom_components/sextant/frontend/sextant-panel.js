@@ -66,6 +66,7 @@ class SextantPanel extends LitElement {
     _mode: { state: true },
     _data: { state: true },
     _positions: { state: true },
+    _now: { state: true },        // ticks every second, for the countdown
     _floor: { state: true },
     _error: { state: true },
   };
@@ -76,6 +77,8 @@ class SextantPanel extends LitElement {
     if (!MODES.some(([id]) => id === this._mode)) this._mode = "live";
     this._data = null;
     this._positions = { positions: [], offline_receivers: [], stamp: 0 };
+    this._now = Date.now() / 1000;
+    this._cycleSecs = null;       // measured from the gap between cycles
     this._floor = null;
     this._unsub = null;
     this._error = null;
@@ -88,10 +91,12 @@ class SextantPanel extends LitElement {
     ensureHaComponents().then(() => this.requestUpdate());
     this._load();
     this._subscribe();
+    this._clock = setInterval(() => { this._now = Date.now() / 1000; }, 1000);
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
+    clearInterval(this._clock);
     if (this._unsub) { this._unsub.then((u) => u()).catch(() => {}); this._unsub = null; }
   }
 
@@ -119,7 +124,14 @@ class SextantPanel extends LitElement {
   _subscribe() {
     if (!this.hass?.connection || this._unsub) return;
     this._unsub = this.hass.connection.subscribeMessage(
-      (payload) => { this._positions = payload; },
+      (payload) => {
+        // The gap between cycles is what the countdown counts down from:
+        // Bermuda's interval is not ours to read, so it is measured here.
+        const gap = payload?.stamp - this._positions?.stamp;
+        if (gap > 1 && gap < 300) this._cycleSecs = this._cycleSecs ? this._cycleSecs * 0.5 + gap * 0.5 : gap;
+        this._positions = payload;
+        this._now = Date.now() / 1000;
+      },
       { type: "sextant/subscribe" },
     );
     this._unsub.catch((e) => { this._unsub = null; this._error = `live updates: ${e?.message || e}`; });
@@ -216,8 +228,20 @@ class SextantPanel extends LitElement {
             ${sortFloors(floors).map((f) => html`<option value=${f.name} ?selected=${f.name === this._floor}>${f.name}</option>`)}
           </select>
         </label>` : nothing}
-      <span class="stamp" title="Time since the last positioning cycle"><ha-icon icon="mdi:update"></ha-icon>${this._positions.stamp ? fmtAge(Date.now() / 1000 - this._positions.stamp) : "—"}</span>
+      ${this._renderStamp()}
     `;
+  }
+
+  /** Seconds until the next positioning cycle, once two cycles have shown how
+   * far apart they are; the age of the last one until then, and while a cycle
+   * is overdue (a proxy went quiet, the house is asleep). */
+  _renderStamp() {
+    const stamp = this._positions.stamp;
+    const age = stamp ? this._now - stamp : null;
+    const left = this._cycleSecs && age != null ? Math.ceil(this._cycleSecs - age) : null;
+    const counting = left != null && left >= 0;
+    return html`<span class="stamp" title=${counting ? "Seconds until the next positioning cycle" : "Time since the last positioning cycle"}>
+      <ha-icon icon=${counting ? "mdi:timer-sand" : "mdi:update"}></ha-icon>${age == null ? "—" : counting ? `${left}s` : fmtAge(age)}</span>`;
   }
 
   _renderMode() {
