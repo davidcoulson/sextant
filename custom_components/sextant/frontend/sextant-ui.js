@@ -224,9 +224,15 @@ export function fmtLen(metres, hass, digits = 1) {
   if (ft >= 5) return `${Math.round(ft)} ft`;          // past five feet a decimal is noise
   return `${ft.toFixed(digits)} ft`;
 }
+/** Metres per second as the user's unit: "0.42 m/s", or mph when imperial.
+ *  Miles per hour rather than feet per second: nobody has a feel for 4.6 ft/s,
+ *  everybody has one for 3 mph. Two decimals under 1 mph, where a dog shifting
+ *  on a landing and a person crossing a room are a tenth of a mile apart. */
 export function fmtSpeed(mps, hass) {
   if (mps == null || !isFinite(mps)) return "—";
-  return isImperial(hass) ? `${(mps * 3.28084).toFixed(1)} ft/s` : `${Number(mps).toFixed(2)} m/s`;
+  if (!isImperial(hass)) return `${Number(mps).toFixed(2)} m/s`;
+  const mph = mps * 2.236936;
+  return `${mph.toFixed(mph < 1 ? 2 : 1)} mph`;
 }
 /** Metres -> the number shown in an input field (feet when imperial), and back. */
 export function toDisplayLen(metres, hass) { return metres == null || metres === "" ? "" : isImperial(hass) ? Math.round(metres * 3.28084 * 100) / 100 : metres; }
