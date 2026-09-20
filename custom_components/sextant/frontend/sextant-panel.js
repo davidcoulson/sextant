@@ -650,6 +650,15 @@ class SextantLive extends LitElement {
     const d = p.device || {};
     // No Wi-Fi signal to report means it is wired.
     const wired = !f.wifi_signal;
+    // The proxies report the percentage ESPHome makes from dBm:
+    // pct = clamp(2 * (dBm + 100)), so 80 % is -60 dBm and 66 % is -67, the
+    // usual line between reliable and not. Wired is always good.
+    const pct = Number(f.wifi_signal?.state);
+    const dbm = Number.isFinite(pct) ? pct / 2 - 100 : null;
+    const grade = wired ? "good" : !Number.isFinite(pct) ? "" : pct >= 80 ? "good" : pct >= 66 ? "fair" : "poor";
+    const linkTitle = wired ? "Wired to the network"
+      : dbm == null ? "On Wi-Fi"
+      : `Wi-Fi ${fmtNum(pct, 0)} % (${fmtNum(dbm, 0)} dBm)`;
     const rows = [
       ["ESPHome release", val("esphome_version", false)],
       // The board name is ESPHome's project name, so it belongs with the version.
@@ -669,7 +678,7 @@ class SextantLive extends LitElement {
       ["Chip MAC", val("chip_mac", false)],
     ].filter(([, v]) => v);
     return html`<div class="proxycard" @click=${(e) => e.stopPropagation()}>
-      <h4>${proxyName(this.data, p.slug)}${p.loading || p.error ? nothing : html`<span class="link" title=${wired ? "Wired to the network" : "On Wi-Fi"}>
+      <h4>${proxyName(this.data, p.slug)}${p.loading || p.error ? nothing : html`<span class="link ${grade}" title=${linkTitle}>
         <ha-icon icon=${wired ? "mdi:ethernet-cable" : "mdi:wifi"}></ha-icon>${wired ? "Ethernet" : "Wi-Fi"}</span>`}</h4>
       ${p.loading ? html`<div class="muted small">Asking…</div>`
         : p.error ? html`<div class="warn small">${p.error}</div>`
@@ -1191,6 +1200,9 @@ class SextantLive extends LitElement {
     .proxycard h4 { margin: 0 0 6px; display: flex; align-items: center; gap: 8px; justify-content: space-between; }
     .proxycard .link { display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px; border-radius: 999px; background: var(--secondary-background-color); color: var(--secondary-text-color); font-size: 11px; font-weight: 500; white-space: nowrap; }
     .proxycard .link ha-icon { --mdc-icon-size: 14px; }
+    .proxycard .link.good { background: var(--success-color, #2e7d32); color: #fff; }
+    .proxycard .link.fair { background: var(--warning-color, #e6a100); color: #23272e; }
+    .proxycard .link.poor { background: var(--error-color, #c62828); color: #fff; }
     .proxycard dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 0; font-size: 13px; }
     .proxycard dt { color: var(--secondary-text-color); }
     .proxycard dd { margin: 0; font-variant-numeric: tabular-nums; }
