@@ -635,7 +635,7 @@ class SextantLive extends LitElement {
               ${this._avatar(p.ent)}
               <span class="name">${this._label(p.ent)}</span>
               <span class="where">${this._roomIcon(p.floor, p.zone) ? html`<ha-icon class="roomicon" icon=${this._roomIcon(p.floor, p.zone)}></ha-icon>` : nothing}${p.zone}</span>
-              <span class="muted small">${st.ghost ? html`<ha-icon class="ghosticon" icon="mdi:ghost-outline"></ha-icon>seen ${shortAge(st.age)} ago · ` : nothing}${p.floor}</span>
+              <span class="muted small floorline">${st.ghost ? html`<ha-icon class="ghosticon" icon="mdi:ghost-outline"></ha-icon>seen ${shortAge(st.age)} ago · ` : nothing}${p.floor}</span>
               ${p.sub_zone && p.sub_zone !== "unknown" ? html`<span class="spot muted small">${p.sub_zone}</span>` : nothing}
               ${p.ent === this._selected ? html`<div class="quickin" @click=${(e) => e.stopPropagation()}>${this._renderQuick(p)}</div>` : nothing}
             </li>`;
@@ -940,6 +940,8 @@ class SextantLive extends LitElement {
        The .small rule below spans columns 2 to 4; this must beat it, or the
        spot spans both columns and lands on a third row. */
     .list .small.spot { grid-column: 3; text-align: right; }
+    /* The floor keeps to its own column, so the spot can sit beside it. */
+    .list .small.floorline { grid-column: 2; }
     .list li.ghost { opacity: 0.55; }
     .list li.ghost .avatar { filter: grayscale(0.6); outline: 1px dashed var(--secondary-text-color); outline-offset: 1px; }
     .ghosticon { --mdc-icon-size: 14px; vertical-align: -2px; margin-right: 2px; }
