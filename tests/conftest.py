@@ -314,7 +314,8 @@ def _install_homeassistant_stubs():
     _module("homeassistant.config_entries", ConfigFlow=_FakeConfigFlow, OptionsFlow=_FakeOptionsFlow,
             AbortFlow=_AbortFlow, ConfigEntryState=enum.Enum("ConfigEntryState", "LOADED NOT_LOADED SETUP_ERROR"))
     sys.modules["homeassistant.helpers.event"].async_call_later = lambda *a, **k: None
-    _module("homeassistant.const", UnitOfLength=types.SimpleNamespace(METERS="m"))
+    _module("homeassistant.const", UnitOfLength=types.SimpleNamespace(METERS="m"),
+            EVENT_HOMEASSISTANT_STOP="homeassistant_stop")
     _module("homeassistant.util", slugify=lambda s: s)
     _module("homeassistant.util.unit_conversion", DistanceConverter=_FakeDistanceConverter)
     _module(

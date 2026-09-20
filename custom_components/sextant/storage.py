@@ -34,6 +34,7 @@ STORAGE_KEY_CALIB = "sextant_calibration_state"      # -> config/.storage/sextan
 STORAGE_KEY_KPI = "sextant_kpi_baselines"            # -> config/.storage/sextant_kpi_baselines
 STORAGE_KEY_TRUTH = "sextant_truth"                  # -> config/.storage/sextant_truth (marks + their samples)
 STORAGE_KEY_FP_GAINS = "sextant_fingerprint_gains"   # -> the learned reference gains, so a restart starts warm
+STORAGE_KEY_RUNTIME = "sextant_runtime"              # -> each thing's elections and filter, to survive a restart
 
 # Serializes read-modify-write sequences on the layout across every writer
 # (panel save + calibration). Lives here so both importers share one lock
@@ -340,6 +341,30 @@ async def load_fp_gains(hass) -> dict:
 
 async def save_fp_gains(hass, data: dict) -> None:
     await _fp_gain_store(hass).async_save(data)
+
+
+# --- Runtime state (see runtime.py) -----------------------------------------
+
+def _runtime_store(hass) -> Store:
+    bucket = _bucket(hass)
+    store = bucket.get("_runtime_store")
+    if store is None:
+        store = bucket["_runtime_store"] = Store(hass, STORAGE_VERSION, STORAGE_KEY_RUNTIME)
+    return store
+
+
+async def load_runtime(hass) -> dict:
+    """The last snapshot, or empty. A restart that cannot read it just starts cold."""
+    try:
+        data = await _runtime_store(hass).async_load()
+    except Exception as e:
+        _LOGGER.warning("Could not load the saved runtime state: %s", e)
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+async def save_runtime(hass, data: dict) -> None:
+    await _runtime_store(hass).async_save(data)
 
 
 # --- One-time migration of the old flat files -------------------------------

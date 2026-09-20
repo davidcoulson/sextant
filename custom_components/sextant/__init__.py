@@ -12,7 +12,7 @@ from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import device_registry as dr
-from homeassistant.const import UnitOfLength
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP, UnitOfLength
 from homeassistant.util.unit_conversion import DistanceConverter
 from homeassistant.util import slugify
 import numpy as np
@@ -60,8 +60,10 @@ from .storage import (
     get_layout_version,
     load_fp_gains,
     load_layout,
+    load_runtime,
     load_truth,
     save_fp_gains,
+    save_runtime,
     migrate_from_bps,
     migrate_legacy,
     save_layout,
@@ -74,6 +76,7 @@ from . import floor_field
 from . import registration
 from . import truth as truth_mod
 from . import persons as persons_mod
+from . import runtime as runtime_mod
 from .zone_adjust import adjust_zones, adjust_subzones
 
 _LOGGER = logging.getLogger(__name__)
@@ -468,6 +471,9 @@ TUNING_SPEC = {
     # nothing about positioning changes, and position_timeout still decides
     # when the thing leaves the map altogether.
     "stale_after_secs": (120.0, float, 15.0, 3600.0),
+    # How long a restart may take and still be resumed rather than started
+    # cold (see runtime.py). Past it only each thing's last sighting is kept.
+    "restore_state_secs": (runtime_mod.DEFAULT_MAX_AGE_SECS, float, 0.0, 86400.0),
     # When the Live list stops waiting for a thing and calls it away: a phone
     # that left the house, a tag in a drawer. Between stale_after_secs and
     # this it is still expected back, and shown where it was last seen.
@@ -2683,10 +2689,21 @@ async def prune_stale_positions(hass):
         update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_spot", "unknown", {"room": "unknown"})
         update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_location", *_location_state("unknown", "unknown", "unknown", "unknown"))
 
+# How often the state a restart would lose is written out. On a clean stop
+# it is written again anyway; this is for the power cut that is not clean.
+RUNTIME_SAVE_EVERY_S = 120.0
+_runtime_saved_at = 0.0
+
+
 async def update_apitricords(hass, new_data):
     """Update apitricords in hass.data"""
+    global _runtime_saved_at
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN]["apitricords"] = new_data
+    now = time.time()
+    if now - _runtime_saved_at >= RUNTIME_SAVE_EVERY_S:
+        _runtime_saved_at = now
+        await _save_runtime(hass)
 
 
 def _sensor_is_live(hass, entity_id):
@@ -2780,6 +2797,53 @@ async def process_entities(hass, new_global_data):
 # thing -> {"floor", "x", "y", "since", "away"}: where an owned thing has
 # stayed (within persons.STAY_RADIUS_M) and since when, for persons.pick.
 _arrivals = {}
+# Where each thing was last heard, kept across restarts: {ent: last dict}.
+# The Live page reads it to say "away since 5:32 PM" for a thing nothing is
+# hearing, which the sensors cannot answer after a restart.
+_last_seen = {}
+
+
+async def _restore_runtime(hass):
+    """Carry the last cycle's state over a restart (see runtime.py)."""
+    layout = get_layout(hass) or {}
+    try:
+        data = await load_runtime(hass)
+    except Exception as e:  # noqa: BLE001
+        _LOGGER.warning("Saved runtime state not loaded: %s", e)
+        return
+    back = runtime_mod.restore(data, time.time(), _tuning(layout, "restore_state_secs"))
+    _last_seen.update(back["last"])
+    for entity, kf in back["kf"].items():
+        _kf_position_state[entity] = {
+            "x": np.array(kf["x"], dtype=float), "P": np.array(kf["P"], dtype=float),
+            "ts": kf["ts"], "floor": kf["floor"],
+        }
+    for entity, state in back["zone"].items():
+        _zone_state[entity] = dict(state)
+    for entity, state in back["spot"].items():
+        # The election stores its answer as a tuple; JSON made it a list.
+        value = state.get("value")
+        if isinstance(value, list) and len(value) == 2:
+            state = {**state, "value": tuple(value)}
+        _subzone_state[entity] = dict(state)
+    _arrivals.update(back["arrivals"])
+    if back["age"] is None:
+        _LOGGER.info("No saved state to resume from; starting cold")
+    elif back["kf"] or back["zone"]:
+        _LOGGER.info("Resumed %d things after %.0f s down", len(back["zone"] or back["kf"]), back["age"])
+    else:
+        _LOGGER.info("Down for %.0f s: too long to resume, keeping %d last sightings", back["age"], len(back["last"]))
+
+
+async def _save_runtime(hass):
+    """Write the state a restart would otherwise lose."""
+    try:
+        rows = [r for r in (hass.data.get(DOMAIN, {}).get("apitricords") or []) if isinstance(r, dict)]
+        data = runtime_mod.snapshot(time.time(), kf=_kf_position_state, zones=_zone_state,
+                                    spots=_subzone_state, arrivals=_arrivals, rows=rows)
+        await save_runtime(hass, data)
+    except Exception as e:  # noqa: BLE001
+        _LOGGER.warning("Could not save the runtime state: %s", e)
 
 
 def _history_arrival(hass, ent, floor, x, y, now):
@@ -4432,6 +4496,13 @@ async def async_setup(hass, config):
 
     hass.data["sextant_initialized"] = True  # Set flag
 
+    # A clean stop writes the state one last time, so a restart resumes from
+    # the moment it went down rather than from the last periodic save.
+    async def _on_stop(_event):
+        await _save_runtime(hass)
+
+    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _on_stop)
+
     async def initialize_sextant():
         """Initialize the Sextant component"""
         _LOGGER.info("Initializing Sextant...")
@@ -4651,6 +4722,7 @@ async def async_setup_entry(hass, entry):
         _restore_fp_gains(await load_fp_gains(hass))
     except Exception as e:  # noqa: BLE001
         _LOGGER.warning("Truth marks or learned gains not loaded: %s", e)
+    await _restore_runtime(hass)
     cleanup_legacy_sextant_registry_and_states(hass)
     await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
     entry.async_on_unload(entry.add_update_listener(async_update_options))

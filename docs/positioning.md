@@ -94,6 +94,16 @@ moves, or when the locked room has kept under a tenth of the evidence for
 twice `zone_unlock_secs`: the lock holds through jitter on a boundary, not
 through the thing being somewhere else.
 
+**Across a restart.** A cycle's state - each thing's filter, its room and
+spot elections with their smoothed probabilities and timers, and when it
+arrived where it is - is written to `.storage/sextant_runtime` every two
+minutes and again on a clean stop. A restart reads it back and carries on,
+as a starting point the next readings can disagree with, so a thing keeps
+its room and its spot instead of re-earning them and a person does not
+follow whichever of their things settles first. Past `restore_state_secs`
+(five minutes) the elections are stale and only each thing's last sighting
+is kept, which is what the Live page shows as *away since*.
+
 **Spots.** The same election scaled down: the share of the ellipse inside
 each spot of the elected room, entered at `subzone_enter_prob`, left at
 `subzone_unlock_margin` outside, every change waiting
