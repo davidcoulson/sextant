@@ -1387,10 +1387,13 @@ def test_subzone_holds_while_the_zone_is_locked_and_follows_the_zone():
     # just outside (within subzone_unlock_margin) keeps the sub-zone.
     assert _sub("e", (300, 350), t + 100, locked=True) == ("Sofa", "Living")
     assert _sub("e", (300, 380), t + 200, locked=True) == ("Sofa", "Living")
-    # But the room lock holds the ROOM, not the sofa: a fix three metres away
-    # with nothing to say it is still there leaves, once the smoothed
-    # membership has fallen and the dwell has passed. (Leela crossed the Great
-    # Room while the couch's pins still matched her; she stayed on the couch.)
+    # A fix that wanders further, but not far (a watch on a bedside table
+    # wanders a metre or two while it lies there), still keeps the spot.
+    assert _sub("e", (300, 500), t + 250, locked=True) == ("Sofa", "Living")
+    # But the room lock holds the ROOM, not the sofa: a fix well away
+    # (subzone_lock_release_m) leaves, once the smoothed membership has fallen
+    # and the dwell has passed. (Leela crossed the Great Room while the
+    # couch's pins still matched her; she stayed on the couch.)
     for dt in (300, 320, 340, 360, 380, 400, 420):
         got = _sub("e", (300, 900), t + dt, locked=True)
     assert got == ("unknown", "Living")

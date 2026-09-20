@@ -656,9 +656,17 @@ class SextantLive extends LitElement {
     const st = staleness(p, this._staleAfter());
     return html`
             <li class="${p.ent === this._selected ? "selected" : ""} ${st.ghost ? "ghost" : ""}" title=${st.ghost ? `Not heard for ${fmtAge(st.age)}: this is where ${this._label(p.ent)} ${this._pn(p.ent).was} last placed` : ""} @click=${() => { this._select(p.ent === this._selected ? null : p.ent); if (p.floor && p.floor !== this.floor) this.dispatchEvent(new CustomEvent("floor-changed", { detail: p.floor })); }}>
-              ${(() => { const who = this._speaksFor(p.ent); return who
-                ? html`<span class="avslot" title=${`Where ${who} is read from right now`}>${this._avatar(p.ent)}<ha-icon class="viabadge" icon="mdi:map-marker"></ha-icon></span>`
-                : this._avatar(p.ent); })()}
+              ${(() => {
+                const who = this._speaksFor(p.ent);
+                // A ghost is not being heard, so it cannot also be what its
+                // owner's location is read from: one badge, never two.
+                const badge = st.ghost
+                  ? html`<ha-icon class="viabadge ghostbadge" icon="mdi:ghost-outline"></ha-icon>`
+                  : who ? html`<ha-icon class="viabadge" icon="mdi:map-marker"></ha-icon>` : nothing;
+                if (badge === nothing) return this._avatar(p.ent);
+                const why = st.ghost ? `Not heard for ${fmtAge(st.age)}: this is where ${this._label(p.ent)} ${this._pn(p.ent).was} last placed` : `Where ${who} is read from right now`;
+                return html`<span class="avslot" title=${why}>${this._avatar(p.ent)}${badge}</span>`;
+              })()}
               <span class="name">${this._label(p.ent)}</span>
               <span class="where">${this._roomIcon(p.floor, p.zone) ? html`<ha-icon class="roomicon" icon=${this._roomIcon(p.floor, p.zone)}></ha-icon>` : nothing}${p.zone}</span>
               <span class="muted small floorline">${st.ghost ? html`<ha-icon class="ghosticon" icon="mdi:ghost-outline"></ha-icon>seen ${shortAge(st.age)} ago · ` : nothing}${p.floor}</span>
@@ -979,6 +987,7 @@ class SextantLive extends LitElement {
     .list .name { font-weight: 600; grid-column: 2; }
     /* A badge on the disc of the thing its owner's location is read from. */
     .list .avslot { grid-row: 1 / 3; position: relative; display: inline-flex; }
+    .list .avslot .viabadge.ghostbadge { background: var(--secondary-background-color, #666); color: var(--secondary-text-color); }
     .list .avslot .viabadge { position: absolute; right: -3px; bottom: -3px; --mdc-icon-size: 13px; width: 17px; height: 17px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--primary-color, #03a9f4); color: var(--text-primary-color, #fff); box-shadow: 0 0 0 2px var(--card-background-color, #fff); }
     /* A flex row so the icon centres on the text instead of sitting on its baseline. */
     .list .where { grid-column: 3; display: flex; align-items: center; justify-content: flex-end; gap: 4px; text-align: right; font-size: 12px; }

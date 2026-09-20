@@ -380,6 +380,11 @@ TUNING_SPEC = {
     # how far (m) outside its polygon the fix must sit before it is left.
     "subzone_enter_prob": (0.5, float, 0.1, 0.95),
     "subzone_unlock_margin": (1.0, float, 0.0, 5.0),
+    # How far a still thing's fix must leave its spot before the room lock
+    # stops holding it there. A watch on a 0.7 x 0.5 m bedside table wanders
+    # 1-2 m while it lies there, so the ordinary margin would drop it every
+    # night; a cat that crossed the room is metres away and should be let go.
+    "subzone_lock_release_m": (2.5, float, 0.5, 20.0),
     # A spot with a proxy on it (a bedside table, a desk): the proxy hearing the
     # thing close, and clearly closer than every other proxy, counts as the thing
     # being in the spot - direct evidence, where the position estimate is as
@@ -3671,12 +3676,16 @@ def _elect_subzone(entity, floor_name, zone, zone_locked, point, kf_state, sub_p
     best = max(contenders, key=contenders.get) if contenders else None
 
     cur_poly = next((poly for sid, _p, poly in polys if sid == current), None) if current != "unknown" else None
-    still_near = cur_poly is not None and cur_poly.distance(Point(*center)) <= margin_px
-    if current != "unknown" and zone_locked and still_near:
+    away_px = cur_poly.distance(Point(*center)) if cur_poly is not None else None
+    still_near = away_px is not None and away_px <= margin_px
+    release_px = _tuning(layout, "subzone_lock_release_m") * (scale if isinstance(scale, (int, float)) and scale > 0 else 0.0)
+    if current != "unknown" and zone_locked and away_px is not None and away_px <= release_px:
         st["pending"] = None
-        # A still thing stays on its couch / table / hook - but only while it
-        # is still there. The room lock holds the ROOM; a cat that crossed the
-        # room is not on the couch any more.
+        # A still thing stays on its couch / table / hook: its fix wanders
+        # about while it lies there and the spot is often smaller than that
+        # wander. Only a fix well away (subzone_lock_release_m) means it has
+        # really left - the room lock holds the ROOM, and a cat that crossed
+        # the room is not on the couch any more.
         return st["value"]
 
     if current != "unknown":
