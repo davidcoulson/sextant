@@ -12,7 +12,7 @@ from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import device_registry as dr
-from homeassistant.const import EVENT_HOMEASSISTANT_STOP, UnitOfLength
+from homeassistant.const import EVENT_HOMEASSISTANT_FINAL_WRITE, EVENT_HOMEASSISTANT_STOP, UnitOfLength
 from homeassistant.util.unit_conversion import DistanceConverter
 from homeassistant.util import slugify
 import numpy as np
@@ -2695,7 +2695,7 @@ async def prune_stale_positions(hass):
 
 # How often the state a restart would lose is written out. On a clean stop
 # it is written again anyway; this is for the power cut that is not clean.
-RUNTIME_SAVE_EVERY_S = 120.0
+RUNTIME_SAVE_EVERY_S = 60.0
 _runtime_saved_at = 0.0
 
 
@@ -4529,11 +4529,14 @@ async def async_setup(hass, config):
     hass.data["sextant_initialized"] = True  # Set flag
 
     # A clean stop writes the state one last time, so a restart resumes from
-    # the moment it went down rather than from the last periodic save.
+    # the moment it went down rather than from the last periodic save. STOP
+    # comes first and FINAL_WRITE last, which is where Home Assistant expects
+    # its stores to be written; taking both costs one extra write.
     async def _on_stop(_event):
         await _save_runtime(hass)
 
     hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _on_stop)
+    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_FINAL_WRITE, _on_stop)
 
     async def initialize_sextant():
         """Initialize the Sextant component"""
