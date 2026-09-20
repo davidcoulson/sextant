@@ -2437,6 +2437,10 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
                 "zone": zone,
                 "zone_raw": instant_zone,
                 "zone_locked": zone_locked,
+                # When this room and this spot were entered: kept across a
+                # restart, where the sensors' own timestamps are not.
+                "since": (_zone_state.get(entity) or {}).get("since"),
+                "spot_since": (_subzone_state.get(entity) or {}).get("since"),
                 "sub_zone": sub_zone,
                 # Smoothed sub-zone membership shares (name -> share, plus
                 # "unknown"), the sub-zone counterpart of "floors" below.
@@ -3726,8 +3730,11 @@ def _elect_subzone(entity, floor_name, zone, zone_locked, point, kf_state, sub_p
     if st is None or st.get("floor") != floor_name or st.get("zone") != zone:
         st = _subzone_state[entity] = {
             "floor": floor_name, "zone": zone, "value": ("unknown", zone), "probs": {}, "pending": None,
+            "since": now,
         }
     if not polys:
+        if st["value"] != ("unknown", zone):
+            st["since"] = now
         st["value"], st["pending"] = ("unknown", zone), None
         return st["value"]
     center = (point.x, point.y) if isinstance(point, Point) else (float(point[0]), float(point[1]))
@@ -3808,7 +3815,7 @@ def _elect_subzone(entity, floor_name, zone, zone_locked, point, kf_state, sub_p
         st["pending"] = (candidate, now)
         return st["value"]
     if now - pending[1] >= _tuning(layout, "subzone_switch_secs"):
-        st["value"], st["pending"] = candidate, None
+        st["value"], st["pending"], st["since"] = candidate, None, now
         return candidate
     return st["value"]
 

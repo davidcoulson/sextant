@@ -702,10 +702,16 @@ class SextantLive extends LitElement {
 
   /** How long a thing has been where it is, from its own location sensor
    * (which changes when its room or spot does), as (short, exact) or null. */
-  _hereFor(ent) {
-    const st = this.hass?.states?.[`sensor.${ent}_sextant_location`];
-    if (!st || ["unknown", "unavailable"].includes(st.state)) return null;
-    const at = Date.parse(st.last_changed) / 1000;
+  _hereFor(p) {
+    // Sextant's own answer first: it survives a restart, where the sensor's
+    // last_changed is the restart itself. The spot when it is in one.
+    const own = p.sub_zone && p.sub_zone !== "unknown" ? (p.spot_since ?? p.since) : p.since;
+    let at = typeof own === "number" ? own : null;
+    if (at == null) {
+      const st = this.hass?.states?.[`sensor.${p.ent}_sextant_location`];
+      if (!st || ["unknown", "unavailable"].includes(st.state)) return null;
+      at = Date.parse(st.last_changed) / 1000;
+    }
     if (!at) return null;
     return [shortAge(Math.max(0, Date.now() / 1000 - at)), this._since(at)];
   }
@@ -825,7 +831,7 @@ class SextantLive extends LitElement {
               <span class="name">${this._label(p.ent)}</span>
               <span class="where">${p.zone ? html`${this._roomIcon(p.floor, p.zone) ? html`<ha-icon class="roomicon" icon=${this._roomIcon(p.floor, p.zone)}></ha-icon>` : nothing}${p.zone}` : html`<span class="muted">away</span>`}</span>
               ${(() => {
-                const here = st.away || st.ghost ? null : this._hereFor(p.ent);
+                const here = st.away || st.ghost ? null : this._hereFor(p);
                 return html`<span class="muted small floorline" title=${here ? `Here since ${here[1]}` : ""}>${
                   st.away && this._since(p.updated) ? html`since ${this._since(p.updated)}${p.floor ? " · " : ""}`
                   : st.ghost && st.age ? html`seen ${shortAge(st.age)} ago${p.floor ? " · " : ""}` : nothing}${p.floor || (st.ghost ? nothing : "")}${

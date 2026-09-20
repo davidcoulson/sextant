@@ -2082,3 +2082,24 @@ def test_pins_inside_a_spot_are_evidence_of_being_in_it():
     assert sextant.spot_pin_evidence(None, "Ground", couch, pins) == 0.0
     assert sextant.spot_pin_evidence({"refs": []}, "Ground", couch, pins) == 0.0
     assert sextant.spot_pin_evidence({"refs": [("mark:1", "bad")]}, "Ground", couch, pins) == 0.0
+
+
+def test_a_spot_remembers_when_it_was_entered():
+    """The Live list says how long a thing has been where it is, and that has
+    to survive a restart - so it comes from the election, not a sensor."""
+    sextant._subzone_state.clear()
+    t = 6000.0
+    for i in range(4):
+        _sub("e", (300, 250), t + i * 10)
+    assert _sub("e", (300, 250), t + 60) == ("Sofa", "Living")
+    entered = sextant._subzone_state["e"]["since"]
+    assert t <= entered <= t + 60
+    # Still there a while later: the time it arrived does not move.
+    for dt in (100, 200, 300):
+        _sub("e", (300, 250), t + dt)
+    assert sextant._subzone_state["e"]["since"] == entered
+    # Off the sofa, and it is a new answer with a new time.
+    for dt in (400, 420, 440, 460, 480, 500):
+        got = _sub("e", (300, 900), t + dt)
+    assert got == ("unknown", "Living")
+    assert sextant._subzone_state["e"]["since"] > entered
