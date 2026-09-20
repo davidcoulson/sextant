@@ -651,7 +651,8 @@ class SextantLive extends LitElement {
     const rows = [
       ["ESPHome release", val("esphome_version", false)],
       // The board name is ESPHome's project name, so it belongs with the version.
-      ["Project", [val("project_name", false) || d.board, val("project_version", false)].filter(Boolean).join(" ") || null],
+      // The version joins its parts with +; a space lets the ble half wrap.
+      ["Project", [val("project_name", false) || d.board, (val("project_version", false) || "").replace(/\+/g, " ")].filter(Boolean).join(" ") || null],
       ["Uptime", val("uptime", false)],
       ["Hearing", p.heard == null ? null : `${p.heard} thing${p.heard === 1 ? "" : "s"}`],
       ["Adverts forwarded", val("adverts_forwarded")],
