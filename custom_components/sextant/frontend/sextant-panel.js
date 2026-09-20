@@ -133,9 +133,17 @@ class SextantPanel extends LitElement {
    * thing's dialog once the destination page has loaded - which is how the
    * Live card's edit button reaches the thing settings without a second
    * copy of the dialog living here. */
+  /** The editor holds an unsaved draft in the page: ask before anything that
+   * would replace it (another floor, another page). True to go ahead. */
+  _mayLeaveEdit(what) {
+    const editor = this.renderRoot?.querySelector("sextant-edit");
+    return !editor?.unsaved || editor.confirmLeave(what);
+  }
+
   _setMode(target) {
     const { mode: wanted, thing } = typeof target === "string" ? { mode: target } : (target || {});
     const mode = this._modes().some(([id]) => id === wanted) ? wanted : "live";
+    if (this._mode === "edit" && mode !== "edit" && !this._mayLeaveEdit(`Leave the floor plan`)) return;
     this._mode = mode;
     this._openThing = mode === "things" ? thing || null : null;
     if (mode !== "edit") this._spots = [];
@@ -204,7 +212,7 @@ class SextantPanel extends LitElement {
       ${floors.length && FLOOR_MODES.has(this._mode) ? html`
         <label class="floor-pick">
           <span class="sr">Floor</span>
-          <select @change=${(e) => { this._floor = e.target.value; }}>
+          <select @change=${(e) => { if (!this._mayLeaveEdit(`Switch to ${e.target.value}`)) { e.target.value = this._floor; return; } this._floor = e.target.value; }}>
             ${sortFloors(floors).map((f) => html`<option value=${f.name} ?selected=${f.name === this._floor}>${f.name}</option>`)}
           </select>
         </label>` : nothing}
@@ -480,7 +488,7 @@ class SextantLive extends LitElement {
       const r = await callWS(this, this.hass, { type: "sextant/truth/mark", entity: ent, floor: this.floor, x: m.x, y: m.y });
       if (!r) return;
       this._truth = r;
-      toast(this, `Mark ${r.mark.id} recorded from ${r.mark.samples} cycles`);
+      toast(this, `Pin ${r.mark.id} recorded from ${r.mark.samples} cycles`);
       this._loadMarks(ent);
       this.dispatchEvent(new CustomEvent("layout-changed"));
     })();
@@ -488,7 +496,7 @@ class SextantLive extends LitElement {
   }
 
   async _deleteMark(id) {
-    if (!confirmDialog(`Forget mark ${id}?`)) return;
+    if (!confirmDialog(`Forget pin ${id}?`)) return;
     const r = await callWS(this, this.hass, { type: "sextant/truth/delete", mark_id: id });
     if (r) { if (this._truth?.mark?.id === id) this._truth = null; this._loadMarks(this._selected); }
   }
@@ -626,8 +634,9 @@ class SextantLive extends LitElement {
             <li class="${p.ent === this._selected ? "selected" : ""} ${st.ghost ? "ghost" : ""}" title=${st.ghost ? `Not heard for ${fmtAge(st.age)}: this is where ${this._label(p.ent)} ${this._pn(p.ent).was} last placed` : ""} @click=${() => { this._select(p.ent === this._selected ? null : p.ent); if (p.floor && p.floor !== this.floor) this.dispatchEvent(new CustomEvent("floor-changed", { detail: p.floor })); }}>
               ${this._avatar(p.ent)}
               <span class="name">${this._label(p.ent)}</span>
-              <span class="where">${this._roomIcon(p.floor, p.zone) ? html`<ha-icon class="roomicon" icon=${this._roomIcon(p.floor, p.zone)}></ha-icon>` : nothing}${p.zone}${p.sub_zone && p.sub_zone !== "unknown" ? ` · ${p.sub_zone}` : ""}</span>
+              <span class="where">${this._roomIcon(p.floor, p.zone) ? html`<ha-icon class="roomicon" icon=${this._roomIcon(p.floor, p.zone)}></ha-icon>` : nothing}${p.zone}</span>
               <span class="muted small">${st.ghost ? html`<ha-icon class="ghosticon" icon="mdi:ghost-outline"></ha-icon>seen ${shortAge(st.age)} ago · ` : nothing}${p.floor}</span>
+              ${p.sub_zone && p.sub_zone !== "unknown" ? html`<span class="spot muted small">${p.sub_zone}</span>` : nothing}
               ${p.ent === this._selected ? html`<div class="quickin" @click=${(e) => e.stopPropagation()}>${this._renderQuick(p)}</div>` : nothing}
             </li>`;
   }
@@ -868,17 +877,17 @@ class SextantLive extends LitElement {
     return html`<div class="truth">
       ${this._marking ? nothing
         : html`<div class="row">${uiButton({ label: `${this._label(ent)} is actually here…`, icon: "mdi:map-marker-check", onClick: () => { this._marking = true; }, title: `Tell Sextant where ${this._label(ent)} really is; Sextant re-solves the last few minutes under every setting and shows which fits best` })}
-            ${this._marks.length ? html`<span class="muted small">${this._marks.length} mark${this._marks.length === 1 ? "" : "s"}</span>` : nothing}</div>`}
+            ${this._marks.length ? html`<span class="muted small">${this._marks.length} pin${this._marks.length === 1 ? "" : "s"}</span>` : nothing}</div>`}
       ${t ? html`<div class="card inner">
         <h4>Mark ${t.mark.id} <span class="muted small">${t.mark.samples} cycles re-solved · now ${Math.round((t.current_weight ?? 0) * 100)}% fingerprint</span></h4>
         ${rows.length ? html`<table class="small"><tr><th>Estimator</th><th class="num">Gain</th><th class="num">Error</th><th class="num">Room</th><th></th></tr>
           ${rows.map((r) => html`<tr><td>${r.estimator}${r.estimator === "fused" ? ` ${Math.round(r.weight * 100)}%` : ""}</td><td class="num">×${fmtNum(r.gain, 1)}</td><td class="num">${fmtLen(r.mean_m, this.hass)}</td><td class="num">${Math.round(r.room_ok * 100)}%</td>
             <td>${uiButton({ label: "Apply", kind: "text", onClick: () => this._applyRow(ent, r) })}</td></tr>`)}
         </table>
-        <p class="muted small">Error is the mean distance from the mark; Room is how often the fix landed in the mark's room. One mark can overfit: mark ${this._pn(ent).obj} in another room too.</p>` : html`<p class="muted small">Nothing could be re-solved for this mark.</p>`}
-        <div class="row">${uiButton({ label: "Close", kind: "text", onClick: () => { this._truth = null; } })}${uiButton({ label: "Forget mark", kind: "text", onClick: () => this._deleteMark(t.mark.id) })}</div>
+        <p class="muted small">Error is the mean distance from the pin; Room is how often the fix landed in the pin's room. One pin can overfit: pin ${this._pn(ent).obj} in another room too.</p>` : html`<p class="muted small">Nothing could be re-solved for this mark.</p>`}
+        <div class="row">${uiButton({ label: "Close", kind: "text", onClick: () => { this._truth = null; } })}${uiButton({ label: "Forget pin", kind: "text", onClick: () => this._deleteMark(t.mark.id) })}</div>
       </div>` : nothing}
-      ${!t && this._marks.length ? html`<details class="marks"><summary>Marks</summary><ul class="plain">${this._marks.map((m) => html`<li>mark ${m.id} · ${m.floor} · ${m.samples} cycles · ${new Date(m.t * 1000).toLocaleString()} ${uiButton({ label: "Forget", kind: "text", onClick: () => this._deleteMark(m.id) })}</li>`)}</ul></details>` : nothing}
+      ${!t && this._marks.length ? html`<details class="marks"><summary>Pins</summary><ul class="plain">${this._marks.map((m) => html`<li>pin ${m.id} · ${m.floor} · ${m.samples} cycles · ${new Date(m.t * 1000).toLocaleString()} ${uiButton({ label: "Forget", kind: "text", onClick: () => this._deleteMark(m.id) })}</li>`)}</ul></details>` : nothing}
     </div>`;
   }
 
@@ -925,7 +934,10 @@ class SextantLive extends LitElement {
     .list li:hover, .list li.selected { background: var(--secondary-background-color); }
     .list li.selected { outline: 2px solid var(--primary-color); }
     .list .name { font-weight: 600; grid-column: 2; }
-    .list .where { grid-column: 3; text-align: right; font-size: 12px; }
+    /* A flex row so the icon centres on the text instead of sitting on its baseline. */
+    .list .where { grid-column: 3; display: flex; align-items: center; justify-content: flex-end; gap: 4px; text-align: right; font-size: 12px; }
+    /* The spot sits under its room, the way the floor sits under the name. */
+    .list .spot { grid-column: 3; text-align: right; }
     .list li.ghost { opacity: 0.55; }
     .list li.ghost .avatar { filter: grayscale(0.6); outline: 1px dashed var(--secondary-text-color); outline-offset: 1px; }
     .ghosticon { --mdc-icon-size: 14px; vertical-align: -2px; margin-right: 2px; }
@@ -952,7 +964,7 @@ class SextantLive extends LitElement {
     .blend input { flex: 1; min-width: 90px; }
     .truth { margin-top: 6px; }
     .heat { align-items: center; gap: 8px; flex-wrap: wrap; }
-    .roomicon { --mdc-icon-size: 16px; margin-right: 3px; vertical-align: -3px; color: var(--secondary-text-color); }
+    .roomicon { --mdc-icon-size: 16px; flex: none; color: var(--secondary-text-color); }
     .list li .quickin { grid-column: 1 / -1; cursor: default; padding-top: 6px; }
     .list li.group { display: flex; align-items: center; gap: 6px; padding: 8px 4px 4px; margin-top: 4px; border-top: 1px solid var(--divider-color, #e0e0e0); border-radius: 0; font-weight: 500; }
     .list li.group:first-child { border-top: none; margin-top: 0; }

@@ -13,6 +13,9 @@ import { sharedStyles, widgetStyles, toast, callWS, confirmDialog, fmtNum, fmtLe
 import { mapUrlFor } from "./sextant-panel.js";
 
 // [id, label under the icon, icon, tooltip]
+/** The Anchor tool's "New anchor" choice (not a name any anchor can have). */
+const NEW_PIN = "\u0000new";
+
 const TOOLS = [
   ["select", "Select", "mdi:cursor-default-outline", "Select and drag proxies, rooms and vertices. A dragged proxy snaps onto a nearby wall on the side you are dragging from; hold Alt to place it freely"],
   ["receiver", "Proxy", "mdi:access-point-plus", "Place a proxy: pick one Bermuda knows, then click the map"],
@@ -20,7 +23,7 @@ const TOOLS = [
   ["subzone", "Spot", "mdi:vector-rectangle", "Draw a spot (a couch, a desk, a bedside table) inside a room"],
   ["nogo", "No-go", "mdi:cancel", "Draw an area things can never be in (a void, a wall)"],
   ["measure", "Scale", "mdi:ruler", "Set the map scale from a known distance"],
-  ["pin", "Pin", "mdi:crosshairs-gps", "Pin a point that lines up through the house - an outside corner, a stair post. The same name on another floor says how the floors stack. It lands on a room corner when one is near; hold Alt to place it freely"],
+  ["pin", "Anchor", "mdi:crosshairs-gps", "Anchor a point that lines up through the house - an outside corner, a stair post. The same name on another floor says how the floors stack. It lands on a room corner when one is near; hold Alt to place it freely"],
 ];
 // Layers that can be locked against selection and dragging, so a finished
 // room layout is not nudged while proxies are being moved (and vice versa).
@@ -28,7 +31,7 @@ const LOCKS = [
   ["zone", "Rooms", "mdi:floor-plan"],
   ["subzone", "Spots", "mdi:vector-rectangle"],
   ["receiver", "Proxies", "mdi:access-point"],
-  ["pin", "Pins", "mdi:crosshairs-gps"],
+  ["pin", "Anchors", "mdi:crosshairs-gps"],
 ];
 const UNDO_DEPTH = 50;
 
@@ -44,6 +47,7 @@ class SextantEdit extends LitElement {
     _draft: { state: true },
     _dirty: { state: true },
     _tool: { state: true },
+    _nextPin: { state: true },   // the Pin tool's next name: one waiting on another floor, or NEW_PIN
     _selection: { state: true },
     _placing: { state: true },
     _measure: { state: true },
@@ -110,9 +114,26 @@ class SextantEdit extends LitElement {
     this._map.setOptions({ labels: true, subzones: true, receiverLabels: true, trails: false });
     this._map.setLocks(this._locks);
     this._syncDraft(true);
+    // A reload or a closed tab would take the draft with it.
+    this._warnUnload = (ev) => { if (this._dirty) { ev.preventDefault(); ev.returnValue = ""; } };
+    window.addEventListener("beforeunload", this._warnUnload);
   }
 
-  disconnectedCallback() { super.disconnectedCallback(); clearTimeout(this._alignTimer); this._map?.destroy(); }
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    clearTimeout(this._alignTimer);
+    window.removeEventListener("beforeunload", this._warnUnload);
+    this._map?.destroy();
+  }
+
+  /** Whether the draft holds changes that are not saved. */
+  get unsaved() { return !!this._dirty; }
+
+  /** Ask before something would throw the draft away (another floor, another
+   * page). True to go ahead. */
+  confirmLeave(what = "Leave") {
+    return !this._dirty || confirmDialog(`${what} without saving? The changes to this floor plan will be lost.`);
+  }
 
   updated(changed) {
     if (!this._map) return;
@@ -197,9 +218,29 @@ class SextantEdit extends LitElement {
     }, 250);
   }
 
-  /** Names pinned on other floors and not yet on this one: what to offer next. */
+  /** A fresh name no floor uses yet. */
+  _freshPinName() {
+    const all = new Set((this._draft.floor || []).flatMap((fl) => (fl.pins || []).map((q) => q.name)));
+    let n = 1;
+    while (all.has(`Anchor ${n}`)) n++;
+    return `Anchor ${n}`;
+  }
+
+  /** What the next click with the Pin tool will be called: the name picked
+   * under the tool while it is still waiting here, a fresh one for "New anchor",
+   * else the first name another floor is waiting on (so linking a floor is a
+   * row of clicks in the same order), else a fresh one. */
+  _nextPinName(f) {
+    const waiting = this._pinNamesElsewhere(f);
+    if (this._nextPin === NEW_PIN) return this._freshPinName();
+    if (this._nextPin && waiting.includes(this._nextPin)) return this._nextPin;
+    return waiting[0] || this._freshPinName();
+  }
+
+  /** Names pinned on other floors and not yet on this one: what to offer next.
+   * Names marked "not on this floor" (f.pins_absent) are skipped. */
   _pinNamesElsewhere(f) {
-    const here = new Set((f.pins || []).map((q) => q.name));
+    const here = new Set([...(f.pins || []).map((q) => q.name), ...(f.pins_absent || [])]);
     const names = [];
     for (const fl of this._draft?.floor || []) if (fl !== f) for (const q of fl.pins || []) if (q.name && !here.has(q.name) && !names.includes(q.name)) names.push(q.name);
     return names;
@@ -212,12 +253,7 @@ class SextantEdit extends LitElement {
     if (!e.altKey) p = snapToVertex(p, f.zones, 12 / this._map.view.k) || p;
     this._snapshot();
     f.pins = f.pins || [];
-    // The next name another floor is waiting on, so linking a floor is a row
-    // of clicks in the same order; a fresh name only when there is none.
-    let n = f.pins.length + 1;
-    const all = new Set((this._draft.floor || []).flatMap((fl) => (fl.pins || []).map((q) => q.name)));
-    while (all.has(`Pin ${n}`)) n++;
-    const name = this._pinNamesElsewhere(f)[0] || `Pin ${n}`;
+    const name = this._nextPinName(f);
     f.pins.push({ pin_id: uid("pin"), name, cords: { x: Math.round(p.x * 1000) / 1000, y: Math.round(p.y * 1000) / 1000 } });
     this._dirty = true;
     this._selection = { kind: "pin", index: f.pins.length - 1 };
@@ -428,7 +464,7 @@ class SextantEdit extends LitElement {
         ${v.on && partners.length > 1 ? uiSelect({ label: "Against", value: v.other || partners[0].name, options: partners.map((o) => ({ value: o.name, label: o.name })), onChange: (other) => { this._biasView = { ...this._biasView, other }; this._loadBiasView(); }, style: "width: 170px" }) : nothing}
         ${v.on && partners.length === 1 ? html`<span class="muted small">against ${partners[0].name}</span>` : nothing}
       </div>
-      ${r ? html`<div class="muted small">Grey: ${f.name} and ${v.other} even. <span style="color:#1eaa46">Green</span>: a thing here leans to ${v.other}; <span style="color:#d72828">red</span>: to ${f.name}. Here it runs from ${pct(r.min)} to ${pct(r.max)}.${r.registered ? "" : " The floors are not lined up with pins, so places are matched by distance from each plan's corner."} Shows the saved layout.</div>` : nothing}
+      ${r ? html`<div class="muted small">Grey: ${f.name} and ${v.other} even. <span style="color:#1eaa46">Green</span>: a thing here leans to ${v.other}; <span style="color:#d72828">red</span>: to ${f.name}. Here it runs from ${pct(r.min)} to ${pct(r.max)}.${r.registered ? "" : " The floors are not lined up with anchors, so places are matched by distance from each plan's corner."} Shows the saved layout.</div>` : nothing}
     </div>`;
   }
 
@@ -503,7 +539,7 @@ class SextantEdit extends LitElement {
     if (!sel || !f) return;
     const list = this._listFor(sel.kind, f);
     const item = list[sel.index];
-    if (!confirmDialog(`Delete ${sel.kind === "receiver" ? "proxy" : sel.kind === "zone" ? "room" : sel.kind === "pin" ? "pin" : "spot"} "${item.entity_id ?? item.name}"?`)) return;
+    if (!confirmDialog(`Delete ${sel.kind === "receiver" ? "proxy" : sel.kind === "zone" ? "room" : sel.kind === "pin" ? "anchor" : "spot"} "${item.entity_id ?? item.name}"?`)) return;
     this._snapshot();
     list.splice(sel.index, 1);
     if (sel.kind === "pin") this._refreshAlignment();
@@ -640,7 +676,7 @@ class SextantEdit extends LitElement {
           ${this._measure?.b ? html`${uiField({ label: `Distance between the two points (${lenUnit(this.hass)})`, type: "number", step: 0.01, min: 0.1, onChange: (v) => { this._metres = v; }, style: "width: 240px" })} ${uiButton({ label: "Set scale", kind: "primary", onClick: () => this._applyMeasure(this._metres) })}`
             : this._measure ? "Click the second point." : `Click two points a known distance apart. Current scale: ${fmtScale(f?.scale, this.hass)}`}
         </div>` : nothing}
-        ${this._tool === "pin" ? html`<div class="hint">Click a point you can find on every floor: an outside corner, a stair post, a chimney. It lands on a room corner when one is near (Alt places it freely). Then switch floor and pin the same points - the names carry over in order.</div>` : nothing}
+        ${this._tool === "pin" ? html`<div class="hint">Click a point you can find on every floor: an outside corner, a stair post, a chimney. It lands on a room corner when one is near (Alt places it freely). Then switch floor and anchor the same points - the names carry over in order.${this._renderNextPin()}</div>` : nothing}
         ${["zone", "subzone", "nogo"].includes(this._tool) ? html`<div class="hint">Click to add corners; click the first corner or double-click to close. An edge close to horizontal, vertical or 45° snaps exact (orange); hold Alt to place a corner freely. ${uiButton({ label: "Cancel", kind: "text", onClick: () => { this._map.cancelDraft(); } })}</div>` : nothing}
       </div>
       <aside class="side">
@@ -684,26 +720,58 @@ class SextantEdit extends LitElement {
     `;
   }
 
+  /** Say a pin another floor has is not on this one (a basement-only post, a
+   * corner that moved upstairs), so the Pin tool stops offering it; or undo that. */
+  _setPinAbsent(f, name, absent) {
+    this._snapshot();
+    const list = new Set(f.pins_absent || []);
+    if (absent) list.add(name); else list.delete(name);
+    if (list.size) f.pins_absent = [...list].sort(); else delete f.pins_absent;
+    if (this._nextPin === name) this._nextPin = undefined;
+    this._dirty = true;
+    this.requestUpdate();
+  }
+
+  /** Under the Pin tool: which name the next click takes - one another floor
+   * is waiting on, or a new pin (sticks while you place several) - and the
+   * names marked as not on this floor. */
+  _renderNextPin() {
+    const f = this._floorObj();
+    if (!f) return nothing;
+    const waiting = this._pinNamesElsewhere(f);
+    const placed = new Set((f.pins || []).map((q) => q.name));
+    const absent = (f.pins_absent || []).filter((n) => !placed.has(n));
+    if (!waiting.length && !absent.length) return nothing;   // every click is a new pin anyway
+    const next = this._nextPinName(f);
+    const isNew = this._nextPin === NEW_PIN;
+    const where = (name) => (this._draft?.floor || []).filter((fl) => fl !== f && (fl.pins || []).some((q) => q.name === name)).map((fl) => fl.name).join(", ");
+    return html`<div class="row small next-pin"><span class="muted">Next anchor:</span>
+      ${waiting.map((n) => html`<span class="pair"><button class="chip ${!isNew && n === next ? "on" : ""}" title="Anchored on ${where(n)}: the same point here" @click=${() => { this._nextPin = n; }}>${n}</button><button class="chip skip" title="${n} is not on this floor: stop offering it here" aria-label="${n} is not on this floor" @click=${() => this._setPinAbsent(f, n, true)}>not here</button></span>`)}
+      <button class="chip ${isNew || !waiting.length ? "on" : ""}" title="A point not anchored on any other floor yet, named ${this._freshPinName()}" @click=${() => { this._nextPin = NEW_PIN; }}>New anchor</button>
+    </div>
+    ${absent.length ? html`<div class="row small next-pin"><span class="muted">Not on this floor:</span>${absent.map((n) => html`<button class="chip" title="Offer ${n} on this floor again" @click=${() => this._setPinAbsent(f, n, false)}>${n} ↺</button>`)}</div>` : nothing}`;
+  }
+
   /** How this floor stacks against the others, and what the pins say about it. */
   _renderAlignment(f) {
     const rep = this._alignment, pins = f.pins || [];
     const row = rep?.floors?.[f.name];
     const waiting = this._pinNamesElsewhere(f);
     if (!pins.length && !waiting.length) {
-      return html`<div class="card small muted"><h4>Alignment</h4>Floors are drawn separately and nothing says how they stack. Pin two or more points that line up through the house (the Pin tool), with the same names on each floor.</div>`;
+      return html`<div class="card small muted"><h4>Alignment</h4>Floors are drawn separately and nothing says how they stack. Anchor two or more points that line up through the house (the Anchor tool), with the same names on each floor.</div>`;
     }
     const useScale = (px) => { this._snapshot(); f.scale = px; this._dirty = true; this._refreshAlignment(); this.requestUpdate(); toast(this, `Scale set to ${fmtScale(px, this.hass)}. Save, then re-run calibration for this floor: its corrections were learned at the old scale`, 8000); };
     const off = row?.implied_scale && row.scale ? Math.abs(row.implied_scale / row.scale - 1) : 0;
     return html`<div class="card small">
-      <h4>Alignment <span class="muted small">${pins.length} pin${pins.length === 1 ? "" : "s"}</span></h4>
+      <h4>Alignment <span class="muted small">${pins.length} anchor${pins.length === 1 ? "" : "s"}</span></h4>
       ${!row ? html`<div class="muted">Checking…</div>`
         : row.reference ? html`<div>This is the reference floor: the others are lined up against it.</div>`
-        : row.ok ? html`${(row.suspects || []).length ? html`<div class="warn"><b>${row.suspects.join(" and ")}</b> ${row.suspects.length === 1 ? "does" : "do"} not line up with the rest (${row.suspects.map((n) => fmtLen(row.misses?.[n], this.hass, 1)).join(", ")} off) and ${row.suspects.length === 1 ? "was" : "were"} left out of the fit. Most often the corner clicked here is not above the one on the other floor: a room that is longer upstairs, a wall set in from the one below. The grey rings on the plan show where the other floors put each pin.</div>` : nothing}<div>Lined up on ${row.shared - (row.suspects || []).length} agreeing pins, typically within <b>${fmtLen(row.rms_m, this.hass, 2)}</b>${row.worst && row.max_m >= 0.05 ? html`; worst is <b>${row.worst}</b> at ${fmtLen(row.max_m, this.hass, 2)}` : nothing}${Math.abs(row.rotation_deg) >= 0.5 ? html`. This plan is turned ${fmtNum(row.rotation_deg, 1)}° against the reference` : nothing}.</div>`
-        : row.rms_m != null && row.implied_scale && row.agree_rms_m != null && row.agree_rms_m <= 0.3 ? html`<div class="warn">The pins agree with each other (within ${fmtLen(row.agree_rms_m, this.hass, 2)}) but not at this floor's scale, so the floor cannot be lined up yet. That points at the scale, not at any pin.</div>`
-        : row.rms_m != null ? html`<div class="warn">The pins disagree by ${fmtLen(row.rms_m, this.hass, 2)} - too much to use. Check <b>${row.worst}</b> first (${fmtLen(row.max_m, this.hass, 2)} off), or pins that sit very close together.</div>`
+        : row.ok ? html`${(row.suspects || []).length ? html`<div class="warn"><b>${row.suspects.join(" and ")}</b> ${row.suspects.length === 1 ? "does" : "do"} not line up with the rest (${row.suspects.map((n) => fmtLen(row.misses?.[n], this.hass, 1)).join(", ")} off) and ${row.suspects.length === 1 ? "was" : "were"} left out of the fit. Most often the corner clicked here is not above the one on the other floor: a room that is longer upstairs, a wall set in from the one below. The grey rings on the plan show where the other floors put each anchor.</div>` : nothing}<div>Lined up on ${row.shared - (row.suspects || []).length} agreeing anchors, typically within <b>${fmtLen(row.rms_m, this.hass, 2)}</b>${row.worst && row.max_m >= 0.05 ? html`; worst is <b>${row.worst}</b> at ${fmtLen(row.max_m, this.hass, 2)}` : nothing}${Math.abs(row.rotation_deg) >= 0.5 ? html`. This plan is turned ${fmtNum(row.rotation_deg, 1)}° against the reference` : nothing}.</div>`
+        : row.rms_m != null && row.implied_scale && row.agree_rms_m != null && row.agree_rms_m <= 0.3 ? html`<div class="warn">The anchors agree with each other (within ${fmtLen(row.agree_rms_m, this.hass, 2)}) but not at this floor's scale, so the floor cannot be lined up yet. That points at the scale, not at any anchor.</div>`
+        : row.rms_m != null ? html`<div class="warn">The anchors disagree by ${fmtLen(row.rms_m, this.hass, 2)} - too much to use. Check <b>${row.worst}</b> first (${fmtLen(row.max_m, this.hass, 2)} off), or anchors that sit very close together.</div>`
         : html`<div class="muted">Not lined up yet: ${row.why}.</div>`}
-      ${off >= 0.01 ? html`<div class="row">The pins fit best at <b>${fmtScale(row.implied_scale, this.hass)}</b>; this floor is set to ${fmtScale(row.scale, this.hass)} (${fmtNum(off * 100, 1)} % apart). ${uiButton({ label: "Use the pins' scale", onClick: () => useScale(row.implied_scale), title: "Set this floor's scale from its pins. Four or more well-spread pins usually beat one tape measurement" })}</div>` : nothing}
-      ${waiting.length ? html`<div class="muted">Pinned on other floors, not here yet: ${waiting.join(", ")}.</div>` : nothing}
+      ${off >= 0.01 ? html`<div class="row">The anchors fit best at <b>${fmtScale(row.implied_scale, this.hass)}</b>; this floor is set to ${fmtScale(row.scale, this.hass)} (${fmtNum(off * 100, 1)} % apart). ${uiButton({ label: "Use the anchors' scale", onClick: () => useScale(row.implied_scale), title: "Set this floor's scale from its anchors. Four or more well-spread anchors usually beat one tape measurement" })}</div>` : nothing}
+      ${waiting.length ? html`<div class="muted">Anchored on other floors, not here yet: ${waiting.join(", ")}.</div>` : nothing}
       ${(rep?.unlinked || []).filter((n) => pins.some((q) => q.name === n)).length ? html`<div class="muted">Only on this floor so far: ${rep.unlinked.filter((n) => pins.some((q) => q.name === n)).join(", ")}.</div>` : nothing}
     </div>`;
   }
@@ -716,10 +784,10 @@ class SextantEdit extends LitElement {
       const others = [...new Set((this._draft?.floor || []).filter((fl) => fl !== f).flatMap((fl) => (fl.pins || []).map((q) => q.name)))].filter(Boolean);
       const taken = new Set((f.pins || []).filter((q) => q !== item).map((q) => q.name));
       return html`<div class="card">
-        <h4>Pin</h4>
-        <div class="row">${uiField({ label: "Name (the same on every floor)", value: item.name || "", onChange: (v) => { const name = String(v || "").trim(); if (!name) return; if (taken.has(name)) return toast(this, `This floor already has a pin called ${name}`); this._edit("name", name); }, style: "flex: 1" })}</div>
-        ${others.filter((n) => !taken.has(n) && n !== item.name).length ? html`<div class="row small"><span class="muted">On other floors:</span>${others.filter((n) => !taken.has(n) && n !== item.name).map((n) => html`<button class="chip" @click=${() => this._edit("name", n)}>${n}</button>`)}</div>` : nothing}
-        <div class="muted small">${item.linked ? "Linked: this name is pinned on another floor too." : "Not linked yet: pin the same point on another floor and give it this name."}${item.miss != null && item.miss >= 0.05 ? ` Misses the fit by ${fmtLen(item.miss, this.hass, 2)}.` : ""} x ${fmtNum(item.cords?.x, 0)}, y ${fmtNum(item.cords?.y, 0)}</div>
+        <h4>Anchor</h4>
+        <div class="row">${uiField({ label: "Name (the same on every floor)", value: item.name || "", onChange: (v) => { const name = String(v || "").trim(); if (!name) return; if (taken.has(name)) return toast(this, `This floor already has an anchor called ${name}`); this._edit("name", name); }, style: "flex: 1" })}</div>
+        <div class="row small"><span class="muted">${others.filter((n) => !taken.has(n) && n !== item.name).length ? "On other floors:" : "Name:"}</span>${others.filter((n) => !taken.has(n) && n !== item.name).map((n) => html`<button class="chip" @click=${() => this._edit("name", n)}>${n}</button>`)}<button class="chip" title="Not the same point as any anchor on another floor: give it a name of its own" @click=${() => this._edit("name", this._freshPinName())}>New anchor</button></div>
+        <div class="muted small">${item.linked ? "Linked: this name is anchored on another floor too." : "Not linked yet: anchor the same point on another floor and give it this name."}${item.miss != null && item.miss >= 0.05 ? ` Misses the fit by ${fmtLen(item.miss, this.hass, 2)}.` : ""} x ${fmtNum(item.cords?.x, 0)}, y ${fmtNum(item.cords?.y, 0)}</div>
         <div class="row"><span class="grow"></span>${uiButton({ label: "Delete", kind: "danger", onClick: () => this._deleteSelection() })}</div>
       </div>`;
     }
@@ -815,6 +883,13 @@ class SextantEdit extends LitElement {
     .family { display: inline-flex; gap: 1px; padding: 2px; border: 1.5px solid var(--divider-color); border-radius: 11px; }
     /* Sized so both family rings sit on one line of the 320px side panel. */
     .proxypick { display: flex; flex-wrap: wrap; gap: 4px; margin: 2px 0 4px; }
+    /* Inside the hint, which floats over the canvas: a row in the stage's own
+       flow would add height, and the canvas is sized to the stage. */
+    .hint .next-pin { flex-basis: 100%; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 2px; }
+    .next-pin .pair { display: inline-flex; }
+    .next-pin .pair .chip:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+    .next-pin .pair .chip.skip { border-left: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; color: var(--secondary-text-color); }
+    .next-pin .chip.on { background: var(--primary-color, #03a9f4); border-color: var(--primary-color, #03a9f4); color: var(--text-primary-color, #fff); }
     .proxypick .chip { border: 1px solid var(--divider-color, #ccc); border-radius: 14px; padding: 3px 9px; background: transparent; color: var(--primary-text-color); cursor: pointer; font: inherit; font-size: 12px; }
     .proxypick .chip.on { background: var(--primary-color, #03a9f4); border-color: var(--primary-color, #03a9f4); color: var(--text-primary-color, #fff); }
     .proxypick .chip.on .muted { color: inherit; opacity: .8; }

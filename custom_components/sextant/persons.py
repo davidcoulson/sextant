@@ -71,6 +71,21 @@ def locates_owner(layout, ent, cls) -> bool:
     return cls in LOCATES_BY_DEFAULT
 
 
+# What a battery sensor says when its device is on a charger: iCloud3 reports
+# Charging / Charged / Full, Apple's Find My "Charged" at 100 %, the companion
+# app Charging / Full. "Not Charging" and "NotCharging" are off the charger.
+CHARGER_STATES = {"charging", "charged", "full", "on"}
+
+
+def on_charger(state) -> bool:
+    """Whether a battery (or charging binary) sensor's state says it is on a charger.
+
+    Anything unreadable - unavailable, unknown, no sensor - is False: a sensor
+    that has nothing to say must not take a thing out of the running.
+    """
+    return isinstance(state, str) and state.strip().lower() in CHARGER_STATES
+
+
 def settled_since(points, here, radius=STAY_RADIUS_M, confirm_secs=MOVE_CONFIRM_SECS):
     """When a thing arrived within ``radius`` metres of ``here``, from its history.
 
@@ -101,6 +116,7 @@ def pick(things, now: float, stale_after: float):
         t for t in things
         if isinstance(t.get("updated"), (int, float)) and now - t["updated"] <= stale_after
         and t.get("zone") not in (None, "", "unknown")
+        and not t.get("on_charger")   # a watch on its charger is not on anybody's wrist
     ]
     if not fresh:
         return None
@@ -120,7 +136,8 @@ def considered(things, now):
     stayed there. Shows why the person reads where they do."""
     return [
         {"thing": t["ent"], "where": t.get("sub_zone") if t.get("sub_zone") not in (None, "", "unknown") else t.get("zone"),
-         "here_for_min": round((now - t["arrived"]) / 60) if isinstance(t.get("arrived"), (int, float)) else None}
+         "here_for_min": round((now - t["arrived"]) / 60) if isinstance(t.get("arrived"), (int, float)) else None,
+         **({"on_charger": True} if t.get("on_charger") else {})}
         for t in things
     ]
 

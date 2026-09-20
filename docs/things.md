@@ -43,9 +43,8 @@ reloads.
 ## People
 
 Give things an owner - **Belongs to**, a Home Assistant person - and two
-things follow. On Live, everyone with two or more things gets a heading of
-their own (their picture, and where they are), which folds their things
-away with a click. And each owner gets three sensors of their own:
+things follow. On Live, each owner gets a heading of their own (their
+picture, and where they are), which folds their things away with a click. And each owner gets three sensors of their own:
 `sensor.<person>_sextant_person_location` (the spot, or the room),
 `_sextant_person_room` and `_sextant_person_floor`, with `via` naming the
 thing they came from. Automations can then ask where David is rather than
@@ -61,4 +60,12 @@ phone left on the couch is not you), and among those a pet's own tag, a
 watch, then a phone. When nothing is on the move, the one that arrived
 where it is most recently wins - the phone you carried downstairs, not the
 watch on its charger since last night.
+
+A thing can also name an **On-charger sensor** - its battery state from
+iCloud3, the companion app, or any `binary_sensor` that is on while it
+charges. While that reads Charging, Charged or Full, the thing does not
+speak for its owner at all: a watch on its charger is on nobody's wrist.
+Unavailable or unknown counts as not charging, so a sensor that has nothing
+to say never takes a thing out of the running. The location sensor's
+`considered` list marks a thing left out this way with `on_charger`.
 

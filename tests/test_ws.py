@@ -586,6 +586,20 @@ def test_thing_tune_sets_and_clears_an_owner_and_pronouns(tmp_path):
     assert st.get_layout(hass)["thing_owners"] == {}
 
 
+def test_thing_tune_sets_and_clears_an_on_charger_sensor(tmp_path):
+    hass = _hass_with_layout(tmp_path, _layout())
+    conn = _Conn()
+    run(ws.ws_thing_tune(hass, conn, {"id": 1, "type": "sextant/thing/tune", "entity": "watch",
+                                        "charging_entity": "sensor.david_apple_watch_battery_status"}))
+    assert st.get_layout(hass)["thing_charging_entity"] == {"watch": "sensor.david_apple_watch_battery_status"}
+    # Not a sensor: refused, nothing stored.
+    run(ws.ws_thing_tune(hass, conn, {"id": 2, "type": "sextant/thing/tune", "entity": "watch",
+                                        "charging_entity": "light.kitchen"}))
+    assert conn.errors and st.get_layout(hass)["thing_charging_entity"] == {"watch": "sensor.david_apple_watch_battery_status"}
+    run(ws.ws_thing_tune(hass, conn, {"id": 3, "type": "sextant/thing/tune", "entity": "watch", "charging_entity": None}))
+    assert st.get_layout(hass)["thing_charging_entity"] == {}
+
+
 def test_history_can_be_kept_to_admins(tmp_path):
     layout = _layout()
     layout["tuning"] = {"history_admin_only": True}

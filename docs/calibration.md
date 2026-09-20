@@ -34,7 +34,7 @@ bedside-table proxy read 1.1 m, the stretch of 1.73 made it 1.8 m, and the
 fix was pushed off the table into the room. So a stretch fades out at close
 range: none of it below `correction_fade_near_m` (1 m), all of it from
 `correction_fade_far_m` (2.5 m), blended in between. Corrections below 1
-are always applied in full. On the truth marks this halved the error at
+are always applied in full. On the location pins this halved the error at
 that table and moved the others by a few centimetres. Switch it off, or
 move its edges, under Calibration on the Tuning page. It acts on factors
 stored with the layout; with `calibration_target: bermuda` the correction

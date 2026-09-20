@@ -12,7 +12,9 @@ NODE = shutil.which("node")
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
 def test_frontend_node_tests_pass():
-    run = subprocess.run([NODE, "--test", "tests/frontend/"], cwd=ROOT, capture_output=True, text=True)
+    # Files, not the directory: Node before 23 does not expand a directory for --test.
+    files = sorted(str(p.relative_to(ROOT)) for p in (ROOT / "tests" / "frontend").glob("*.test.mjs"))
+    run = subprocess.run([NODE, "--test", *files], cwd=ROOT, capture_output=True, text=True)
     assert run.returncode == 0, run.stdout + run.stderr
 
 

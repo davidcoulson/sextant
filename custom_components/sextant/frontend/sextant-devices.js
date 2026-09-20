@@ -226,6 +226,14 @@ class SextantDevices extends LitElement {
 
   // --- Thing dialog --------------------------------------------------------
 
+  /** Battery-state and charging sensors to offer for "On-charger sensor"; the current choice always included. */
+  _batterySensors(current) {
+    const ids = Object.keys(this.hass?.states || {}).filter((e) =>
+      (e.startsWith("sensor.") && /batter(y|ies)_(state|status)$/.test(e)) || (e.startsWith("binary_sensor.") && /charg/.test(e)));
+    if (current && !ids.includes(current)) ids.push(current);
+    return ids.sort();
+  }
+
   _openWizard(slug, address) {
     const layout = this.data?.layout || {};
     this._wizard = {
@@ -236,6 +244,7 @@ class SextantDevices extends LitElement {
       pronouns: layout.thing_pronouns?.[slug] || "",
       owner: layout.thing_owners?.[slug] || "",
       locates: typeof layout.thing_locates_owner?.[slug] === "boolean" ? (layout.thing_locates_owner[slug] ? "yes" : "no") : "",
+      charging: layout.thing_charging_entity?.[slug] || "",
       height: toDisplayLen(layout.thing_heights?.[slug], this.hass),
       ref: layout.thing_ref_offsets?.[slug] ?? "",
       icon: layout.thing_icons?.[slug] || "",
@@ -338,6 +347,7 @@ class SextantDevices extends LitElement {
       pronouns: w.pronouns || null,
       owner: w.owner || null,
       locates_owner: w.locates === "yes" ? true : w.locates === "no" ? false : null,
+      charging_entity: w.charging || null,
       height: w.height === "" || w.height == null ? null : fromDisplayLen(w.height, this.hass),
       ref_offset_db: w.ref === "" || w.ref == null ? null : Number(w.ref),
       icon: w.icon || null,
@@ -398,6 +408,13 @@ class SextantDevices extends LitElement {
             { value: "yes", label: "Yes" }, { value: "no", label: "No" },
           ], onChange: (v) => { w.locates = v; this.requestUpdate(); }, style: "width: 220px" })}
           <span class="small muted">Watches, phones and a pet's own tag say where their owner is. Headphones, keys or a bag go along only some of the time, so by default they don't.</span>
+        </div>
+        <div class="row">
+          ${uiSelect({ label: "On-charger sensor", value: w.charging || "", options: [
+            { value: "", label: "None" },
+            ...this._batterySensors(w.charging).map((e) => ({ value: e, label: `${this.hass?.states?.[e]?.attributes?.friendly_name || e} (${this.hass?.states?.[e]?.state ?? "?"})` })),
+          ], onChange: (v) => { w.charging = v; this.requestUpdate(); }, style: "width: 320px" })}
+          <span class="small muted">While this says Charging (or Charged / Full), ${w.name || w.placeholder || "this thing"} is on a charger and doesn't give its owner's location. Unavailable counts as not charging.</span>
         </div>` : nothing}
         <div class="row colour">
           <span class="avatar-preview" style="background: ${thingColor(w.slug, w.color || null)}" title="how this thing will look">${w.preview || w.icon ? html`<img src=${w.preview || w.icon} alt="">` : classIcon(w.thing_class) ? html`<ha-icon icon=${classIcon(w.thing_class)}></ha-icon>` : html`<span class="initials">${(w.name || w.placeholder || "?").slice(0, 2).toUpperCase()}</span>`}</span>

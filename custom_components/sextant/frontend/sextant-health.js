@@ -22,7 +22,7 @@ const TUNING_LABELS = {
   fingerprint_missing_m: ["Not heard counts as (m)", "a proxy that does not hear the thing is treated as this far away"],
   fingerprint_ref_gain: ["Reference gain", "probe beacons hotter (<1) or cooler (>1) than the things"],
   fingerprint_auto_gain: ["Learn reference gain from things", "walk the gain in from every match, published per fix as fp.gain"],
-  fingerprint_marks: ["Truth marks as references", "each mark from the Live page is also a fingerprint reference at that point"],
+  fingerprint_marks: ["Location pins as references", "each pin from the Live page is also a fingerprint reference at that point"],
   distance_estimator: ["Distance estimator", "bermuda = Bermuda's smoothed distance; median = the median of the recent raw RSSI samples"],
   median_window_secs: ["Median window (s)", "only samples newer than this feed the median"],
   median_min_samples: ["Median minimum samples", "fewer than this falls back to Bermuda's distance"],
@@ -54,7 +54,7 @@ const TUNING_LABELS = {
   spot_proxy_far_m: ["Spot proxy: nothing from (m)", "from this far the spot's proxy says nothing; between the two it fades"],
   spot_proxy_ratio: ["Spot proxy: clearly nearest ×", "every other proxy must read this many times farther for full weight (none within 1.25×)"],
   zone_lock_warmup_secs: ["Lock warm-up (s)", "no stationary lock until a thing has been tracked this long since a start or a floor change"],
-  fingerprint_marks_scope: ["Marks guide", "whose truth marks place a thing: own = only its own; class = also those of things of its class (the cats share one another's); all = everyone's"],
+  fingerprint_marks_scope: ["Pins guide", "whose location pins place a thing: own = only its own; class = also those of things of its class (the cats share one another's); all = everyone's"],
   history_admin_only: ["History for admins only", "only administrators may read where things have been (scrubber, timeline, Activity); live positions stay visible to everyone"],
   history_hours: ["History kept (hours)", "how far back the history scrubber, the timeline and Activity reach (1 to 168)"],
   calibration_target: ["Calibration writes to", "sextant = a per-proxy factor in the layout; bermuda = per-scanner RSSI offsets in Bermuda"],
@@ -431,7 +431,7 @@ class SextantHealth extends LitElement {
     const floors = a ? this._adviceByFloor(a.rooms) : [];
     return html`<section class="card wide">
       <h3>Where a proxy would help</h3>
-      <p class="small muted">Every room is judged two ways: how far its proxies land from where they are placed in the self-test, and whether any point in the room has three proxies near enough and around it. Grouped into one change plan per floor, worst floor first; a suggested spot is on a wall, where an outlet or a switch is. <b>Show on plan</b> marks one room's spots on the Edit page, <b>Show all on this floor</b> marks every spot on the floor at once.</p>
+      <p class="small muted">Every room is judged two ways: how far its proxies land from where they are placed in the self-test, and whether any point in the room has three proxies near enough and around it. Grouped into one change plan per floor, worst floor first; a suggested spot is on a wall, where an outlet or a switch is. <b>Show on plan</b> pins one room's spots on the Edit page, <b>Show all on this floor</b> pins every spot on the floor at once.</p>
       <div class="row">${uiButton({ label: this._busy === "advice" ? "Analysing…" : a ? "Refresh" : "Analyse the house", kind: stale(a) || !a ? "primary" : "outline", disabled: this._busy === "advice", onClick: () => this._runAdvice() })}
         ${stale(a) ? html`<span class="pill warn" title="Auto calibration has sampled a lot since; refresh for a current picture">over an hour old</span>` : nothing}
         ${a ? html`<span class="muted small">${a.at ? `analysed ${fmtAge((Date.now() - a.at) / 1000)} ago · ` : ""}${a.summary.rooms} rooms · ${a.summary.to_add ? `${a.summary.to_add} proxies to add` : "nothing to add"}${Object.entries(a.summary.issues || {}).filter(([k]) => k !== "ok").map(([k, n]) => ` · ${n} ${k}`).join("")}</span>` : nothing}</div>
@@ -591,14 +591,14 @@ class SextantHealth extends LitElement {
     const a = this._accuracy;
     const rows = Object.entries(a?.things || {}).sort((x, y) => y[1].mean_m - x[1].mean_m);
     return html`<section class="card wide">
-      <h3>Accuracy <span class="muted small">against your truth marks</span></h3>
-      <p class="small muted">Every mark (Live page, "It's actually here…") re-solved under the settings in force now: how far each thing lands from where you said it was, and how often it gets the room right.</p>
-      <div class="row">${uiButton({ label: this._busy === "accuracy" ? "Evaluating…" : "Evaluate marks", kind: "primary", disabled: this._busy === "accuracy", onClick: () => this._runAccuracy() })}
-        ${a ? html`<span class="pill">${(a.marks || []).length} mark${(a.marks || []).length === 1 ? "" : "s"}</span>` : nothing}</div>
+      <h3>Accuracy <span class="muted small">against your location pins</span></h3>
+      <p class="small muted">Every pin (Live page, "It's actually here…") re-solved under the settings in force now: how far each thing lands from where you said it was, and how often it gets the room right.</p>
+      <div class="row">${uiButton({ label: this._busy === "accuracy" ? "Evaluating…" : "Evaluate pins", kind: "primary", disabled: this._busy === "accuracy", onClick: () => this._runAccuracy() })}
+        ${a ? html`<span class="pill">${(a.marks || []).length} pin${(a.marks || []).length === 1 ? "" : "s"}</span>` : nothing}</div>
       ${rows.length ? html`<div class="wrap"><table>
-        <tr><th>Thing</th><th class="num">Marks</th><th class="num">Mean error</th><th class="num">Right room</th></tr>
+        <tr><th>Thing</th><th class="num">Pins</th><th class="num">Mean error</th><th class="num">Right room</th></tr>
         ${rows.map(([e, m]) => html`<tr><td>${thingName(this.data, e)}</td><td class="num">${m.marks}</td><td class="num">${fmtLen(m.mean_m, this.hass)}</td><td class="num">${Math.round(m.room_ok * 100)}%</td></tr>`)}
-      </table></div>` : a ? html`<div class="muted small">No marks yet.</div>` : nothing}
+      </table></div>` : a ? html`<div class="muted small">No pins yet.</div>` : nothing}
     </section>`;
   }
 

@@ -338,6 +338,8 @@ async def ws_tuning_set(hass, connection, msg):
     vol.Optional("owner"): vol.Any(None, str),
     # Whether this thing's place may stand for its owner's (None: its class decides).
     vol.Optional("locates_owner"): vol.Any(None, bool),
+    # A battery sensor whose "Charging" takes the thing out of its owner's location.
+    vol.Optional("charging_entity"): vol.Any(None, str),
     vol.Optional("estimator"): vol.Any(None, "", "geometric", "fingerprint", "fused"),
     vol.Optional("fp_weight"): vol.Any(None, vol.Coerce(float)),
     vol.Optional("color"): vol.Any(None, str),
@@ -356,6 +358,9 @@ async def ws_thing_tune(hass, connection, msg):
     owner = msg.get("owner")
     if owner and not re.fullmatch(r"person\.[a-z0-9_]+", owner):
         return _error(connection, msg, "owner must be a Home Assistant person, like person.david")
+    charging = msg.get("charging_entity")
+    if charging and not re.fullmatch(r"(sensor|binary_sensor)\.[a-z0-9_]+", charging):
+        return _error(connection, msg, "the on-charger sensor must be a sensor or binary_sensor")
     async with LAYOUT_LOCK:
         data = get_layout_for_edit(hass)
         if not isinstance(data, dict):
@@ -458,6 +463,16 @@ async def ws_thing_tune(hass, connection, msg):
                 values.pop(entity, None)
             data["thing_locates_owner"] = values
             changes["locates_owner"] = msg["locates_owner"]
+        if "charging_entity" in msg:
+            values = data.get("thing_charging_entity")
+            if not isinstance(values, dict):
+                values = {}
+            if msg["charging_entity"]:
+                values[entity] = msg["charging_entity"]
+            else:
+                values.pop(entity, None)
+            data["thing_charging_entity"] = values
+            changes["charging_entity"] = msg["charging_entity"]
         await save_layout(hass, data)
     connection.send_result(msg["id"], {"entity": entity, **changes})
 

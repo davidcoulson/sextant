@@ -406,7 +406,7 @@ export class SextantMap {
     this.things = [];
     this.trails = new Map();
     this.offline = new Set();
-    this.marks = [];   // truth marks of the focused thing on this floor: [{x, y, label}]
+    this.marks = [];   // location pins of the focused thing on this floor: [{x, y, label}]
     this.heat = null;  // where the focused thing has been: {size, max, cells: [{x, y, secs}]} in map px
     this.areaIcons = {};  // Home Assistant area id -> its mdi icon, for rooms linked to an area
     this.biasMap = null;  // this floor's election prior against another's: {size, cells: [[x, y, ratio]]} in map px
@@ -563,7 +563,7 @@ export class SextantMap {
     this._pointers.set(e.pointerId, p);
     if (this._pointers.size === 2) { this._startPinch(); return; }
     if (this._pointers.size > 2) return;
-    // Placing something (a truth mark): the tap counts when the finger lifts
+    // Placing something (a location pin): the tap counts when the finger lifts
     // without moving, so a pan or a pinch never places it by accident.
     if (this.mode !== "edit" && e.button === 0 && this.host.isPlacing?.()) {
       this._drag = { kind: "pan", start: p, view: { ...this.view }, moved: false, slop: e.pointerType === "touch" ? 10 : 3, place: this.toMap(p) };
@@ -1109,7 +1109,7 @@ export class SextantMap {
     pts.forEach((p, i) => this._handle(ctx, p, (i === 0 ? VERTEX_SIZE * 1.3 : VERTEX_SIZE) / k, "#ffd166", "#5a4400"));
   }
 
-  /** Truth marks: a pin where the user said the focused thing really was. */
+  /** Location pins: a pin where the user said the focused thing really was. */
   _drawSuggestions(ctx) {
     // Where the Advice page says a proxy would help: a magenta target, in
     // both modes. Drawn over a scrim (see draw()), numbered so a whole

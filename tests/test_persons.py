@@ -120,3 +120,24 @@ def test_arrival_survives_a_restart_with_a_late_history_and_a_wrong_floor_blip(m
         got = sextant._arrived_at(None, layout, "watch", downstairs, t + dt)
     assert got == t + 100
     sextant._arrivals.clear()
+
+
+def test_a_thing_on_its_charger_does_not_speak_for_its_owner():
+    now = NOW
+    watch = {**thing("watch", "watch", still_for=60, zone="Master Bedroom"), "on_charger": True}
+    phone = thing("phone", "phone", still_for=5000, zone="Kitchen")
+    # The watch just arrived and outranks the phone on class - but it is charging.
+    assert persons.pick([watch, phone], now, 300)["ent"] == "phone"
+    assert persons.pick([{**watch, "on_charger": False}, phone], now, 300)["ent"] == "watch"
+    # Charging and nothing else: nobody is placed by it.
+    assert persons.pick([watch], now, 300) is None
+    # And the sensor says why.
+    why = persons.considered([watch, phone], now)
+    assert why[0]["on_charger"] is True and "on_charger" not in why[1]
+
+
+def test_what_counts_as_on_the_charger():
+    for s in ("Charging", "charging", "Charged", "Full", "on", " Charging "):
+        assert persons.on_charger(s), s
+    for s in ("Not Charging", "NotCharging", "not_charging", "Discharging", "off", "unavailable", "unknown", "", None, 42):
+        assert not persons.on_charger(s), s
