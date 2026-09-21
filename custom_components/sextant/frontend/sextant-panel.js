@@ -56,6 +56,10 @@ function shortSpan(secs) {
   return `${(secs / 3600).toFixed(secs < 36000 ? 1 : 0)} h`;
 }
 
+// Battery badge thresholds (percent): amber at LOW, red at CRITICAL.
+const BATTERY_LOW = 20;
+const BATTERY_CRITICAL = 10;
+
 class SextantPanel extends LitElement {
   static properties = {
     _spots: { state: true },
@@ -824,9 +828,13 @@ class SextantLive extends LitElement {
                 const badge = st.away ? html`<ha-icon class="viabadge ghostbadge" icon="mdi:ghost-outline"></ha-icon>`
                   : st.ghost ? html`<ha-icon class="viabadge waitbadge" icon="mdi:timer-sand"></ha-icon>`
                   : who ? html`<ha-icon class="viabadge" icon="mdi:map-marker"></ha-icon>` : nothing;
-                if (badge === nothing) return this._avatar(p.ent);
-                const why = st.away ? lastSeen : st.ghost ? `Last heard ${fmtAge(st.age)} ago` : `Where ${who} is read from right now`;
-                return html`<span class="avslot" title=${why}>${this._avatar(p.ent)}${badge}</span>`;
+                // A low battery gets its own corner: it is a separate question
+                // from the status above, and both can be true at once - a tag
+                // going quiet BECAUSE its battery is dying is the whole point.
+                const battery = this._batteryBadge(p.ent);
+                if (badge === nothing && battery === nothing) return this._avatar(p.ent);
+                const why = badge === nothing ? "" : st.away ? lastSeen : st.ghost ? `Last heard ${fmtAge(st.age)} ago` : `Where ${who} is read from right now`;
+                return html`<span class="avslot" title=${why}>${this._avatar(p.ent)}${badge}${battery}</span>`;
               })()}
               <span class="name">${this._label(p.ent)}</span>
               <span class="where">${p.zone ? html`${this._roomIcon(p.floor, p.zone) ? html`<ha-icon class="roomicon" icon=${this._roomIcon(p.floor, p.zone)}></ha-icon>` : nothing}${p.zone}` : html`<span class="muted">away</span>`}</span>
@@ -980,7 +988,8 @@ class SextantLive extends LitElement {
               <dt>Floor</dt><dd>${sel.floor}</dd>
               <dt>Proxies</dt><dd>${sel.radii?.length ?? 0} in the solve${sel.anchor ? html`<br><span class="pill ok" title=${`one proxy reads ${this._label(sel.ent)} within arm's reach and no other comes close: placed on that proxy`}>anchored to ${proxyName(this.data, sel.anchor)}</span>` : nothing}</dd>
               ${this._renderHere(sel)}
-              <dt>Updated</dt><dd>${fmtAge(Date.now() / 1000 - sel.updated)} ago${staleness(sel, this._staleAfter()).ghost ? html` <span class="pill warn" title=${`Nothing has heard ${this._label(sel.ent)} since; this is where ${this._pn(sel.ent).subj} ${this._pn(sel.ent).was} last placed`}>not heard</span>` : nothing}</dd>
+              ${this._battery(sel.ent) === null ? nothing : html`<dt>Battery</dt><dd class=${this._battery(sel.ent) <= BATTERY_CRITICAL ? "crit" : this._battery(sel.ent) <= BATTERY_LOW ? "warn" : ""}>${Math.round(this._battery(sel.ent))}%</dd>`}
+              <dt>Updated</dt><dd>${typeof sel.updated === "number" && sel.updated > 0 ? html`${fmtAge(Date.now() / 1000 - sel.updated)} ago` : html`<span class="muted">not heard since the last restart</span>`}${staleness(sel, this._staleAfter()).ghost ? html` <span class="pill warn" title=${`Nothing has heard ${this._label(sel.ent)} since; this is where ${this._pn(sel.ent).subj} ${this._pn(sel.ent).was} last placed`}>not heard</span>` : nothing}</dd>
             </dl>
             ${this._renderTimeline(sel)}
             <details class="telemetry">
@@ -1018,8 +1027,32 @@ class SextantLive extends LitElement {
     return stays;
   }
 
+  /** The thing's battery level (0-100), or null when it has no battery sensor
+   * or the sensor has nothing to say. */
+  _battery(ent) {
+    const id = this.data?.layout?.thing_battery_entity?.[ent];
+    const v = id ? parseFloat(this.hass?.states?.[id]?.state) : NaN;
+    return Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : null;
+  }
+
+  /** A badge only once the battery is low: a full one would put a badge on
+   * every pet and say nothing. Amber from BATTERY_LOW, red from BATTERY_CRITICAL. */
+  _batteryBadge(ent) {
+    const level = this._battery(ent);
+    if (level === null || level > BATTERY_LOW) return nothing;
+    const crit = level <= BATTERY_CRITICAL;
+    return html`<ha-icon class="batterybadge ${crit ? "crit" : ""}" icon=${crit ? "mdi:battery-alert-variant-outline" : "mdi:battery-low"}
+      title=${`Battery ${Math.round(level)}%${crit ? " - replace it soon; a dead tag reads exactly like one that has left" : ""}`}></ha-icon>`;
+  }
+
   /** "Meg's Cafe for 1h 12m · in Catwalk for 3h" - how long it has been where it is. */
   _renderHere(sel) {
+    // A thing nothing is hearing is not "here" anywhere, and certainly has not
+    // "just arrived": say where it was last heard, if that is known at all.
+    if (sel.away) {
+      const where = (sel.sub_zone && sel.sub_zone !== "unknown" ? sel.sub_zone : null) || sel.zone;
+      return where ? html`<dt>Last heard</dt><dd>${where}${sel.floor ? html` <span class="muted small">${sel.floor}</span>` : nothing}</dd>` : nothing;
+    }
     const stays = this._stays(sel);
     if (!stays) return nothing;
     const spot = sel.sub_zone && sel.sub_zone !== "unknown" ? sel.sub_zone : null;
@@ -1159,6 +1192,10 @@ class SextantLive extends LitElement {
     .list .avslot { grid-row: 1 / 3; position: relative; display: inline-flex; }
     .list .avslot .viabadge.waitbadge { background: var(--warning-color, #e6a100); color: #23272e; }
     .list .avslot .viabadge.ghostbadge { background: var(--secondary-background-color, #666); color: var(--secondary-text-color); }
+    .list .avslot .batterybadge { position: absolute; right: -3px; bottom: -3px; --mdc-icon-size: 12px; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--warning-color, #e6a100); color: #23272e; box-shadow: 0 0 0 2px var(--card-background-color, #fff); }
+    .list .avslot .batterybadge.crit { background: var(--error-color, #db4437); color: #fff; }
+    dd.warn { color: var(--warning-color, #e6a100); font-weight: 600; }
+    dd.crit { color: var(--error-color, #db4437); font-weight: 600; }
     .list .avslot .viabadge { position: absolute; right: -3px; top: -3px; --mdc-icon-size: 13px; width: 17px; height: 17px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--primary-color, #03a9f4); color: var(--text-primary-color, #fff); box-shadow: 0 0 0 2px var(--card-background-color, #fff); }
     /* A flex row so the icon centres on the text instead of sitting on its baseline. */
     .list .where { grid-column: 3; display: flex; align-items: center; justify-content: flex-end; gap: 4px; text-align: right; font-size: 12px; }

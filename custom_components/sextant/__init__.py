@@ -1017,6 +1017,7 @@ async def restore_position_history(hass):
         return
     hist.adopt(loaded)
     hist.mark_all_gaps()
+    _seed_last_seen_from_history(hass)
     ents = hist.entities()
     _LOGGER.info("Sextant position history restored: %d points across %d things",
                  sum((hist.retained(e) or {}).get("points", 0) for e in ents), len(ents))
@@ -2897,19 +2898,7 @@ async def _restore_runtime(hass):
         return
     back = runtime_mod.restore(data, time.time(), _tuning(layout, "restore_state_secs"))
     _last_seen.update(back["last"])
-    # Anything the snapshot never knew, but the position history did: the
-    # store outlives any restart, so its last point is a real sighting.
-    try:
-        hist = get_position_history(hass)
-        for entity in hist.entities():
-            if entity in _last_seen:
-                continue
-            span = hist.retained(entity)
-            if span and isinstance(span.get("to"), (int, float)):
-                _last_seen[entity] = {"zone": None, "spot": None, "floor": None,
-                                      "updated": span["to"], "cords": None}
-    except Exception as e:  # noqa: BLE001
-        _LOGGER.debug("No history to date the last sighting from: %s", e)
+    _seed_last_seen_from_history(hass)
     for entity, kf in back["kf"].items():
         _kf_position_state[entity] = {
             "x": np.array(kf["x"], dtype=float), "P": np.array(kf["P"], dtype=float),
@@ -2987,10 +2976,63 @@ def _floor_elections():
     }
 
 
+def _rows_with_last_seen(rows, last_seen):
+    """The published rows, plus a row for every thing that has gone quiet but
+    whose last sighting is still remembered - the snapshot builds its record
+    of last sightings from these."""
+    live = {r.get("ent") for r in rows}
+    return rows + [
+        {"ent": ent, "zone": v.get("zone"), "sub_zone": v.get("spot"), "floor": v.get("floor"),
+         "updated": v.get("updated"), "cords": v.get("cords")}
+        for ent, v in last_seen.items() if ent not in live and isinstance(v, dict)
+    ]
+
+
+def _seed_last_seen_from_history(hass):
+    """Give a last sighting to anything the position history has seen and
+    _last_seen has not: the history outlives any restart, so its last point is
+    a real sighting, with the room and floor it was in.
+
+    Called from the runtime restore AND again once the history has loaded. The
+    restore runs first, ahead of the setup step that reads the history off
+    disk, so on a real restart the history it asked was still empty and this
+    fallback never once did anything - the same ordering trap as the restore
+    window reading an unloaded layout.
+    """
+    try:
+        hist = get_position_history(hass)
+        for entity in hist.entities():
+            if entity in _last_seen:
+                continue
+            span = hist.retained(entity)
+            if not (span and isinstance(span.get("to"), (int, float))):
+                continue
+            seen = {"zone": None, "spot": None, "floor": None, "updated": span["to"], "cords": None}
+            try:
+                q = hist.query(entity, span["to"] - 1, span["to"] + 1, 4)
+                if q.get("t"):
+                    i = len(q["t"]) - 1
+                    fi, zi, si = q["f"][i], q["z"][i], q["sp"][i]
+                    seen["floor"] = q["floors"][fi] if isinstance(fi, int) and fi < len(q["floors"]) else None
+                    seen["zone"] = (q["zones"][zi] or None) if isinstance(zi, int) and zi < len(q["zones"]) else None
+                    seen["spot"] = (q["spots"][si] or None) if isinstance(si, int) and si < len(q["spots"]) else None
+            except Exception:  # noqa: BLE001 - the time alone is still worth having
+                pass
+            _last_seen[entity] = seen
+    except Exception as e:  # noqa: BLE001
+        _LOGGER.debug("No history to date the last sighting from: %s", e)
+
+
 async def _save_runtime(hass):
     """Write the state a restart would otherwise lose."""
     try:
         rows = [r for r in (hass.data.get(DOMAIN, {}).get("apitricords") or []) if isinstance(r, dict)]
+        # A thing that has gone quiet is pruned out of the rows, but where it
+        # was last heard is precisely what has to survive a restart - that is
+        # the whole of "away since". Built from the rows alone, a stale thing's
+        # sighting lasted one restart at most: Socks, silent since 5:42 AM on
+        # a dying tag, was gone entirely after the 15:34 restart.
+        rows = _rows_with_last_seen(rows, _last_seen)
         data = runtime_mod.snapshot(time.time(), kf=_kf_position_state, zones=_zone_state,
                                     spots=_subzone_state, arrivals=_arrivals, rows=rows,
                                     floors=_floor_elections())

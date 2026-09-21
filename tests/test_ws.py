@@ -600,6 +600,22 @@ def test_thing_tune_sets_and_clears_an_on_charger_sensor(tmp_path):
     assert st.get_layout(hass)["thing_charging_entity"] == {}
 
 
+def test_thing_tune_sets_and_clears_a_battery_sensor(tmp_path):
+    """Socks's tag sat at 1% and nothing on the Live page said so: he just
+    went quiet, which reads exactly like a cat that has left the house."""
+    hass = _hass_with_layout(tmp_path, _layout())
+    conn = _Conn()
+    run(ws.ws_thing_tune(hass, conn, {"id": 1, "type": "sextant/thing/tune", "entity": "socks",
+                                        "battery_entity": "sensor.great_room_holy_iot_sensors_socks_battery"}))
+    assert st.get_layout(hass)["thing_battery_entity"] == {"socks": "sensor.great_room_holy_iot_sensors_socks_battery"}
+    # A battery LEVEL is a sensor; anything else is refused and nothing changes.
+    run(ws.ws_thing_tune(hass, conn, {"id": 2, "type": "sextant/thing/tune", "entity": "socks",
+                                        "battery_entity": "binary_sensor.socks_low"}))
+    assert conn.errors and st.get_layout(hass)["thing_battery_entity"] == {"socks": "sensor.great_room_holy_iot_sensors_socks_battery"}
+    run(ws.ws_thing_tune(hass, conn, {"id": 3, "type": "sextant/thing/tune", "entity": "socks", "battery_entity": None}))
+    assert st.get_layout(hass)["thing_battery_entity"] == {}
+
+
 def test_history_can_be_kept_to_admins(tmp_path):
     layout = _layout()
     layout["tuning"] = {"history_admin_only": True}

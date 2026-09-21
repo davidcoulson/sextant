@@ -200,3 +200,50 @@ def test_the_live_dicts_go_out_and_come_back(monkeypatch):
     assert now - sextant._arrivals["watch"]["since"] > 39000
     assert sextant._kf_position_state["watch"]["x"].tolist() == [1.0, 2.0, 0.1, -0.2]
     assert back["last"]["watch"]["updated"] == now - 5
+
+
+def test_a_quiet_thing_keeps_its_last_sighting_through_the_snapshot():
+    """Socks, 2026-09-21: his tag battery ran down, he went quiet at 5:42 AM
+    and was pruned out of the published rows as stale. The snapshot built its
+    record of last sightings from those rows alone, so the 15:34 restart lost
+    him completely and the Live page said he was last heard 20,717 days ago."""
+    import sextant
+
+    rows = [{"ent": "meg", "zone": "Catwalk", "sub_zone": "Meg's Cafe", "floor": "Second Floor",
+             "updated": 5000.0, "cords": [1.0, 2.0]}]
+    last_seen = {
+        "meg": {"zone": "Catwalk", "spot": "Meg's Cafe", "floor": "Second Floor", "updated": 5000.0, "cords": [1.0, 2.0]},
+        "socks": {"zone": "Dining Room", "spot": None, "floor": "Ground Floor", "updated": 1000.0, "cords": [5.0, 6.0]},
+    }
+    merged = sextant._rows_with_last_seen(rows, last_seen)
+    assert [r["ent"] for r in merged] == ["meg", "socks"]          # the live row is not duplicated
+
+    back = runtime.restore(runtime.snapshot(5000.0, rows=merged), 5000.0 + 3600)
+    assert back["last"]["socks"]["zone"] == "Dining Room"          # an hour down: only sightings kept...
+    assert back["last"]["socks"]["updated"] == 1000.0               # ...and the quiet one is among them
+
+
+def test_the_history_fills_in_a_last_sighting_once_it_has_loaded():
+    """The restore asked the history before the history was read off disk, so
+    this fallback never fired on a real restart. It now runs again after the
+    load - this is that second call, with the room and floor recovered too."""
+    import sextant
+    from sextant import history as history_mod
+
+    hist = history_mod.PositionHistory(history_mod.history_config({}))
+    hist.record("socks", 1000.0, 3.0, 4.0, "Ground Floor", 100.0, zone="Dining Room")
+    hist.record("socks", 1060.0, 3.1, 4.0, "Ground Floor", 100.0, zone="Dining Room")
+
+    class Hass:
+        data = {sextant.DOMAIN: {"_history": hist}}
+
+    sextant._last_seen.clear()
+    sextant._seed_last_seen_from_history(Hass())
+    seen = sextant._last_seen["socks"]
+    assert seen["updated"] == 1060.0
+    assert seen["floor"] == "Ground Floor" and seen["zone"] == "Dining Room"
+
+    # Something already remembered is never overwritten by the history's guess.
+    sextant._last_seen["socks"] = {"zone": "Kitchen", "spot": None, "floor": "Ground Floor", "updated": 2000.0, "cords": None}
+    sextant._seed_last_seen_from_history(Hass())
+    assert sextant._last_seen["socks"]["zone"] == "Kitchen"
