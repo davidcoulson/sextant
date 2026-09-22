@@ -1027,9 +1027,11 @@ class SextantLive extends LitElement {
           ${this._renderGroupedRows(rows)}
           ${rows.length ? nothing : html`<li class="muted">No positions yet.</li>`}
         </ul>
+      </aside>
         ${sel ? html`
-          <div class="card detail">
-            <h4>${this._label(sel.ent)} <span class="muted small">click the row again to unfocus</span></h4>
+          <div class="card detail ${this._history ? "lifted" : ""}">
+            <h4>${this._label(sel.ent)}<span class="grow"></span>
+              <button class="iconbtn" title="Close" aria-label="Close" @click=${() => this._select(null)}><ha-icon icon="mdi:close"></ha-icon></button></h4>
             <dl>
               <dt>Room</dt><dd>${sel.zone} ${sel.zone_locked ? html`<ha-icon icon="mdi:lock" title="stationary lock: still for a while, so the room holds"></ha-icon>` : nothing}</dd>
               <dt>Spot</dt><dd>${sel.sub_zone && sel.sub_zone !== "unknown" ? sel.sub_zone : "—"}</dd>
@@ -1060,7 +1062,6 @@ class SextantLive extends LitElement {
             </div>
             ${this._renderLinks(sel.ent)}
           </div>` : nothing}
-      </aside>
     `;
   }
 
@@ -1203,7 +1204,7 @@ class SextantLive extends LitElement {
     const everything = row.receivers || [];
     const recs = everything.filter((r) => placedSlugs.has(r.scanner) || placedAddr.has(String(addrOf(r.scanner) || "").toLowerCase()));
     const dropped = everything.length - recs.length;
-    return html`<details open class="links">
+    return html`<details class="links">
       <summary>Heard by ${recs.length} placed ${recs.length === 1 ? "proxy" : "proxies"}${dropped ? html` <span class="muted small">(+${dropped} unplaced and ignored)</span>` : nothing}</summary>
       <table class="small"><tr><th>Proxy</th><th class="num">Distance</th></tr>
         ${recs.slice(0, 16).map((r) => html`<tr><td>${proxyName(this.data, r.scanner)}</td><td class="num">${fmtLen(r.distance, this.hass)}</td></tr>`)}
@@ -1213,7 +1214,11 @@ class SextantLive extends LitElement {
   }
 
   static styles = [sharedStyles, widgetStyles, css`
-    :host { display: grid; grid-template-columns: 1fr 300px; min-height: 0; }
+    /* The list floats over the map rather than taking a column from it: the
+       plan runs the full width, and what is on it is read on top. The focused
+       thing's detail floats in the opposite corner, out of the toolbar's way.
+       Under 720px both go back to being stacked blocks (see the end). */
+    :host { display: grid; grid-template-columns: 1fr; min-height: 0; position: relative; }
     .quick-actions { display: none; }
     .narrow-only { display: none; }
     .stage { position: relative; min-width: 0; }
@@ -1240,9 +1245,12 @@ class SextantLive extends LitElement {
     .chipwrap > ha-formfield, .chipwrap > label.inline { border: 1px solid var(--divider-color); border-radius: 999px; padding: 0 12px 0 2px; }
     .chipwrap > label.inline { padding: 4px 12px 4px 8px; }
     .links table { margin-top: 6px; }
-    .scrub { position: absolute; left: 10px; right: 10px; bottom: 10px; display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 8px; background: var(--card-background-color); box-shadow: var(--ha-card-box-shadow, 0 1px 4px rgba(0,0,0,0.2)); font-size: 12px; font-variant-numeric: tabular-nums; }
+    .scrub { position: absolute; left: 10px; right: 320px; bottom: 10px; display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 8px; background: var(--card-background-color); box-shadow: var(--ha-card-box-shadow, 0 1px 4px rgba(0,0,0,0.2)); font-size: 12px; font-variant-numeric: tabular-nums; }
     .scrub input { flex: 1; }
-    .side { border-left: 1px solid var(--divider-color); overflow: auto; padding: 12px; }
+    .side { position: absolute; right: 10px; top: 10px; bottom: 10px; width: 300px; z-index: 3; overflow: auto; padding: 10px 12px; border-radius: 12px; background: var(--card-background-color); box-shadow: var(--ha-card-box-shadow, 0 2px 8px rgba(0,0,0,0.3)); }
+    .detail { position: absolute; left: 10px; bottom: 10px; width: 340px; max-width: calc(100% - 340px); max-height: min(62%, calc(100% - 86px)); overflow: auto; z-index: 3; margin: 0; }
+    .detail.lifted { bottom: 62px; max-height: min(62%, calc(100% - 138px)); }
+    .detail h4 { display: flex; align-items: center; gap: 6px; }
     .list { list-style: none; margin: 0 0 12px; padding: 0; }
     .list li { display: grid; grid-template-columns: 30px 1fr auto; grid-template-rows: auto auto; column-gap: 10px; align-items: center; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
     .avatar { grid-row: 1 / 3; width: 30px; height: 30px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,0.15); display: flex; align-items: center; justify-content: center; overflow: hidden; color: #fff; }
@@ -1366,7 +1374,9 @@ class SextantLive extends LitElement {
          below it, above the selected thing's own detail card. */
       :host { display: flex; flex-direction: column; }
       .quick-actions { order: 0; display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px; background: var(--card-background-color); border-bottom: 1px solid var(--divider-color); }
-      .side { order: 1; flex: 1 1 auto; min-height: 0; overflow: auto; border-left: 0; border-top: 1px solid var(--divider-color); max-height: none; }
+      .side { position: static; order: 1; flex: 1 1 auto; width: auto; min-height: 0; overflow: auto; border-left: 0; border-top: 1px solid var(--divider-color); max-height: none; border-radius: 0; box-shadow: none; padding: 12px; }
+      .detail, .detail.lifted { position: static; order: 3; width: auto; max-width: none; max-height: none; margin: 0 10px 10px; }
+      .scrub { right: 10px; }
       /* Things, and with it Hide map, stays reachable however far the list
          is scrolled - it used to scroll away and leave no way to close a map
          taking half the screen. */

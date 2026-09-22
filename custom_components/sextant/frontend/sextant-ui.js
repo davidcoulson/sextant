@@ -40,6 +40,19 @@ export const sharedStyles = css`
   .chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
   .chips > ha-formfield, .chips > label.inline { border: 1px solid var(--divider-color); border-radius: 999px; padding: 0 12px 0 2px; }
   .chips > label.inline { padding: 4px 12px 4px 8px; }
+  /* ⋮ overflow menu (uiMenu): the rare actions live here instead of each
+     taking a button of its own down the side of a card. */
+  details.menu { position: relative; }
+  details.menu > summary { list-style: none; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--secondary-text-color); cursor: pointer; }
+  details.menu > summary::-webkit-details-marker, details.menu > summary::marker { display: none; content: ""; }
+  details.menu > summary:hover { background: var(--secondary-background-color, rgba(0,0,0,0.06)); color: var(--primary-text-color); }
+  details.menu .menu-items { position: absolute; right: 0; top: 36px; z-index: 5; min-width: 210px; padding: 4px; border-radius: 10px; background: var(--card-background-color); box-shadow: var(--ha-card-box-shadow, 0 4px 14px rgba(0,0,0,0.3)); display: flex; flex-direction: column; }
+  details.menu .menu-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: 6px; background: transparent; text-align: left; font: inherit; color: var(--primary-text-color); cursor: pointer; }
+  details.menu .menu-item:hover:not([disabled]) { background: var(--secondary-background-color, rgba(0,0,0,0.06)); }
+  details.menu .menu-item[disabled] { opacity: 0.45; cursor: default; }
+  details.menu .menu-item.danger { color: var(--error-color, #b00020); }
+  details.menu .menu-item ha-icon { --mdc-icon-size: 20px; }
+  details.menu hr { width: 100%; border: 0; border-top: 1px solid var(--divider-color); margin: 4px 0; }
   button.iconbtn { padding: 4px; line-height: 0; border-radius: 50%; }
   button.iconbtn ha-icon { --mdc-icon-size: 20px; }
   .pill.ok { background: rgba(44,110,73,0.18); color: var(--success-color, #2c6e49); }
@@ -185,6 +198,23 @@ export function uiSwitch({ label, checked, onChange, disabled = false }) {
 }
 
 /** Button. kind: "primary" | "outline" | "text" | "danger" */
+/** An overflow menu behind a ⋮ button: occasional actions that do not earn a
+ * permanent button each. `items` are {label, onClick, icon?, title?, danger?,
+ * disabled?} or {divider: true}. Built on <details> so it opens, closes and
+ * takes focus without a click-outside listener. */
+export function uiMenu({ items, label = "More actions", icon = "mdi:dots-vertical" }) {
+  return html`<details class="menu">
+    <summary title=${label} aria-label=${label} role="button"><ha-icon icon=${icon}></ha-icon></summary>
+    <div class="menu-items" @click=${(e) => { const d = e.currentTarget.parentElement; if (d) d.open = false; }}>
+      ${(items || []).map((it) => it.divider
+        ? html`<hr>`
+        : html`<button class=${it.danger ? "menu-item danger" : "menu-item"} ?disabled=${it.disabled}
+            title=${it.title ?? nothing} @click=${it.onClick}>
+            ${it.icon ? html`<ha-icon icon=${it.icon}></ha-icon>` : nothing}<span>${it.label}</span></button>`)}
+    </div>
+  </details>`;
+}
+
 export function uiButton({ label, onClick, kind = "outline", disabled = false, icon, title }) {
   if (has("ha-button") || has("mwc-button")) {
     const tag = has("ha-button") ? "ha-button" : "mwc-button";

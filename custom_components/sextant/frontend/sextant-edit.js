@@ -9,7 +9,7 @@
  */
 import { LitElement, html, css, nothing } from "./lit.js";
 import { SextantMap, polygonCentroid, snapToVertex, squareUp } from "./sextant-map.js";
-import { sharedStyles, widgetStyles, toast, callWS, confirmDialog, fmtNum, fmtLen, uiField, uiSelect, uiSwitch, uiButton, proxyName, lenUnit, toDisplayLen, fromDisplayLen, fmtScale, isImperial, THING_CLASSES, CLASS_FAMILIES } from "./sextant-ui.js";
+import { sharedStyles, widgetStyles, toast, callWS, confirmDialog, fmtNum, fmtLen, uiField, uiSelect, uiSwitch, uiButton, uiMenu, proxyName, lenUnit, toDisplayLen, fromDisplayLen, fmtScale, isImperial, THING_CLASSES, CLASS_FAMILIES } from "./sextant-ui.js";
 import { mapUrlFor } from "./sextant-panel.js";
 
 // [id, label under the icon, icon, tooltip]
@@ -709,7 +709,14 @@ class SextantEdit extends LitElement {
       <aside class="side">
         ${f ? html`
           <div class="card">
-            <h4>${f.name} <span class="muted small">${fmtScale(f.scale, this.hass)}</span></h4>
+            <h4>${f.name} <span class="muted small">${fmtScale(f.scale, this.hass)}</span><span class="grow"></span>
+              ${uiMenu({ items: [
+                { label: "Link rooms to areas", icon: "mdi:link-variant", disabled: this._busy, onClick: () => this._linkAreasByName(), title: "Link every unlinked room on this floor to the Home Assistant area of the same name" },
+                { label: "Adjust rooms", icon: "mdi:vector-square", disabled: this._busy, onClick: () => this._adjust("zones"), title: "Square up rooms and snap shared walls" },
+                { label: "Adjust spots", icon: "mdi:vector-rectangle", disabled: this._busy, onClick: () => this._adjust("subzones") },
+                { divider: true },
+                { label: "Delete floor", icon: "mdi:delete-outline", danger: true, disabled: this._busy, onClick: () => this._removeFloor() },
+              ] })}</h4>
             <div class="row small muted">${(f.receivers || []).length} proxies · ${(f.zones || []).filter((z) => !z.no_go).length} rooms · ${(f.zones || []).filter((z) => z.no_go).length} no-go · ${(f.subzones || []).length} spots</div>
             <div class="row small muted">Level: storey number, 0 = ground, -1 = basement; orders the floor picker top-down. Elevation: this floor's finished floor above the ground floor's, so ceiling height plus the floor structure; blank assumes 3 m a storey. Bias: election prior, 1.2 = a 20 % head start every cycle.</div>
             <div class="row">
@@ -721,10 +728,6 @@ class SextantEdit extends LitElement {
               ${uiField({ label: `Elevation (${lenUnit(this.hass)})`, type: "number", step: 0.05, value: toDisplayLen(f.elevation, this.hass), placeholder: String(toDisplayLen((f.level || 0) * 3, this.hass)), onChange: (v) => { this._snapshot(); const m = fromDisplayLen(v, this.hass); if (m == null || isNaN(m)) delete f.elevation; else f.elevation = m; this._dirty = true; this._refreshAlignment(); this.requestUpdate(); }, style: "width: 130px" })}
               ${uiField({ label: "Election bias", type: "number", step: 0.05, min: 0.25, max: 4, value: f.bias ?? "", placeholder: "1", onChange: (v) => { if (v === "" || v == null) delete f.bias; else f.bias = Number(v); this._dirty = true; this.requestUpdate(); }, style: "width: 120px" })}
               ${Object.keys(this.hass?.floors || {}).length ? uiSelect({ label: "Home Assistant floor", value: f.floor_id || "", options: [{ value: "", label: "not linked" }, ...Object.values(this.hass.floors).map((x) => ({ value: x.floor_id, label: x.name }))], onChange: (v) => { this._snapshot(); if (v) f.floor_id = v; else delete f.floor_id; this._dirty = true; this.requestUpdate(); }, style: "width: 170px" }) : nothing}
-              ${uiButton({ label: "Link rooms to areas", disabled: this._busy, onClick: () => this._linkAreasByName(), title: "Link every unlinked room on this floor to the Home Assistant area of the same name" })}
-              ${uiButton({ label: "Adjust rooms", disabled: this._busy, onClick: () => this._adjust("zones"), title: "Square up rooms and snap shared walls" })}
-              ${uiButton({ label: "Adjust spots", disabled: this._busy, onClick: () => this._adjust("subzones") })}
-              ${uiButton({ label: "Delete floor", kind: "danger", disabled: this._busy, onClick: () => this._removeFloor() })}
             </div>
           </div>` : html`<div class="card muted">No floor yet. Add one below.</div>`}
         ${f ? this._renderBiasView(f) : nothing}
@@ -797,7 +800,7 @@ class SextantEdit extends LitElement {
         : row.rms_m != null && row.implied_scale && row.agree_rms_m != null && row.agree_rms_m <= 0.3 ? html`<div class="warn">The anchors agree with each other (within ${fmtLen(row.agree_rms_m, this.hass, 2)}) but not at this floor's scale, so the floor cannot be lined up yet. That points at the scale, not at any anchor.</div>`
         : row.rms_m != null ? html`<div class="warn">The anchors disagree by ${fmtLen(row.rms_m, this.hass, 2)} - too much to use. Check <b>${row.worst}</b> first (${fmtLen(row.max_m, this.hass, 2)} off), or anchors that sit very close together.</div>`
         : html`<div class="muted">Not lined up yet: ${row.why}.</div>`}
-      ${off >= 0.01 ? html`<div class="row">The anchors fit best at <b>${fmtScale(row.implied_scale, this.hass)}</b>; this floor is set to ${fmtScale(row.scale, this.hass)} (${fmtNum(off * 100, 1)} % apart). ${uiButton({ label: "Use the anchors' scale", onClick: () => useScale(row.implied_scale), title: "Set this floor's scale from its anchors. Four or more well-spread anchors usually beat one tape measurement" })}</div>` : nothing}
+      ${off >= 0.01 ? html`<div class="row">The anchors fit best at <b>${fmtScale(row.implied_scale, this.hass)}</b>; this floor is set to ${fmtScale(row.scale, this.hass)} (${fmtNum(off * 100, 1)} % apart). ${uiButton({ label: "Use the anchors' scale", kind: "text", onClick: () => useScale(row.implied_scale), title: "Set this floor's scale from its anchors. Four or more well-spread anchors usually beat one tape measurement" })}</div>` : nothing}
       ${waiting.length ? html`<div class="muted">Anchored on other floors, not here yet: ${waiting.join(", ")}.</div>` : nothing}
       ${(rep?.unlinked || []).filter((n) => pins.some((q) => q.name === n)).length ? html`<div class="muted">Only on this floor so far: ${rep.unlinked.filter((n) => pins.some((q) => q.name === n)).join(", ")}.</div>` : nothing}
     </div>`;
@@ -954,6 +957,7 @@ class SextantEdit extends LitElement {
     .zoom ha-icon { --mdc-icon-size: 20px; }
     .toolbar button.active { background: var(--primary-color); color: var(--text-primary-color, #fff); border-color: var(--primary-color); }
     .toolbar button.lock.locked { background: var(--secondary-background-color); color: var(--secondary-text-color); }
+    .card h4 { display: flex; align-items: center; gap: 6px; }
     .lockicons { position: relative; display: inline-block; }
     .lockicons .badge { position: absolute; right: -8px; bottom: -4px; --mdc-icon-size: 13px; background: var(--card-background-color); border-radius: 50%; }
     .toolbar button.lock.locked .lockicons .badge { color: var(--error-color, #b00020); }
