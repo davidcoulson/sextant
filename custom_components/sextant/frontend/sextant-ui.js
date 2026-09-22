@@ -206,9 +206,9 @@ export const widgetStyles = css`
 `;
 
 /** Floors top-down by their storey `level` (1 = the floor above ground, 0 = ground, -1 = basement); ties keep file order. */
-export function sortFloors(floors) {
-  return [...(floors || [])].map((f, i) => [f, i]).sort((a, b) => ((b[0].level ?? 0) - (a[0].level ?? 0)) || (a[1] - b[1])).map(([f]) => f);
-}
+// Kept in its own module so it can be tested without a DOM - the same reason
+// the pronoun helpers live in sextant-pronouns.js.
+export { sortFloors } from "./sextant-floors.js";
 
 // --- Units and names ------------------------------------------------------------
 

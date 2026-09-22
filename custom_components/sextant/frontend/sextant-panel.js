@@ -227,7 +227,7 @@ class SextantPanel extends LitElement {
     return html`
       ${floors.length && FLOOR_MODES.has(this._mode) ? html`
         <div class="floor-tabs" role="tablist" aria-label="Floor">
-          ${sortFloors(floors).map((f) => {
+          ${sortFloors(floors, true).map((f) => {
             const on = f.name === this._floor;
             const n = this._mode === "live" ? this._thingsOn(f.name) : null;
             return html`<button role="tab" class=${on ? "active" : ""} aria-selected=${on}
