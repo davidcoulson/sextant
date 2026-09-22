@@ -754,6 +754,18 @@ export class SextantMap {
     this.invalidate();
   }
 
+  /** Zoom by a factor about the centre of the view, for the + and − buttons -
+   * the same maths as the wheel, anchored where the eye already is. */
+  zoomBy(factor) {
+    const rect = this.canvas.getBoundingClientRect();
+    const p = { x: rect.width / 2, y: rect.height / 2 };
+    const k = Math.max(0.05, Math.min(MAX_ZOOM, this.view.k * factor));
+    const m = this.toMap(p);
+    this.view = { k, tx: p.x - m.x * k, ty: p.y - m.y * k };
+    this._fitted = true;
+    this.invalidate();
+  }
+
   _wheel(e) {
     e.preventDefault();
     const p = this._local(e);

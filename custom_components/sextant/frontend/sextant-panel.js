@@ -185,7 +185,7 @@ class SextantPanel extends LitElement {
             </button>`)}
         </nav>
         <div class="spacer"></div>
-        <div class="wide-only">${this._renderFloorAndStamp(floors)}</div>
+        <div class="wide-only floorstamp">${this._renderFloorAndStamp(floors)}</div>
         <a class="repo" href=${REPO_URL} target="_blank" rel="noopener" title="Sextant on GitHub"><ha-icon icon="mdi:github"></ha-icon></a>
       </div>
       ${this._error ? html`<div class="banner error">${this._error} <button @click=${() => this._load()}>Retry</button></div>` : nothing}
@@ -226,14 +226,32 @@ class SextantPanel extends LitElement {
   _renderFloorAndStamp(floors) {
     return html`
       ${floors.length && FLOOR_MODES.has(this._mode) ? html`
-        <label class="floor-pick">
-          <span class="sr">Floor</span>
-          <select @change=${(e) => { if (!this._mayLeaveEdit(`Switch to ${e.target.value}`)) { e.target.value = this._floor; return; } this._floor = e.target.value; }}>
-            ${sortFloors(floors).map((f) => html`<option value=${f.name} ?selected=${f.name === this._floor}>${f.name}</option>`)}
-          </select>
-        </label>` : nothing}
+        <div class="floor-tabs" role="tablist" aria-label="Floor">
+          ${sortFloors(floors).map((f) => {
+            const on = f.name === this._floor;
+            const n = this._mode === "live" ? this._thingsOn(f.name) : null;
+            return html`<button role="tab" class=${on ? "active" : ""} aria-selected=${on}
+              title=${n === null ? f.name : `${f.name}: ${n} thing${n === 1 ? "" : "s"} here now`}
+              @click=${() => this._pickFloor(f.name)}>${f.name}${n ? html`<span class="n">${n}</span>` : nothing}</button>`;
+          })}
+        </div>` : nothing}
       ${this._renderStamp()}
     `;
+  }
+
+  /** One click to another floor. It goes through the same unsaved-draft guard
+   * the dropdown did: in Edit a floor switch is an unsaved plan being left. */
+  _pickFloor(name) {
+    if (name === this._floor) return;
+    if (!this._mayLeaveEdit(`Switch to ${name}`)) return;
+    this._floor = name;
+  }
+
+  /** How many things are on a floor right now, for the Live tabs: where
+   * everyone is, without switching to look. */
+  _thingsOn(floorName) {
+    const rows = this._positions?.positions || [];
+    return rows.filter((r) => r.floor === floorName).length;
   }
 
   /** Seconds until the next positioning cycle, once two cycles have shown how
@@ -288,8 +306,22 @@ class SextantPanel extends LitElement {
     .modes button.active { opacity: 1; border-bottom-color: currentColor; }
     .modes button:hover { opacity: 1; }
     .spacer { flex: 1; }
-    .floor-pick select { font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.4); background: rgba(255,255,255,0.12); color: inherit; }
-    .floor-pick select option { color: #111; }
+    /* Floors as one-click tabs rather than a dropdown: every floor is on
+       screen, and switching is one click instead of two. A segmented control,
+       so it reads as "which floor" and not as another page like the modes. */
+    .floorstamp { display: flex; align-items: center; gap: 10px; }
+    .floor-tabs { display: flex; gap: 2px; padding: 3px; border-radius: 9px; background: rgba(255,255,255,0.14); flex: none; }
+    .floor-tabs button { display: flex; align-items: center; gap: 6px; background: transparent; border: 0; color: inherit; font: inherit; font-size: 13px; padding: 5px 12px; border-radius: 7px; cursor: pointer; opacity: 0.85; white-space: nowrap; }
+    .floor-tabs button:hover { opacity: 1; background: rgba(255,255,255,0.12); }
+    .floor-tabs button.active { opacity: 1; font-weight: 600; background: rgba(255,255,255,0.95); color: var(--app-header-background-color, var(--primary-color, #03a9f4)); }
+    .floor-tabs button:focus-visible { outline: 2px solid currentColor; outline-offset: 1px; }
+    .floor-tabs .n { font-size: 11px; font-weight: 600; min-width: 16px; padding: 0 4px; border-radius: 8px; background: rgba(255,255,255,0.22); text-align: center; }
+    .floor-tabs button.active .n { background: var(--app-header-background-color, var(--primary-color, #03a9f4)); color: #fff; }
+    .bottombar .floor-tabs { background: var(--secondary-background-color, rgba(0,0,0,0.05)); }
+    .bottombar .floor-tabs button:hover { background: rgba(0,0,0,0.05); }
+    .bottombar .floor-tabs button.active { background: var(--primary-color, #03a9f4); color: var(--text-primary-color, #fff); }
+    .bottombar .floor-tabs .n { background: rgba(0,0,0,0.08); }
+    .bottombar .floor-tabs button.active .n { background: rgba(255,255,255,0.25); color: inherit; }
     .stamp { display: inline-flex; align-items: center; gap: 3px; font-variant-numeric: tabular-nums; opacity: 0.8; font-size: 12px; min-width: 40px; justify-content: flex-end; }
     .stamp ha-icon { --mdc-icon-size: 16px; }
     ha-menu-button { --mdc-icon-button-size: 40px; }
@@ -303,7 +335,6 @@ class SextantPanel extends LitElement {
     .sr { position: absolute; left: -9999px; }
     .narrow-only { display: none; }
     .bottombar { align-items: center; justify-content: flex-end; gap: 10px; padding: 6px 10px; background: var(--card-background-color); border-top: 1px solid var(--divider-color); flex: none; padding-bottom: max(6px, env(safe-area-inset-bottom)); }
-    .bottombar .floor-pick select { padding: 6px 8px; }
     .bottombar .stamp { color: var(--secondary-text-color); }
     @media (max-width: 960px) { .mode-label { display: none; } .modes button { padding: 0 8px; } }
     /* Below 720px the topbar has only the brand mark, the mode tabs and the
@@ -928,11 +959,28 @@ class SextantLive extends LitElement {
     ];
     // The map's own switches, as the pressed buttons the Edit tools and a
     // thing's quick actions use: an icon with its word under it.
-    const optBtn = ([k, label, tip, icon]) => html`<button class="qa opt ${this._options[k] ? "on" : ""}" title=${tip}
+    const optBtn = ([k, label, tip, icon]) => html`<button class="qa opt ${this._options[k] ? "on" : ""}" title=${`${label}: ${tip}`}
       aria-label=${label} aria-pressed=${!!this._options[k]} @click=${() => this._setOption(k, !this._options[k])}>
       <ha-icon icon=${icon}></ha-icon><span>${label}</span></button>`;
     const gridPicker = uiSelect({ label: "Grid", value: this._options.grid, options: [{ value: "off", label: "No grid" }, { value: "m", label: "Metres" }, { value: "ft", label: "Feet" }], onChange: (v) => this._setOption("grid", v), style: "min-width: 120px" });
-    const fitButton = uiButton({ label: "Fit map", kind: "text", icon: "mdi:fit-to-screen", onClick: () => this._map.fit() });
+    // The grid as one button that steps No grid -> Metres -> Feet, so it sits in
+    // the icon toolbar with everything else instead of a dropdown in the middle
+    // of it. The narrow sheet keeps the dropdown, where there is room for words.
+    const GRID = [["off", "No grid"], ["m", "Metres"], ["ft", "Feet"]];
+    const gi = Math.max(0, GRID.findIndex(([v]) => v === this._options.grid));
+    const [, gridName] = GRID[gi];
+    const [nextGrid, nextName] = GRID[(gi + 1) % GRID.length];
+    const gridBtn = html`<button class="qa opt ${this._options.grid && this._options.grid !== "off" ? "on" : ""}"
+      title=${`Grid: ${gridName}. Click for ${nextName}`} aria-label=${`Grid: ${gridName}`}
+      @click=${() => this._setOption("grid", nextGrid)}>
+      <ha-icon icon=${this._options.grid && this._options.grid !== "off" ? "mdi:grid" : "mdi:grid-off"}></ha-icon>${this._options.grid && this._options.grid !== "off" ? html`<b class="unit">${this._options.grid}</b>` : nothing}</button>`;
+    // Fit, in and out, as their own small cluster in the bottom corner - out of
+    // the way of the switches, and where every map puts them.
+    const zoom = html`<div class="zoom ${this._history ? "lifted" : ""}" role="group" aria-label="Zoom">
+      <button title="Fit the whole floor into view" aria-label="Fit the whole floor" @click=${() => this._map.fit()}><ha-icon icon="mdi:fit-to-screen-outline"></ha-icon></button>
+      <button title="Zoom in" aria-label="Zoom in" @click=${() => this._map.zoomBy(1.3)}><ha-icon icon="mdi:plus"></ha-icon></button>
+      <button title="Zoom out" aria-label="Zoom out" @click=${() => this._map.zoomBy(1 / 1.3)}><ha-icon icon="mdi:minus"></ha-icon></button>
+    </div>`;
     return html`
       <div class="quick-actions">
         ${uiButton({ label: "Self-test", kind: "outline", icon: "mdi:clipboard-check-outline", onClick: () => this._goto("proxies") })}
@@ -941,14 +989,14 @@ class SextantLive extends LitElement {
           ${uiButton({ label: "Calibrate", kind: "outline", icon: "mdi:tune-vertical", onClick: () => this._goto("calibration") })}` : nothing}
       </div>
       <div class="stage ${this._mapOpen ? "" : "collapsed"}"><canvas></canvas>${this._renderProxyCard()}
-        <div class="overlay">
+        <div class="overlay" role="toolbar" aria-label="Map">
           <div class="chips wide-only">${switches.map(optBtn)}</div>
-          <span class="wide-only">${gridPicker}</span>
-          <span class="wide-only">${fitButton}</span>
-          <button class="iconbtn narrow-only" title="Map options" @click=${() => { this._optionsOpen = !this._optionsOpen; }}><ha-icon icon="mdi:tune-variant"></ha-icon></button>
-          <span class="narrow-only">${fitButton}</span>
+          <span class="sep wide-only"></span>
+          <span class="wide-only">${gridBtn}</span>
+          <button class="iconbtn narrow-only" title="Map options" aria-label="Map options" @click=${() => { this._optionsOpen = !this._optionsOpen; }}><ha-icon icon="mdi:tune-variant"></ha-icon></button>
           <button class="iconbtn narrow-only" title="Hide the map" aria-label="Hide the map" @click=${() => { this._mapOpen = false; }}><ha-icon icon="mdi:map-minus"></ha-icon></button>
         </div>
+        ${zoom}
         ${this._optionsOpen ? html`
           <div class="opts-backdrop narrow-only" @click=${() => { this._optionsOpen = false; }}></div>
           <div class="opts-sheet narrow-only">
@@ -1170,7 +1218,23 @@ class SextantLive extends LitElement {
     .narrow-only { display: none; }
     .stage { position: relative; min-width: 0; }
     canvas { width: 100%; height: 100%; display: block; --sextant-map-bg: var(--card-background-color, #fff); }
-    .overlay { position: absolute; left: 10px; top: 10px; display: flex; flex-wrap: wrap; gap: 8px 12px; padding: 6px 10px; border-radius: 8px; background: var(--card-background-color); box-shadow: var(--ha-card-box-shadow, 0 1px 4px rgba(0,0,0,0.2)); font-size: 12px; align-items: center; max-width: calc(100% - 20px); }
+    /* The map's toolbar: one compact floating panel of icon-only buttons, the
+       active ones filled. The names are in each button's tooltip and aria
+       label; the narrow sheet below keeps its labelled buttons. */
+    .overlay { position: absolute; left: 10px; top: 10px; display: flex; flex-wrap: wrap; gap: 2px; padding: 4px; border-radius: 12px; background: var(--card-background-color); box-shadow: var(--ha-card-box-shadow, 0 2px 6px rgba(0,0,0,0.25)); font-size: 12px; align-items: center; max-width: calc(100% - 20px); z-index: 2; }
+    .overlay .chips { display: flex; flex-wrap: wrap; gap: 2px; }
+    .overlay .qa.opt { flex-direction: row; min-width: 0; width: 34px; height: 34px; padding: 0; gap: 0; justify-content: center; border: 0; border-radius: 8px; background: transparent; position: relative; }
+    .overlay .qa.opt > span { display: none; }
+    .overlay .qa.opt:hover { background: var(--secondary-background-color, rgba(0,0,0,0.06)); filter: none; }
+    .overlay .qa.opt.on { background: var(--primary-color, #03a9f4); color: var(--text-primary-color, #fff); }
+    .overlay .qa.opt .unit { position: absolute; right: 2px; bottom: 1px; font-size: 8px; line-height: 1; }
+    .overlay .sep { width: 1px; align-self: stretch; margin: 4px 3px; background: var(--divider-color, rgba(0,0,0,0.12)); }
+    .zoom { position: absolute; right: 10px; bottom: 10px; display: flex; gap: 2px; padding: 4px; border-radius: 12px; background: var(--card-background-color); box-shadow: var(--ha-card-box-shadow, 0 2px 6px rgba(0,0,0,0.25)); z-index: 2; }
+    .zoom.lifted { bottom: 62px; }
+    .zoom button { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--primary-text-color); cursor: pointer; }
+    .zoom button:hover { background: var(--secondary-background-color, rgba(0,0,0,0.06)); }
+    .zoom button:focus-visible, .overlay .qa.opt:focus-visible { outline: 2px solid var(--primary-color, #03a9f4); outline-offset: 1px; }
+    .zoom ha-icon { --mdc-icon-size: 20px; }
     .overlay ha-formfield { --mdc-typography-body2-font-size: 12px; }
     .chipwrap { display: inline-flex; }
     .chipwrap > ha-formfield, .chipwrap > label.inline { border: 1px solid var(--divider-color); border-radius: 999px; padding: 0 12px 0 2px; }
