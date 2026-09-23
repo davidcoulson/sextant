@@ -581,7 +581,8 @@ class SextantEdit extends LitElement {
     const item = list[sel.index];
     this._snapshot();
     if (sel.kind === "pin") this._refreshAlignment();
-    if (field === "height" || field === "correction") item[field] = value === "" || value == null ? undefined : Number(value);
+    if (field === "calibrate") { if (value === undefined) delete item.calibrate; else item.calibrate = value; }
+    else if (field === "height" || field === "correction") item[field] = value === "" || value == null ? undefined : Number(value);
     else if (field === "no_go") item.no_go = !!value;
     else item[field] = value;
     if (item.height === undefined) delete item.height;
@@ -843,6 +844,9 @@ class SextantEdit extends LitElement {
           ${uiField({ label: `Mount height (${lenUnit(this.hass)})`, type: "number", step: 0.05, min: 0, max: isImperial(this.hass) ? 33 : 10, value: toDisplayLen(item.height, this.hass), onChange: (v) => this._edit("height", v === "" ? "" : fromDisplayLen(v, this.hass)), style: "width: 150px" })}
           ${uiField({ label: "Correction ×", type: "number", step: 0.001, min: 0.5, max: 2, value: item.correction ?? "", onChange: (v) => this._edit("correction", v), style: "width: 150px" })}
         </div>
+        ${uiSwitch({ label: "Leave this proxy's correction alone", checked: item.calibrate === false,
+          onChange: (v) => this._edit("calibrate", v ? false : undefined) })}
+        <div class="muted small">Calibration skips it: it is left out of the fit and its correction is never overwritten. For a radio whose distances are the wrong shape rather than the wrong scale - a tablet or a phone, which read long up close and far too short across a room - where no single multiplier fits.</div>
         <div class="muted small">${item.unmatched ? "Bermuda does not report this proxy right now." : "Linked."} x ${fmtNum(item.cords?.x, 0)}, y ${fmtNum(item.cords?.y, 0)}</div>` : nothing}
       ${sel.kind === "zone" ? uiSwitch({ label: "No-go area (things can never be here)", checked: !!item.no_go, onChange: (v) => this._edit("no_go", v) }) : nothing}
       ${sel.kind === "zone" && !item.no_go ? this._renderAreaLink(item) : nothing}

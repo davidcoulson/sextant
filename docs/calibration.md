@@ -40,6 +40,16 @@ move its edges, under Calibration on the Tuning page. It acts on factors
 stored with the layout; with `calibration_target: bermuda` the correction
 lives inside Bermuda's distances and is not faded.
 
+**A proxy can be left out of it.** Turn on *Leave this proxy's correction
+alone* in a proxy's panel on the Edit page and calibration skips it: it is
+kept out of the fit, and whatever correction you set is never overwritten.
+This is for a radio whose distances are the wrong *shape* rather than the
+wrong scale. A wall tablet acting as a proxy read 3.2 m for something 2.1 m
+away and 2.5 m for something 8.5 m away - long up close, far too short
+across the room - so no single multiplier describes it, and the solve ran
+into its ceiling of 5.0 trying. Left in the fit, that ceiling drags every
+other proxy's correction with it.
+
 Re-run calibration after changing a floor's scale, whether by hand or from
 its [alignment anchors](edit.md#lining-the-floors-up): the corrections were
 learned against distances measured at the old scale.

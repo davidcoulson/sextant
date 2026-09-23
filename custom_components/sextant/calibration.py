@@ -276,6 +276,13 @@ def _build_receiver_map(coords, floor_name=None) -> dict:
             continue
         for receiver in floor.get("receivers", []):
             cords = receiver.get("cords") or {}
+            # "calibrate": false keeps a proxy out of the pair fit entirely.
+            # A radio whose distances are the wrong SHAPE - the laundry
+            # tablet reads long up close and far too short across the room -
+            # cannot be described by one multiplier, and letting the solver
+            # try drags every other proxy's correction with it.
+            if receiver.get("calibrate") is False:
+                continue
             if receiver.get("entity_id") and cords.get("x") is not None and cords.get("y") is not None:
                 uid = receiver.get("scanner_uid")
                 height = receiver.get("height")
@@ -1201,6 +1208,8 @@ def _push_corrections_to_bermuda(hass, coords, floor, result) -> int:
     base = coords.setdefault("bermuda_offset_base", {})
     updates = {}
     for receiver in floor.get("receivers", []):
+        if receiver.get("calibrate") is False:
+            continue
         slug = str(receiver.get("entity_id") or "")
         correction = result["receivers"].get(slug)
         address = slug_to_addr.get(slug)
@@ -1231,6 +1240,8 @@ def _write_floor_corrections(hass, coords, floor, result, *, auto: bool) -> int:
     else:
         updated = 0
         for receiver in floor.get("receivers", []):
+            if receiver.get("calibrate") is False:
+                continue           # its correction is the user's, not ours
             correction = result["receivers"].get(str(receiver.get("entity_id")))
             if correction is not None:
                 receiver["correction"] = correction
