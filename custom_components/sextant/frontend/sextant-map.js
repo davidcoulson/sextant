@@ -23,6 +23,56 @@ const HIT_SLOP = 8;
 const MAX_ZOOM = 20;
 const THING_RADIUS = 12;
 const HUES = [205, 25, 140, 95, 320, 45, 260, 180, 0, 60];
+// Who wins a crowded patch of plan when labels are laid out (see _flushLabels).
+// The thing you picked out first, then the things, then the plan they sit on.
+const LABEL_PRIO = { focus: 4, thing: 3, place: 2, other: 2, proxy: 1 };
+const LABEL_TRIES = 7;           // how far a label may step from its marker before it is dropped
+
+/** Where each label of a frame goes so that no two overlap.
+ *
+ * Markers never move - a marker is a measurement, and shifting one would be a
+ * lie about where something is - so it is the labels that give way. Each takes
+ * its anchor if it is free, then steps below and above it in turn, and is
+ * dropped if it can find nowhere clear: one readable label and a marker you
+ * can click beats two labels printed through each other.
+ *
+ * Each label carries `x`, `y` (the anchor), `w`, `h` (its plate), `gap` (the
+ * breathing room between stacked labels), `prio` (who gets first refusal) and
+ * `order` (the tiebreak, so a frame draws the same way twice running).
+ * Returns `{label, y}` for the ones that found room, in paint order. */
+export function placeLabels(labels, tries = LABEL_TRIES) {
+  const clash = (a, b) => a.x0 < b.x1 && a.x1 > b.x0 && a.y0 < b.y1 && a.y1 > b.y0;
+  const taken = [], out = [];
+  for (const L of [...labels].sort((a, b) => b.prio - a.prio || a.order - b.order)) {
+    const halfW = L.w / 2, halfH = L.h / 2, step = L.h + (L.gap || 0);
+    let at = null;
+    for (let ring = 0; ring < tries && at === null; ring++) {
+      for (const dy of ring === 0 ? [0] : [ring * step, -ring * step]) {
+        const box = { x0: L.x - halfW, x1: L.x + halfW, y0: L.y + dy - halfH, y1: L.y + dy + halfH };
+        if (!taken.some((t) => clash(box, t))) { at = { y: L.y + dy, box }; break; }
+      }
+    }
+    if (at === null) continue;
+    taken.push(at.box);
+    out.push({ label: L, y: at.y });
+  }
+  return out;
+}
+
+/** The proxies a thing marker is sitting on top of, each with `cover`: the
+ * radius of the widest thing covering it. A proxy buried under a thing reads
+ * as a proxy that is GONE, so the map draws these ones again over the top. */
+export function coveredProxies(proxies, things) {
+  const out = [];
+  for (const p of proxies) {
+    let cover = 0;
+    for (const t of things) {
+      if (Math.hypot(t.x - p.x, t.y - p.y) < t.r + p.s * 0.25) cover = Math.max(cover, t.r);
+    }
+    if (cover) out.push({ ...p, cover });
+  }
+  return out;
+}
 
 // --- Material Design Icons on the canvas ------------------------------------
 // The panel classes things (person, dog, phone...) and draws that class's
@@ -862,6 +912,11 @@ export class SextantMap {
     ctx.clearRect(0, 0, rect.width, rect.height);
     const f = this.floor;
     if (!f) return;
+    // Per-frame collections: labels are placed together at the end so they can
+    // dodge each other, and the marks let a covered proxy be redrawn on top.
+    this._labels = [];
+    this._proxyMarks = [];
+    this._thingMarks = [];
     const v = this.view;
     ctx.save();
     ctx.translate(v.tx, v.ty);
@@ -894,6 +949,10 @@ export class SextantMap {
     // standing in the room with the Live page open, which is the whole point.
     this._drawRemarks(ctx, f.remarks || []);
     if (this.suggestions.length) {
+      // Everything labelled so far belongs to the plan, so it goes down before
+      // the scrim and fades with it. Labels queued after this line are the
+      // advice, and land on top.
+      this._flushLabels(ctx);
       // A house plan is busy: walls, room fills, dozens of proxies. Fade all
       // of it back behind a scrim of the page's own background so the advised
       // spots drawn next are the only thing at full strength - the plan stays
@@ -906,6 +965,8 @@ export class SextantMap {
       this._drawSuggestions(ctx);
     }
     if (this.mode !== "edit") { this._drawThings(ctx); this._drawMarks(ctx); }
+    this._drawProxyPeeks(ctx);
+    this._flushLabels(ctx);
     ctx.restore();
   }
 
@@ -983,7 +1044,7 @@ export class SextantMap {
         const c = polygonCentroid(pts);
         const icon = kind === "zone" ? this.areaIcons[item.area_id] : null;
         this._label(ctx, item.entity_id, c.x, c.y, kind === "subzone" ? 11 : 13, kind === "subzone" ? 0.75 : 0.9,
-          icon ? mdiPath(icon, () => this.invalidate()) : null);
+          icon ? mdiPath(icon, () => this.invalidate()) : null, LABEL_PRIO.place);
       }
       if (this.mode === "edit" && selected) {
         for (let v = 0; v < pts.length; v++) this._handle(ctx, pts[v], VERTEX_SIZE / k, "#ffffff", ctx.strokeStyle);
@@ -1020,28 +1081,61 @@ export class SextantMap {
   }
 
   /** A label on its white plate; `glyph` (a 24-unit MDI Path2D) sits before the text. */
-  _label(ctx, text, x, y, px, alpha = 0.9, glyph = null) {
+  /** Queue a label rather than paint it. Every label of a frame is placed
+   * together in _flushLabels, so they can dodge each other; painting here
+   * would make that impossible. The ambient alpha of whatever queued the
+   * label (a faded thing, a locked proxy) is folded in now, because by flush
+   * time that ctx.save() block is long gone.
+   *
+   * `prio` decides who gets first refusal on a crowded spot: the things you
+   * are looking at outrank the furniture they are sitting on. */
+  _label(ctx, text, x, y, px, alpha = 0.9, glyph = null, prio = LABEL_PRIO.other) {
+    (this._labels ||= []).push({
+      text, x, y, px, glyph, prio,
+      alpha: alpha * ctx.globalAlpha,
+      order: this._labels.length,
+    });
+  }
+
+  /** Place and paint the frame's labels so that no two sit on top of each
+   * other. Markers never move - a marker is a measurement - so it is the
+   * labels that give way: each tries its anchor, then steps below and above
+   * it, and is dropped if it can find nowhere clear. Two labels printed over
+   * one another are worse than one label and a marker you can click. */
+  _flushLabels(ctx) {
+    const queue = this._labels || [];
+    this._labels = [];
+    if (!queue.length) return;
     const k = this.view.k;
+    // Measuring needs the canvas; deciding where things go does not, so the
+    // decision lives in placeLabels where it can be tested without one.
+    const measured = queue.map((L) => {
+      const size = L.px / k, pad = 4 / k;
+      ctx.font = `600 ${size}px system-ui, sans-serif`;
+      const gs = L.glyph ? size * 1.15 : 0, gap = L.glyph ? size * 0.3 : 0;
+      const total = ctx.measureText(L.text).width + gs + gap;
+      return { ...L, m: { size, pad, total, gs, gap },
+               w: total + pad * 2, h: size + pad, gap: 2 / k };
+    });
+    for (const { label, y } of placeLabels(measured)) this._paintLabel(ctx, label, y, label.m);
+  }
+
+  _paintLabel(ctx, L, y, m) {
     const plate = this.dark ? "18,22,28" : "255,255,255";
     const ink = this.dark ? "235,240,246" : "20,24,32";
-    const size = px / k;
-    ctx.font = `600 ${size}px system-ui, sans-serif`;
+    ctx.font = `600 ${m.size}px system-ui, sans-serif`;
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    const w = ctx.measureText(text).width;
-    const gs = glyph ? size * 1.15 : 0, gap = glyph ? size * 0.3 : 0;   // glyph size and its gap
-    const total = w + gs + gap;
-    ctx.fillStyle = `rgba(${plate},${alpha * 0.85})`;
-    const pad = 4 / k;
-    ctx.fillRect(x - total / 2 - pad, y - size / 2 - pad / 2, total + pad * 2, size + pad);
-    ctx.fillStyle = `rgba(${ink},${alpha})`;
-    if (glyph) {
+    ctx.fillStyle = `rgba(${plate},${L.alpha * 0.85})`;
+    ctx.fillRect(L.x - m.total / 2 - m.pad, y - m.size / 2 - m.pad / 2, m.total + m.pad * 2, m.size + m.pad);
+    ctx.fillStyle = `rgba(${ink},${L.alpha})`;
+    if (L.glyph) {
       ctx.save();
-      ctx.translate(x - total / 2, y - gs / 2);
-      ctx.scale(gs / 24, gs / 24);
-      ctx.fill(glyph);
+      ctx.translate(L.x - m.total / 2, y - m.gs / 2);
+      ctx.scale(m.gs / 24, m.gs / 24);
+      ctx.fill(L.glyph);
       ctx.restore();
     }
-    ctx.fillText(text, x + (gs + gap) / 2, y);
+    ctx.fillText(L.text, L.x + (m.gs + m.gap) / 2, y);
   }
 
   _drawReceivers(ctx, receivers) {
@@ -1055,20 +1149,49 @@ export class SextantMap {
       const unmatched = r.unmatched;
       const locked = edit && this.locks.receiver;
       const s = (hovered || selected ? base * 1.4 : base) / k;
+      const face = offline ? "#d9534f" : unmatched ? "#e0a54a" : "#1f7a8c";
       ctx.save();
       ctx.translate(r.cords.x, r.cords.y);
       ctx.rotate(Math.PI / 4);
       ctx.globalAlpha = locked ? 0.55 : 1;
-      ctx.fillStyle = offline ? "#d9534f" : unmatched ? "#e0a54a" : "#1f7a8c";
+      ctx.fillStyle = face;
       ctx.strokeStyle = selected ? "#ffd166" : "#ffffff";
       ctx.lineWidth = (selected ? 3 : 1.5) / k;
       ctx.fillRect(-s / 2, -s / 2, s, s);
       ctx.strokeRect(-s / 2, -s / 2, s, s);
       ctx.restore();
+      this._proxyMarks.push({ x: r.cords.x, y: r.cords.y, s, color: face });
       if (this.options.labels && (edit || hovered || selected)) {
-        this._label(ctx, r.label || r.entity_id, r.cords.x, r.cords.y + (base + 9) / k, 10, 0.8);
+        // The proxy under the pointer, or the one being edited, always gets
+        // its name: in Edit that label is how you tell which one you grabbed.
+        this._label(ctx, r.label || r.entity_id, r.cords.x, r.cords.y + (base + 9) / k, 10, 0.8, null,
+                    hovered || selected ? LABEL_PRIO.focus : LABEL_PRIO.proxy);
       }
     });
+  }
+
+  /** Proxies that a thing is sitting on top of, drawn again over it.
+   *
+   * Things are the subject of the Live map, so they keep the foreground. But
+   * a proxy that disappears completely under one reads as a proxy that is
+   * GONE - a nightstand with a proxy, a watch and an AirPods case on it
+   * showed no proxy at all, and it took a DOM dump to prove it was still
+   * there. So a covered proxy comes back as a hollow diamond drawn wide
+   * enough to ring whatever is covering it: same centre, same measurement,
+   * just no longer invisible. */
+  _drawProxyPeeks(ctx) {
+    const k = this.view.k;
+    for (const p of coveredProxies(this._proxyMarks, this._thingMarks)) {
+      const s = Math.max(p.s, (p.cover + 5 / k) * 2);
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(Math.PI / 4);
+      ctx.lineWidth = 4 / k; ctx.strokeStyle = "rgba(255,255,255,0.85)";
+      ctx.strokeRect(-s / 2, -s / 2, s, s);
+      ctx.lineWidth = 2 / k; ctx.strokeStyle = p.color;
+      ctx.strokeRect(-s / 2, -s / 2, s, s);
+      ctx.restore();
+    }
   }
 
   /** Alignment pins: a surveyor's crosshair, so it reads as a reference mark
@@ -1388,7 +1511,13 @@ export class SextantMap {
         ctx.fillText((t.label || t.ent).slice(0, 2).toUpperCase(), t.cords[0], t.cords[1]);
       }
       const label = ghost ? `${t.label || t.ent} · ${shortAge(age)} ago` : (t.label || t.ent);
-      if (this.options.labels || focused || ghost) this._label(ctx, label, t.cords[0], t.cords[1] + r + 9 / k, focused ? 13 : 11, 0.9);
+      if (this.options.labels || focused || ghost) {
+        this._label(ctx, label, t.cords[0], t.cords[1] + r + 9 / k, focused ? 13 : 11, 0.9, null,
+                    focused ? LABEL_PRIO.focus : LABEL_PRIO.thing);
+      }
+      // Where the dot ended up, so a proxy hidden underneath it can come back
+      // over the top: see _drawProxyPeeks.
+      this._thingMarks.push({ x: t.cords[0], y: t.cords[1], r });
       ctx.restore();
     }
   }

@@ -304,7 +304,7 @@ async def ws_layout_save(hass, connection, msg):
         layout = merge_editor_layout(get_layout(hass), layout)
         # A spot belongs to one room: clip each to its room before it is stored.
         confined = await hass.async_add_executor_job(_confine_spots, layout)
-        await save_layout(hass, layout)
+        losses = await save_layout(hass, layout)
     if remove_target is not None and remove_target.exists():
         try:
             await hass.async_add_executor_job(remove_target.unlink)
@@ -315,7 +315,8 @@ async def ws_layout_save(hass, connection, msg):
     except Exception as e:  # noqa: BLE001 - calibration bookkeeping must not fail a save
         _LOGGER.debug("refresh_receivers_from_coords: %s", e)
     connection.send_result(
-        msg["id"], {"version": get_layout_version(hass), "confined": confined}
+        msg["id"],
+        {"version": get_layout_version(hass), "confined": confined, "lost": losses},
     )
 
 
@@ -1546,8 +1547,54 @@ async def ws_advice(hass, connection, msg):
     connection.send_result(msg["id"], out)
 
 
+@websocket_api.websocket_command({vol.Required("type"): "sextant/snapshots/list"})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_snapshots_list(hass, connection, msg):
+    """Every kept copy of the layout, newest first."""
+    from .snapshots import listing  # noqa: PLC0415
+
+    connection.send_result(msg["id"], {"snapshots": await listing(hass)})
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): "sextant/snapshots/restore",
+    vol.Required("id"): str,
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_snapshots_restore(hass, connection, msg):
+    """Put a kept copy back.
+
+    The restore is itself a save, so the layout being replaced is snapshotted
+    on the way out like any other: changing your mind about a restore costs
+    nothing.
+    """
+    from .snapshots import read  # noqa: PLC0415
+
+    try:
+        layout = await read(hass, msg["id"])
+    except ValueError:
+        return _error(connection, msg, "No such snapshot")
+    except FileNotFoundError:
+        return _error(connection, msg, "That snapshot is no longer there")
+    except Exception as e:  # noqa: BLE001
+        return _error(connection, msg, f"Could not read that snapshot: {e}")
+    if not isinstance(layout, dict) or not layout.get("floor"):
+        return _error(connection, msg, "That snapshot has no floors in it")
+    async with LAYOUT_LOCK:
+        await save_layout(hass, layout)
+    try:
+        core = _core()
+        core.refresh_receivers_from_coords(hass, json.dumps(layout))
+    except Exception as e:  # noqa: BLE001
+        _LOGGER.debug("refresh_receivers_from_coords: %s", e)
+    connection.send_result(msg["id"], {"version": get_layout_version(hass)})
+
+
 COMMANDS = (
     ws_advice,
+    ws_snapshots_list, ws_snapshots_restore,
     ws_layout_get, ws_layout_save, ws_tuning_set, ws_thing_tune,
     ws_history_index, ws_history_get, ws_history_timeline, ws_history_clear, ws_thing_readings, ws_floor_bias_map,
     ws_calibration_status, ws_calibration_action, ws_selftest, ws_scanner_linking, ws_receivers, ws_beacon_links,

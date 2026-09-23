@@ -237,17 +237,32 @@ async def load_layout(hass):
     return _bucket(hass)["layout"]
 
 
-async def save_layout(hass, data) -> None:
+async def save_layout(hass, data) -> list:
     """Persist the layout dict atomically, THEN refresh the cache.
 
     Uses ``async_save`` (immediate atomic write), never ``async_delay_save`` —
     a debounced write could still be lost on a crash inside the delay window.
     Persist first so a raising write leaves the cache matching what survives a
     restart rather than running ahead of disk.
+
+    The layout on its way out is snapshotted first, so any save can be undone
+    — every writer goes through here, which makes this the one place that has
+    both the old and the new layout in hand. Returns whatever geometry this
+    save destroys (see ``snapshots.degraded``), empty in the normal case; the
+    save still goes through, because refusing it would be guessing at what the
+    person meant, and the snapshot means nothing is lost either way.
     """
+    from .snapshots import degraded, take  # noqa: PLC0415 - keeps storage importable on its own
+
+    before = get_layout(hass)
+    losses = degraded(before, data)
+    for line in losses:
+        _LOGGER.warning("Layout save: %s", line)
+    await take(hass, before, get_layout_version(hass))
     await _layout_store(hass).async_save(data)
     _bucket(hass)["layout"] = data
     _bump_layout_version(hass)
+    return losses
 
 
 # --- Calibration state -------------------------------------------------------
