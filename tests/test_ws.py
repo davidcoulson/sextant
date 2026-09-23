@@ -366,6 +366,24 @@ def test_layout_save_keeps_what_the_server_owns(tmp_path):
     assert "correction" not in recs["new"]
 
 
+def test_a_proxy_out_of_calibration_owns_its_correction_through_a_save(tmp_path):
+    """The server owns corrections so a stale editor cannot undo calibration -
+    but a proxy switched out of calibration is the exception, or its number
+    could be looked at and never changed. The laundry tablet, 2026-09-22."""
+    current = {"floor": [{"name": "F", "scale": 100.0, "zones": [], "subzones": [],
+                          "receivers": [{"entity_id": "tablet", "cords": {"x": 0, "y": 0}, "correction": 5.0},
+                                        {"entity_id": "r0", "cords": {"x": 1, "y": 1}, "correction": 0.9}]}]}
+    hass = _hass_with_layout(tmp_path, current)
+    editor = {"floor": [{"name": "F", "scale": 100.0, "zones": [], "subzones": [],
+                         "receivers": [{"entity_id": "tablet", "cords": {"x": 0, "y": 0}, "correction": 1.0, "calibrate": False},
+                                       {"entity_id": "r0", "cords": {"x": 1, "y": 1}, "correction": 0.5}]}]}
+    conn = _Conn()
+    run(ws.ws_layout_save(hass, conn, {"id": 9, "type": "sextant/layout/save", "layout": editor}))
+    recs = {r["entity_id"]: r for r in st.get_layout(hass)["floor"][0]["receivers"]}
+    assert recs["tablet"]["correction"] == 1.0 and recs["tablet"]["calibrate"] is False
+    assert recs["r0"]["correction"] == 0.9      # everything else still the server's
+
+
 def test_layout_save_on_a_fresh_install_takes_the_editor_layout_whole(tmp_path):
     hass = _hass_with_layout(tmp_path)
     conn = _Conn()

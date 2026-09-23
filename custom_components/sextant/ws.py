@@ -251,6 +251,14 @@ def merge_editor_layout(current, incoming):
             receivers = []
             for r in floor.get("receivers", []):
                 r = dict(r)
+                # A proxy the user has taken out of calibration owns its own
+                # correction - that is the whole point of the switch - so the
+                # editor's number is the one that counts. Everything else
+                # keeps the stored value: calibration may have written it
+                # since this editor copy was loaded.
+                if r.get("calibrate") is False:
+                    receivers.append(r)
+                    continue
                 r.pop("correction", None)
                 kept = corrections.get(str(r.get("entity_id")))
                 if kept is not None:
