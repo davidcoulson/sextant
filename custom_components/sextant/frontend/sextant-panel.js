@@ -22,6 +22,14 @@ import "./sextant-devices.js";
 import "./sextant-health.js";
 import "./sextant-edit.js";
 
+// No advised spots: one array for every render, so the editor does not see a
+// new value (and repaint) each time the clock ticks.
+const NO_SPOTS = Object.freeze([]);
+
+// A failed layout fetch or subscription is not retried from updated() sooner
+// than this: hass changes several times a second. Retry still goes at once.
+const RETRY_MS = 30000;
+
 const MODES = [
   ["live", "Live", "mdi:map-marker-radius"],
   ["edit", "Edit", "mdi:vector-polygon"],
@@ -105,8 +113,9 @@ class SextantPanel extends LitElement {
   }
 
   updated(changed) {
-    if (changed.has("hass") && this.hass && !this._data && !this._loading) this._load();
-    if (changed.has("hass") && this.hass && !this._unsub) this._subscribe();
+    const now = Date.now();
+    if (changed.has("hass") && this.hass && !this._data && !this._loading && !(now - (this._loadFailedAt || 0) < RETRY_MS)) this._load();
+    if (changed.has("hass") && this.hass && !this._unsub && !(now - (this._subFailedAt || 0) < RETRY_MS)) this._subscribe();
   }
 
   async _load() {
@@ -118,8 +127,10 @@ class SextantPanel extends LitElement {
       const floors = data.layout?.floor || [];
       if (!this._floor || !floors.some((f) => f.name === this._floor)) this._floor = floors[0]?.name || null;
       this._error = null;
+      this._loadFailedAt = 0;
     } catch (e) {
       this._error = e?.message || String(e);
+      this._loadFailedAt = Date.now();
     } finally {
       this._loading = false;
     }
@@ -138,7 +149,7 @@ class SextantPanel extends LitElement {
       },
       { type: "sextant/subscribe" },
     );
-    this._unsub.catch((e) => { this._unsub = null; this._error = `live updates: ${e?.message || e}`; });
+    this._unsub.then(() => { this._subFailedAt = 0; }, (e) => { this._unsub = null; this._subFailedAt = Date.now(); this._error = `live updates: ${e?.message || e}`; });
   }
 
   _isAdmin() { return this.hass?.user?.is_admin !== false; }
@@ -162,7 +173,7 @@ class SextantPanel extends LitElement {
     if (this._mode === "edit" && mode !== "edit" && !this._mayLeaveEdit(`Leave the floor plan`)) return;
     this._mode = mode;
     this._openThing = mode === "things" ? thing || null : null;
-    if (mode !== "edit") this._spots = [];
+    if (mode !== "edit") this._spots = NO_SPOTS;
     try { localStorage.setItem("sextant.mode", mode); } catch { /* private mode */ }
   }
 
@@ -270,7 +281,7 @@ class SextantPanel extends LitElement {
     if (!this._data && !this._error) return html`<div class="empty">Loading…</div>`;
     switch (this._mode) {
       case "edit":
-        return html`<sextant-edit .hass=${this.hass} .data=${this._data} .floor=${this._floor} .narrow=${this.narrow} .spots=${this._spots || []}
+        return html`<sextant-edit .hass=${this.hass} .data=${this._data} .floor=${this._floor} .narrow=${this.narrow} .spots=${this._spots || NO_SPOTS}
                                   @layout-changed=${() => this._onLayoutChanged()} @floor-changed=${(e) => { this._floor = e.detail; }}></sextant-edit>`;
       case "things":
       case "bermuda":
@@ -463,7 +474,9 @@ class SextantLive extends LitElement {
       if (this._selected !== ent) return;   // selection moved on while this was in flight
       this._timeline = { ent, at: Date.now(), ...r };
     } catch (_e) {
-      this._timeline = null;   // older backend: the card just leaves the timeline out
+      // Older backend: the card just leaves the timeline out. Marked failed
+      // rather than cleared so the once-a-minute throttle holds off retries.
+      if (this._selected === ent) this._timeline = { ent, at: Date.now(), failed: true };
     }
   }
 
@@ -659,7 +672,9 @@ class SextantLive extends LitElement {
     if (!rx?.entity_id) return;
     this._proxy = { slug: rx.entity_id, loading: true };
     try {
-      const info = await callWS(this, this.hass, { type: "sextant/proxy/info", proxy: rx.entity_id });
+      // Straight to hass: the helper turns a failure into null, which would
+      // read as a proxy that publishes nothing rather than as an error.
+      const info = await this.hass.callWS({ type: "sextant/proxy/info", proxy: rx.entity_id });
       if (this._proxy?.slug === rx.entity_id) this._proxy = { ...info, slug: rx.entity_id };
     } catch (e) {
       this._proxy = { slug: rx.entity_id, error: e?.message || String(e) };
@@ -1068,7 +1083,7 @@ class SextantLive extends LitElement {
   /** The stays from the timeline, with the current one reaching to now while it is still heard. */
   _stays(sel) {
     const tl = this._timeline;
-    if (!tl || tl.ent !== sel.ent) return null;
+    if (!tl || tl.failed || tl.ent !== sel.ent) return null;
     const stays = (tl.stays || []).map((s) => ({ ...s }));
     const last = stays[stays.length - 1];
     const heard = !staleness(sel, this._staleAfter()).ghost;

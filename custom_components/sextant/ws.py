@@ -94,17 +94,26 @@ RUNNING_VERSION = None
 RUNNING_CODE = None
 
 
+_signature_cache = [None, None]  # [(name, mtime_ns, size) per file, digest]
+
+
 def code_signature() -> str | None:
     """sha256 over the package's .py files, in name order (blocking: call in the executor)."""
     import hashlib  # noqa: PLC0415
     from pathlib import Path  # noqa: PLC0415
 
     try:
+        paths = sorted(Path(__file__).parent.glob("*.py"))
+        # Every panel load asks; re-hash only when a file's size or mtime moved.
+        key = tuple((p.name, st.st_mtime_ns, st.st_size) for p in paths for st in (p.stat(),))
+        if _signature_cache[0] == key:
+            return _signature_cache[1]
         digest = hashlib.sha256()
-        for path in sorted(Path(__file__).parent.glob("*.py")):
+        for path in paths:
             digest.update(path.name.encode())
             digest.update(path.read_bytes())
-        return digest.hexdigest()
+        _signature_cache[:] = [key, digest.hexdigest()]
+        return _signature_cache[1]
     except OSError:
         return None
 
@@ -583,6 +592,8 @@ def _refresh_mark_refs(core, store):
 async def ws_truth_mark(hass, connection, msg):
     """Record that ``entity`` is really at (x, y) on ``floor`` right now, from the
     cycles of the last ``window_secs``, and say which settings fit it best."""
+    if not (math.isfinite(msg["x"]) and math.isfinite(msg["y"])):
+        return _error(connection, msg, "x and y must be finite numbers")
     core = _core()
     since = time.time() - max(30.0, float(msg["window_secs"]))
     samples = core._truth_buffer.samples(msg["entity"], since=since, floor=msg["floor"])
@@ -946,18 +957,17 @@ async def ws_proxy_info(hass, connection, msg):
     # How many things it hears: the readings Bermuda has for it right now,
     # judged by the same staleness gate the solver uses.
     max_age = core._reading_max_age(layout)
-    heard = 0
-    for (_ent, key), reading in ((bermuda_source.async_get_readings_by_address(hass) or {})).items():
-        if key == address and isinstance(reading, dict):
-            age = reading.get("age")
-            if age is None or age <= max_age:
-                heard += 1
-    by_slug = bermuda_source.async_get_readings(hass) or {}
-    for (_ent, key), reading in by_slug.items():
-        if key == slug and isinstance(reading, dict):
-            age = reading.get("age")
-            if age is None or age <= max_age:
-                heard += 1
+    # A set of things: both maps carry the same reading, under the address
+    # and under the slug, so adding the two counted every thing twice.
+    heard_things = set()
+    for readings, want in ((bermuda_source.async_get_readings_by_address(hass), address),
+                           (bermuda_source.async_get_readings(hass), slug)):
+        for (ent, key), reading in (readings or {}).items():
+            if key == want and isinstance(reading, dict):
+                age = reading.get("age")
+                if age is None or age <= max_age:
+                    heard_things.add(ent)
+    heard = len(heard_things)
 
     connection.send_result(msg["id"], {
         "proxy": slug,

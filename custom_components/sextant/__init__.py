@@ -27,7 +27,6 @@ import math
 import os
 import json
 import re
-import copy
 import difflib
 import shapely
 from shapely.geometry import Point, Polygon
@@ -1216,7 +1215,10 @@ async def update_tracked_entities(hass):
         now_ts = time.time()
         if now_ts - getattr(update_tracked_entities, "last_liveness", 0.0) >= RECEIVER_DUMP_INTERVAL:
             update_tracked_entities.last_liveness = now_ts
-            await update_receiver_liveness(hass)
+            try:
+                await update_receiver_liveness(hass)
+            except Exception as e:  # outside the cycle's try: raising here ended the loop for good
+                _LOGGER.warning("Sextant receiver liveness update failed: %s", e)
 
         # Runs on the first tick too, so a fresh deploy shows a value quickly.
         # The scipy solves run in the executor so the loop is never blocked; the
@@ -1528,7 +1530,10 @@ def _resolve_receiver_addresses(layout, directory):
                     candidates = [mac]
             base_slug = slug[: mac_suffix.start()] if mac_suffix else slug
             token = receiver.get("scanner_uid") or _scanner_token(base_slug)
-            if token:
+            # Only when the suffix gave no exact answer: the BLE and wifi MAC
+            # tails differ, so the token can miss (or double-match) an address
+            # the suffix names outright.
+            if token and not candidates:
                 candidates = [
                     a for a, s in directory.items()
                     if a not in claimed and (
@@ -1564,7 +1569,10 @@ async def async_resolve_receiver_addresses(hass) -> bool:
     layout = get_layout(hass)
     if not isinstance(layout, dict):
         return False
-    probe = copy.deepcopy(layout)
+    # Only receivers' own keys are written, so a receivers-only copy is a
+    # safe probe; a deepcopy of the whole layout (rooms, bias grids, pins)
+    # every liveness tick was the real cost of this "cheap" check.
+    probe = _thing_layout(layout)
     changed, _unresolved = _resolve_receiver_addresses(probe, directory)
     if not changed:
         return False
@@ -2003,17 +2011,26 @@ async def update_receiver_radii(hass, eids):
     # thousands of recorder writes and websocket state_changed fan-outs. None
     # when Bermuda is absent or too old, in which case we scrape entities as
     # before. Fetched once per call, not per receiver.
-    readings = bermuda_source.async_get_readings(hass, include_history=use_median)
     # Address-keyed readings need no slug map and cannot drift on a rename;
-    # the slug-keyed dict remains for placements not yet resolved.
+    # the slug-keyed dict remains for placements not yet resolved, and is
+    # only built (a device x scanner join) once one of those is met.
     by_address = bermuda_source.async_get_readings_by_address(hass, include_history=use_median)
+    readings = None
+    readings_built = by_address is None
+    if readings_built:
+        readings = bermuda_source.async_get_readings(hass, include_history=use_median)
     for floor in (f for f in eids["data"]["floor"] if f["scale"] is not None):
         for receiver in floor["receivers"]:
+            if not isinstance(receiver.get("cords"), dict):
+                continue  # not placed: no circle to size, and cords["r"] below would raise
             entity_id = "sensor." + eids["entity"] + "_distance_to_" + receiver["entity_id"]
             reading = None
             address = receiver.get("address")
             if by_address is not None and isinstance(address, str) and address:
                 reading = by_address.get((eids["entity"], address.lower()))
+            if reading is None and not readings_built:
+                readings_built = True
+                readings = bermuda_source.async_get_readings(hass, include_history=use_median)
             if reading is None and readings is not None:
                 reading = readings.get((eids["entity"], receiver["entity_id"]))
             # Per-point reliability of this reading in (0, 1]; only the
@@ -2712,10 +2729,21 @@ async def prune_stale_positions(hass):
 
     now = time.time()
     stale_ents = {e["ent"] for e in apitricords if now - e.get("updated", now) > timeout}
+    # State restored over a restart for a thing not heard since has no row
+    # here, and would otherwise keep its incumbency (and be saved again)
+    # forever. It is as old as the last time the thing was seen.
+    live = {e["ent"] for e in apitricords}
+    restored = (set(_kf_position_state) | set(_zone_state) | set(_subzone_state)
+                | set(getattr(update_trilateration_and_zone, "last_floor", {}))) - live
+    stale_ents |= {
+        ent for ent in restored
+        if now - ((_last_seen.get(ent) or {}).get("updated") or 0) > timeout
+    }
     if not stale_ents:
         return
-    apitricords = [e for e in apitricords if e["ent"] not in stale_ents]
-    await update_apitricords(hass, apitricords)
+    if live & stale_ents:
+        apitricords = [e for e in apitricords if e["ent"] not in stale_ents]
+        await update_apitricords(hass, apitricords)
     # History is deliberately NOT pruned with the live entry: the point of it is
     # to survive the absence. Just break the line so the scrubber does not draw
     # a straight segment across the gap.
@@ -2861,7 +2889,10 @@ async def process_entities(hass, new_global_data):
     to do it in.
     """
     for eids in new_global_data:
-        await process_single_entity(hass, new_global_data, eids)
+        try:
+            await process_single_entity(hass, new_global_data, eids)
+        except Exception:  # noqa: BLE001 - one thing's bad data must not stop the rest
+            _LOGGER.exception("Positioning failed for %s", eids)
         await asyncio.sleep(0)  # a thing with nothing to solve never awaits: yield for it
     try:
         _update_person_sensors(hass)
@@ -2899,12 +2930,17 @@ async def _restore_runtime(hass):
     back = runtime_mod.restore(data, time.time(), _tuning(layout, "restore_state_secs"))
     _last_seen.update(back["last"])
     _seed_last_seen_from_history(hass)
-    for entity, kf in back["kf"].items():
-        _kf_position_state[entity] = {
-            "x": np.array(kf["x"], dtype=float), "P": np.array(kf["P"], dtype=float),
-            "ts": kf["ts"], "floor": kf["floor"],
-        }
     now = time.time()
+    for entity, kf in back["kf"].items():
+        # Stamped now, velocity dropped: the saved ts is the downtime old, and
+        # _kalman_update resets anything past KF_MAX_GAP_S - any restart
+        # longer than half a minute threw the restored filter straight away.
+        x = np.array(kf["x"], dtype=float)
+        x[2:] = 0.0
+        _kf_position_state[entity] = {
+            "x": x, "P": np.array(kf["P"], dtype=float),
+            "ts": now, "floor": kf["floor"],
+        }
     for entity, state in back["zone"].items():
         # Filled out against the live shape: a key the snapshot predates (or
         # never carried) has to read as "no value", not raise mid-election.
@@ -2914,6 +2950,12 @@ async def _restore_runtime(hass):
         value = state.get("value")
         if isinstance(value, list) and len(value) == 2:
             state = {**state, "value": tuple(value)}
+        # And so is the pending challenger's, inside (candidate, ts): left a
+        # list it never equals the tuple candidate, so the dwell restarted.
+        pending = state.get("pending")
+        if (isinstance(pending, list) and len(pending) == 2
+                and isinstance(pending[0], list) and len(pending[0]) == 2):
+            state = {**state, "pending": (tuple(pending[0]), pending[1])}
         _subzone_state[entity] = {**_new_subzone_state(state.get("floor"), state.get("zone"), now), **state}
     _arrivals.update(back["arrivals"])
     # The floor election, and with it the fact that this thing's floor is not
@@ -3079,8 +3121,10 @@ def _arrived_at(hass, layout, ent, row, now):
         st["away_since"] = None
         if st["provisional"] and now - st["first_seen"] <= ARRIVAL_RETRY_SECS:
             found = _history_arrival(hass, ent, floor, x, y, now)
-            if found is not None and found < st["since"]:
-                st["since"], st["provisional"] = found, False
+            if found is not None:
+                # Answered: take it if earlier, and stop asking either way (a
+                # 24 h history query per owned thing per cycle otherwise).
+                st["since"], st["provisional"] = min(found, st["since"]), False
         return st["since"]
     fallback = now
     if st is not None:
@@ -3451,10 +3495,29 @@ def _covariance_samples(center, cov, scale=None):
 def _zone_membership(zone_polys, samples):
     """zone_id -> share of sample weight in (or, failing that, nearest to)
     each allowed zone. No-go zones never receive membership."""
+    shares = {}
+    if isinstance(zone_polys, _FloorZones):
+        # One vectorised covers (and, for points outside every zone, one
+        # distance) over zones x samples, instead of a Python shapely call per
+        # pair: up to nine samples times every room, per thing per cycle.
+        ids, geoms = zone_polys.allowed_ids, zone_polys.allowed_geoms
+        if not ids or not samples:
+            return {}
+        pts = shapely.points([(x, y) for x, y, _w in samples])
+        covered = shapely.covers(geoms[:, None], pts[None, :])
+        inside = covered.any(axis=0)
+        pick = np.argmax(covered, axis=0)  # the first covering zone, as below
+        if not inside.all():
+            outside = np.flatnonzero(~inside)
+            pick[outside] = np.argmin(shapely.distance(geoms[:, None], pts[outside][None, :]), axis=0)
+        for i, (_x, _y, w) in enumerate(samples):
+            zid = ids[int(pick[i])]
+            shares[zid] = shares.get(zid, 0.0) + w
+        total = sum(shares.values())
+        return {z: v / total for z, v in shares.items()} if total > 0 else {}
     allowed = [(zid, poly) for zid, poly, _b, no_go in zone_polys if not no_go]
     if not allowed:
         return {}
-    shares = {}
     for x, y, w in samples:
         pt = Point(x, y)
         hit = None
@@ -4701,8 +4764,14 @@ async def async_setup(hass, config):
     async def _on_stop(_event):
         await _save_runtime(hass)
 
-    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _on_stop)
-    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_FINAL_WRITE, _on_stop)
+    # Once per Home Assistant run: sextant_initialized is cleared on unload,
+    # so every reload (each options change) used to add another set, and a
+    # stop then ran every save and shutdown once per reload, concurrently.
+    first_setup = not hass.data.get("sextant_stop_listeners")
+    hass.data["sextant_stop_listeners"] = True
+    if first_setup:
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _on_stop)
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_FINAL_WRITE, _on_stop)
 
     async def initialize_sextant():
         """Initialize the Sextant component"""
@@ -4827,7 +4896,8 @@ async def async_setup(hass, config):
                 _LOGGER.debug("Sextant position history final flush failed: %s", e)
             await async_shutdown_calibration(hass)
 
-        hass.bus.async_listen_once("homeassistant_stop", handle_homeassistant_stop)
+        if first_setup:
+            hass.bus.async_listen_once("homeassistant_stop", handle_homeassistant_stop)
 
         await async_restore_calibration_state(hass)
         await async_start_auto_if_enabled(hass)
@@ -4852,6 +4922,15 @@ async def async_unload_entry(hass: HomeAssistant, entry):
     state_listener_unsub = hass.data.pop("sextant_state_listener_unsub", None)
     if state_listener_unsub:
         state_listener_unsub()
+
+    # Stop the loop before anything below can fail and return early (which
+    # left it running against half-torn-down state), and write the runtime
+    # out: setup restores it, and a reload would otherwise rewind every
+    # election to the last periodic save, up to a minute back.
+    update_task = hass.data.pop("sextant_update_task", None)
+    if update_task:
+        update_task.cancel()
+    await _save_runtime(hass)
 
     # Get whatever the tracking loop buffered since the last 60 s flush onto
     # disk before the task goes away. The in-memory ring survives an unload
@@ -4886,10 +4965,6 @@ async def async_unload_entry(hass: HomeAssistant, entry):
     except Exception as e:
         _LOGGER.error(f"Error when removing frontend-panel for entry {entry.entry_id}: {e}")
         return False
-
-    update_task = hass.data.pop("sextant_update_task", None)
-    if update_task:
-        update_task.cancel()
 
     await async_shutdown_calibration(hass)
 
@@ -5079,7 +5154,8 @@ class SextantSaveAPIText(HomeAssistantView):
             map_target = _safe_maps_child(maps_path, map_file.filename, _ALLOWED_MAP_EXTS)
             if map_target is None:
                 return web.Response(status=400, text="Invalid map filename")
-            map_bytes = map_file.file.read()
+            # Up to 25 MB off aiohttp's temp file: not on the event loop.
+            map_bytes = await hass.async_add_executor_job(map_file.file.read)
             if len(map_bytes) > MAX_MAP_UPLOAD_BYTES:
                 return web.Response(status=413, text="Map file too large")
 
@@ -5108,14 +5184,20 @@ class SextantSaveAPIText(HomeAssistantView):
         await save_layout(hass, coords_obj)
 
         # Never delete the map we just wrote (a replace with the same filename).
-        if remove_target is not None and remove_target != map_target and remove_target.exists():
+        if remove_target is not None and remove_target != map_target:
             try:
-                remove_target.unlink()
+                await hass.async_add_executor_job(_unlink_if_exists, remove_target)
                 _LOGGER.info(f"Removed file: {remove_target.name}")
             except Exception as e:
                 _LOGGER.error(f"Failed to remove file {remove_target.name}: {e}")
                 return web.Response(status=500, text="Failed to remove file")
         return None
+
+
+def _unlink_if_exists(path):
+    """Delete a file that may be gone already (runs in the executor)."""
+    if path.exists():
+        path.unlink()
 
 
 def list_map_files(maps_path):
@@ -5159,7 +5241,7 @@ class SextantUploadThingIconAPI(HomeAssistantView):
         safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", Path(icon_file.filename).name)
         if not safe_name or Path(safe_name).suffix.lower() not in _ALLOWED_ICON_EXTS:
             return web.Response(status=400, text="Icons must be png, jpg, webp or gif")
-        icon_bytes = icon_file.file.read()
+        icon_bytes = await hass.async_add_executor_job(icon_file.file.read)
         if len(icon_bytes) > MAX_ICON_UPLOAD_BYTES:
             return web.Response(status=413, text="Icon file too large (2 MB max)")
 

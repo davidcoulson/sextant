@@ -16,10 +16,13 @@ const { SextantMap } = await import("../../custom_components/sextant/frontend/se
 
 function fakeCanvas() {
   const ctx = new Proxy({}, { get: () => () => ({ addColorStop() {} }), set: () => true });
+  const listeners = new Map();
   return {
-    style: {}, width: 400, height: 800,
+    style: {}, width: 400, height: 800, listeners,
     getContext: () => ctx,
-    addEventListener() {}, removeEventListener() {}, setPointerCapture() {},
+    addEventListener(type, fn) { listeners.set(type, fn); },
+    removeEventListener(type, fn) { if (listeners.get(type) === fn) listeners.delete(type); },
+    setPointerCapture() {},
     getBoundingClientRect: () => ({ left: 0, top: 0, width: 400, height: 800 }),
   };
 }
@@ -70,4 +73,13 @@ test("the second note on a floor leaves the second spot alone too", () => {
   assert.deepEqual(map.floor.remarks[1].cords, { x: 546.522, y: 682.442 });
   assert.deepEqual(map.floor.remarks[0].cords, { x: 1206, y: 807 });
   assert.deepEqual(map.floor.subzones, before);
+});
+
+test("destroy takes the canvas listeners off again", () => {
+  const canvas = fakeCanvas();
+  const map = new SextantMap(canvas, {});
+  assert.ok(canvas.listeners.size > 0);
+  map.destroy();
+  assert.equal(canvas.listeners.size, 0);
+  assert.equal(map._raf, 0);
 });

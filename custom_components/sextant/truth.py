@@ -225,8 +225,11 @@ def mark_reference(mark, samples=None):
         gain = float(s.get("gain") or gain)
         for rx, d in (s.get("thing_vec") or {}).items():
             if isinstance(d, (int, float)) and d > 0:
-                per_rx.setdefault(rx, []).append(float(d))
-    vector = {rx: fingerprint._median(v) / max(gain, 1e-6) for rx, v in per_rx.items() if len(v) >= 2}
+                # Each sample by its own cycle's gain: auto-gain moves it
+                # between cycles, and dividing all of them by the last one
+                # scaled the whole reference by that one cycle's value.
+                per_rx.setdefault(rx, []).append(float(d) / max(gain, 1e-6))
+    vector = {rx: fingerprint._median(v) for rx, v in per_rx.items() if len(v) >= 2}
     if not vector:
         return None
     return {

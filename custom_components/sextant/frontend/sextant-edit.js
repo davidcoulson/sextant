@@ -38,6 +38,17 @@ const UNDO_DEPTH = 50;
 
 function uid(prefix) { return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`; }
 
+/** A layout as a string to compare, without the display-only fields the
+ * editor hangs on proxies and pins (the ones _cleanDraft drops before a save). */
+function layoutKey(layout) {
+  const copy = JSON.parse(JSON.stringify(layout || {}));
+  for (const f of copy.floor || []) {
+    for (const r of f.receivers || []) { delete r.unmatched; delete r.label; }
+    for (const q of f.pins || []) { delete q.linked; delete q.miss; delete q.missLabel; }
+  }
+  return JSON.stringify(copy);
+}
+
 class SextantEdit extends LitElement {
   static properties = {
     hass: { attribute: false },
@@ -90,7 +101,7 @@ class SextantEdit extends LitElement {
     const prev = this._undo[this._undo.length - 1];
     this._undo = this._undo.slice(0, -1);
     this._draft = JSON.parse(prev);
-    this._dirty = JSON.stringify(this._draft) !== JSON.stringify(this.data?.layout || { floor: [] });
+    this._dirty = layoutKey(this._draft) !== layoutKey(this.data?.layout || { floor: [] });
     this._proposal = null;
     this._pushFloor();
   }
@@ -627,8 +638,10 @@ class SextantEdit extends LitElement {
     const maps = this.data?.maps || [];
     const url = mapUrlFor(f.name, maps);
     const mapFile = url ? decodeURIComponent(url.split("/").pop()) : null;
-    this._draft.floor = this._draft.floor.filter((x) => x !== f);
-    await this._save(mapFile);
+    const before = this._draft.floor;
+    this._draft.floor = before.filter((x) => x !== f);
+    // A failed save leaves the floor where it was, in the draft as in the store.
+    if (!(await this._save(mapFile))) { this._draft.floor = before; this._pushFloor(); this.requestUpdate(); return; }
     this.dispatchEvent(new CustomEvent("floor-changed", { detail: this._draft.floor[0]?.name || null }));
   }
 
@@ -643,6 +656,7 @@ class SextantEdit extends LitElement {
       this._dirty = false;
       this.dispatchEvent(new CustomEvent("layout-changed"));
     }
+    return r;
   }
 
   _discard() {

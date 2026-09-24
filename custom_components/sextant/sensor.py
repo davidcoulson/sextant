@@ -543,6 +543,11 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             expected_entity_ids.add(f"sensor.{entity}_{suffix}")
 
     # Remove stale Sextant registry entries that are no longer expected.
+    # A person's sensors are not a thing's and are pruned by
+    # prune_person_sensors; swept here, every setup deleted them and the
+    # user's name, area and disabled flag with them.
+    from .persons import PERSON_SENSOR_KINDS  # noqa: PLC0415
+    person_prefixes = tuple(f"{suffix}_" for suffix, _label in PERSON_SENSOR_KINDS)
     entity_registry = er.async_get(hass)
     if expected_entity_ids:
         stale_sextant_ids = [
@@ -550,6 +555,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             for entry in entity_registry.entities.values()
             if entry.platform == "sextant" and entry.entity_id not in expected_entity_ids
             and entry.entity_id != ACCURACY_ENTITY_ID  # keep the global diagnostic
+            and not (isinstance(entry.unique_id, str) and entry.unique_id.startswith(person_prefixes))
         ]
         for entity_id in stale_sextant_ids:
             _LOGGER.info("Removing stale Sextant registry entity: %s", entity_id)
@@ -640,7 +646,11 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     old_berm_unsub = hass.data.pop("sextant_bermuda_listener_unsub", None)
     if old_berm_unsub:
         old_berm_unsub()
+    old_retry_unsub = hass.data.pop("sextant_bermuda_retry_unsub", None)
+    if old_retry_unsub:
+        old_retry_unsub()  # a pending retry from before a reload would subscribe twice
 
+    @callback  # without it async_call_later runs the retry on a worker thread
     def _try_subscribe(_now=None):
         """Attach to Bermuda's coordinator, retrying until it exists.
 
@@ -650,6 +660,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         no per-thing sensors forever, because the state_changed hook it used
         to rely on never fires for disabled distance entities.
         """
+        hass.data.pop("sextant_bermuda_retry_unsub", None)
         if hass.data.get("sextant_sensors") is None:
             return  # unloading/reloading; stop retrying
         unsub = bermuda_source.async_subscribe(hass, bermuda_updated)

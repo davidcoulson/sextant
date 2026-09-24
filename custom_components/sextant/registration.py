@@ -263,8 +263,12 @@ def solve(layout) -> dict:
                 # not agree is noise with two decimal places.
                 "implied_scale": scale / implied if implied and spread >= 2.0 and implied > 0 else None,
             }
-            for pin, (lx, ly) in pins[name].items():
-                house.setdefault(pin, (cos_t * lx - sin_t * ly + tx, sin_t * lx + cos_t * ly + ty))
+            # Only a usable fit may place pins for the floors after it: a
+            # rejected one would hand them its error, and a floor sharing
+            # pins with it alone would then fit them "well" in the wrong place.
+            if frames[name]["ok"]:
+                for pin, (lx, ly) in pins[name].items():
+                    house.setdefault(pin, (cos_t * lx - sin_t * ly + tx, sin_t * lx + cos_t * ly + ty))
             progress = True
 
     for f in floors:

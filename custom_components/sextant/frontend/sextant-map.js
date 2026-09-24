@@ -487,6 +487,10 @@ export class SextantMap {
   destroy() {
     this._resize.disconnect();
     cancelAnimationFrame(this._raf);
+    this._raf = 0;
+    for (const [type, fn, opts] of this._listeners || []) this.canvas.removeEventListener(type, fn, opts);
+    this._listeners = [];
+    this._planCache = null;
   }
 
   // --- data ------------------------------------------------------------------
@@ -597,13 +601,18 @@ export class SextantMap {
   _bind() {
     const c = this.canvas;
     c.style.touchAction = "none";
-    c.addEventListener("pointerdown", (e) => this._down(e));
-    c.addEventListener("pointermove", (e) => this._move(e));
-    c.addEventListener("pointerup", (e) => this._up(e));
-    c.addEventListener("pointercancel", (e) => this._up(e));
-    c.addEventListener("wheel", (e) => this._wheel(e), { passive: false });
-    c.addEventListener("dblclick", (e) => this._dblclick(e));
-    c.addEventListener("contextmenu", (e) => { e.preventDefault(); const hit = this.hitTest(this._local(e)); if (this.host.onContextMenu) this.host.onContextMenu(hit, e); });
+    // Kept so destroy() can take them off again: a card that reconnects
+    // builds a new map on the same canvas.
+    this._listeners = [
+      ["pointerdown", (e) => this._down(e)],
+      ["pointermove", (e) => this._move(e)],
+      ["pointerup", (e) => this._up(e)],
+      ["pointercancel", (e) => this._up(e)],
+      ["wheel", (e) => this._wheel(e), { passive: false }],
+      ["dblclick", (e) => this._dblclick(e)],
+      ["contextmenu", (e) => { e.preventDefault(); const hit = this.hitTest(this._local(e)); if (this.host.onContextMenu) this.host.onContextMenu(hit, e); }],
+    ];
+    for (const [type, fn, opts] of this._listeners) c.addEventListener(type, fn, opts);
   }
 
   _local(e) { const r = this.canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
@@ -937,9 +946,14 @@ export class SextantMap {
       // dark room, so it is inverted to white on black; the hue rotation puts
       // any colour in the drawing back where it was, and the walls are taken
       // down to a grey that reads as a drawing rather than a light source.
-      if (this.dark) { ctx.save(); ctx.filter = "invert(1) hue-rotate(180deg) brightness(0.62)"; ctx.globalAlpha = 0.85; }
-      ctx.drawImage(this.image, 0, 0, size.w, size.h);
-      if (this.dark) ctx.restore();
+      if (this.dark) {
+        ctx.save();
+        ctx.globalAlpha = 0.85;
+        ctx.drawImage(this._darkPlan(), 0, 0, size.w, size.h);
+        ctx.restore();
+      } else {
+        ctx.drawImage(this.image, 0, 0, size.w, size.h);
+      }
     }
     this._drawGrid(ctx, size);
     this._drawPolygons(ctx, f.zones || [], "zone");
@@ -975,6 +989,23 @@ export class SextantMap {
     this._drawProxyPeeks(ctx);
     this._flushLabels(ctx);
     ctx.restore();
+  }
+
+  /** The floor plan with the dark-theme filter already applied, made once per
+   * image: filtering the whole plan on every frame is most of a frame's cost. */
+  _darkPlan() {
+    const img = this.image;
+    if (this._planCache?.image === img) return this._planCache.canvas;
+    const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+    if (!w || !h) return img;
+    const c = document.createElement("canvas");
+    c.width = w; c.height = h;
+    const cx = c.getContext("2d");
+    if (!cx) return img;
+    cx.filter = "invert(1) hue-rotate(180deg) brightness(0.62)";
+    cx.drawImage(img, 0, 0);
+    this._planCache = { image: img, canvas: c };
+    return c;
   }
 
   /** Whether the page this map is drawn on is dark, from its own background:
