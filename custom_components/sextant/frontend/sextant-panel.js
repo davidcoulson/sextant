@@ -321,13 +321,20 @@ class SextantPanel extends LitElement {
        screen, and switching is one click instead of two. A segmented control,
        so it reads as "which floor" and not as another page like the modes. */
     .floorstamp { display: flex; align-items: center; gap: 10px; }
-    .floor-tabs { display: flex; gap: 2px; padding: 3px; border-radius: 9px; background: rgba(255,255,255,0.14); flex: none; }
+    /* The tabs sit in the header, whose colours are the theme's: a dark bar
+     * with light text, or in a light theme a white bar with dark text. Every
+     * colour here is a tint of the header's TEXT colour, and the picked tab
+     * is that colour inverted - so it is a white pill on a dark header and a
+     * dark pill on a white one. Hard-coded white pills vanished on a white
+     * header, taking the floor you were on with them. */
+    .floor-tabs { --ink: var(--app-header-text-color, var(--primary-text-color, #212121)); --paper: var(--app-header-background-color, var(--card-background-color, #fff));
+      display: flex; gap: 2px; padding: 3px; border-radius: 9px; background: color-mix(in srgb, var(--ink) 12%, transparent); flex: none; }
     .floor-tabs button { display: flex; align-items: center; gap: 6px; background: transparent; border: 0; color: inherit; font: inherit; font-size: 13px; padding: 5px 12px; border-radius: 7px; cursor: pointer; opacity: 0.85; white-space: nowrap; }
-    .floor-tabs button:hover { opacity: 1; background: rgba(255,255,255,0.12); }
-    .floor-tabs button.active { opacity: 1; font-weight: 600; background: rgba(255,255,255,0.95); color: var(--app-header-background-color, var(--primary-color, #03a9f4)); }
+    .floor-tabs button:hover { opacity: 1; background: color-mix(in srgb, var(--ink) 10%, transparent); }
+    .floor-tabs button.active { opacity: 1; font-weight: 600; background: var(--ink); color: var(--paper); }
     .floor-tabs button:focus-visible { outline: 2px solid currentColor; outline-offset: 1px; }
-    .floor-tabs .n { font-size: 11px; font-weight: 600; min-width: 16px; padding: 0 4px; border-radius: 8px; background: rgba(255,255,255,0.22); text-align: center; }
-    .floor-tabs button.active .n { background: var(--app-header-background-color, var(--primary-color, #03a9f4)); color: #fff; }
+    .floor-tabs .n { font-size: 11px; font-weight: 600; min-width: 16px; padding: 0 4px; border-radius: 8px; background: color-mix(in srgb, var(--ink) 18%, transparent); text-align: center; }
+    .floor-tabs button.active .n { background: color-mix(in srgb, var(--paper) 28%, transparent); color: inherit; }
     .bottombar .floor-tabs { background: var(--secondary-background-color, rgba(0,0,0,0.05)); }
     .bottombar .floor-tabs button:hover { background: rgba(0,0,0,0.05); }
     .bottombar .floor-tabs button.active { background: var(--primary-color, #03a9f4); color: var(--text-primary-color, #fff); }
