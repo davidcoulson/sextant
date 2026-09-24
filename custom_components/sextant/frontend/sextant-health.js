@@ -398,6 +398,10 @@ class SextantHealth extends LitElement {
     remember("advice", report);
   }
 
+  // The Edit page, where the spots are pinned, is an administrator's; for
+  // anyone else the button landed on Live with nothing to show.
+  _isAdmin() { return this.hass?.user?.is_admin !== false; }
+
   _showSpots(floor, spots) {
     // sextant-edit labels each ring "add a proxy here · <room>" itself, so
     // several rooms' spots read fine together on one floor's plan.
@@ -436,13 +440,13 @@ class SextantHealth extends LitElement {
         ${stale(a) ? html`<span class="pill warn" title="Auto calibration has sampled a lot since; refresh for a current picture">over an hour old</span>` : nothing}
         ${a ? html`<span class="muted small">${a.at ? `analysed ${fmtAge((Date.now() - a.at) / 1000)} ago · ` : ""}${a.summary.rooms} rooms · ${a.summary.to_add ? `${a.summary.to_add} proxies to add` : "nothing to add"}${Object.entries(a.summary.issues || {}).filter(([k]) => k !== "ok").map(([k, n]) => ` · ${n} ${k}`).join("")}</span>` : nothing}</div>
       ${a?.unplaced?.length ? html`<div class="row"><b>Heard but not placed:</b>
-        ${a.unplaced.map((u) => html`<span class="chips">${u.name}${u.suggest ? html` <span class="muted small">→ ${u.suggest.room} (${u.suggest.floor})</span> ${uiButton({ label: "Show on plan", kind: "text", onClick: () => this._showSpots(u.suggest.floor, [{ room: u.suggest.room, x: u.suggest.x, y: u.suggest.y }]) })}` : nothing} ${uiButton({ label: "Ignore", kind: "text", title: "Leave this scanner out of the unplaced lists (a kiosk, a test board, an outdoor proxy)", onClick: () => this._ignoreScanner(u.address, true) })}</span>`)}</div>` : nothing}
+        ${a.unplaced.map((u) => html`<span class="chips">${u.name}${u.suggest ? html` <span class="muted small">→ ${u.suggest.room} (${u.suggest.floor})</span> ${this._isAdmin() ? uiButton({ label: "Show on plan", kind: "text", onClick: () => this._showSpots(u.suggest.floor, [{ room: u.suggest.room, x: u.suggest.x, y: u.suggest.y }]) }) : nothing}` : nothing} ${uiButton({ label: "Ignore", kind: "text", title: "Leave this scanner out of the unplaced lists (a kiosk, a test board, an outdoor proxy)", onClick: () => this._ignoreScanner(u.address, true) })}</span>`)}</div>` : nothing}
       ${a?.ignored?.length ? html`<div class="row muted small">Ignored: ${a.ignored.map((u) => html`<span class="chips">${u.name} ${uiButton({ label: "Un-ignore", kind: "text", onClick: () => this._ignoreScanner(u.address, false) })}</span>`)}</div>` : nothing}
       ${a ? floors.map(({ floor, rows, toAdd, flagged }) => {
         const allSpots = rows.flatMap((r) => (r.spots || []).map((s) => ({ ...s, room: r.room })));
         return html`<div class="floorplan">
           <h4>${floor} <span class="muted small">${flagged ? `${flagged} room${flagged === 1 ? "" : "s"} flagged` : "every room fine"}${toAdd ? ` · ${toAdd} to add` : ""}</span>
-            ${allSpots.length ? uiButton({ label: `Show all ${allSpots.length} on this floor`, kind: "outline", onClick: () => this._showSpots(floor, allSpots) }) : nothing}
+            ${allSpots.length && this._isAdmin() ? uiButton({ label: `Show all ${allSpots.length} on this floor`, kind: "outline", onClick: () => this._showSpots(floor, allSpots) }) : nothing}
           </h4>
           <div class="wrap"><table>
             <tr><th>Room</th><th>Issue</th><th class="num">Proxies</th><th class="num">Median</th><th class="num">Add</th><th>What to do</th><th></th></tr>
@@ -452,7 +456,7 @@ class SextantHealth extends LitElement {
               <td class="num">${r.median_m != null ? fmtLen(r.median_m, this.hass, 2) : "—"}</td>
               <td class="num">${r.add || ""}</td>
               <td class="small">${r.note ? r.note.replace(/[a-z0-9_]+_(rrn00|s2224|eth|shelly)[a-z0-9_]*/g, (m) => proxyName(this.data, m)) : html`<span class="muted">fine</span>`}</td>
-              <td>${r.spots?.length ? uiButton({ label: "Show on plan", kind: "text", onClick: () => this._showSpots(r.floor, r.spots.map((s) => ({ ...s, room: r.room }))) }) : nothing}</td>
+              <td>${r.spots?.length && this._isAdmin() ? uiButton({ label: "Show on plan", kind: "text", onClick: () => this._showSpots(r.floor, r.spots.map((s) => ({ ...s, room: r.room }))) }) : nothing}</td>
             </tr>`)}
           </table></div>
         </div>`;

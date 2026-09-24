@@ -2010,10 +2010,14 @@ async def update_receiver_radii(hass, eids):
     # thousands of recorder writes and websocket state_changed fan-outs. None
     # when Bermuda is absent or too old, in which case we scrape entities as
     # before. Fetched once per call, not per receiver.
-    readings = bermuda_source.async_get_readings(hass, include_history=use_median)
     # Address-keyed readings need no slug map and cannot drift on a rename;
-    # the slug-keyed dict remains for placements not yet resolved.
+    # the slug-keyed dict remains for placements not yet resolved, and is
+    # only built (a device x scanner join) once one of those is met.
     by_address = bermuda_source.async_get_readings_by_address(hass, include_history=use_median)
+    readings = None
+    readings_built = by_address is None
+    if readings_built:
+        readings = bermuda_source.async_get_readings(hass, include_history=use_median)
     for floor in (f for f in eids["data"]["floor"] if f["scale"] is not None):
         for receiver in floor["receivers"]:
             if not isinstance(receiver.get("cords"), dict):
@@ -2023,6 +2027,9 @@ async def update_receiver_radii(hass, eids):
             address = receiver.get("address")
             if by_address is not None and isinstance(address, str) and address:
                 reading = by_address.get((eids["entity"], address.lower()))
+            if reading is None and not readings_built:
+                readings_built = True
+                readings = bermuda_source.async_get_readings(hass, include_history=use_median)
             if reading is None and readings is not None:
                 reading = readings.get((eids["entity"], receiver["entity_id"]))
             # Per-point reliability of this reading in (0, 1]; only the
@@ -5105,7 +5112,8 @@ class SextantSaveAPIText(HomeAssistantView):
             map_target = _safe_maps_child(maps_path, map_file.filename, _ALLOWED_MAP_EXTS)
             if map_target is None:
                 return web.Response(status=400, text="Invalid map filename")
-            map_bytes = map_file.file.read()
+            # Up to 25 MB off aiohttp's temp file: not on the event loop.
+            map_bytes = await hass.async_add_executor_job(map_file.file.read)
             if len(map_bytes) > MAX_MAP_UPLOAD_BYTES:
                 return web.Response(status=413, text="Map file too large")
 
@@ -5134,14 +5142,20 @@ class SextantSaveAPIText(HomeAssistantView):
         await save_layout(hass, coords_obj)
 
         # Never delete the map we just wrote (a replace with the same filename).
-        if remove_target is not None and remove_target != map_target and remove_target.exists():
+        if remove_target is not None and remove_target != map_target:
             try:
-                remove_target.unlink()
+                await hass.async_add_executor_job(_unlink_if_exists, remove_target)
                 _LOGGER.info(f"Removed file: {remove_target.name}")
             except Exception as e:
                 _LOGGER.error(f"Failed to remove file {remove_target.name}: {e}")
                 return web.Response(status=500, text="Failed to remove file")
         return None
+
+
+def _unlink_if_exists(path):
+    """Delete a file that may be gone already (runs in the executor)."""
+    if path.exists():
+        path.unlink()
 
 
 def list_map_files(maps_path):
@@ -5185,7 +5199,7 @@ class SextantUploadThingIconAPI(HomeAssistantView):
         safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", Path(icon_file.filename).name)
         if not safe_name or Path(safe_name).suffix.lower() not in _ALLOWED_ICON_EXTS:
             return web.Response(status=400, text="Icons must be png, jpg, webp or gif")
-        icon_bytes = icon_file.file.read()
+        icon_bytes = await hass.async_add_executor_job(icon_file.file.read)
         if len(icon_bytes) > MAX_ICON_UPLOAD_BYTES:
             return web.Response(status=413, text="Icon file too large (2 MB max)")
 
