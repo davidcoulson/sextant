@@ -301,6 +301,10 @@ class PositionHistory:
                 gap = GAP_FRAME
             elif fi != lf:
                 gap = GAP_FRAME             # different pixel frame: break the line
+                # A silence ending on another floor is still a silence: without
+                # this, the timeline stretched the old floor's stay across it.
+                if ts - lt > max(self.cfg["heartbeat"] * DROPOUT_GAP_FACTOR, DROPOUT_GAP_MIN):
+                    gap = GAP_DROPOUT
             else:
                 dt = ts - lt
                 moved = math.hypot(x_m - lx, y_m - ly)

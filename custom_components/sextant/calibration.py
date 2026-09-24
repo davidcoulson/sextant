@@ -1200,6 +1200,7 @@ def _push_corrections_to_bermuda(hass, coords, floor, result) -> int:
     current = {str(k).lower(): float(v) for k, v in (info.get("offsets") or {}).items()}
     base = coords.setdefault("bermuda_offset_base", {})
     updates = {}
+    pushed = set()
     for receiver in floor.get("receivers", []):
         slug = str(receiver.get("entity_id") or "")
         correction = result["receivers"].get(slug)
@@ -1213,8 +1214,16 @@ def _push_corrections_to_bermuda(hass, coords, floor, result) -> int:
         old = current.get(address, 0.0)
         base.setdefault(address, old)
         updates[address] = round(old + delta_db, 1)
+        pushed.add(slug)
     if updates:
         bermuda_source.async_set_rssi_offsets(hass, updates)
+        # The windows these receivers heard into predate the new offsets, and
+        # hold hours of samples: left in, the next solve fitted the SAME
+        # residual again and added it a second time, every cycle, until the
+        # window turned over. Start them over so it fits only what is left.
+        samples = get_calibration_state(hass).get("samples") or {}
+        for key in [k for k in samples if k.rpartition("|")[2] in pushed]:
+            del samples[key]
     return len(updates)
 
 
@@ -1357,6 +1366,13 @@ async def async_calibration_action(hass, data: dict) -> dict:
             cal["error"] = None
     elif action == "solve":
         floor_name = data.get("floor") or cal.get("floor")
+        if cal["state"] != "sampling":
+            # Outside a run the map is whatever the last one left: empty after
+            # a restart, or another floor's after a manual run there.
+            coords = await _read_coords(hass)
+            if coords:
+                cal["receivers"] = _build_receiver_map(coords)
+                cal["all_placed_slugs"] = _all_placed_slugs(coords)
         result = await async_solve(hass, cal, floor_name)
         coords = await _read_coords(hass)
         floor = _find_floor(coords, result["floor"]) if coords else None
