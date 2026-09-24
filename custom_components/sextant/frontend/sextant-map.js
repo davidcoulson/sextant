@@ -759,6 +759,12 @@ export class SextantMap {
       const corner = e.altKey ? null : snapToVertex(raw, f.zones, (HIT_SLOP * 1.5) / this.view.k);
       f.pins[hit.index].cords = corner || raw;
       this._pinSnap = corner;
+    } else if (hit.kind === "remark") {
+      // A note has to be caught here: the branch below is rooms-or-spots, and
+      // a note used to fall into it and have its one point written over the
+      // spot at the same index. That is how two bedside tables lost every
+      // corner but one and vanished from the plan (2026-09-22).
+      f.remarks[hit.index].cords = { x: d.origin[0].x + dx, y: d.origin[0].y + dy };
     } else {
       const list = hit.kind === "zone" ? f.zones : f.subzones;
       const item = list[hit.index];
@@ -798,6 +804,7 @@ export class SextantMap {
       const round = (q) => ({ x: Math.round(q.x * 1000) / 1000, y: Math.round(q.y * 1000) / 1000 });
       if (hit.kind === "receiver") f.receivers[hit.index].cords = round(f.receivers[hit.index].cords);
       else if (hit.kind === "pin") f.pins[hit.index].cords = round(f.pins[hit.index].cords);
+      else if (hit.kind === "remark") f.remarks[hit.index].cords = round(f.remarks[hit.index].cords);
       else { const list = hit.kind === "zone" ? f.zones : f.subzones; list[hit.index].cords = list[hit.index].cords.map(round); }
       if (this.host.onChange) this.host.onChange(hit.kind, hit.index);
     }
