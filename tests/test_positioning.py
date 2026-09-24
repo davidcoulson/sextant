@@ -1917,6 +1917,36 @@ def test_the_cycle_gives_the_event_loop_a_turn_between_things(monkeypatch):
     assert [o for o in order if o != "loop"] == ["a", "b", "c", "d"]
 
 
+def test_a_failing_thing_is_named_not_dumped_and_rate_limited(monkeypatch, caplog):
+    """One thing's bad data must not stop the rest - and its log line must not
+    print the thing's working copy of the layout (tens of KB) every cycle."""
+    monkeypatch.setattr(sextant, "_thing_error_counts", {}, raising=False)
+    done = []
+
+    async def fake_single(hass, data, eids):
+        if eids["entity"] == "bad":
+            raise ValueError("broken reading")
+        done.append(eids["entity"])
+
+    monkeypatch.setattr(sextant, "process_single_entity", fake_single)
+    marker = "LAYOUT-PAYLOAD-" + "x" * 200
+    batch = [{"entity": "bad", "data": {"floor": [{"name": marker}]}}, {"entity": "good", "data": {}}]
+    caplog.set_level("ERROR")
+    cycles = sextant.CYCLE_ERROR_REPEAT_EVERY + 1
+    for _ in range(cycles):
+        run(sextant.process_entities(None, batch))
+
+    assert done == ["good"] * cycles, "the good thing still ran every cycle"
+    lines = [r for r in caplog.records if "Positioning failed" in r.getMessage()]
+    assert len(lines) == 2, "the first failure and one repeat, not one per cycle"
+    assert all("bad" in r.getMessage() and marker not in r.getMessage() for r in lines)
+
+    # Recovering resets the count, so a fresh failure is reported straight away.
+    monkeypatch.setattr(sextant, "process_single_entity", lambda *a: asyncio.sleep(0))
+    run(sextant.process_entities(None, batch))
+    assert "bad" not in sextant._thing_error_counts
+
+
 # --------------------------------------------------------------------------- #
 # Close-range fade of a stretching calibration correction
 # --------------------------------------------------------------------------- #

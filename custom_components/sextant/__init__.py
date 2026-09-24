@@ -1201,6 +1201,8 @@ def cleanup_legacy_sextant_registry_and_states(hass: HomeAssistant):
 _cycle_error_last = None
 _cycle_error_count = 0
 CYCLE_ERROR_REPEAT_EVERY = 40   # roughly every ten minutes at a 15 s cycle
+# thing -> cycles in a row its positioning has raised; rate-limits its log line.
+_thing_error_counts = {}
 
 
 async def update_tracked_entities(hass):
@@ -2889,10 +2891,17 @@ async def process_entities(hass, new_global_data):
     to do it in.
     """
     for eids in new_global_data:
+        ent = eids.get("entity")
         try:
             await process_single_entity(hass, new_global_data, eids)
+            _thing_error_counts.pop(ent, None)
         except Exception:  # noqa: BLE001 - one thing's bad data must not stop the rest
-            _LOGGER.exception("Positioning failed for %s", eids)
+            n = _thing_error_counts[ent] = _thing_error_counts.get(ent, 0) + 1
+            # Named, not printed whole: eids["data"] is this thing's copy of
+            # the layout, tens of KB, and bad data fails every 15 s cycle. The
+            # first failure and every CYCLE_ERROR_REPEAT_EVERY-th after it.
+            if n == 1 or n % CYCLE_ERROR_REPEAT_EVERY == 0:
+                _LOGGER.exception("Positioning failed for %s (%d cycle%s in a row)", ent, n, "" if n == 1 else "s")
         await asyncio.sleep(0)  # a thing with nothing to solve never awaits: yield for it
     try:
         _update_person_sensors(hass)
