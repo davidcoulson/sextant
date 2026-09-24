@@ -1250,9 +1250,11 @@ async def _write_floor_corrections(hass, coords, floor, result, *, auto: bool) -
         updates, pushed = _push_corrections_to_bermuda(hass, coords, floor, result)
         updated = len(updates)
         # The correction now lives in Bermuda's distances; a multiplier here
-        # would apply it twice.
+        # would apply it twice. Except on a proxy taken out of calibration:
+        # nothing was pushed for it, and its multiplier is the user's own.
         for receiver in floor.get("receivers", []):
-            receiver.pop("correction", None)
+            if receiver.get("calibrate") is not False:
+                receiver.pop("correction", None)
     else:
         updated = 0
         for receiver in floor.get("receivers", []):
