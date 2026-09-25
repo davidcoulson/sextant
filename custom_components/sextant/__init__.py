@@ -23,6 +23,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 import logging
 import asyncio
+from datetime import datetime, timezone
 import math
 import os
 import json
@@ -2609,12 +2610,16 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
                     lowest_floor_name, scale, zone, sub_zone)
             except Exception as e:  # history must never break tracking
                 _LOGGER.debug("Position history record failed for %s: %s", entity, e)
+        # Just heard: presence "here", and the moment it was heard.
+        here = _presence_attrs(time.time(), time.time(), layout)
+        _presence_published[entity] = "here"
+        loc_state, loc_attrs = _location_state(zone, sub_zone, parent_zone, lowest_floor_name, layout)
         update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_room", zone,
-                                    {"area_id": room_area(layout, lowest_floor_name, zone)[0]})
-        update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_nearest_room", nearest_zone)
-        update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_floor", lowest_floor_name)
-        update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_spot", sub_zone, {"room": parent_zone})
-        update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_location", *_location_state(zone, sub_zone, parent_zone, lowest_floor_name, layout))
+                                    {"area_id": room_area(layout, lowest_floor_name, zone)[0], **here})
+        update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_nearest_room", nearest_zone, dict(here))
+        update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_floor", lowest_floor_name, dict(here))
+        update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_spot", sub_zone, {"room": parent_zone, **here})
+        update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_location", loc_state, {**loc_attrs, **here})
 
 def room_area(layout, floor_name, room_name):
     """(area_id, floor_id): the Home Assistant area a room is linked to, and
@@ -2764,7 +2769,7 @@ def _forget_thing_state(ent):
     the Live page can say "away since". For a thing being forgotten on purpose
     (see ws_thing_forget) that memory is the point."""
     for table in (_kf_position_state, _zone_state, _subzone_state, _anchor_state, _floor_probability,
-                  _floor_challenge, _floor_dark_cycles, _floor_since, _arrivals, _last_seen):
+                  _floor_challenge, _floor_dark_cycles, _floor_since, _arrivals, _last_seen, _presence_published):
         table.pop(ent, None)
     getattr(update_trilateration_and_zone, "last_floor", {}).pop(ent, None)
     getattr(update_trilateration_and_zone, "last_r_values", {}).pop(ent, None)
@@ -2831,11 +2836,14 @@ async def prune_stale_positions(hass):
         getattr(update_trilateration_and_zone, "last_r_values", {}).pop(ent, None)
         _arrivals.pop(ent, None)
         _LOGGER.info("Thing %s not seen for %ss; clearing its position", ent, timeout)
-        update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_room", "unknown", {"area_id": None})
-        update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_floor", "unknown")
-        update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_nearest_room", "unknown")
-        update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_spot", "unknown", {"room": "unknown"})
-        update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_location", *_location_state("unknown", "unknown", "unknown", "unknown"))
+        gone = _presence_attrs((_last_seen.get(ent) or {}).get("updated"), now, layout if isinstance(layout, dict) else {})
+        _presence_published[ent] = gone["presence"]
+        loc_state, loc_attrs = _location_state("unknown", "unknown", "unknown", "unknown")
+        update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_room", "unknown", {"area_id": None, **gone})
+        update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_floor", "unknown", dict(gone))
+        update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_nearest_room", "unknown", dict(gone))
+        update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_spot", "unknown", {"room": "unknown", **gone})
+        update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_location", loc_state, {**loc_attrs, **gone})
 
 # How often the state a restart would lose is written out. On a clean stop
 # it is written again anyway; this is for the power cut that is not clean.
@@ -2962,6 +2970,11 @@ async def process_entities(hass, new_global_data):
         _update_person_sensors(hass)
     except Exception as e:  # noqa: BLE001 - a person's sensor must never stop the things'
         _LOGGER.warning("Person locations not updated: %s", e)
+    try:
+        layout = get_layout(hass)
+        _publish_presence(hass, layout if isinstance(layout, dict) else {})
+    except Exception as e:  # noqa: BLE001 - an attribute must never stop the things'
+        _LOGGER.debug("Presence not published: %s", e)
 
 
 # thing -> {"floor", "x", "y", "since", "away"}: where an owned thing has
@@ -2971,6 +2984,61 @@ _arrivals = {}
 # The Live page reads it to say "away since 5:32 PM" for a thing nothing is
 # hearing, which the sensors cannot answer after a restart.
 _last_seen = {}
+# ent -> the presence last written to its sensors ("here", "quiet", "away"),
+# so a transition is written once, not every cycle (see _publish_presence).
+_presence_published = {}
+
+
+def _presence_of(updated, now, layout):
+    """here / quiet / away from how long since the thing was heard, on the same
+    two thresholds the Live page uses: quiet past stale_after_secs, away past
+    away_after_secs (or never heard). An automation can read home/away off it
+    and fall back to GPS when it says away."""
+    if not isinstance(updated, (int, float)):
+        return "away"
+    age = max(0.0, now - updated)
+    if age <= _tuning(layout, "stale_after_secs"):
+        return "here"
+    if age <= _tuning(layout, "away_after_secs"):
+        return "quiet"
+    return "away"
+
+
+def _presence_attrs(updated, now, layout):
+    """The two presence attributes every per-thing sensor carries."""
+    iso = None
+    if isinstance(updated, (int, float)) and updated > 0:
+        iso = datetime.fromtimestamp(updated, timezone.utc).isoformat(timespec="seconds")
+    return {"presence": _presence_of(updated, now, layout), "last_heard": iso}
+
+
+def _publish_presence(hass, layout):
+    """Write a presence transition (here -> quiet -> away) to the sensors of a
+    thing the cycle did not hear. A thing that is heard gets its presence with
+    its position; one that has gone quiet is not processed at all, so nothing
+    else would ever tell its sensors."""
+    now = time.time()
+    for ent, seen in list(_last_seen.items()):
+        if not isinstance(seen, dict):
+            continue
+        presence = _presence_of(seen.get("updated"), now, layout)
+        if presence == "here" or _presence_published.get(ent) == presence:
+            continue
+        attrs = _presence_attrs(seen.get("updated"), now, layout)
+        for suffix in THING_SENSOR_SUFFIXES:
+            _patch_sensor_attrs(hass, f"sensor.{ent}{suffix}", attrs)
+        _presence_published[ent] = presence
+
+
+THING_SENSOR_SUFFIXES = ("_sextant_room", "_sextant_floor", "_sextant_nearest_room", "_sextant_spot", "_sextant_location")
+
+
+def _patch_sensor_attrs(hass, entity_id, attrs):
+    """Change some attributes of a registered Sextant sensor, keeping the rest."""
+    sensor = (hass.data.get("sextant_sensors") or {}).get(entity_id)
+    if sensor is None:
+        return
+    update_sextant_sensor_state(hass, entity_id, sensor._state, {**(sensor._attrs or {}), **attrs})
 
 
 async def _restore_runtime(hass):

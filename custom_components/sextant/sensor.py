@@ -279,6 +279,12 @@ def get_filtered_entities(hass):
     return list(filtered)
 
 class CustomDistanceSensor(SensorEntity):
+    # last_heard moves every cycle a thing is heard. Left out of the recorder's
+    # attribute rows so a day of it does not fill the database with copies of
+    # attributes that differ only by a timestamp; presence is kept, it is the
+    # one automations and history care about.
+    _unrecorded_attributes = frozenset({"last_heard"})
+
     """A representation of a custom sensor"""
     def __init__(self, name, unique_id, entity_id, device_key=None, via_device=None, attrs=None):
         self._name = name

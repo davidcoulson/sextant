@@ -1127,7 +1127,8 @@ def test_full_cycle_publishes_a_stable_zone_and_the_raw_one(monkeypatch):
         entry = _cycle(hass, layout, 8.0, 5.0)
     assert entry["zone"] == "Dining"
     assert sensors["sensor.e_sextant_room"]._state == "Dining"
-    assert sensors["sensor.e_sextant_spot"]._attrs == {"room": "Dining"}
+    assert sensors["sensor.e_sextant_spot"]._attrs["room"] == "Dining"
+    assert sensors["sensor.e_sextant_spot"]._attrs["presence"] == "here"   # just heard
 
 
 def test_full_cycle_with_hysteresis_off_publishes_instantly(monkeypatch):
