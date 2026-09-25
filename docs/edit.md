@@ -28,7 +28,11 @@ a mount height. A dragged proxy snaps onto a wall within about 25 cm, a few
 centimetres inside the room you are dragging it from, and stays on that
 side until you pull it well past the wall: a proxy in an outlet or a switch
 is part of the wall, and which side it lands on decides which room it
-counts for. Hold Alt to place one freely. Draw rooms, spots and no-go areas as polygons: vertices
+counts for. Hold Alt to place one freely. A proxy's panel also has **Use in
+positioning**: off keeps it out of the solve, the floor election, anchoring
+and spot evidence while it stays placed (drawn hollow), calibrated and
+self-tested - for a proxy that hears fine but reads wrong where it sits
+(metal under the counter, a range hood) and keeps dragging the fix its way. Draw rooms, spots and no-go areas as polygons: vertices
 drag, edge midpoints add a vertex, right-click removes one. An edge within
 7° of horizontal, vertical or 45° snaps exact as you draw or drag a
 corner - the preview turns orange when it does - so right angles and cut

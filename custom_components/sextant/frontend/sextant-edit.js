@@ -594,7 +594,7 @@ class SextantEdit extends LitElement {
     const item = list[sel.index];
     this._snapshot();
     if (sel.kind === "pin") this._refreshAlignment();
-    if (field === "calibrate") { if (value === undefined) delete item.calibrate; else item.calibrate = value; }
+    if (field === "calibrate" || field === "solve") { if (value === undefined) delete item[field]; else item[field] = value; }
     else if (field === "height" || field === "correction") item[field] = value === "" || value == null ? undefined : Number(value);
     else if (field === "no_go") item.no_go = !!value;
     else item[field] = value;
@@ -910,6 +910,9 @@ class SextantEdit extends LitElement {
           ${uiField({ label: `Mount height (${lenUnit(this.hass)})`, type: "number", step: 0.05, min: 0, max: isImperial(this.hass) ? 33 : 10, value: toDisplayLen(item.height, this.hass), onChange: (v) => this._edit("height", v === "" ? "" : fromDisplayLen(v, this.hass)), style: "width: 150px" })}
           ${uiField({ label: "Correction ×", type: "number", step: 0.001, min: 0.5, max: 2, value: item.correction ?? "", onChange: (v) => this._edit("correction", v), style: "width: 150px" })}
         </div>
+        ${uiSwitch({ label: "Use in positioning", checked: item.solve !== false,
+          onChange: (v) => this._edit("solve", v ? undefined : false) })}
+        <div class="muted small">Off keeps this proxy out of the solve, the floor election, anchoring and spot evidence, while it stays placed, drawn, calibrated and self-tested. For a proxy that hears fine but reads wrong where it sits - metal under the counter, a range hood - and keeps dragging the fix its way.</div>
         ${uiSwitch({ label: "Leave this proxy's correction alone", checked: item.calibrate === false,
           onChange: (v) => this._edit("calibrate", v ? false : undefined) })}
         <div class="muted small">Calibration skips it: it is left out of the fit and its correction is never overwritten. For a radio whose distances are the wrong shape rather than the wrong scale - a tablet or a phone, which read long up close and far too short across a room - where no single multiplier fits.</div>

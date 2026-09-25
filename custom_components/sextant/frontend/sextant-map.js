@@ -1216,13 +1216,16 @@ export class SextantMap {
       const locked = edit && this.locks.receiver;
       const s = (hovered || selected ? base * 1.4 : base) / k;
       const face = offline ? "#d9534f" : unmatched ? "#e0a54a" : "#1f7a8c";
+      // A proxy kept out of positioning ("Use in positioning" off) is drawn
+      // hollow: still there, still heard, just not steering anything.
+      const idle = r.solve === false;
       ctx.save();
       ctx.translate(r.cords.x, r.cords.y);
       ctx.rotate(Math.PI / 4);
       ctx.globalAlpha = locked ? 0.55 : 1;
-      ctx.fillStyle = face;
-      ctx.strokeStyle = selected ? "#ffd166" : "#ffffff";
-      ctx.lineWidth = (selected ? 3 : 1.5) / k;
+      ctx.fillStyle = idle ? "rgba(255,255,255,0.35)" : face;
+      ctx.strokeStyle = selected ? "#ffd166" : idle ? face : "#ffffff";
+      ctx.lineWidth = (selected ? 3 : idle ? 2 : 1.5) / k;
       ctx.fillRect(-s / 2, -s / 2, s, s);
       ctx.strokeRect(-s / 2, -s / 2, s, s);
       ctx.restore();

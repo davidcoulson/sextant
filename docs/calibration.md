@@ -43,6 +43,9 @@ lives inside Bermuda's distances and is not faded.
 **A proxy can be left out of it.** Turn on *Leave this proxy's correction
 alone* in a proxy's panel on the Edit page and calibration skips it: it is
 kept out of the fit, and whatever correction you set is never overwritten.
+(The other switch there, *Use in positioning*, is the opposite case: the
+proxy still calibrates and self-tests, it just no longer steers the fix -
+see [Edit](edit.md).)
 This is for a radio whose distances are the wrong *shape* rather than the
 wrong scale. A wall tablet acting as a proxy read 3.2 m for something 2.1 m
 away and 2.5 m for something 8.5 m away - long up close, far too short

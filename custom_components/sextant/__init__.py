@@ -808,6 +808,24 @@ def _tuning(data, key):
     return _coerce_tuning(key, tuning[key], default)
 
 
+def _solves(receiver):
+    """Whether a placed proxy takes part in positioning.
+
+    ``"solve": false`` on a receiver (the "Use in positioning" switch in its
+    panel on the Edit page) keeps it out of the solve, the floor election,
+    the near-field anchor and spot evidence, while it stays placed, drawn,
+    calibrated and self-tested. For a proxy that hears fine but reads wrong
+    where it sits - a Shelly in a metal-lined kitchen corner that the
+    self-test put 9 m from its plug and that was the nearest reading in one
+    kitchen cycle in five - so its readings stop steering the fix without
+    losing what the proxy still tells you about itself. The fingerprint
+    match keeps using it on purpose: it compares patterns, not geometry, and
+    a receiver dropped from the thing's vector would read as "far away"
+    (fingerprint.similarity's missing_m), which is the one thing it is not.
+    """
+    return receiver.get("solve") is not False
+
+
 def _close_range_correction(correction, raw_m, data):
     """The share of a receiver's calibration correction to apply at this range.
 
@@ -3417,6 +3435,8 @@ def extract_candidate_floors(new_global_data, tmpentity):
                 distance = receiver.get("distance")
                 if distance is None or "r" not in receiver.get("cords", {}):
                     continue
+                if receiver.get("solve") is False:
+                    continue  # placed and heard, but kept out of positioning (see _solves)
                 quality = receiver.get("quality")
                 if not isinstance(quality, (int, float)) or isinstance(quality, bool) \
                         or not 0 < quality <= 1:
@@ -3927,7 +3947,7 @@ def _spot_proxy_evidence(layout, proxies):
     for floor in layout.get("floor") or []:
         for receiver in floor.get("receivers") or []:
             d = receiver.get("distance")
-            if not isinstance(d, (int, float)) or isinstance(d, bool) or not d > 0:
+            if not isinstance(d, (int, float)) or isinstance(d, bool) or not d > 0 or not _solves(receiver):
                 continue
             (mine if receiver.get("entity_id") in proxies else others).append(float(d))
     if not mine:
@@ -4063,7 +4083,7 @@ def _elect_anchor(entity, floor_name, receivers, layout, now=None):
     for rx in receivers:
         d = rx.get("distance")
         cords = rx.get("cords") or {}
-        if not isinstance(d, (int, float)) or isinstance(d, bool) or not d > 0 or cords.get("x") is None:
+        if not isinstance(d, (int, float)) or isinstance(d, bool) or not d > 0 or cords.get("x") is None or not _solves(rx):
             continue
         ranked.append((float(d), rx))
         by_slug[rx.get("entity_id")] = (float(d), rx)
