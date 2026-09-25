@@ -525,6 +525,10 @@ TUNING_SPEC = {
     # that left the house, a tag in a drawer. Between stale_after_secs and
     # this it is still expected back, and shown where it was last seen.
     "away_after_secs": (900.0, float, 60.0, 86400.0),
+    # A person's GPS tracker that has not reported for this long is disregarded
+    # (see persons.judge_source): a Companion app that lost its location
+    # permission sat on "home" for six days.
+    "gps_stale_secs": (7200.0, float, 60.0, 604800.0),
     # Hours of position history kept per thing: the history scrubber, the
     # timeline and Activity reach back this far. Applied on the next
     # cycle; an explicit top-level history_max_age (seconds) still wins.
@@ -2987,6 +2991,8 @@ _last_seen = {}
 # ent -> the presence last written to its sensors ("here", "quiet", "away"),
 # so a transition is written once, not every cycle (see _publish_presence).
 _presence_published = {}
+# person -> (thing, considered) that last placed them, held through a quiet spell.
+_person_last = {}
 
 
 def _presence_of(updated, now, layout):
@@ -3290,6 +3296,11 @@ def _update_person_sensors(hass):
     owning = frozenset(by_person)
     if hass.data.get("sextant_person_owners") != owning:
         sensor_mod.prune_person_sensors(hass, owning)
+        try:
+            from . import device_tracker as tracker_mod  # noqa: PLC0415
+            tracker_mod.prune_person_trackers(hass, owning)
+        except Exception as e:  # noqa: BLE001
+            _LOGGER.debug("Person trackers not pruned: %s", e)
         hass.data["sextant_person_owners"] = owning
     for ent in [e for e in _arrivals if not any(e in things for things in by_person.values())]:
         del _arrivals[ent]
@@ -3300,11 +3311,23 @@ def _update_person_sensors(hass):
     classes = layout.get("thing_classes") or {}
     chargers = layout.get("thing_charging_entity") or {}
     now, stale = time.time(), _tuning(layout, "stale_after_secs")
+    home = (getattr(hass.config, "latitude", None), getattr(hass.config, "longitude", None))
+    gps_stale = _tuning(layout, "gps_stale_secs")
+    trackers = hass.data.get("sextant_trackers") or {}
+    try:
+        from . import device_tracker as tracker_mod  # noqa: PLC0415 - the platform imports this module
+        tracker_mod.ensure_person_trackers(hass, list(by_person))
+    except Exception as e:  # noqa: BLE001 - the sensors do not depend on the trackers
+        _LOGGER.debug("Person trackers not ensured: %s", e)
     for person, things in by_person.items():
-        candidates = []
+        candidates, presences = [], []
         for ent in things:
+            if not persons_mod.locates_owner(layout, ent, classes.get(ent)):
+                continue
+            seen = _last_seen.get(ent) or {}
+            presences.append(_presence_of(seen.get("updated") if isinstance(seen, dict) else None, now, layout))
             row = rows.get(ent)
-            if not row or not persons_mod.locates_owner(layout, ent, classes.get(ent)):
+            if not row:
                 continue
             candidates.append({
                 "ent": ent, "cls": classes.get(ent), "updated": row.get("updated"),
@@ -3316,8 +3339,19 @@ def _update_person_sensors(hass):
             })
         slug = person.split(".", 1)[1]
         why = persons_mod.considered(candidates, now)
-        for suffix, (state, attrs) in persons_mod.states(persons_mod.pick(candidates, now, stale), why).items():
+        presence = persons_mod.presence_of_things(presences)
+        best = persons_mod.pick(candidates, now, stale)
+        if best is not None:
+            _person_last[person] = (best, why)
+        # Quiet: the last place they were put stands until BLE either hears
+        # them again or gives up (away), when GPS takes over.
+        held, held_why = _person_last.get(person, (None, None)) if best is None and presence == "quiet" else (None, None)
+        gps, ignored = persons_mod.choose_gps(hass.states.get, layout, person, now, gps_stale)
+        for suffix, (state, attrs) in persons_mod.fuse(best, why if best else held_why, presence, held, gps, ignored, home).items():
             update_sextant_sensor_state(hass, f"sensor.{slug}_{suffix}", state, attrs)
+        tracker = trackers.get(slug)
+        if tracker is not None:
+            tracker.set_fix(persons_mod.tracker_fix(presence, gps))
 
 def extract_candidate_floors(new_global_data, tmpentity):
     """Every floor hearing the thing, ranked by its nearest receiver.
@@ -5090,7 +5124,7 @@ async def async_unload_entry(hass: HomeAssistant, entry):
     # settings (area, name, disabled) and rewrote the whole registry twice.
 
     try: # Attempt to unload platforms
-        unload_ok = await hass.config_entries.async_unload_platforms(entry, ["sensor"])
+        unload_ok = await hass.config_entries.async_unload_platforms(entry, ["sensor", "device_tracker"])
     except Exception as e:
         _LOGGER.error(f"Error during offloading of platforms for entry {entry.entry_id}: {e}")
         return False
@@ -5140,7 +5174,7 @@ async def async_setup_entry(hass, entry):
         _LOGGER.warning("Truth marks or learned gains not loaded: %s", e)
     await _restore_runtime(hass)
     cleanup_legacy_sextant_registry_and_states(hass)
-    await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
+    await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "device_tracker"])
     entry.async_on_unload(entry.add_update_listener(async_update_options))
 
     """Set up Sextant from a config entry."""

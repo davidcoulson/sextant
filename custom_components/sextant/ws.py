@@ -1604,6 +1604,35 @@ async def ws_thing_forget(hass, connection, msg):
     connection.send_result(msg["id"], {"entity": ent, "tracked": tracked, "history_removed": removed_points, "settings_dropped": dropped})
 
 
+@websocket_api.websocket_command({
+    vol.Required("type"): "sextant/person/trackers/set",
+    vol.Required("person"): str,
+    vol.Required("trackers"): [str],
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_person_trackers_set(hass, connection, msg):
+    """A person's GPS trackers, in the order they are tried when Sextant has
+    lost them (layout person_trackers; see persons.choose_gps)."""
+    person = str(msg["person"])
+    if not person.startswith("person."):
+        return _error(connection, msg, "person must be a person.* entity")
+    trackers = list(dict.fromkeys(t for t in msg["trackers"] if isinstance(t, str) and t.startswith("device_tracker.")))
+    async with LAYOUT_LOCK:
+        layout = get_layout_for_edit(hass)
+        if not isinstance(layout, dict):
+            return _error(connection, msg, "No layout yet")
+        table = layout.setdefault("person_trackers", {})
+        if trackers:
+            table[person] = trackers
+        else:
+            table.pop(person, None)
+        if not table:
+            layout.pop("person_trackers", None)
+        await save_layout(hass, layout)
+    connection.send_result(msg["id"], {"person": person, "trackers": trackers})
+
+
 @websocket_api.websocket_command({vol.Required("type"): "sextant/snapshots/list"})
 @websocket_api.require_admin
 @websocket_api.async_response
@@ -1651,7 +1680,7 @@ async def ws_snapshots_restore(hass, connection, msg):
 
 COMMANDS = (
     ws_advice,
-    ws_snapshots_list, ws_snapshots_restore, ws_thing_forget,
+    ws_snapshots_list, ws_snapshots_restore, ws_thing_forget, ws_person_trackers_set,
     ws_layout_get, ws_layout_save, ws_tuning_set, ws_thing_tune,
     ws_history_index, ws_history_get, ws_history_timeline, ws_history_clear, ws_thing_readings, ws_floor_bias_map,
     ws_calibration_status, ws_calibration_action, ws_selftest, ws_scanner_linking, ws_receivers, ws_beacon_links,

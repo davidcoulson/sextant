@@ -813,8 +813,58 @@ class SextantDevices extends LitElement {
 
       <section class="card wide">
         <h3>Tiles</h3>
+        ${this._renderPeople()}
         ${this._renderTiles()}
       </section>
+    </div>`;
+  }
+
+  /** Each owner, where they read as being, and their GPS sources in order:
+   * their things place them while home; away, the first source that is
+   * neither broken nor stale (persons.judge_source) gives the zone. */
+  _people() {
+    return [...new Set(Object.values(this.data?.layout?.thing_owners || {}).filter((p) => typeof p === "string" && p.startsWith("person.")))].sort();
+  }
+
+  _gpsTrackerOptions(chosen) {
+    return Object.values(this.hass?.states || {})
+      .filter((s) => s.entity_id.startsWith("device_tracker.") && !s.entity_id.endsWith("_sextant") && !chosen.includes(s.entity_id)
+        && (s.attributes?.source_type === "gps" || s.attributes?.latitude != null))
+      .map((s) => ({ value: s.entity_id, label: `${s.attributes?.friendly_name || s.entity_id} · ${s.state}` }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }
+
+  async _setPersonTrackers(person, trackers) {
+    const r = await callWS(this, this.hass, { type: "sextant/person/trackers/set", person, trackers });
+    if (r) { toast(this, "Saved; the person's location follows on the next cycle"); this.dispatchEvent(new CustomEvent("layout-changed")); }
+  }
+
+  _renderPeople() {
+    const people = this._people();
+    if (!people.length) return nothing;
+    const table = this.data?.layout?.person_trackers || {};
+    return html`<div class="card">
+      <h4>People <span class="muted small">their things place them at home; a GPS tracker takes over when Sextant loses them</span></h4>
+      ${people.map((p) => {
+        const slug = p.split(".", 1)[1] || p.slice(7);
+        const name = this.hass?.states?.[p]?.attributes?.friendly_name || slug;
+        const loc = this.hass?.states?.[`sensor.${slug}_sextant_person_location`];
+        const a = loc?.attributes || {};
+        const chosen = Array.isArray(table[p]) ? table[p] : [];
+        const ignored = Array.isArray(a.gps_ignored) ? a.gps_ignored : [];
+        return html`<div class="person" style="padding: 6px 0; border-top: 1px solid var(--divider-color)">
+          <div class="row"><b>${name}</b>
+            <span class="muted small">${loc ? html`${loc.state}${a.source ? ` · via ${a.source === "ble" ? "Sextant" : a.source === "held" ? "Sextant (last place, not heard for a bit)" : a.source === "gps" ? (this.hass?.states?.[a.tracker]?.attributes?.friendly_name || a.tracker) : "nothing usable"}` : ""}${a.distance_m != null && a.source === "gps" ? ` · ${a.distance_m >= 1000 ? `${(a.distance_m / 1000).toFixed(1)} km` : `${a.distance_m} m`} from home` : ""}` : "no location yet"}</span>
+            <span class="grow"></span>
+            <span class="muted small">device_tracker.${slug}_sextant</span></div>
+          <div class="row"><span class="muted small">GPS sources, first usable wins</span>
+            ${chosen.map((t, i) => html`<span class="pill">${i + 1}. ${this.hass?.states?.[t]?.attributes?.friendly_name || t}
+              <button class="iconbtn" title="Remove this source" aria-label="Remove this source" @click=${() => this._setPersonTrackers(p, chosen.filter((x) => x !== t))}><ha-icon icon="mdi:close" style="--mdc-icon-size: 14px"></ha-icon></button></span>`)}
+            ${uiSelect({ label: chosen.length ? "Add another" : "Add a source", value: "", options: [{ value: "", label: "…" }, ...this._gpsTrackerOptions(chosen)], onChange: (v) => { if (v) this._setPersonTrackers(p, [...chosen, v]); }, style: "width: 280px" })}
+          </div>
+          ${ignored.length ? html`<div class="muted small">Disregarded right now: ${ignored.map((g) => `${this.hass?.states?.[g.entity]?.attributes?.friendly_name || g.entity} (${g.reason})`).join(", ")}</div>` : nothing}
+        </div>`;
+      })}
     </div>`;
   }
 
