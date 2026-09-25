@@ -156,10 +156,33 @@ READING_MAX_AGE_SECS = 45
 # the trilateration fixes fed in here are not raw-RSSI noisy. Tune KF_MEAS_NOISE_M
 # up for more smoothing, or KF_ACCEL_NOISE_MS2 up for a snappier response.
 KF_MEAS_NOISE_M = 1.5        # per-fix position uncertainty (m); larger = smoother
-KF_ACCEL_NOISE_MS2 = 0.5     # expected acceleration (m/s^2); larger = more responsive
+KF_ACCEL_NOISE_MS2 = 0.5     # expected acceleration (m/s^2) while moving; larger = more responsive
+# The filter runs one step per positioning cycle, fifteen seconds apart, and
+# at that step the process noise 0.5 m/s^2 allows is a position spread of
+# tens of metres - so the filter trusted every new fix outright, smoothed
+# nothing, and its velocity was the fix jitter divided by the cycle. An
+# AirPods case on a table read 0.46 m/s, never counted as still, and its
+# room flipped a hundred times a day on a 1.2 m jitter across a wall.
+#
+# So the filter has two speeds. While the fixes stay within what stillness
+# explains it runs quiet, with this much smaller acceleration noise, and the
+# estimate settles to an average over the last several cycles. When a fix
+# lands further from the prediction than KF_MOVE_NIS allows (a normalised
+# innovation, chi-squared with two degrees of freedom: 6 is about the 95th
+# percentile), the thing is moving: the responsive noise takes over at once
+# and stays for KF_MOVE_HOLD_CYCLES after the innovations calm down, so a
+# pause mid-walk does not freeze the track.
+KF_ACCEL_NOISE_STILL_MS2 = 0.0005
+KF_MOVE_NIS = 4.0
+KF_MOVE_HOLD_CYCLES = 3
 KF_INIT_VEL_UNC_MS = 1.0     # initial velocity uncertainty (m/s) at (re)init
 KF_MAX_DT_S = 10.0           # cap the prediction step so a gap can't blow up P
-KF_MAX_GAP_S = 30.0          # gap beyond which state is reset (thing was away)
+# Gap beyond which the state is reset (the thing was away). This was 30 s on
+# a 15 s cycle, so ONE missed cycle - a thing not heard for a moment, which
+# happens on 14% of an AirPods case's cycles - started the filter over at
+# the next raw fix, and nothing ever averaged. At 90 s it takes six missed
+# cycles; a replay of a day's tracks found no further gain beyond that.
+KF_MAX_GAP_S = 90.0
 # Soft-gate scale for spiky per-receiver distances: a reading whose radius
 # changed by this fraction versus the previous update is down-weighted to 0.5
 # (was a hard 50% discard). Nothing is dropped, so the solver keeps enough
@@ -1146,33 +1169,53 @@ def _kalman_position_update(entity, floor_name, meas, scale, bounds):
         return _clip(zx, zy)
 
     dt = min(max(now - st["ts"], 1e-3), KF_MAX_DT_S)
-    x, P = st["x"], st["P"]
-    F = np.array(
-        [[1, 0, dt, 0], [0, 1, 0, dt], [0, 0, 1, 0], [0, 0, 0, 1]], dtype=float
-    )
-    # Piecewise white-noise-acceleration process covariance, per axis.
+    a_still = (KF_ACCEL_NOISE_STILL_MS2 * s) ** 2
+    x, P, moving, nis = _kf_step(st["x"], st["P"], (zx, zy), dt, r_var, a_var, a_still,
+                                 st.get("moving", 0), KF_MOVE_NIS, KF_MOVE_HOLD_CYCLES)
+    st["x"], st["P"], st["ts"], st["floor"], st["moving"], st["nis"] = x, P, now, floor_name, moving, nis
+    return _clip(float(x[0]), float(x[1]))
+
+
+def _kf_step(x, P, meas, dt, r_var, a_var_move, a_var_still, moving, move_nis, hold_cycles):
+    """One constant-velocity Kalman step with two process-noise levels.
+
+    Pure, so it can be replayed over a logged track and unit-tested: state in,
+    state out. ``moving`` is how many more cycles the responsive noise is held
+    for (0 = quiet). The measurement is judged against the QUIET prediction:
+    if its normalised innovation exceeds ``move_nis`` the thing has moved, the
+    step is redone with the responsive noise so the estimate follows at once,
+    and the hold is (re)armed. Returns ``(x, P, moving, nis)``.
+    """
+    F = np.array([[1, 0, dt, 0], [0, 1, 0, dt], [0, 0, 1, 0], [0, 0, 0, 1]], dtype=float)
+    H = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], dtype=float)
+    R = np.diag([r_var, r_var]).astype(float)
+    z = np.array([float(meas[0]), float(meas[1])], dtype=float)
     dt2 = dt * dt
     dt3 = dt2 * dt
     dt4 = dt3 * dt
-    q_axis = np.array([[dt4 / 4.0, dt3 / 2.0], [dt3 / 2.0, dt2]]) * a_var
-    Q = np.zeros((4, 4))
-    Q[np.ix_([0, 2], [0, 2])] = q_axis  # x, vx
-    Q[np.ix_([1, 3], [1, 3])] = q_axis  # y, vy
 
-    # Predict.
-    x = F @ x
-    P = F @ P @ F.T + Q
-    # Update with the position measurement.
-    H = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], dtype=float)
-    R = np.diag([r_var, r_var]).astype(float)
-    z = np.array([zx, zy], dtype=float)
-    S = H @ P @ H.T + R
-    K = P @ H.T @ np.linalg.inv(S)
-    x = x + K @ (z - H @ x)
-    P = (np.eye(4) - K @ H) @ P
+    def predict(a_var):
+        # Piecewise white-noise-acceleration process covariance, per axis.
+        q_axis = np.array([[dt4 / 4.0, dt3 / 2.0], [dt3 / 2.0, dt2]]) * a_var
+        Q = np.zeros((4, 4))
+        Q[np.ix_([0, 2], [0, 2])] = q_axis  # x, vx
+        Q[np.ix_([1, 3], [1, 3])] = q_axis  # y, vy
+        return F @ x, F @ P @ F.T + Q
 
-    st["x"], st["P"], st["ts"], st["floor"] = x, P, now, floor_name
-    return _clip(float(x[0]), float(x[1]))
+    def update(xp, Pp):
+        S = H @ Pp @ H.T + R
+        K = Pp @ H.T @ np.linalg.inv(S)
+        return xp + K @ (z - H @ xp), (np.eye(4) - K @ H) @ Pp
+
+    xq, Pq = predict(a_var_still)
+    nu = z - H @ xq
+    nis = float(nu @ np.linalg.inv(H @ Pq @ H.T + R) @ nu)
+    if nis > move_nis:
+        moving = hold_cycles                 # moved: follow now, and keep following for a while
+    elif moving > 0:
+        moving -= 1
+    xn, Pn = update(*predict(a_var_move)) if moving > 0 else update(xq, Pq)
+    return xn, Pn, moving, nis
 
 
 def cleanup_legacy_sextant_registry_and_states(hass: HomeAssistant):
