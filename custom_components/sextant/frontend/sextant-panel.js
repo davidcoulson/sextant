@@ -1054,9 +1054,15 @@ class SextantLive extends LitElement {
           <div class="card detail ${this._history ? "lifted" : ""}">
             <h4>${this._label(sel.ent)}<span class="grow"></span>
               <span class="iconbar">
-                ${this._state(sel).ghost
+                ${/* Three states in the first slot. Away: nothing is here to
+                      correct and it may never be, so Forget. Quiet (not heard
+                      for a while, but not gone): there is nothing recent to
+                      re-solve, so the slot shows why, greyed. Live: "here". */ ""}
+                ${this._state(sel).away
                   ? uiIconButton({ icon: "mdi:delete-outline", title: `Forget ${this._label(sel.ent)}: remove ${this._pn(sel.ent).poss} last sighting, history and - if nothing tracks ${this._pn(sel.ent).obj} any more - settings`, onClick: () => this._forget(sel.ent) })
-                  : uiIconButton({ icon: "mdi:map-marker-check", active: this._marking, title: this._marking ? `Marking where ${this._label(sel.ent)} really is - tap the plan` : `${this._label(sel.ent)} is actually here… Tell Sextant where ${this._pn(sel.ent).subj} really ${this._pn(sel.ent).is}; the last few minutes are re-solved under every setting to show which fits best`, onClick: () => { this._marking = !this._marking; } })}
+                  : this._state(sel).ghost
+                    ? uiIconButton({ icon: "mdi:timer-sand", disabled: true, title: `Not heard for ${fmtAge(this._state(sel).age)}: nothing recent to correct. "${this._label(sel.ent)} is actually here…" comes back once ${this._pn(sel.ent).subj} ${this._pn(sel.ent).is} heard again`, onClick: () => {} })
+                    : uiIconButton({ icon: "mdi:map-marker-check", active: this._marking, title: this._marking ? `Marking where ${this._label(sel.ent)} really is - tap the plan` : `${this._label(sel.ent)} is actually here… Tell Sextant where ${this._pn(sel.ent).subj} really ${this._pn(sel.ent).is}; the last few minutes are re-solved under every setting to show which fits best`, onClick: () => { this._marking = !this._marking; } })}
                 ${this._isAdmin() ? uiIconButton({ icon: "mdi:pencil-outline", title: `Edit ${this._label(sel.ent)}: name, class, icon, owner`, onClick: () => this._goto({ mode: "things", thing: sel.ent }) }) : nothing}
                 ${uiIconButton({ icon: "mdi:history", title: `Scrub history: replay where ${this._label(sel.ent)} has been on the plan`, disabled: h?.ent === sel.ent, onClick: () => this._loadHistory(sel.ent) })}
                 <button class="iconbtn" title="Close" aria-label="Close" @click=${() => this._select(null)}><ha-icon icon="mdi:close"></ha-icon></button>
