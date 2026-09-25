@@ -73,6 +73,18 @@ def test_a_thing_still_heard_is_left_to_its_own_cycle():
     assert "presence" not in hass.data["sextant_sensors"][f"sensor.{ent}_sextant_location"]._attrs
 
 
+def test_a_thing_with_sensors_but_no_remembered_sighting_is_away():
+    """Jack's phone: not heard since before the sightings were first kept, so
+    it has no entry - and its sensors must still say away, once."""
+    ent = "never_heard"
+    hass = _hass_with_sensors(ent)
+    sextant._last_seen.clear(); sextant._presence_published.clear()
+    sextant._publish_presence(hass, LAYOUT)
+    loc = hass.data["sextant_sensors"][f"sensor.{ent}_sextant_location"]
+    assert loc._attrs["presence"] == "away" and loc._attrs["last_heard"] is None
+    assert sextant._presence_published[ent] == "away"
+
+
 def test_forgetting_clears_the_published_presence():
     sextant._presence_published["gone"] = "away"
     sextant._forget_thing_state("gone")

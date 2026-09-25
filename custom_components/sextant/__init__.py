@@ -3018,9 +3018,14 @@ def _publish_presence(hass, layout):
     its position; one that has gone quiet is not processed at all, so nothing
     else would ever tell its sensors."""
     now = time.time()
-    for ent, seen in list(_last_seen.items()):
-        if not isinstance(seen, dict):
-            continue
+    # Every thing that has sensors, not only the remembered sightings: a
+    # thing not heard since the sightings were first kept has none, and would
+    # otherwise never be told it is away.
+    suffix = "_sextant_location"
+    with_sensors = {e[len("sensor."):-len(suffix)] for e in (hass.data.get("sextant_sensors") or {}) if e.endswith(suffix)}
+    for ent in with_sensors | set(_last_seen):
+        seen = _last_seen.get(ent)
+        seen = seen if isinstance(seen, dict) else {}
         presence = _presence_of(seen.get("updated"), now, layout)
         if presence == "here" or _presence_published.get(ent) == presence:
             continue
