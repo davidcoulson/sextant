@@ -41,16 +41,38 @@ class SextantPersonTracker(TrackerEntity):
         self._apply(self._fix)
 
     def _apply(self, fix):
-        # The _attr_ form, not property overrides: Home Assistant deprecates
-        # overriding location_name and friends on a TrackerEntity (unsupported
-        # from 2027.7).
+        """Push a fusion (persons.tracker_fix) into the entity's attributes.
+
+        Home Assistant 2026.9 derives a tracker's state from ``in_zones`` - a
+        list of zone entity ids, which takes precedence over coordinates (an
+        empty list is not_home) - and deprecates ``location_name`` for removal
+        in 2027.7. So: home on BLE's word is ``["zone.home"]``; the GPS fix is
+        coordinates with no list; a zone-only source is that zone's entity;
+        nothing usable is ``[]``. A build without in_zones gets the old name.
+        """
         acc = fix.get("accuracy")
         self._attr_source_type = SourceType.GPS if fix.get("source_type") == "gps" else SourceType.BLUETOOTH_LE
-        self._attr_location_name = fix.get("location_name")
         self._attr_latitude = fix.get("latitude")
         self._attr_longitude = fix.get("longitude")
         self._attr_location_accuracy = int(acc) if isinstance(acc, (int, float)) else 0
         self._attr_extra_state_attributes = {k: fix.get(k) for k in ("source", "presence", "tracker")}
+        name = fix.get("location_name")
+        if not hasattr(TrackerEntity, "_attr_in_zones"):
+            self._attr_location_name = name
+            return
+        if name == "home":
+            zones = ["zone.home"]
+        elif name is None:
+            zones = None                     # coordinates decide
+        elif name == "not_home":
+            zones = []
+        else:
+            zones = [z.entity_id for z in self._zone_states() if z.name == name] or []
+        self._attr_in_zones = zones
+
+    def _zone_states(self):
+        hass = getattr(self, "hass", None)
+        return hass.states.async_all("zone") if hass is not None else []
 
     @callback
     def set_fix(self, fix):
