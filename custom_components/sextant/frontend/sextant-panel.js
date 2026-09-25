@@ -13,7 +13,7 @@
  */
 import { LitElement, html, css, nothing } from "./lit.js";
 import { SextantMap, thingColor, thingHue, staleness, shortAge, heatCells } from "./sextant-map.js";
-import { sharedStyles, widgetStyles, fmtAge, fmtNum, toast, confirmDialog, ensureHaComponents, uiSelect, uiButton, callWS, sortFloors, thingName, proxyName, fmtLen, fmtSpeed, classIcon, pronounsFor } from "./sextant-ui.js";
+import { sharedStyles, widgetStyles, fmtAge, fmtNum, toast, confirmDialog, ensureHaComponents, uiSelect, uiButton, callWS, sortFloors, thingName, proxyName, fmtLen, fmtSpeed, classIcon, pronounsFor, uiIconButton, uiSegmented } from "./sextant-ui.js";
 
 // What this page is running: the version of the files it was loaded from
 // (sextant-version.js), not the one in its URL - see that file.
@@ -553,7 +553,7 @@ class SextantLive extends LitElement {
     const here = h?.byFloor[this.floor];
     const elsewhere = h ? Object.entries(h.byFloor).filter(([f]) => f !== this.floor).map(([f, v]) => `${f} ${shortSpan(v.total)}`) : [];
     return html`<div class="row heat">
-      ${uiSelect({ label: "Activity", value: String(this._heatHours || 0), options: [["0", "Off"], ["1", "Last hour"], ["6", "Last 6 hours"], ["24", "Last 24 hours"], ["168", "Last week"]].map(([value, label]) => ({ value, label })), onChange: (v) => this._loadHeat(sel.ent, Number(v)), style: "width: 170px" })}
+      ${uiSegmented({ label: "Location heatmap", value: this._heatHours || 0, options: [{ value: 0, label: "Off" }, { value: 6, label: "6h", title: "Where it has been in the last 6 hours" }, { value: 24, label: "24h", title: "The last 24 hours" }, { value: 168, label: "7d", title: "The last 7 days" }], onChange: (v) => this._loadHeat(sel.ent, Number(v)) })}
       ${h ? html`<span class="muted small">${here ? html`${shortSpan(here.total)} on this floor, longest ${shortSpan(here.max)} in one place (red)` : "Not on this floor"}${elsewhere.length ? html` · ${elsewhere.join(", ")}` : nothing}${h.keptSecs && h.hours * 3600 > h.keptSecs + 60 ? html` · history only goes back ${shortSpan(h.keptSecs)}` : nothing}</span>` : nothing}
     </div>`;
   }
@@ -1053,7 +1053,12 @@ class SextantLive extends LitElement {
         ${sel ? html`
           <div class="card detail ${this._history ? "lifted" : ""}">
             <h4>${this._label(sel.ent)}<span class="grow"></span>
-              <button class="iconbtn" title="Close" aria-label="Close" @click=${() => this._select(null)}><ha-icon icon="mdi:close"></ha-icon></button></h4>
+              <span class="iconbar">
+                ${uiIconButton({ icon: "mdi:map-marker-check", active: this._marking, title: this._marking ? `Marking where ${this._label(sel.ent)} really is - tap the plan` : `${this._label(sel.ent)} is actually here… Tell Sextant where ${this._pn(sel.ent).subj} really ${this._pn(sel.ent).is}; the last few minutes are re-solved under every setting to show which fits best`, onClick: () => { this._marking = !this._marking; } })}
+                ${this._isAdmin() ? uiIconButton({ icon: "mdi:pencil-outline", title: `Edit ${this._label(sel.ent)}: name, class, icon, owner`, onClick: () => this._goto({ mode: "things", thing: sel.ent }) }) : nothing}
+                ${uiIconButton({ icon: "mdi:history", title: `Scrub history: replay where ${this._label(sel.ent)} has been on the plan`, disabled: h?.ent === sel.ent, onClick: () => this._loadHistory(sel.ent) })}
+                <button class="iconbtn" title="Close" aria-label="Close" @click=${() => this._select(null)}><ha-icon icon="mdi:close"></ha-icon></button>
+              </span></h4>
             <dl>
               <dt>Room</dt><dd>${sel.zone} ${sel.zone_locked ? html`<ha-icon icon="mdi:lock" title="stationary lock: still for a while, so the room holds"></ha-icon>` : nothing}</dd>
               <dt>Spot</dt><dd>${sel.sub_zone && sel.sub_zone !== "unknown" ? sel.sub_zone : "—"}</dd>
@@ -1065,7 +1070,7 @@ class SextantLive extends LitElement {
             </dl>
             ${this._renderTimeline(sel)}
             <details class="telemetry">
-              <summary>Details <span class="muted small">how sure Sextant is, and why</span></summary>
+              <summary>Confidence <span class="muted small">how sure Sextant is, and why</span></summary>
               <dl>
                 <dt>Floor odds</dt><dd>${sel.floors ? Object.entries(sel.floors).sort((a, b) => b[1] - a[1]).map(([f, p]) => `${f} ${(p * 100).toFixed(0)}%`).join(" · ") : "—"}</dd>
                 <dt>Spot shares</dt><dd>${sel.sub_zones ? Object.entries(sel.sub_zones).sort((a, b) => b[1] - a[1]).map(([s, p]) => `${s === "unknown" ? "none" : s} ${(p * 100).toFixed(0)}%`).join(" · ") : "—"}</dd>
@@ -1078,10 +1083,6 @@ class SextantLive extends LitElement {
             ${this._renderHeat(sel)}
             ${this._renderBlend(sel)}
             ${this._renderTruth(sel)}
-            <div class="row">
-              ${this._isAdmin() ? uiButton({ label: "Edit", icon: "mdi:pencil-outline", onClick: () => this._goto({ mode: "things", thing: sel.ent }) }) : nothing}
-              ${uiButton({ label: "Scrub history", icon: "mdi:history", disabled: h?.ent === sel.ent, onClick: () => this._loadHistory(sel.ent) })}
-            </div>
             ${this._renderLinks(sel.ent)}
           </div>` : nothing}
     `;
@@ -1196,7 +1197,7 @@ class SextantLive extends LitElement {
     const rows = (t?.rows || []).slice(0, 6);
     return html`<div class="truth">
       ${this._marking ? nothing
-        : html`<div class="row">${uiButton({ label: `${this._label(ent)} is actually here…`, icon: "mdi:map-marker-check", onClick: () => { this._marking = true; }, title: `Tell Sextant where ${this._label(ent)} really is; Sextant re-solves the last few minutes under every setting and shows which fits best` })}
+        : html`<div class="row">
             ${this._marks.length ? html`<span class="muted small">${this._marks.length} pin${this._marks.length === 1 ? "" : "s"}</span>` : nothing}</div>`}
       ${t ? html`<div class="card inner">
         <h4>Mark ${t.mark.id} <span class="muted small">${t.mark.samples} cycles re-solved · now ${Math.round((t.current_weight ?? 0) * 100)}% fingerprint</span></h4>

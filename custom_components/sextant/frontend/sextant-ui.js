@@ -53,8 +53,19 @@ export const sharedStyles = css`
   details.menu .menu-item.danger { color: var(--error-color, #b00020); }
   details.menu .menu-item ha-icon { --mdc-icon-size: 20px; }
   details.menu hr { width: 100%; border: 0; border-top: 1px solid var(--divider-color); margin: 4px 0; }
-  button.iconbtn { padding: 4px; line-height: 0; border-radius: 50%; }
-  button.iconbtn ha-icon { --mdc-icon-size: 20px; }
+  button.iconbtn { padding: 6px; line-height: 0; border-radius: 50%; border: 0; background: transparent; color: var(--secondary-text-color); cursor: pointer; }
+  button.iconbtn:hover:not([disabled]) { background: var(--secondary-background-color, rgba(0,0,0,0.06)); color: var(--primary-text-color); }
+  button.iconbtn.on { background: var(--primary-text-color); color: var(--card-background-color); }
+  button.iconbtn[disabled] { opacity: 0.4; cursor: default; }
+  button.iconbtn ha-icon { --mdc-icon-size: 22px; }
+  .iconbar { display: flex; align-items: center; gap: 2px; }
+  .segctl-wrap { display: inline-flex; align-items: center; gap: 8px; }
+  .segctl { display: inline-flex; border: 1px solid var(--divider-color); border-radius: 999px; overflow: hidden; }
+  .segctl button { border: 0; background: transparent; padding: 4px 11px; font: inherit; font-size: 12px; color: var(--secondary-text-color); cursor: pointer; }
+  .segctl button + button { border-left: 1px solid var(--divider-color); }
+  .segctl button:hover:not([disabled]) { color: var(--primary-text-color); }
+  .segctl button.on { background: var(--primary-text-color); color: var(--card-background-color); font-weight: 600; }
+  .segctl button[disabled] { opacity: 0.4; cursor: default; }
   .pill.ok { background: rgba(44,110,73,0.18); color: var(--success-color, #2c6e49); }
   .pill.warn { background: rgba(224,165,74,0.22); color: var(--warning-color, #9a5b00); }
   .pill.bad { background: rgba(217,83,79,0.18); color: var(--error-color, #b00020); }
@@ -213,6 +224,24 @@ export function uiMenu({ items, label = "More actions", icon = "mdi:dots-vertica
             ${it.icon ? html`<ha-icon icon=${it.icon}></ha-icon>` : nothing}<span>${it.label}</span></button>`)}
     </div>
   </details>`;
+}
+
+/** An action as an icon with a tooltip: for a row of actions on a card where
+ * three pill buttons took a third of a phone screen. `title` is both the
+ * tooltip and the accessible name, so it must say what the action does.
+ * `active` marks a mode that is switched on (a marking in progress). */
+export function uiIconButton({ icon, title, onClick, disabled = false, active = false }) {
+  return html`<button class="iconbtn ${active ? "on" : ""}" ?disabled=${disabled} title=${title} aria-label=${title} aria-pressed=${active ? "true" : nothing} @click=${onClick}><ha-icon icon=${icon}></ha-icon></button>`;
+}
+
+/** A row of short choices, one of them on - Off · 6h · 24h · 7d - in the
+ * space a dropdown's closed state takes, with every choice visible. Colours
+ * come from the text colour inverted, the same as the floor tabs, so the
+ * picked one reads on any theme without being a blue pill. */
+export function uiSegmented({ label, value, options, onChange, disabled = false }) {
+  return html`<span class="segctl-wrap">${label ? html`<span class="muted small">${label}</span>` : nothing}<span class="segctl" role="radiogroup" aria-label=${label ?? nothing}>
+    ${options.map((o) => html`<button role="radio" class=${String(o.value) === String(value) ? "on" : ""} aria-checked=${String(o.value) === String(value)} ?disabled=${disabled} title=${o.title ?? nothing} @click=${() => onChange(o.value)}>${o.label}</button>`)}
+  </span></span>`;
 }
 
 export function uiButton({ label, onClick, kind = "outline", disabled = false, icon, title }) {
