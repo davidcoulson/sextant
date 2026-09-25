@@ -46,7 +46,8 @@ Give things an owner - **Belongs to**, a Home Assistant person - and two
 things follow. On Live, each owner gets a heading of their own (their
 picture, and where they are), which folds their things away with a click. And each owner gets three sensors of their own:
 `sensor.<person>_sextant_person_location` (the spot, or the room),
-`_sextant_person_room` and `_sextant_person_floor`, with `via` naming the
+`_sextant_person_room` and `_sextant_person_floor` (and a
+`device_tracker.<person>_sextant`), with `via` naming the
 thing they came from. Automations can then ask where David is rather than
 where his phone is.
 
@@ -69,3 +70,13 @@ Unavailable or unknown counts as not charging, so a sensor that has nothing
 to say never takes a thing out of the running. The location sensor's
 `considered` list marks a thing left out this way with `on_charger`.
 
+
+## People
+
+Below the things, a **People** card lists each owner: where they read as
+being and how (by their things, the last place held while unheard, or a
+GPS tracker), and their **GPS sources** in order. Add the Companion app,
+Life360 or any `device_tracker` with coordinates; the first one that is
+neither broken nor stale is used once Sextant has lost the person. The card
+also says which sources are being passed over right now, and why. See
+[People](automation.md#people) for what the sensors then carry.

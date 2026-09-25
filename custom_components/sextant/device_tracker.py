@@ -38,39 +38,29 @@ class SextantPersonTracker(TrackerEntity):
             name=name, manufacturer="Sextant", model="Sextant (BLE Positioning)",
         )
 
+        self._apply(self._fix)
+
+    def _apply(self, fix):
+        # The _attr_ form, not property overrides: Home Assistant deprecates
+        # overriding location_name and friends on a TrackerEntity (unsupported
+        # from 2027.7).
+        acc = fix.get("accuracy")
+        self._attr_source_type = SourceType.GPS if fix.get("source_type") == "gps" else SourceType.BLUETOOTH_LE
+        self._attr_location_name = fix.get("location_name")
+        self._attr_latitude = fix.get("latitude")
+        self._attr_longitude = fix.get("longitude")
+        self._attr_location_accuracy = int(acc) if isinstance(acc, (int, float)) else 0
+        self._attr_extra_state_attributes = {k: fix.get(k) for k in ("source", "presence", "tracker")}
+
     @callback
     def set_fix(self, fix):
         """Take the latest fusion (persons.tracker_fix) and publish it."""
         if fix == self._fix:
             return
         self._fix = dict(fix)
+        self._apply(self._fix)
         if getattr(self, "hass", None) is not None:
             self.async_write_ha_state()
-
-    @property
-    def source_type(self):
-        return SourceType.GPS if self._fix.get("source_type") == "gps" else SourceType.BLUETOOTH_LE
-
-    @property
-    def location_name(self):
-        return self._fix.get("location_name")
-
-    @property
-    def latitude(self):
-        return self._fix.get("latitude")
-
-    @property
-    def longitude(self):
-        return self._fix.get("longitude")
-
-    @property
-    def location_accuracy(self):
-        acc = self._fix.get("accuracy")
-        return int(acc) if isinstance(acc, (int, float)) else 0
-
-    @property
-    def extra_state_attributes(self):
-        return {k: self._fix.get(k) for k in ("source", "presence", "tracker")}
 
 
 @callback
