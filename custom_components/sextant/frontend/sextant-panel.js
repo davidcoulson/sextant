@@ -1054,7 +1054,9 @@ class SextantLive extends LitElement {
           <div class="card detail ${this._history ? "lifted" : ""}">
             <h4>${this._label(sel.ent)}<span class="grow"></span>
               <span class="iconbar">
-                ${uiIconButton({ icon: "mdi:map-marker-check", active: this._marking, title: this._marking ? `Marking where ${this._label(sel.ent)} really is - tap the plan` : `${this._label(sel.ent)} is actually here… Tell Sextant where ${this._pn(sel.ent).subj} really ${this._pn(sel.ent).is}; the last few minutes are re-solved under every setting to show which fits best`, onClick: () => { this._marking = !this._marking; } })}
+                ${this._state(sel).ghost
+                  ? uiIconButton({ icon: "mdi:delete-outline", title: `Forget ${this._label(sel.ent)}: remove ${this._pn(sel.ent).poss} last sighting, history and - if nothing tracks ${this._pn(sel.ent).obj} any more - settings`, onClick: () => this._forget(sel.ent) })
+                  : uiIconButton({ icon: "mdi:map-marker-check", active: this._marking, title: this._marking ? `Marking where ${this._label(sel.ent)} really is - tap the plan` : `${this._label(sel.ent)} is actually here… Tell Sextant where ${this._pn(sel.ent).subj} really ${this._pn(sel.ent).is}; the last few minutes are re-solved under every setting to show which fits best`, onClick: () => { this._marking = !this._marking; } })}
                 ${this._isAdmin() ? uiIconButton({ icon: "mdi:pencil-outline", title: `Edit ${this._label(sel.ent)}: name, class, icon, owner`, onClick: () => this._goto({ mode: "things", thing: sel.ent }) }) : nothing}
                 ${uiIconButton({ icon: "mdi:history", title: `Scrub history: replay where ${this._label(sel.ent)} has been on the plan`, disabled: h?.ent === sel.ent, onClick: () => this._loadHistory(sel.ent) })}
                 <button class="iconbtn" title="Close" aria-label="Close" @click=${() => this._select(null)}><ha-icon icon="mdi:close"></ha-icon></button>
@@ -1189,6 +1191,21 @@ class SextantLive extends LitElement {
       <span class="small">${what}${typeof own === "number" ? nothing : html` <span class="muted">(default)</span>`}</span>
       ${typeof own === "number" ? uiButton({ label: "Default", kind: "text", onClick: () => this._setBlend(ent, null), title: "Follow the tuning again" }) : nothing}
     </div>`;
+  }
+
+  /** Forget a ghost. The server decides how much goes: a thing Bermuda no
+   * longer tracks (a phone after an IRK swap, a Tile after its ID rotated)
+   * loses its sighting, history and settings and is gone for good; one that
+   * is merely away loses the sighting and history and comes back, settings
+   * intact, the next time it is heard. */
+  async _forget(ent) {
+    const name = this._label(ent), pn = this._pn(ent);
+    if (!confirmDialog(`Forget ${name}?\n\nRemoves where ${pn.subj} ${pn.was} last seen and ${pn.poss} history. If nothing tracks ${pn.obj} any more, ${pn.poss} name, class and other settings go too and ${pn.subj} ${pn.is} gone for good; if ${pn.subj} ${pn.is} only away, ${pn.subj} ${pn.is} back - settings kept - the next time ${pn.subj} ${pn.is} heard.`)) return;
+    const r = await callWS(this, this.hass, { type: "sextant/thing/forget", entity: ent });
+    if (!r) return;
+    toast(this, r.tracked ? `${name}: last sighting and history forgotten; ${pn.subj} will be back when heard` : `${name} forgotten${r.settings_dropped?.length ? " - settings removed too" : ""}`, 6000);
+    this._select(null);
+    this.dispatchEvent(new CustomEvent("layout-changed"));
   }
 
   _renderTruth(sel) {

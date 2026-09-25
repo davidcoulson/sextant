@@ -1557,6 +1557,53 @@ async def ws_advice(hass, connection, msg):
     connection.send_result(msg["id"], out)
 
 
+@websocket_api.websocket_command({
+    vol.Required("type"): "sextant/thing/forget",
+    vol.Required("entity"): str,
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_thing_forget(hass, connection, msg):
+    """Forget a thing: its remembered last sighting, its position history,
+    and - unless Bermuda still tracks it - its settings.
+
+    A thing whose identity has gone (a phone after an IRK swap, a Tile after
+    its ID rotated) lived on in the layout's thing_* maps and the list of
+    things, as a ghost that was "away" for ever, with nothing in the UI able
+    to remove it. A thing Bermuda still tracks is only away: its sighting and
+    history go, and it comes back with its name and settings when heard.
+    """
+    core = _core()
+    ent = str(msg["entity"]).strip()
+    if not ent:
+        return _error(connection, msg, "Which thing?")
+    tracked = any(
+        str(dev.get("slug") or "").lower() == ent.lower()
+        for dev in (bermuda_source.async_get_tracked_devices(hass) or {}).values()
+    )
+    core._forget_thing_state(ent)
+    hist = core.get_position_history(hass)
+    async with core._history_lock(hass):
+        hist.forget(ent)
+        removed_points = await hass.async_add_executor_job(history_mod.drop_entity, core.history_dir(hass), ent)
+    dropped = []
+    if not tracked:
+        async with LAYOUT_LOCK:
+            layout = get_layout_for_edit(hass)
+            if isinstance(layout, dict):
+                for key, table in layout.items():
+                    if key.startswith("thing_") and isinstance(table, dict) and ent in table:
+                        del table[ent]
+                        dropped.append(key)
+                if dropped:
+                    await save_layout(hass, layout)
+    try:
+        await core._save_runtime(hass)   # so a restart does not bring the sighting back
+    except Exception as e:  # noqa: BLE001 - the in-memory forget still stands
+        _LOGGER.debug("Runtime not saved after forgetting %s: %s", ent, e)
+    connection.send_result(msg["id"], {"entity": ent, "tracked": tracked, "history_removed": removed_points, "settings_dropped": dropped})
+
+
 @websocket_api.websocket_command({vol.Required("type"): "sextant/snapshots/list"})
 @websocket_api.require_admin
 @websocket_api.async_response
@@ -1604,7 +1651,7 @@ async def ws_snapshots_restore(hass, connection, msg):
 
 COMMANDS = (
     ws_advice,
-    ws_snapshots_list, ws_snapshots_restore,
+    ws_snapshots_list, ws_snapshots_restore, ws_thing_forget,
     ws_layout_get, ws_layout_save, ws_tuning_set, ws_thing_tune,
     ws_history_index, ws_history_get, ws_history_timeline, ws_history_clear, ws_thing_readings, ws_floor_bias_map,
     ws_calibration_status, ws_calibration_action, ws_selftest, ws_scanner_linking, ws_receivers, ws_beacon_links,

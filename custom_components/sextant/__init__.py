@@ -2758,6 +2758,18 @@ def update_or_add_entry(data, new_entry):
     return data
 
 
+def _forget_thing_state(ent):
+    """Drop everything the tracking loop remembers about one thing, including
+    its last sighting - the one thing the stale-position prune keeps, so that
+    the Live page can say "away since". For a thing being forgotten on purpose
+    (see ws_thing_forget) that memory is the point."""
+    for table in (_kf_position_state, _zone_state, _subzone_state, _anchor_state, _floor_probability,
+                  _floor_challenge, _floor_dark_cycles, _floor_since, _arrivals, _last_seen):
+        table.pop(ent, None)
+    getattr(update_trilateration_and_zone, "last_floor", {}).pop(ent, None)
+    getattr(update_trilateration_and_zone, "last_r_values", {}).pop(ent, None)
+
+
 async def prune_stale_positions(hass):
     """Drop things not detected by any receiver for the timeout period.
 
