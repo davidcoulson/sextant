@@ -40,8 +40,32 @@ export const sharedStyles = css`
   .chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
   .chips > ha-formfield, .chips > label.inline { border: 1px solid var(--divider-color); border-radius: 999px; padding: 0 12px 0 2px; }
   .chips > label.inline { padding: 4px 12px 4px 8px; }
-  button.iconbtn { padding: 4px; line-height: 0; border-radius: 50%; }
-  button.iconbtn ha-icon { --mdc-icon-size: 20px; }
+  /* ⋮ overflow menu (uiMenu): the rare actions live here instead of each
+     taking a button of its own down the side of a card. */
+  details.menu { position: relative; }
+  details.menu > summary { list-style: none; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--secondary-text-color); cursor: pointer; }
+  details.menu > summary::-webkit-details-marker, details.menu > summary::marker { display: none; content: ""; }
+  details.menu > summary:hover { background: var(--secondary-background-color, rgba(0,0,0,0.06)); color: var(--primary-text-color); }
+  details.menu .menu-items { position: absolute; right: 0; top: 36px; z-index: 5; min-width: 210px; padding: 4px; border-radius: 10px; background: var(--card-background-color); box-shadow: var(--ha-card-box-shadow, 0 4px 14px rgba(0,0,0,0.3)); display: flex; flex-direction: column; }
+  details.menu .menu-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: 6px; background: transparent; text-align: left; font: inherit; color: var(--primary-text-color); cursor: pointer; }
+  details.menu .menu-item:hover:not([disabled]) { background: var(--secondary-background-color, rgba(0,0,0,0.06)); }
+  details.menu .menu-item[disabled] { opacity: 0.45; cursor: default; }
+  details.menu .menu-item.danger { color: var(--error-color, #b00020); }
+  details.menu .menu-item ha-icon { --mdc-icon-size: 20px; }
+  details.menu hr { width: 100%; border: 0; border-top: 1px solid var(--divider-color); margin: 4px 0; }
+  button.iconbtn { padding: 6px; line-height: 0; border-radius: 50%; border: 0; background: transparent; color: var(--secondary-text-color); cursor: pointer; }
+  button.iconbtn:hover:not([disabled]) { background: var(--secondary-background-color, rgba(0,0,0,0.06)); color: var(--primary-text-color); }
+  button.iconbtn.on { background: var(--primary-text-color); color: var(--card-background-color); }
+  button.iconbtn[disabled] { opacity: 0.4; cursor: default; }
+  button.iconbtn ha-icon { --mdc-icon-size: 22px; }
+  .iconbar { display: flex; align-items: center; gap: 2px; }
+  .segctl-wrap { display: inline-flex; align-items: center; gap: 8px; }
+  .segctl { display: inline-flex; border: 1px solid var(--divider-color); border-radius: 999px; overflow: hidden; }
+  .segctl button { border: 0; background: transparent; padding: 4px 11px; font: inherit; font-size: 12px; color: var(--secondary-text-color); cursor: pointer; }
+  .segctl button + button { border-left: 1px solid var(--divider-color); }
+  .segctl button:hover:not([disabled]) { color: var(--primary-text-color); }
+  .segctl button.on { background: var(--primary-text-color); color: var(--card-background-color); font-weight: 600; }
+  .segctl button[disabled] { opacity: 0.4; cursor: default; }
   .pill.ok { background: rgba(44,110,73,0.18); color: var(--success-color, #2c6e49); }
   .pill.warn { background: rgba(224,165,74,0.22); color: var(--warning-color, #9a5b00); }
   .pill.bad { background: rgba(217,83,79,0.18); color: var(--error-color, #b00020); }
@@ -185,6 +209,41 @@ export function uiSwitch({ label, checked, onChange, disabled = false }) {
 }
 
 /** Button. kind: "primary" | "outline" | "text" | "danger" */
+/** An overflow menu behind a ⋮ button: occasional actions that do not earn a
+ * permanent button each. `items` are {label, onClick, icon?, title?, danger?,
+ * disabled?} or {divider: true}. Built on <details> so it opens, closes and
+ * takes focus without a click-outside listener. */
+export function uiMenu({ items, label = "More actions", icon = "mdi:dots-vertical" }) {
+  return html`<details class="menu">
+    <summary title=${label} aria-label=${label} role="button"><ha-icon icon=${icon}></ha-icon></summary>
+    <div class="menu-items" @click=${(e) => { const d = e.currentTarget.parentElement; if (d) d.open = false; }}>
+      ${(items || []).map((it) => it.divider
+        ? html`<hr>`
+        : html`<button class=${it.danger ? "menu-item danger" : "menu-item"} ?disabled=${it.disabled}
+            title=${it.title ?? nothing} @click=${it.onClick}>
+            ${it.icon ? html`<ha-icon icon=${it.icon}></ha-icon>` : nothing}<span>${it.label}</span></button>`)}
+    </div>
+  </details>`;
+}
+
+/** An action as an icon with a tooltip: for a row of actions on a card where
+ * three pill buttons took a third of a phone screen. `title` is both the
+ * tooltip and the accessible name, so it must say what the action does.
+ * `active` marks a mode that is switched on (a marking in progress). */
+export function uiIconButton({ icon, title, onClick, disabled = false, active = false }) {
+  return html`<button class="iconbtn ${active ? "on" : ""}" ?disabled=${disabled} title=${title} aria-label=${title} aria-pressed=${active ? "true" : nothing} @click=${onClick}><ha-icon icon=${icon}></ha-icon></button>`;
+}
+
+/** A row of short choices, one of them on - Off · 6h · 24h · 7d - in the
+ * space a dropdown's closed state takes, with every choice visible. Colours
+ * come from the text colour inverted, the same as the floor tabs, so the
+ * picked one reads on any theme without being a blue pill. */
+export function uiSegmented({ label, value, options, onChange, disabled = false }) {
+  return html`<span class="segctl-wrap">${label ? html`<span class="muted small">${label}</span>` : nothing}<span class="segctl" role="radiogroup" aria-label=${label ?? nothing}>
+    ${options.map((o) => html`<button role="radio" class=${String(o.value) === String(value) ? "on" : ""} aria-checked=${String(o.value) === String(value)} ?disabled=${disabled} title=${o.title ?? nothing} @click=${() => onChange(o.value)}>${o.label}</button>`)}
+  </span></span>`;
+}
+
 export function uiButton({ label, onClick, kind = "outline", disabled = false, icon, title }) {
   if (has("ha-button") || has("mwc-button")) {
     const tag = has("ha-button") ? "ha-button" : "mwc-button";
@@ -206,9 +265,9 @@ export const widgetStyles = css`
 `;
 
 /** Floors top-down by their storey `level` (1 = the floor above ground, 0 = ground, -1 = basement); ties keep file order. */
-export function sortFloors(floors) {
-  return [...(floors || [])].map((f, i) => [f, i]).sort((a, b) => ((b[0].level ?? 0) - (a[0].level ?? 0)) || (a[1] - b[1])).map(([f]) => f);
-}
+// Kept in its own module so it can be tested without a DOM - the same reason
+// the pronoun helpers live in sextant-pronouns.js.
+export { sortFloors } from "./sextant-floors.js";
 
 // --- Units and names ------------------------------------------------------------
 

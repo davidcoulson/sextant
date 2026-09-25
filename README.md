@@ -46,7 +46,7 @@ nothing to a thing on your floor plan and a first automation.
 
 | Install | Configure | Tune | Automate |
 |---|---|---|---|
-| [Getting started](docs/getting-started.md) · [Installing](docs/install.md) · [What you need](docs/install.md#what-you-need) · [Upgrading from BPS](docs/install.md#upgrading-from-bps-or-bps-improved) | [Edit](docs/edit.md) · [Things](docs/things.md) · [Bermuda](docs/bermuda.md) · [Proxies](docs/proxies.md) | [Live](docs/live.md) · [Calibration](docs/calibration.md) · [Tuning](docs/tuning.md) · [Advice](docs/advice.md) · [How positioning works](docs/positioning.md) | [Sensors, card, services and API](docs/automation.md) |
+| [Getting started](docs/getting-started.md) · [Installing](docs/install.md) · [What you need](docs/install.md#what-you-need) · [Upgrading from BPS](docs/install.md#upgrading-from-bps-or-bps-improved) | [Edit](docs/edit.md) · [Things](docs/things.md) · [Bermuda](docs/bermuda.md) · [Proxies](docs/proxies.md) | [Live](docs/live.md) · [Calibration](docs/calibration.md) · [Tuning](docs/tuning.md) · [Advice](docs/advice.md) · [How positioning works](docs/positioning.md) | [Recipes](docs/recipes.md) · [Sensors, card, services and API](docs/automation.md) |
 
 Also [Hardware](docs/hardware.md) (turning outlets and switches into
 proxies, with the pin maps), [Where Sextant fits](docs/compared.md) (Bermuda, BPS, BPS-improved and

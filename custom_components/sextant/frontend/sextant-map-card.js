@@ -17,6 +17,10 @@ import { LitElement, html, css, nothing } from "./lit.js";
 import { SextantMap } from "./sextant-map.js";
 import { sortFloors, classIcon, thingName } from "./sextant-ui.js";
 
+// A failed layout fetch or subscription is not retried sooner than this: hass
+// changes several times a second, and each change would otherwise try again.
+const RETRY_MS = 30000;
+
 function mapUrlFor(floorName, maps) {
   if (!floorName || !maps) return null;
   const norm = (s) => String(s).toLowerCase().replace(/\.[a-z0-9]+$/, "").replace(/[\s_-]+/g, "");
@@ -38,16 +42,30 @@ class SextantMapCard extends LitElement {
 
   getCardSize() { return Math.ceil((this._config?.height || 360) / 50); }
 
-  connectedCallback() { super.connectedCallback(); this._load(); this._subscribe(); }
+  connectedCallback() {
+    super.connectedCallback();
+    this._load(); this._subscribe();
+    // The map was torn down on disconnect; render again so updated() builds a new one.
+    if (this.hasUpdated && !this._map) this.requestUpdate();
+  }
   disconnectedCallback() { super.disconnectedCallback(); if (this._unsub) { this._unsub.then((u) => u()).catch(() => {}); this._unsub = null; } this._map?.destroy(); this._map = null; }
 
   updated(changed) {
-    if (changed.has("hass") && this.hass) { if (!this._data && !this._loading) this._load(); if (!this._unsub) this._subscribe(); }
+    const now = Date.now();
+    if (changed.has("hass") && this.hass) {
+      if (!this._data && !this._loading && !(now - (this._loadFailedAt || 0) < RETRY_MS)) this._load();
+      if (!this._unsub && !(now - (this._subFailedAt || 0) < RETRY_MS)) this._subscribe();
+    }
+    let fresh = false;
     if (!this._map) {
       const canvas = this.renderRoot.querySelector("canvas");
-      if (canvas) this._map = new SextantMap(canvas, { fetch: (url) => this.hass.fetchWithAuth(url) });
+      if (canvas) { this._map = new SextantMap(canvas, { fetch: (url) => this.hass.fetchWithAuth(url) }); fresh = true; }
     }
-    if (this._map) this._push();
+    if (!this._map) return;
+    // hass changes many times a second and none of it is drawn but the area
+    // icons: repaint the whole map only when something drawn has changed.
+    if (fresh || ["_data", "_positions", "_floor", "_config"].some((k) => changed.has(k))) this._push();
+    else if (changed.has("hass") && changed.get("hass")?.areas !== this.hass?.areas) this._map.setAreas(this.hass?.areas);
   }
 
   async _load() {
@@ -55,8 +73,9 @@ class SextantMapCard extends LitElement {
     this._loading = true;
     try {
       this._data = await this.hass.callWS({ type: "sextant/layout/get" });
+      this._loadFailedAt = 0;
       if (!this._floor) this._floor = this._config?.floor || this._data.layout?.floor?.[0]?.name || null;
-    } catch (e) { this._error = e?.message || String(e); }
+    } catch (e) { this._error = e?.message || String(e); this._loadFailedAt = Date.now(); }
     finally { this._loading = false; }
   }
 
@@ -69,7 +88,7 @@ class SextantMapCard extends LitElement {
         if (first?.floor && first.floor !== this._floor) this._floor = first.floor;
       }
     }, { type: "sextant/subscribe" });
-    this._unsub.catch(() => { this._unsub = null; });
+    this._unsub.then(() => { this._subFailedAt = 0; }, () => { this._unsub = null; this._subFailedAt = Date.now(); });
   }
 
   _push() {

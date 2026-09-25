@@ -94,17 +94,26 @@ RUNNING_VERSION = None
 RUNNING_CODE = None
 
 
+_signature_cache = [None, None]  # [(name, mtime_ns, size) per file, digest]
+
+
 def code_signature() -> str | None:
     """sha256 over the package's .py files, in name order (blocking: call in the executor)."""
     import hashlib  # noqa: PLC0415
     from pathlib import Path  # noqa: PLC0415
 
     try:
+        paths = sorted(Path(__file__).parent.glob("*.py"))
+        # Every panel load asks; re-hash only when a file's size or mtime moved.
+        key = tuple((p.name, st.st_mtime_ns, st.st_size) for p in paths for st in (p.stat(),))
+        if _signature_cache[0] == key:
+            return _signature_cache[1]
         digest = hashlib.sha256()
-        for path in sorted(Path(__file__).parent.glob("*.py")):
+        for path in paths:
             digest.update(path.name.encode())
             digest.update(path.read_bytes())
-        return digest.hexdigest()
+        _signature_cache[:] = [key, digest.hexdigest()]
+        return _signature_cache[1]
     except OSError:
         return None
 
@@ -251,6 +260,14 @@ def merge_editor_layout(current, incoming):
             receivers = []
             for r in floor.get("receivers", []):
                 r = dict(r)
+                # A proxy the user has taken out of calibration owns its own
+                # correction - that is the whole point of the switch - so the
+                # editor's number is the one that counts. Everything else
+                # keeps the stored value: calibration may have written it
+                # since this editor copy was loaded.
+                if r.get("calibrate") is False:
+                    receivers.append(r)
+                    continue
                 r.pop("correction", None)
                 kept = corrections.get(str(r.get("entity_id")))
                 if kept is not None:
@@ -296,7 +313,7 @@ async def ws_layout_save(hass, connection, msg):
         layout = merge_editor_layout(get_layout(hass), layout)
         # A spot belongs to one room: clip each to its room before it is stored.
         confined = await hass.async_add_executor_job(_confine_spots, layout)
-        await save_layout(hass, layout)
+        losses = await save_layout(hass, layout)
     if remove_target is not None and remove_target.exists():
         try:
             await hass.async_add_executor_job(remove_target.unlink)
@@ -307,7 +324,8 @@ async def ws_layout_save(hass, connection, msg):
     except Exception as e:  # noqa: BLE001 - calibration bookkeeping must not fail a save
         _LOGGER.debug("refresh_receivers_from_coords: %s", e)
     connection.send_result(
-        msg["id"], {"version": get_layout_version(hass), "confined": confined}
+        msg["id"],
+        {"version": get_layout_version(hass), "confined": confined, "lost": losses},
     )
 
 
@@ -345,6 +363,10 @@ async def ws_tuning_set(hass, connection, msg):
     vol.Optional("locates_owner"): vol.Any(None, bool),
     # A battery sensor whose "Charging" takes the thing out of its owner's location.
     vol.Optional("charging_entity"): vol.Any(None, str),
+    # The thing's own battery level, as a percentage sensor: shown on the Live
+    # page, and as a badge on the thing once it runs low. A pet's tag that goes
+    # quiet reads exactly like a pet that has left, unless the battery says why.
+    vol.Optional("battery_entity"): vol.Any(None, str),
     vol.Optional("estimator"): vol.Any(None, "", "geometric", "fingerprint", "fused"),
     vol.Optional("fp_weight"): vol.Any(None, vol.Coerce(float)),
     vol.Optional("color"): vol.Any(None, str),
@@ -366,6 +388,9 @@ async def ws_thing_tune(hass, connection, msg):
     charging = msg.get("charging_entity")
     if charging and not re.fullmatch(r"(sensor|binary_sensor)\.[a-z0-9_]+", charging):
         return _error(connection, msg, "the on-charger sensor must be a sensor or binary_sensor")
+    battery = msg.get("battery_entity")
+    if battery and not re.fullmatch(r"sensor\.[a-z0-9_]+", battery):
+        return _error(connection, msg, "the battery sensor must be a sensor")
     async with LAYOUT_LOCK:
         data = get_layout_for_edit(hass)
         if not isinstance(data, dict):
@@ -478,6 +503,16 @@ async def ws_thing_tune(hass, connection, msg):
                 values.pop(entity, None)
             data["thing_charging_entity"] = values
             changes["charging_entity"] = msg["charging_entity"]
+        if "battery_entity" in msg:
+            values = data.get("thing_battery_entity")
+            if not isinstance(values, dict):
+                values = {}
+            if msg["battery_entity"]:
+                values[entity] = msg["battery_entity"]
+            else:
+                values.pop(entity, None)
+            data["thing_battery_entity"] = values
+            changes["battery_entity"] = msg["battery_entity"]
         await save_layout(hass, data)
     connection.send_result(msg["id"], {"entity": entity, **changes})
 
@@ -557,6 +592,8 @@ def _refresh_mark_refs(core, store):
 async def ws_truth_mark(hass, connection, msg):
     """Record that ``entity`` is really at (x, y) on ``floor`` right now, from the
     cycles of the last ``window_secs``, and say which settings fit it best."""
+    if not (math.isfinite(msg["x"]) and math.isfinite(msg["y"])):
+        return _error(connection, msg, "x and y must be finite numbers")
     core = _core()
     since = time.time() - max(30.0, float(msg["window_secs"]))
     samples = core._truth_buffer.samples(msg["entity"], since=since, floor=msg["floor"])
@@ -920,18 +957,17 @@ async def ws_proxy_info(hass, connection, msg):
     # How many things it hears: the readings Bermuda has for it right now,
     # judged by the same staleness gate the solver uses.
     max_age = core._reading_max_age(layout)
-    heard = 0
-    for (_ent, key), reading in ((bermuda_source.async_get_readings_by_address(hass) or {})).items():
-        if key == address and isinstance(reading, dict):
-            age = reading.get("age")
-            if age is None or age <= max_age:
-                heard += 1
-    by_slug = bermuda_source.async_get_readings(hass) or {}
-    for (_ent, key), reading in by_slug.items():
-        if key == slug and isinstance(reading, dict):
-            age = reading.get("age")
-            if age is None or age <= max_age:
-                heard += 1
+    # A set of things: both maps carry the same reading, under the address
+    # and under the slug, so adding the two counted every thing twice.
+    heard_things = set()
+    for readings, want in ((bermuda_source.async_get_readings_by_address(hass), address),
+                           (bermuda_source.async_get_readings(hass), slug)):
+        for (ent, key), reading in (readings or {}).items():
+            if key == want and isinstance(reading, dict):
+                age = reading.get("age")
+                if age is None or age <= max_age:
+                    heard_things.add(ent)
+    heard = len(heard_things)
 
     connection.send_result(msg["id"], {
         "proxy": slug,
@@ -1521,8 +1557,130 @@ async def ws_advice(hass, connection, msg):
     connection.send_result(msg["id"], out)
 
 
+@websocket_api.websocket_command({
+    vol.Required("type"): "sextant/thing/forget",
+    vol.Required("entity"): str,
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_thing_forget(hass, connection, msg):
+    """Forget a thing: its remembered last sighting, its position history,
+    and - unless Bermuda still tracks it - its settings.
+
+    A thing whose identity has gone (a phone after an IRK swap, a Tile after
+    its ID rotated) lived on in the layout's thing_* maps and the list of
+    things, as a ghost that was "away" for ever, with nothing in the UI able
+    to remove it. A thing Bermuda still tracks is only away: its sighting and
+    history go, and it comes back with its name and settings when heard.
+    """
+    core = _core()
+    ent = str(msg["entity"]).strip()
+    if not ent:
+        return _error(connection, msg, "Which thing?")
+    tracked = any(
+        str(dev.get("slug") or "").lower() == ent.lower()
+        for dev in (bermuda_source.async_get_tracked_devices(hass) or {}).values()
+    )
+    core._forget_thing_state(ent)
+    hist = core.get_position_history(hass)
+    async with core._history_lock(hass):
+        hist.forget(ent)
+        removed_points = await hass.async_add_executor_job(history_mod.drop_entity, core.history_dir(hass), ent)
+    dropped = []
+    if not tracked:
+        async with LAYOUT_LOCK:
+            layout = get_layout_for_edit(hass)
+            if isinstance(layout, dict):
+                for key, table in layout.items():
+                    if key.startswith("thing_") and isinstance(table, dict) and ent in table:
+                        del table[ent]
+                        dropped.append(key)
+                if dropped:
+                    await save_layout(hass, layout)
+    try:
+        await core._save_runtime(hass)   # so a restart does not bring the sighting back
+    except Exception as e:  # noqa: BLE001 - the in-memory forget still stands
+        _LOGGER.debug("Runtime not saved after forgetting %s: %s", ent, e)
+    connection.send_result(msg["id"], {"entity": ent, "tracked": tracked, "history_removed": removed_points, "settings_dropped": dropped})
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): "sextant/person/trackers/set",
+    vol.Required("person"): str,
+    vol.Required("trackers"): [str],
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_person_trackers_set(hass, connection, msg):
+    """A person's GPS trackers, in the order they are tried when Sextant has
+    lost them (layout person_trackers; see persons.choose_gps)."""
+    person = str(msg["person"])
+    if not person.startswith("person."):
+        return _error(connection, msg, "person must be a person.* entity")
+    trackers = list(dict.fromkeys(t for t in msg["trackers"] if isinstance(t, str) and t.startswith("device_tracker.")))
+    async with LAYOUT_LOCK:
+        layout = get_layout_for_edit(hass)
+        if not isinstance(layout, dict):
+            return _error(connection, msg, "No layout yet")
+        table = layout.setdefault("person_trackers", {})
+        if trackers:
+            table[person] = trackers
+        else:
+            table.pop(person, None)
+        if not table:
+            layout.pop("person_trackers", None)
+        await save_layout(hass, layout)
+    connection.send_result(msg["id"], {"person": person, "trackers": trackers})
+
+
+@websocket_api.websocket_command({vol.Required("type"): "sextant/snapshots/list"})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_snapshots_list(hass, connection, msg):
+    """Every kept copy of the layout, newest first."""
+    from .snapshots import listing  # noqa: PLC0415
+
+    connection.send_result(msg["id"], {"snapshots": await listing(hass)})
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): "sextant/snapshots/restore",
+    vol.Required("id"): str,
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_snapshots_restore(hass, connection, msg):
+    """Put a kept copy back.
+
+    The restore is itself a save, so the layout being replaced is snapshotted
+    on the way out like any other: changing your mind about a restore costs
+    nothing.
+    """
+    from .snapshots import read  # noqa: PLC0415
+
+    try:
+        layout = await read(hass, msg["id"])
+    except ValueError:
+        return _error(connection, msg, "No such snapshot")
+    except FileNotFoundError:
+        return _error(connection, msg, "That snapshot is no longer there")
+    except Exception as e:  # noqa: BLE001
+        return _error(connection, msg, f"Could not read that snapshot: {e}")
+    if not isinstance(layout, dict) or not layout.get("floor"):
+        return _error(connection, msg, "That snapshot has no floors in it")
+    async with LAYOUT_LOCK:
+        await save_layout(hass, layout)
+    try:
+        core = _core()
+        core.refresh_receivers_from_coords(hass, json.dumps(layout))
+    except Exception as e:  # noqa: BLE001
+        _LOGGER.debug("refresh_receivers_from_coords: %s", e)
+    connection.send_result(msg["id"], {"version": get_layout_version(hass)})
+
+
 COMMANDS = (
     ws_advice,
+    ws_snapshots_list, ws_snapshots_restore, ws_thing_forget, ws_person_trackers_set,
     ws_layout_get, ws_layout_save, ws_tuning_set, ws_thing_tune,
     ws_history_index, ws_history_get, ws_history_timeline, ws_history_clear, ws_thing_readings, ws_floor_bias_map,
     ws_calibration_status, ws_calibration_action, ws_selftest, ws_scanner_linking, ws_receivers, ws_beacon_links,

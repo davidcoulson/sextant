@@ -1127,7 +1127,8 @@ def test_full_cycle_publishes_a_stable_zone_and_the_raw_one(monkeypatch):
         entry = _cycle(hass, layout, 8.0, 5.0)
     assert entry["zone"] == "Dining"
     assert sensors["sensor.e_sextant_room"]._state == "Dining"
-    assert sensors["sensor.e_sextant_spot"]._attrs == {"room": "Dining"}
+    assert sensors["sensor.e_sextant_spot"]._attrs["room"] == "Dining"
+    assert sensors["sensor.e_sextant_spot"]._attrs["presence"] == "here"   # just heard
 
 
 def test_full_cycle_with_hysteresis_off_publishes_instantly(monkeypatch):
@@ -1917,6 +1918,36 @@ def test_the_cycle_gives_the_event_loop_a_turn_between_things(monkeypatch):
     assert [o for o in order if o != "loop"] == ["a", "b", "c", "d"]
 
 
+def test_a_failing_thing_is_named_not_dumped_and_rate_limited(monkeypatch, caplog):
+    """One thing's bad data must not stop the rest - and its log line must not
+    print the thing's working copy of the layout (tens of KB) every cycle."""
+    monkeypatch.setattr(sextant, "_thing_error_counts", {}, raising=False)
+    done = []
+
+    async def fake_single(hass, data, eids):
+        if eids["entity"] == "bad":
+            raise ValueError("broken reading")
+        done.append(eids["entity"])
+
+    monkeypatch.setattr(sextant, "process_single_entity", fake_single)
+    marker = "LAYOUT-PAYLOAD-" + "x" * 200
+    batch = [{"entity": "bad", "data": {"floor": [{"name": marker}]}}, {"entity": "good", "data": {}}]
+    caplog.set_level("ERROR")
+    cycles = sextant.CYCLE_ERROR_REPEAT_EVERY + 1
+    for _ in range(cycles):
+        run(sextant.process_entities(None, batch))
+
+    assert done == ["good"] * cycles, "the good thing still ran every cycle"
+    lines = [r for r in caplog.records if "Positioning failed" in r.getMessage()]
+    assert len(lines) == 2, "the first failure and one repeat, not one per cycle"
+    assert all("bad" in r.getMessage() and marker not in r.getMessage() for r in lines)
+
+    # Recovering resets the count, so a fresh failure is reported straight away.
+    monkeypatch.setattr(sextant, "process_single_entity", lambda *a: asyncio.sleep(0))
+    run(sextant.process_entities(None, batch))
+    assert "bad" not in sextant._thing_error_counts
+
+
 # --------------------------------------------------------------------------- #
 # Close-range fade of a stretching calibration correction
 # --------------------------------------------------------------------------- #
@@ -2154,3 +2185,10 @@ def test_a_spot_remembers_when_it_was_entered():
         got = _sub("e", (300, 900), t + dt)
     assert got == ("unknown", "Living")
     assert sextant._subzone_state["e"]["since"] > entered
+
+
+def test_the_floor_switch_margin_is_tunable():
+    """A near-tie between two floors drifted on a half-hour period at 0.05;
+    the margin has to be settable without a release."""
+    assert sextant.TUNING_SPEC["floor_switch_margin"][0] == sextant.FLOOR_SWITCH_MARGIN == 0.05
+    assert sextant._tuning({"tuning": {"floor_switch_margin": 0.1}}, "floor_switch_margin") == 0.1

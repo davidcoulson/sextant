@@ -86,7 +86,7 @@ def test_setup_and_unload_round_trip(tmp_path, monkeypatch):
     run(st.save_layout(hass, {"floor": [{"name": "F", "scale": 100.0, "receivers": [], "zones": [], "subzones": []}], "tuning": {}}))
 
     assert run(sextant.async_setup_entry(hass, entry)) is True
-    assert entry.forwarded == [["sensor"]]
+    assert entry.forwarded == [["sensor", "device_tracker"]]
     assert {v.__class__.__name__ for v in hass.http.views} == {
         "SextantFrontendView", "SextantMapImageView", "SextantSaveAPIText", "SextantUploadThingIconAPI",
         "SextantCordsAPI", "SextantSelfTestAPI"}
@@ -105,7 +105,7 @@ def test_setup_and_unload_round_trip(tmp_path, monkeypatch):
     assert len(hass.http.views) == 6 and len(hass.data["_ws_commands"]) == len(handlers) + 1
 
     assert run(sextant.async_unload_entry(hass, entry)) is True
-    assert entry.unloaded == [["sensor"]] and len(entry.on_unload) == 1
+    assert entry.unloaded == [["sensor", "device_tracker"]] and len(entry.on_unload) == 1
     assert hass.tasks[-1].cancelled
     for key in ("sextant_initialized", "sextant_sensors", "sextant_add_entities", "sextant_update_task"):
         assert key not in hass.data

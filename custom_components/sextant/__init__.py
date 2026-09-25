@@ -23,11 +23,11 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 import logging
 import asyncio
+from datetime import datetime, timezone
 import math
 import os
 import json
 import re
-import copy
 import difflib
 import shapely
 from shapely.geometry import Point, Polygon
@@ -157,10 +157,33 @@ READING_MAX_AGE_SECS = 45
 # the trilateration fixes fed in here are not raw-RSSI noisy. Tune KF_MEAS_NOISE_M
 # up for more smoothing, or KF_ACCEL_NOISE_MS2 up for a snappier response.
 KF_MEAS_NOISE_M = 1.5        # per-fix position uncertainty (m); larger = smoother
-KF_ACCEL_NOISE_MS2 = 0.5     # expected acceleration (m/s^2); larger = more responsive
+KF_ACCEL_NOISE_MS2 = 0.5     # expected acceleration (m/s^2) while moving; larger = more responsive
+# The filter runs one step per positioning cycle, fifteen seconds apart, and
+# at that step the process noise 0.5 m/s^2 allows is a position spread of
+# tens of metres - so the filter trusted every new fix outright, smoothed
+# nothing, and its velocity was the fix jitter divided by the cycle. An
+# AirPods case on a table read 0.46 m/s, never counted as still, and its
+# room flipped a hundred times a day on a 1.2 m jitter across a wall.
+#
+# So the filter has two speeds. While the fixes stay within what stillness
+# explains it runs quiet, with this much smaller acceleration noise, and the
+# estimate settles to an average over the last several cycles. When a fix
+# lands further from the prediction than KF_MOVE_NIS allows (a normalised
+# innovation, chi-squared with two degrees of freedom: 6 is about the 95th
+# percentile), the thing is moving: the responsive noise takes over at once
+# and stays for KF_MOVE_HOLD_CYCLES after the innovations calm down, so a
+# pause mid-walk does not freeze the track.
+KF_ACCEL_NOISE_STILL_MS2 = 0.0005
+KF_MOVE_NIS = 4.0
+KF_MOVE_HOLD_CYCLES = 3
 KF_INIT_VEL_UNC_MS = 1.0     # initial velocity uncertainty (m/s) at (re)init
 KF_MAX_DT_S = 10.0           # cap the prediction step so a gap can't blow up P
-KF_MAX_GAP_S = 30.0          # gap beyond which state is reset (thing was away)
+# Gap beyond which the state is reset (the thing was away). This was 30 s on
+# a 15 s cycle, so ONE missed cycle - a thing not heard for a moment, which
+# happens on 14% of an AirPods case's cycles - started the filter over at
+# the next raw fix, and nothing ever averaged. At 90 s it takes six missed
+# cycles; a replay of a day's tracks found no further gain beyond that.
+KF_MAX_GAP_S = 90.0
 # Soft-gate scale for spiky per-receiver distances: a reading whose radius
 # changed by this fraction versus the previous update is down-weighted to 0.5
 # (was a hard 50% discard). Nothing is dropped, so the solver keeps enough
@@ -423,6 +446,11 @@ TUNING_SPEC = {
     "spot_proxy_ratio": (2.0, float, 1.3, 10.0),
     # Floor election dwell (see _elect_floor).
     "floor_switch_secs": (FLOOR_SWITCH_SECS, float, 0.0, 3600.0),
+    # The lead a challenger floor needs before its dwell starts. 0.05 lets a
+    # near-tie (a phone on the floor above a strong proxy) drift between two
+    # floors on a half-hour period; 0.10 held Eilee's phone on its floor all
+    # night in replay with the cats' moves untouched.
+    "floor_switch_margin": (FLOOR_SWITCH_MARGIN, float, 0.0, 0.5),
     "floor_tenure_bonus": (0.05, float, 0.0, 0.5),      # extra margin at full tenure
     "floor_tenure_full_secs": (600.0, float, 1.0, 86400.0),
     # How much a floor's confidence is scaled by how near its nearest receiver
@@ -502,6 +530,10 @@ TUNING_SPEC = {
     # that left the house, a tag in a drawer. Between stale_after_secs and
     # this it is still expected back, and shown where it was last seen.
     "away_after_secs": (900.0, float, 60.0, 86400.0),
+    # A person's GPS tracker that has not reported for this long is disregarded
+    # (see persons.judge_source): a Companion app that lost its location
+    # permission sat on "home" for six days.
+    "gps_stale_secs": (7200.0, float, 60.0, 604800.0),
     # Hours of position history kept per thing: the history scrubber, the
     # timeline and Activity reach back this far. Applied on the next
     # cycle; an explicit top-level history_max_age (seconds) still wins.
@@ -1017,6 +1049,7 @@ async def restore_position_history(hass):
         return
     hist.adopt(loaded)
     hist.mark_all_gaps()
+    _seed_last_seen_from_history(hass)
     ents = hist.entities()
     _LOGGER.info("Sextant position history restored: %d points across %d things",
                  sum((hist.retained(e) or {}).get("points", 0) for e in ents), len(ents))
@@ -1146,33 +1179,53 @@ def _kalman_position_update(entity, floor_name, meas, scale, bounds):
         return _clip(zx, zy)
 
     dt = min(max(now - st["ts"], 1e-3), KF_MAX_DT_S)
-    x, P = st["x"], st["P"]
-    F = np.array(
-        [[1, 0, dt, 0], [0, 1, 0, dt], [0, 0, 1, 0], [0, 0, 0, 1]], dtype=float
-    )
-    # Piecewise white-noise-acceleration process covariance, per axis.
+    a_still = (KF_ACCEL_NOISE_STILL_MS2 * s) ** 2
+    x, P, moving, nis = _kf_step(st["x"], st["P"], (zx, zy), dt, r_var, a_var, a_still,
+                                 st.get("moving", 0), KF_MOVE_NIS, KF_MOVE_HOLD_CYCLES)
+    st["x"], st["P"], st["ts"], st["floor"], st["moving"], st["nis"] = x, P, now, floor_name, moving, nis
+    return _clip(float(x[0]), float(x[1]))
+
+
+def _kf_step(x, P, meas, dt, r_var, a_var_move, a_var_still, moving, move_nis, hold_cycles):
+    """One constant-velocity Kalman step with two process-noise levels.
+
+    Pure, so it can be replayed over a logged track and unit-tested: state in,
+    state out. ``moving`` is how many more cycles the responsive noise is held
+    for (0 = quiet). The measurement is judged against the QUIET prediction:
+    if its normalised innovation exceeds ``move_nis`` the thing has moved, the
+    step is redone with the responsive noise so the estimate follows at once,
+    and the hold is (re)armed. Returns ``(x, P, moving, nis)``.
+    """
+    F = np.array([[1, 0, dt, 0], [0, 1, 0, dt], [0, 0, 1, 0], [0, 0, 0, 1]], dtype=float)
+    H = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], dtype=float)
+    R = np.diag([r_var, r_var]).astype(float)
+    z = np.array([float(meas[0]), float(meas[1])], dtype=float)
     dt2 = dt * dt
     dt3 = dt2 * dt
     dt4 = dt3 * dt
-    q_axis = np.array([[dt4 / 4.0, dt3 / 2.0], [dt3 / 2.0, dt2]]) * a_var
-    Q = np.zeros((4, 4))
-    Q[np.ix_([0, 2], [0, 2])] = q_axis  # x, vx
-    Q[np.ix_([1, 3], [1, 3])] = q_axis  # y, vy
 
-    # Predict.
-    x = F @ x
-    P = F @ P @ F.T + Q
-    # Update with the position measurement.
-    H = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], dtype=float)
-    R = np.diag([r_var, r_var]).astype(float)
-    z = np.array([zx, zy], dtype=float)
-    S = H @ P @ H.T + R
-    K = P @ H.T @ np.linalg.inv(S)
-    x = x + K @ (z - H @ x)
-    P = (np.eye(4) - K @ H) @ P
+    def predict(a_var):
+        # Piecewise white-noise-acceleration process covariance, per axis.
+        q_axis = np.array([[dt4 / 4.0, dt3 / 2.0], [dt3 / 2.0, dt2]]) * a_var
+        Q = np.zeros((4, 4))
+        Q[np.ix_([0, 2], [0, 2])] = q_axis  # x, vx
+        Q[np.ix_([1, 3], [1, 3])] = q_axis  # y, vy
+        return F @ x, F @ P @ F.T + Q
 
-    st["x"], st["P"], st["ts"], st["floor"] = x, P, now, floor_name
-    return _clip(float(x[0]), float(x[1]))
+    def update(xp, Pp):
+        S = H @ Pp @ H.T + R
+        K = Pp @ H.T @ np.linalg.inv(S)
+        return xp + K @ (z - H @ xp), (np.eye(4) - K @ H) @ Pp
+
+    xq, Pq = predict(a_var_still)
+    nu = z - H @ xq
+    nis = float(nu @ np.linalg.inv(H @ Pq @ H.T + R) @ nu)
+    if nis > move_nis:
+        moving = hold_cycles                 # moved: follow now, and keep following for a while
+    elif moving > 0:
+        moving -= 1
+    xn, Pn = update(*predict(a_var_move)) if moving > 0 else update(xq, Pq)
+    return xn, Pn, moving, nis
 
 
 def cleanup_legacy_sextant_registry_and_states(hass: HomeAssistant):
@@ -1201,6 +1254,8 @@ def cleanup_legacy_sextant_registry_and_states(hass: HomeAssistant):
 _cycle_error_last = None
 _cycle_error_count = 0
 CYCLE_ERROR_REPEAT_EVERY = 40   # roughly every ten minutes at a 15 s cycle
+# thing -> cycles in a row its positioning has raised; rate-limits its log line.
+_thing_error_counts = {}
 
 
 async def update_tracked_entities(hass):
@@ -1215,7 +1270,10 @@ async def update_tracked_entities(hass):
         now_ts = time.time()
         if now_ts - getattr(update_tracked_entities, "last_liveness", 0.0) >= RECEIVER_DUMP_INTERVAL:
             update_tracked_entities.last_liveness = now_ts
-            await update_receiver_liveness(hass)
+            try:
+                await update_receiver_liveness(hass)
+            except Exception as e:  # outside the cycle's try: raising here ended the loop for good
+                _LOGGER.warning("Sextant receiver liveness update failed: %s", e)
 
         # Runs on the first tick too, so a fresh deploy shows a value quickly.
         # The scipy solves run in the executor so the loop is never blocked; the
@@ -1527,7 +1585,10 @@ def _resolve_receiver_addresses(layout, directory):
                     candidates = [mac]
             base_slug = slug[: mac_suffix.start()] if mac_suffix else slug
             token = receiver.get("scanner_uid") or _scanner_token(base_slug)
-            if token:
+            # Only when the suffix gave no exact answer: the BLE and wifi MAC
+            # tails differ, so the token can miss (or double-match) an address
+            # the suffix names outright.
+            if token and not candidates:
                 candidates = [
                     a for a, s in directory.items()
                     if a not in claimed and (
@@ -1563,7 +1624,10 @@ async def async_resolve_receiver_addresses(hass) -> bool:
     layout = get_layout(hass)
     if not isinstance(layout, dict):
         return False
-    probe = copy.deepcopy(layout)
+    # Only receivers' own keys are written, so a receivers-only copy is a
+    # safe probe; a deepcopy of the whole layout (rooms, bias grids, pins)
+    # every liveness tick was the real cost of this "cheap" check.
+    probe = _thing_layout(layout)
     changed, _unresolved = _resolve_receiver_addresses(probe, directory)
     if not changed:
         return False
@@ -2002,17 +2066,26 @@ async def update_receiver_radii(hass, eids):
     # thousands of recorder writes and websocket state_changed fan-outs. None
     # when Bermuda is absent or too old, in which case we scrape entities as
     # before. Fetched once per call, not per receiver.
-    readings = bermuda_source.async_get_readings(hass, include_history=use_median)
     # Address-keyed readings need no slug map and cannot drift on a rename;
-    # the slug-keyed dict remains for placements not yet resolved.
+    # the slug-keyed dict remains for placements not yet resolved, and is
+    # only built (a device x scanner join) once one of those is met.
     by_address = bermuda_source.async_get_readings_by_address(hass, include_history=use_median)
+    readings = None
+    readings_built = by_address is None
+    if readings_built:
+        readings = bermuda_source.async_get_readings(hass, include_history=use_median)
     for floor in (f for f in eids["data"]["floor"] if f["scale"] is not None):
         for receiver in floor["receivers"]:
+            if not isinstance(receiver.get("cords"), dict):
+                continue  # not placed: no circle to size, and cords["r"] below would raise
             entity_id = "sensor." + eids["entity"] + "_distance_to_" + receiver["entity_id"]
             reading = None
             address = receiver.get("address")
             if by_address is not None and isinstance(address, str) and address:
                 reading = by_address.get((eids["entity"], address.lower()))
+            if reading is None and not readings_built:
+                readings_built = True
+                readings = bermuda_source.async_get_readings(hass, include_history=use_median)
             if reading is None and readings is not None:
                 reading = readings.get((eids["entity"], receiver["entity_id"]))
             # Per-point reliability of this reading in (0, 1]; only the
@@ -2399,7 +2472,7 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
     # (up to floor_tenure_bonus at floor_tenure_full_secs), so a floor that
     # has been right for ten minutes is not unseated by one geometry fluke.
     tenure = max(0.0, now - _floor_since.get(entity, now))
-    margin = FLOOR_SWITCH_MARGIN + _tuning(layout, "floor_tenure_bonus") * min(
+    margin = _tuning(layout, "floor_switch_margin") + _tuning(layout, "floor_tenure_bonus") * min(
         1.0, tenure / _tuning(layout, "floor_tenure_full_secs")
     )
     lowest_floor_name, challenge = _elect_floor(
@@ -2546,12 +2619,16 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
                     lowest_floor_name, scale, zone, sub_zone)
             except Exception as e:  # history must never break tracking
                 _LOGGER.debug("Position history record failed for %s: %s", entity, e)
+        # Just heard: presence "here", and the moment it was heard.
+        here = _presence_attrs(time.time(), time.time(), layout)
+        _presence_published[entity] = "here"
+        loc_state, loc_attrs = _location_state(zone, sub_zone, parent_zone, lowest_floor_name, layout)
         update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_room", zone,
-                                    {"area_id": room_area(layout, lowest_floor_name, zone)[0]})
-        update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_nearest_room", nearest_zone)
-        update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_floor", lowest_floor_name)
-        update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_spot", sub_zone, {"room": parent_zone})
-        update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_location", *_location_state(zone, sub_zone, parent_zone, lowest_floor_name, layout))
+                                    {"area_id": room_area(layout, lowest_floor_name, zone)[0], **here})
+        update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_nearest_room", nearest_zone, dict(here))
+        update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_floor", lowest_floor_name, dict(here))
+        update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_spot", sub_zone, {"room": parent_zone, **here})
+        update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_location", loc_state, {**loc_attrs, **here})
 
 def room_area(layout, floor_name, room_name):
     """(area_id, floor_id): the Home Assistant area a room is linked to, and
@@ -2695,6 +2772,18 @@ def update_or_add_entry(data, new_entry):
     return data
 
 
+def _forget_thing_state(ent):
+    """Drop everything the tracking loop remembers about one thing, including
+    its last sighting - the one thing the stale-position prune keeps, so that
+    the Live page can say "away since". For a thing being forgotten on purpose
+    (see ws_thing_forget) that memory is the point."""
+    for table in (_kf_position_state, _zone_state, _subzone_state, _anchor_state, _floor_probability,
+                  _floor_challenge, _floor_dark_cycles, _floor_since, _arrivals, _last_seen, _presence_published):
+        table.pop(ent, None)
+    getattr(update_trilateration_and_zone, "last_floor", {}).pop(ent, None)
+    getattr(update_trilateration_and_zone, "last_r_values", {}).pop(ent, None)
+
+
 async def prune_stale_positions(hass):
     """Drop things not detected by any receiver for the timeout period.
 
@@ -2711,10 +2800,21 @@ async def prune_stale_positions(hass):
 
     now = time.time()
     stale_ents = {e["ent"] for e in apitricords if now - e.get("updated", now) > timeout}
+    # State restored over a restart for a thing not heard since has no row
+    # here, and would otherwise keep its incumbency (and be saved again)
+    # forever. It is as old as the last time the thing was seen.
+    live = {e["ent"] for e in apitricords}
+    restored = (set(_kf_position_state) | set(_zone_state) | set(_subzone_state)
+                | set(getattr(update_trilateration_and_zone, "last_floor", {}))) - live
+    stale_ents |= {
+        ent for ent in restored
+        if now - ((_last_seen.get(ent) or {}).get("updated") or 0) > timeout
+    }
     if not stale_ents:
         return
-    apitricords = [e for e in apitricords if e["ent"] not in stale_ents]
-    await update_apitricords(hass, apitricords)
+    if live & stale_ents:
+        apitricords = [e for e in apitricords if e["ent"] not in stale_ents]
+        await update_apitricords(hass, apitricords)
     # History is deliberately NOT pruned with the live entry: the point of it is
     # to survive the absence. Just break the line so the scrubber does not draw
     # a straight segment across the gap.
@@ -2745,11 +2845,14 @@ async def prune_stale_positions(hass):
         getattr(update_trilateration_and_zone, "last_r_values", {}).pop(ent, None)
         _arrivals.pop(ent, None)
         _LOGGER.info("Thing %s not seen for %ss; clearing its position", ent, timeout)
-        update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_room", "unknown", {"area_id": None})
-        update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_floor", "unknown")
-        update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_nearest_room", "unknown")
-        update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_spot", "unknown", {"room": "unknown"})
-        update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_location", *_location_state("unknown", "unknown", "unknown", "unknown"))
+        gone = _presence_attrs((_last_seen.get(ent) or {}).get("updated"), now, layout if isinstance(layout, dict) else {})
+        _presence_published[ent] = gone["presence"]
+        loc_state, loc_attrs = _location_state("unknown", "unknown", "unknown", "unknown")
+        update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_room", "unknown", {"area_id": None, **gone})
+        update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_floor", "unknown", dict(gone))
+        update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_nearest_room", "unknown", dict(gone))
+        update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_spot", "unknown", {"room": "unknown", **gone})
+        update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_location", loc_state, {**loc_attrs, **gone})
 
 # How often the state a restart would lose is written out. On a clean stop
 # it is written again anyway; this is for the power cut that is not clean.
@@ -2860,12 +2963,27 @@ async def process_entities(hass, new_global_data):
     to do it in.
     """
     for eids in new_global_data:
-        await process_single_entity(hass, new_global_data, eids)
+        ent = eids.get("entity")
+        try:
+            await process_single_entity(hass, new_global_data, eids)
+            _thing_error_counts.pop(ent, None)
+        except Exception:  # noqa: BLE001 - one thing's bad data must not stop the rest
+            n = _thing_error_counts[ent] = _thing_error_counts.get(ent, 0) + 1
+            # Named, not printed whole: eids["data"] is this thing's copy of
+            # the layout, tens of KB, and bad data fails every 15 s cycle. The
+            # first failure and every CYCLE_ERROR_REPEAT_EVERY-th after it.
+            if n == 1 or n % CYCLE_ERROR_REPEAT_EVERY == 0:
+                _LOGGER.exception("Positioning failed for %s (%d cycle%s in a row)", ent, n, "" if n == 1 else "s")
         await asyncio.sleep(0)  # a thing with nothing to solve never awaits: yield for it
     try:
         _update_person_sensors(hass)
     except Exception as e:  # noqa: BLE001 - a person's sensor must never stop the things'
         _LOGGER.warning("Person locations not updated: %s", e)
+    try:
+        layout = get_layout(hass)
+        _publish_presence(hass, layout if isinstance(layout, dict) else {})
+    except Exception as e:  # noqa: BLE001 - an attribute must never stop the things'
+        _LOGGER.debug("Presence not published: %s", e)
 
 
 # thing -> {"floor", "x", "y", "since", "away"}: where an owned thing has
@@ -2875,6 +2993,71 @@ _arrivals = {}
 # The Live page reads it to say "away since 5:32 PM" for a thing nothing is
 # hearing, which the sensors cannot answer after a restart.
 _last_seen = {}
+# ent -> the presence last written to its sensors ("here", "quiet", "away"),
+# so a transition is written once, not every cycle (see _publish_presence).
+_presence_published = {}
+# person -> (thing, considered) that last placed them, held through a quiet spell.
+_person_last = {}
+
+
+def _presence_of(updated, now, layout):
+    """here / quiet / away from how long since the thing was heard, on the same
+    two thresholds the Live page uses: quiet past stale_after_secs, away past
+    away_after_secs (or never heard). An automation can read home/away off it
+    and fall back to GPS when it says away."""
+    if not isinstance(updated, (int, float)):
+        return "away"
+    age = max(0.0, now - updated)
+    if age <= _tuning(layout, "stale_after_secs"):
+        return "here"
+    if age <= _tuning(layout, "away_after_secs"):
+        return "quiet"
+    return "away"
+
+
+def _presence_attrs(updated, now, layout):
+    """The two presence attributes every per-thing sensor carries."""
+    iso = None
+    if isinstance(updated, (int, float)) and updated > 0:
+        iso = datetime.fromtimestamp(updated, timezone.utc).isoformat(timespec="seconds")
+    return {"presence": _presence_of(updated, now, layout), "last_heard": iso}
+
+
+def _publish_presence(hass, layout):
+    """Write a presence transition (here -> quiet -> away) to the sensors of a
+    thing the cycle did not hear. A thing that is heard gets its presence with
+    its position; one that has gone quiet is not processed at all, so nothing
+    else would ever tell its sensors."""
+    now = time.time()
+    # Every thing that has sensors, not only the remembered sightings: a
+    # thing not heard since the sightings were first kept has none, and would
+    # otherwise never be told it is away.
+    suffix = "_sextant_location"
+    with_sensors = {e[len("sensor."):-len(suffix)] for e in (hass.data.get("sextant_sensors") or {}) if e.endswith(suffix)}
+    for ent in with_sensors | set(_last_seen):
+        seen = _last_seen.get(ent)
+        seen = seen if isinstance(seen, dict) else {}
+        presence = _presence_of(seen.get("updated"), now, layout)
+        # "here" is normally written with the position; a thing heard but not
+        # located (too few proxies for a fix) never gets that write, so it is
+        # covered here too. The published gate keeps it to one write.
+        if _presence_published.get(ent) == presence:
+            continue
+        attrs = _presence_attrs(seen.get("updated"), now, layout)
+        for suffix in THING_SENSOR_SUFFIXES:
+            _patch_sensor_attrs(hass, f"sensor.{ent}{suffix}", attrs)
+        _presence_published[ent] = presence
+
+
+THING_SENSOR_SUFFIXES = ("_sextant_room", "_sextant_floor", "_sextant_nearest_room", "_sextant_spot", "_sextant_location")
+
+
+def _patch_sensor_attrs(hass, entity_id, attrs):
+    """Change some attributes of a registered Sextant sensor, keeping the rest."""
+    sensor = (hass.data.get("sextant_sensors") or {}).get(entity_id)
+    if sensor is None:
+        return
+    update_sextant_sensor_state(hass, entity_id, sensor._state, {**(sensor._attrs or {}), **attrs})
 
 
 async def _restore_runtime(hass):
@@ -2897,25 +3080,18 @@ async def _restore_runtime(hass):
         return
     back = runtime_mod.restore(data, time.time(), _tuning(layout, "restore_state_secs"))
     _last_seen.update(back["last"])
-    # Anything the snapshot never knew, but the position history did: the
-    # store outlives any restart, so its last point is a real sighting.
-    try:
-        hist = get_position_history(hass)
-        for entity in hist.entities():
-            if entity in _last_seen:
-                continue
-            span = hist.retained(entity)
-            if span and isinstance(span.get("to"), (int, float)):
-                _last_seen[entity] = {"zone": None, "spot": None, "floor": None,
-                                      "updated": span["to"], "cords": None}
-    except Exception as e:  # noqa: BLE001
-        _LOGGER.debug("No history to date the last sighting from: %s", e)
-    for entity, kf in back["kf"].items():
-        _kf_position_state[entity] = {
-            "x": np.array(kf["x"], dtype=float), "P": np.array(kf["P"], dtype=float),
-            "ts": kf["ts"], "floor": kf["floor"],
-        }
+    _seed_last_seen_from_history(hass)
     now = time.time()
+    for entity, kf in back["kf"].items():
+        # Stamped now, velocity dropped: the saved ts is the downtime old, and
+        # _kalman_update resets anything past KF_MAX_GAP_S - any restart
+        # longer than half a minute threw the restored filter straight away.
+        x = np.array(kf["x"], dtype=float)
+        x[2:] = 0.0
+        _kf_position_state[entity] = {
+            "x": x, "P": np.array(kf["P"], dtype=float),
+            "ts": now, "floor": kf["floor"],
+        }
     for entity, state in back["zone"].items():
         # Filled out against the live shape: a key the snapshot predates (or
         # never carried) has to read as "no value", not raise mid-election.
@@ -2925,6 +3101,12 @@ async def _restore_runtime(hass):
         value = state.get("value")
         if isinstance(value, list) and len(value) == 2:
             state = {**state, "value": tuple(value)}
+        # And so is the pending challenger's, inside (candidate, ts): left a
+        # list it never equals the tuple candidate, so the dwell restarted.
+        pending = state.get("pending")
+        if (isinstance(pending, list) and len(pending) == 2
+                and isinstance(pending[0], list) and len(pending[0]) == 2):
+            state = {**state, "pending": (tuple(pending[0]), pending[1])}
         _subzone_state[entity] = {**_new_subzone_state(state.get("floor"), state.get("zone"), now), **state}
     _arrivals.update(back["arrivals"])
     # The floor election, and with it the fact that this thing's floor is not
@@ -2987,10 +3169,63 @@ def _floor_elections():
     }
 
 
+def _rows_with_last_seen(rows, last_seen):
+    """The published rows, plus a row for every thing that has gone quiet but
+    whose last sighting is still remembered - the snapshot builds its record
+    of last sightings from these."""
+    live = {r.get("ent") for r in rows}
+    return rows + [
+        {"ent": ent, "zone": v.get("zone"), "sub_zone": v.get("spot"), "floor": v.get("floor"),
+         "updated": v.get("updated"), "cords": v.get("cords")}
+        for ent, v in last_seen.items() if ent not in live and isinstance(v, dict)
+    ]
+
+
+def _seed_last_seen_from_history(hass):
+    """Give a last sighting to anything the position history has seen and
+    _last_seen has not: the history outlives any restart, so its last point is
+    a real sighting, with the room and floor it was in.
+
+    Called from the runtime restore AND again once the history has loaded. The
+    restore runs first, ahead of the setup step that reads the history off
+    disk, so on a real restart the history it asked was still empty and this
+    fallback never once did anything - the same ordering trap as the restore
+    window reading an unloaded layout.
+    """
+    try:
+        hist = get_position_history(hass)
+        for entity in hist.entities():
+            if entity in _last_seen:
+                continue
+            span = hist.retained(entity)
+            if not (span and isinstance(span.get("to"), (int, float))):
+                continue
+            seen = {"zone": None, "spot": None, "floor": None, "updated": span["to"], "cords": None}
+            try:
+                q = hist.query(entity, span["to"] - 1, span["to"] + 1, 4)
+                if q.get("t"):
+                    i = len(q["t"]) - 1
+                    fi, zi, si = q["f"][i], q["z"][i], q["sp"][i]
+                    seen["floor"] = q["floors"][fi] if isinstance(fi, int) and fi < len(q["floors"]) else None
+                    seen["zone"] = (q["zones"][zi] or None) if isinstance(zi, int) and zi < len(q["zones"]) else None
+                    seen["spot"] = (q["spots"][si] or None) if isinstance(si, int) and si < len(q["spots"]) else None
+            except Exception:  # noqa: BLE001 - the time alone is still worth having
+                pass
+            _last_seen[entity] = seen
+    except Exception as e:  # noqa: BLE001
+        _LOGGER.debug("No history to date the last sighting from: %s", e)
+
+
 async def _save_runtime(hass):
     """Write the state a restart would otherwise lose."""
     try:
         rows = [r for r in (hass.data.get(DOMAIN, {}).get("apitricords") or []) if isinstance(r, dict)]
+        # A thing that has gone quiet is pruned out of the rows, but where it
+        # was last heard is precisely what has to survive a restart - that is
+        # the whole of "away since". Built from the rows alone, a stale thing's
+        # sighting lasted one restart at most: Socks, silent since 5:42 AM on
+        # a dying tag, was gone entirely after the 15:34 restart.
+        rows = _rows_with_last_seen(rows, _last_seen)
         data = runtime_mod.snapshot(time.time(), kf=_kf_position_state, zones=_zone_state,
                                     spots=_subzone_state, arrivals=_arrivals, rows=rows,
                                     floors=_floor_elections())
@@ -3037,8 +3272,10 @@ def _arrived_at(hass, layout, ent, row, now):
         st["away_since"] = None
         if st["provisional"] and now - st["first_seen"] <= ARRIVAL_RETRY_SECS:
             found = _history_arrival(hass, ent, floor, x, y, now)
-            if found is not None and found < st["since"]:
-                st["since"], st["provisional"] = found, False
+            if found is not None:
+                # Answered: take it if earlier, and stop asking either way (a
+                # 24 h history query per owned thing per cycle otherwise).
+                st["since"], st["provisional"] = min(found, st["since"]), False
         return st["since"]
     fallback = now
     if st is not None:
@@ -3064,6 +3301,11 @@ def _update_person_sensors(hass):
     owning = frozenset(by_person)
     if hass.data.get("sextant_person_owners") != owning:
         sensor_mod.prune_person_sensors(hass, owning)
+        try:
+            from . import device_tracker as tracker_mod  # noqa: PLC0415
+            tracker_mod.prune_person_trackers(hass, owning)
+        except Exception as e:  # noqa: BLE001
+            _LOGGER.debug("Person trackers not pruned: %s", e)
         hass.data["sextant_person_owners"] = owning
     for ent in [e for e in _arrivals if not any(e in things for things in by_person.values())]:
         del _arrivals[ent]
@@ -3074,11 +3316,23 @@ def _update_person_sensors(hass):
     classes = layout.get("thing_classes") or {}
     chargers = layout.get("thing_charging_entity") or {}
     now, stale = time.time(), _tuning(layout, "stale_after_secs")
+    home = (getattr(hass.config, "latitude", None), getattr(hass.config, "longitude", None))
+    gps_stale = _tuning(layout, "gps_stale_secs")
+    trackers = hass.data.get("sextant_trackers") or {}
+    try:
+        from . import device_tracker as tracker_mod  # noqa: PLC0415 - the platform imports this module
+        tracker_mod.ensure_person_trackers(hass, list(by_person))
+    except Exception as e:  # noqa: BLE001 - the sensors do not depend on the trackers
+        _LOGGER.debug("Person trackers not ensured: %s", e)
     for person, things in by_person.items():
-        candidates = []
+        candidates, presences = [], []
         for ent in things:
+            if not persons_mod.locates_owner(layout, ent, classes.get(ent)):
+                continue
+            seen = _last_seen.get(ent) or {}
+            presences.append(_presence_of(seen.get("updated") if isinstance(seen, dict) else None, now, layout))
             row = rows.get(ent)
-            if not row or not persons_mod.locates_owner(layout, ent, classes.get(ent)):
+            if not row:
                 continue
             candidates.append({
                 "ent": ent, "cls": classes.get(ent), "updated": row.get("updated"),
@@ -3090,8 +3344,19 @@ def _update_person_sensors(hass):
             })
         slug = person.split(".", 1)[1]
         why = persons_mod.considered(candidates, now)
-        for suffix, (state, attrs) in persons_mod.states(persons_mod.pick(candidates, now, stale), why).items():
+        presence = persons_mod.presence_of_things(presences)
+        best = persons_mod.pick(candidates, now, stale)
+        if best is not None:
+            _person_last[person] = (best, why)
+        # Quiet: the last place they were put stands until BLE either hears
+        # them again or gives up (away), when GPS takes over.
+        held, held_why = _person_last.get(person, (None, None)) if best is None and presence == "quiet" else (None, None)
+        gps, ignored = persons_mod.choose_gps(hass.states.get, layout, person, now, gps_stale)
+        for suffix, (state, attrs) in persons_mod.fuse(best, why if best else held_why, presence, held, gps, ignored, home).items():
             update_sextant_sensor_state(hass, f"sensor.{slug}_{suffix}", state, attrs)
+        tracker = trackers.get(slug)
+        if tracker is not None:
+            tracker.set_fix(persons_mod.tracker_fix(presence, gps))
 
 def extract_candidate_floors(new_global_data, tmpentity):
     """Every floor hearing the thing, ranked by its nearest receiver.
@@ -3409,10 +3674,29 @@ def _covariance_samples(center, cov, scale=None):
 def _zone_membership(zone_polys, samples):
     """zone_id -> share of sample weight in (or, failing that, nearest to)
     each allowed zone. No-go zones never receive membership."""
+    shares = {}
+    if isinstance(zone_polys, _FloorZones):
+        # One vectorised covers (and, for points outside every zone, one
+        # distance) over zones x samples, instead of a Python shapely call per
+        # pair: up to nine samples times every room, per thing per cycle.
+        ids, geoms = zone_polys.allowed_ids, zone_polys.allowed_geoms
+        if not ids or not samples:
+            return {}
+        pts = shapely.points([(x, y) for x, y, _w in samples])
+        covered = shapely.covers(geoms[:, None], pts[None, :])
+        inside = covered.any(axis=0)
+        pick = np.argmax(covered, axis=0)  # the first covering zone, as below
+        if not inside.all():
+            outside = np.flatnonzero(~inside)
+            pick[outside] = np.argmin(shapely.distance(geoms[:, None], pts[outside][None, :]), axis=0)
+        for i, (_x, _y, w) in enumerate(samples):
+            zid = ids[int(pick[i])]
+            shares[zid] = shares.get(zid, 0.0) + w
+        total = sum(shares.values())
+        return {z: v / total for z, v in shares.items()} if total > 0 else {}
     allowed = [(zid, poly) for zid, poly, _b, no_go in zone_polys if not no_go]
     if not allowed:
         return {}
-    shares = {}
     for x, y, w in samples:
         pt = Point(x, y)
         hit = None
@@ -4659,8 +4943,14 @@ async def async_setup(hass, config):
     async def _on_stop(_event):
         await _save_runtime(hass)
 
-    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _on_stop)
-    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_FINAL_WRITE, _on_stop)
+    # Once per Home Assistant run: sextant_initialized is cleared on unload,
+    # so every reload (each options change) used to add another set, and a
+    # stop then ran every save and shutdown once per reload, concurrently.
+    first_setup = not hass.data.get("sextant_stop_listeners")
+    hass.data["sextant_stop_listeners"] = True
+    if first_setup:
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _on_stop)
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_FINAL_WRITE, _on_stop)
 
     async def initialize_sextant():
         """Initialize the Sextant component"""
@@ -4785,7 +5075,8 @@ async def async_setup(hass, config):
                 _LOGGER.debug("Sextant position history final flush failed: %s", e)
             await async_shutdown_calibration(hass)
 
-        hass.bus.async_listen_once("homeassistant_stop", handle_homeassistant_stop)
+        if first_setup:
+            hass.bus.async_listen_once("homeassistant_stop", handle_homeassistant_stop)
 
         await async_restore_calibration_state(hass)
         await async_start_auto_if_enabled(hass)
@@ -4811,6 +5102,15 @@ async def async_unload_entry(hass: HomeAssistant, entry):
     if state_listener_unsub:
         state_listener_unsub()
 
+    # Stop the loop before anything below can fail and return early (which
+    # left it running against half-torn-down state), and write the runtime
+    # out: setup restores it, and a reload would otherwise rewind every
+    # election to the last periodic save, up to a minute back.
+    update_task = hass.data.pop("sextant_update_task", None)
+    if update_task:
+        update_task.cancel()
+    await _save_runtime(hass)
+
     # Get whatever the tracking loop buffered since the last 60 s flush onto
     # disk before the task goes away. The in-memory ring survives an unload
     # (hass.data[DOMAIN] is not cleared), so this is belt-and-braces, but an
@@ -4829,7 +5129,7 @@ async def async_unload_entry(hass: HomeAssistant, entry):
     # settings (area, name, disabled) and rewrote the whole registry twice.
 
     try: # Attempt to unload platforms
-        unload_ok = await hass.config_entries.async_unload_platforms(entry, ["sensor"])
+        unload_ok = await hass.config_entries.async_unload_platforms(entry, ["sensor", "device_tracker"])
     except Exception as e:
         _LOGGER.error(f"Error during offloading of platforms for entry {entry.entry_id}: {e}")
         return False
@@ -4844,10 +5144,6 @@ async def async_unload_entry(hass: HomeAssistant, entry):
     except Exception as e:
         _LOGGER.error(f"Error when removing frontend-panel for entry {entry.entry_id}: {e}")
         return False
-
-    update_task = hass.data.pop("sextant_update_task", None)
-    if update_task:
-        update_task.cancel()
 
     await async_shutdown_calibration(hass)
 
@@ -4883,7 +5179,7 @@ async def async_setup_entry(hass, entry):
         _LOGGER.warning("Truth marks or learned gains not loaded: %s", e)
     await _restore_runtime(hass)
     cleanup_legacy_sextant_registry_and_states(hass)
-    await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
+    await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "device_tracker"])
     entry.async_on_unload(entry.add_update_listener(async_update_options))
 
     """Set up Sextant from a config entry."""
@@ -5037,7 +5333,8 @@ class SextantSaveAPIText(HomeAssistantView):
             map_target = _safe_maps_child(maps_path, map_file.filename, _ALLOWED_MAP_EXTS)
             if map_target is None:
                 return web.Response(status=400, text="Invalid map filename")
-            map_bytes = map_file.file.read()
+            # Up to 25 MB off aiohttp's temp file: not on the event loop.
+            map_bytes = await hass.async_add_executor_job(map_file.file.read)
             if len(map_bytes) > MAX_MAP_UPLOAD_BYTES:
                 return web.Response(status=413, text="Map file too large")
 
@@ -5066,14 +5363,20 @@ class SextantSaveAPIText(HomeAssistantView):
         await save_layout(hass, coords_obj)
 
         # Never delete the map we just wrote (a replace with the same filename).
-        if remove_target is not None and remove_target != map_target and remove_target.exists():
+        if remove_target is not None and remove_target != map_target:
             try:
-                remove_target.unlink()
+                await hass.async_add_executor_job(_unlink_if_exists, remove_target)
                 _LOGGER.info(f"Removed file: {remove_target.name}")
             except Exception as e:
                 _LOGGER.error(f"Failed to remove file {remove_target.name}: {e}")
                 return web.Response(status=500, text="Failed to remove file")
         return None
+
+
+def _unlink_if_exists(path):
+    """Delete a file that may be gone already (runs in the executor)."""
+    if path.exists():
+        path.unlink()
 
 
 def list_map_files(maps_path):
@@ -5117,7 +5420,7 @@ class SextantUploadThingIconAPI(HomeAssistantView):
         safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", Path(icon_file.filename).name)
         if not safe_name or Path(safe_name).suffix.lower() not in _ALLOWED_ICON_EXTS:
             return web.Response(status=400, text="Icons must be png, jpg, webp or gif")
-        icon_bytes = icon_file.file.read()
+        icon_bytes = await hass.async_add_executor_job(icon_file.file.read)
         if len(icon_bytes) > MAX_ICON_UPLOAD_BYTES:
             return web.Response(status=413, text="Icon file too large (2 MB max)")
 

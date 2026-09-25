@@ -190,6 +190,33 @@ def test_auto_apply_rewrites_corrections_the_layout_lost(tmp_path):
     assert again["r2"] is not None and abs(again["r2"] - first["r2"]) < 0.05
 
 
+def test_a_proxy_can_keep_its_own_correction(tmp_path):
+    """The laundry tablet, 2026-09-22: its distances read long up close and far
+    too short across the room, so one multiplier cannot describe it and the
+    solver pinned it at the 5.0 ceiling. "calibrate": false keeps it out of the
+    fit and leaves the correction its owner set."""
+    hass = _hass(tmp_path)
+    hass.async_create_task = lambda coro: coro.close()
+    layout = st.get_layout(hass)
+    for r in layout["floor"][0]["receivers"]:
+        if r["entity_id"] == "r2":
+            r["calibrate"] = False
+            r["correction"] = 1.0
+    run(st.save_layout(hass, layout))
+
+    cal = _prepared(hass)
+    rng = random.Random(5)
+    bias = {s: 1.0 for s in ADDR}
+    bias["r2"] = 1.3          # the solve would very much like to change r2
+    for k in range(12):
+        cal_mod._ingest_dump(cal, _dump(bias, rng, stamp=1000.0 + k))
+    run(cal_mod._auto_solve_and_apply_locked(hass, cal))
+
+    after = {r["entity_id"]: r.get("correction") for r in st.get_layout(hass)["floor"][0]["receivers"]}
+    assert after["r2"] == 1.0                      # left exactly as set
+    assert "r2" not in (cal["results"].get("F") or {}).get("receivers", {})   # and not even fitted
+
+
 def test_auto_decision_rules():
     fit_ok = {"error_factor_before": 1.4, "error_factor_after": 1.3}
     fit_bad = {"error_factor_before": 1.4, "error_factor_after": 1.5}

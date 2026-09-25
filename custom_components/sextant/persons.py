@@ -164,3 +164,127 @@ def states(best, why=None):
         "sextant_person_room": (room, {"area_id": area_id, **via}),
         "sextant_person_floor": (floor, via),
     }
+
+
+# --- BLE + GPS: where a person is when their things cannot say ----------------
+# A person's things place them while they are home. Away, a GPS tracker (the
+# Companion app, Life360) knows the zone. The two are fused here: BLE while it
+# hears them (and held through a quiet spell - the last place they were put is
+# the best answer for a few minutes), the first GPS source that is neither
+# broken nor stale once BLE has lost them.
+
+GPS_STALE_SECS = 7200.0            # a tracker that has not reported for this long is ignored
+_DEAD = (None, "", "unknown", "unavailable")
+_PRESENCE_RANK = {"here": 0, "quiet": 1, "away": 2}
+
+
+def gps_sources(layout, person) -> list[str]:
+    """The person's GPS trackers, in the order they are to be tried."""
+    raw = layout.get("person_trackers") if isinstance(layout, dict) else None
+    lst = raw.get(person) if isinstance(raw, dict) else None
+    return [x for x in lst if isinstance(x, str) and x.startswith("device_tracker.")] if isinstance(lst, list) else []
+
+
+def judge_source(entity_id, state, now, stale_secs=GPS_STALE_SECS):
+    """Whether one tracker is usable right now: ``(ok, reason, info)``.
+
+    Broken (no entity, unknown/unavailable) and stale (no report within
+    stale_secs - a Companion app that has lost its location permission sits
+    on its last fix for days) are both disregarded, and the reason is kept so
+    the Things page can say why. A tracker with a zone but no coordinates
+    (some router-style ones) still tells the zone.
+    """
+    if state is None:
+        return False, "not found", None
+    st = getattr(state, "state", None)
+    if st in _DEAD:
+        return False, str(st or "empty"), None
+    attrs = getattr(state, "attributes", None) or {}
+    stamps = [t for t in (getattr(state, "last_reported", None), getattr(state, "last_updated", None)) if t is not None]
+    reported = max((t.timestamp() if hasattr(t, "timestamp") else float(t)) for t in stamps) if stamps else None
+    if reported is not None and now - reported > stale_secs:
+        return False, f"no report for {(now - reported) / 3600:.1f} h", None
+    lat, lon = attrs.get("latitude"), attrs.get("longitude")
+    coords = isinstance(lat, (int, float)) and isinstance(lon, (int, float))
+    return True, None, {
+        "entity": entity_id, "zone": st,
+        "latitude": float(lat) if coords else None, "longitude": float(lon) if coords else None,
+        "accuracy": attrs.get("gps_accuracy") if coords else None,
+        "reported": reported,
+    }
+
+
+def choose_gps(get_state, layout, person, now, stale_secs=GPS_STALE_SECS):
+    """The first usable GPS source in the person's order, and the ones passed over."""
+    chosen, ignored = None, []
+    for eid in gps_sources(layout, person):
+        ok, reason, info = judge_source(eid, get_state(eid), now, stale_secs)
+        if ok and chosen is None:
+            chosen = info
+        elif not ok:
+            ignored.append({"entity": eid, "reason": reason})
+    return chosen, ignored
+
+
+def presence_of_things(presences) -> str:
+    """A person is as present as their most present thing."""
+    return min(presences, key=lambda p: _PRESENCE_RANK.get(p, 9)) if presences else "away"
+
+
+def _haversine_m(a, b):
+    import math  # noqa: PLC0415
+    (lat1, lon1), (lat2, lon2) = a, b
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    d = math.sin((p2 - p1) / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(math.radians(lon2 - lon1) / 2) ** 2
+    return 2 * 6371000.0 * math.asin(math.sqrt(d))
+
+
+def fuse(best, why, presence, held, gps, ignored, home=None):
+    """(suffix -> (state, attributes)) for a person's sensors, BLE and GPS fused.
+
+    here: the thing that speaks for them (states). quiet: the place they were
+    last put, held - a person unheard for a few minutes is still in the house.
+    away: the GPS zone, or "away" with nothing usable. The location sensor
+    always carries the GPS side too (zone, coordinates, distance from home),
+    so a dashboard can show both.
+    """
+    gps_attrs = {"zone": None, "latitude": None, "longitude": None, "gps_accuracy": None, "tracker": None, "distance_m": None}
+    if gps:
+        gps_attrs.update(zone=gps.get("zone"), latitude=gps.get("latitude"), longitude=gps.get("longitude"),
+                         gps_accuracy=gps.get("accuracy"), tracker=gps.get("entity"))
+        if home and None not in home and gps.get("latitude") is not None:
+            gps_attrs["distance_m"] = round(_haversine_m(home, (gps["latitude"], gps["longitude"])))
+    common = {"presence": presence, "gps_ignored": list(ignored or [])}
+    if presence in ("here", "quiet") and (best or held):
+        out = states(best or held, why)
+        source = "ble" if best else "held"
+        for suffix, (_st, attrs) in out.items():
+            attrs["source"] = source
+            attrs["presence"] = presence
+        out["sextant_person_location"][1].update({**gps_attrs, "gps_ignored": common["gps_ignored"]})
+        return out
+    if gps:
+        zone = gps.get("zone")
+        state, source = ("away" if zone == "not_home" else zone), "gps"
+    else:
+        state, source = "away", "none"
+    blank = {"kind": "zone", "room": "unknown", "spot": None, "floor": "unknown", "area_id": None, "floor_id": None, "via": None}
+    return {
+        "sextant_person_location": (state, {**blank, "source": source, **common, **gps_attrs, "considered": why or []}),
+        "sextant_person_room": ("unknown", {"area_id": None, "via": None, "source": source, "presence": presence}),
+        "sextant_person_floor": ("unknown", {"via": None, "source": source, "presence": presence}),
+    }
+
+
+def tracker_fix(presence, gps):
+    """What the person's device_tracker reports: home on BLE's word (it is far
+    surer of "in the house" than GPS at the property line), the GPS fix once
+    BLE has lost them, not_home with nothing usable."""
+    if presence in ("here", "quiet"):
+        return {"location_name": "home", "source_type": "bluetooth_le", "source": "ble", "presence": presence}
+    if gps and gps.get("latitude") is not None:
+        return {"location_name": None, "latitude": gps["latitude"], "longitude": gps["longitude"],
+                "accuracy": gps.get("accuracy"), "source_type": "gps", "source": "gps", "presence": presence, "tracker": gps.get("entity")}
+    if gps:
+        return {"location_name": gps.get("zone"), "source_type": "gps", "source": "gps", "presence": presence, "tracker": gps.get("entity")}
+    return {"location_name": "not_home", "source_type": "gps", "source": "none", "presence": presence}

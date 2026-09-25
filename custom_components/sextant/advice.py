@@ -38,12 +38,20 @@ def _ring(zone):
     return [(float(c["x"]), float(c["y"])) for c in zone.get("cords", []) if c.get("x") is not None and c.get("y") is not None]
 
 
+def _largest(geom):
+    """The biggest polygon part: repairing a self-crossing room, or insetting
+    one with a narrow neck, yields a MultiPolygon, which has no exterior."""
+    if geom.geom_type == "MultiPolygon":
+        return max(geom.geoms, key=lambda g: g.area)
+    return geom
+
+
 def _rooms_of(floor):
     rooms = []
     for zone in floor.get("zones") or []:
         if zone.get("no_go") or len(_ring(zone)) < 3:
             continue
-        poly = Polygon(_ring(zone)).buffer(0)
+        poly = _largest(Polygon(_ring(zone)).buffer(0))
         if not poly.is_empty and poly.area > 0:
             rooms.append((str(zone.get("entity_id") or zone.get("zone_id")), poly))
     return rooms
@@ -78,11 +86,9 @@ def _coverage(grid, proxies, scale):
     d = np.hypot(grid[:, None, 0] - px[None, :, 0], grid[:, None, 1] - px[None, :, 1]) / scale
     order = np.argsort(d, axis=1)[:, :3]
     d3 = np.take_along_axis(d, order[:, 2:3], axis=1)[:, 0]
-    gaps = np.empty(len(grid))
-    for i in range(len(grid)):
-        ang = np.sort(np.degrees(np.arctan2(px[order[i], 1] - grid[i, 1], px[order[i], 0] - grid[i, 0])))
-        diffs = np.diff(np.concatenate([ang, [ang[0] + 360.0]]))
-        gaps[i] = diffs.max()
+    near = px[order]  # (points, 3, 2)
+    ang = np.sort(np.degrees(np.arctan2(near[:, :, 1] - grid[:, None, 1], near[:, :, 0] - grid[:, None, 0])), axis=1)
+    gaps = np.diff(np.concatenate([ang, ang[:, :1] + 360.0], axis=1), axis=1).max(axis=1)
     return d3, gaps
 
 
@@ -94,7 +100,7 @@ def _covered_share(grid, proxies, scale):
 
 def _wall_candidates(poly, scale):
     ring = poly.exterior
-    inner = poly.buffer(-WALL_INSET_M * scale)
+    inner = _largest(poly.buffer(-WALL_INSET_M * scale))
     out = []
     n = max(4, int(ring.length / (WALL_STEP_M * scale)))
     for i in range(n):

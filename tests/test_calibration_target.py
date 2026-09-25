@@ -80,6 +80,27 @@ def test_target_bermuda_writes_offsets_and_clears_multipliers(monkeypatch, tmp_p
     assert cal["applied"]["F"]["kitchen_rrn00_aaaa01"] == 0.5
 
 
+def test_target_bermuda_leaves_a_proxy_out_of_calibration_alone(monkeypatch, tmp_path):
+    """A proxy with calibrate: false gets no Bermuda offset, and keeps the
+    multiplier the user gave it - clearing multipliers is only right for the
+    proxies whose correction just moved into Bermuda."""
+    hass = make_hass(tmp_path)
+    lay = _layout(corrections={"kitchen_rrn00_aaaa01": 1.3, "office_rrn00_aaaa02": 0.9})
+    lay["floor"][0]["receivers"][0]["calibrate"] = False
+    run(st.save_layout(hass, lay))
+    fake = _FakeBermuda().install(monkeypatch)
+    cal = cal_mod.get_calibration_state(hass)
+    cal["results"]["F"] = _result({"kitchen_rrn00_aaaa01": 0.5, "office_rrn00_aaaa02": 2.0})
+
+    updated = run(cal_mod.apply_corrections(hass, cal, "F"))
+
+    assert updated == 1
+    assert fake.writes == [{"aa:aa:aa:aa:aa:02": round(-30 * math.log10(2.0), 1)}]
+    recs = {r["entity_id"]: r for r in st.get_layout(hass)["floor"][0]["receivers"]}
+    assert recs["kitchen_rrn00_aaaa01"]["correction"] == 1.3, "the user's own multiplier survives"
+    assert "correction" not in recs["office_rrn00_aaaa02"], "its correction moved into Bermuda"
+
+
 def test_target_bermuda_accumulates_and_ignores_tiny_residuals(monkeypatch, tmp_path):
     hass = make_hass(tmp_path)
     run(st.save_layout(hass, _layout()))

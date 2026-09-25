@@ -49,7 +49,24 @@ own timer on the [Tuning](tuning.md) page:
 
 A sighting is remembered across restarts, and a thing that went quiet
 before Sextant last started is dated from the position history, so *since*
-survives an update rather than resetting to it.
+survives an update rather than resetting to it. That holds however many
+restarts it has been quiet through: a thing's last sighting stays in the
+saved state until it is heard again.
+
+**The list floats over the map**, and the focused thing's detail opens as a
+panel in the opposite corner rather than pushing the list down - the plan
+runs the full width underneath both. Close it with the × or by clicking the
+row again. On a phone nothing floats: the list and the detail are stacked
+blocks under the map, as before.
+
+**Batteries.** A thing can name its own battery sensor (Things → the thing →
+*Battery sensor*; the list offers percentage sensors, the thing's own first).
+Its level shows in the focused thing's card, and once it drops to 20 % a
+battery badge appears in the bottom corner of its disc - amber, then red at
+10 %. It sits apart from the status badge in the top corner because both can
+be true at once, and usually are: a tag that has gone quiet because its
+battery is dying looks exactly like a thing that has left, until the battery
+says why.
 
 What you see while a thing is late or away is where it *was*; its room and
 spot sensors still say the same, because nothing has contradicted them yet.

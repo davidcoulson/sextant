@@ -13,7 +13,7 @@
  */
 import { LitElement, html, css, nothing } from "./lit.js";
 import { SextantMap, thingColor, thingHue, staleness, shortAge, heatCells } from "./sextant-map.js";
-import { sharedStyles, widgetStyles, fmtAge, fmtNum, toast, confirmDialog, ensureHaComponents, uiSelect, uiButton, callWS, sortFloors, thingName, proxyName, fmtLen, fmtSpeed, classIcon, pronounsFor } from "./sextant-ui.js";
+import { sharedStyles, widgetStyles, fmtAge, fmtNum, toast, confirmDialog, ensureHaComponents, uiSelect, uiButton, callWS, sortFloors, thingName, proxyName, fmtLen, fmtSpeed, classIcon, pronounsFor, uiIconButton, uiSegmented } from "./sextant-ui.js";
 
 // What this page is running: the version of the files it was loaded from
 // (sextant-version.js), not the one in its URL - see that file.
@@ -21,6 +21,14 @@ import { VERSION as PANEL_VERSION } from "./sextant-version.js";
 import "./sextant-devices.js";
 import "./sextant-health.js";
 import "./sextant-edit.js";
+
+// No advised spots: one array for every render, so the editor does not see a
+// new value (and repaint) each time the clock ticks.
+const NO_SPOTS = Object.freeze([]);
+
+// A failed layout fetch or subscription is not retried from updated() sooner
+// than this: hass changes several times a second. Retry still goes at once.
+const RETRY_MS = 30000;
 
 const MODES = [
   ["live", "Live", "mdi:map-marker-radius"],
@@ -55,6 +63,10 @@ function shortSpan(secs) {
   if (secs < 3600) return `${Math.max(1, Math.round(secs / 60))} min`;
   return `${(secs / 3600).toFixed(secs < 36000 ? 1 : 0)} h`;
 }
+
+// Battery badge thresholds (percent): amber at LOW, red at CRITICAL.
+const BATTERY_LOW = 20;
+const BATTERY_CRITICAL = 10;
 
 class SextantPanel extends LitElement {
   static properties = {
@@ -101,8 +113,9 @@ class SextantPanel extends LitElement {
   }
 
   updated(changed) {
-    if (changed.has("hass") && this.hass && !this._data && !this._loading) this._load();
-    if (changed.has("hass") && this.hass && !this._unsub) this._subscribe();
+    const now = Date.now();
+    if (changed.has("hass") && this.hass && !this._data && !this._loading && !(now - (this._loadFailedAt || 0) < RETRY_MS)) this._load();
+    if (changed.has("hass") && this.hass && !this._unsub && !(now - (this._subFailedAt || 0) < RETRY_MS)) this._subscribe();
   }
 
   async _load() {
@@ -114,8 +127,10 @@ class SextantPanel extends LitElement {
       const floors = data.layout?.floor || [];
       if (!this._floor || !floors.some((f) => f.name === this._floor)) this._floor = floors[0]?.name || null;
       this._error = null;
+      this._loadFailedAt = 0;
     } catch (e) {
       this._error = e?.message || String(e);
+      this._loadFailedAt = Date.now();
     } finally {
       this._loading = false;
     }
@@ -134,7 +149,7 @@ class SextantPanel extends LitElement {
       },
       { type: "sextant/subscribe" },
     );
-    this._unsub.catch((e) => { this._unsub = null; this._error = `live updates: ${e?.message || e}`; });
+    this._unsub.then(() => { this._subFailedAt = 0; }, (e) => { this._unsub = null; this._subFailedAt = Date.now(); this._error = `live updates: ${e?.message || e}`; });
   }
 
   _isAdmin() { return this.hass?.user?.is_admin !== false; }
@@ -158,7 +173,7 @@ class SextantPanel extends LitElement {
     if (this._mode === "edit" && mode !== "edit" && !this._mayLeaveEdit(`Leave the floor plan`)) return;
     this._mode = mode;
     this._openThing = mode === "things" ? thing || null : null;
-    if (mode !== "edit") this._spots = [];
+    if (mode !== "edit") this._spots = NO_SPOTS;
     try { localStorage.setItem("sextant.mode", mode); } catch { /* private mode */ }
   }
 
@@ -181,7 +196,7 @@ class SextantPanel extends LitElement {
             </button>`)}
         </nav>
         <div class="spacer"></div>
-        <div class="wide-only">${this._renderFloorAndStamp(floors)}</div>
+        <div class="wide-only floorstamp">${this._renderFloorAndStamp(floors)}</div>
         <a class="repo" href=${REPO_URL} target="_blank" rel="noopener" title="Sextant on GitHub"><ha-icon icon="mdi:github"></ha-icon></a>
       </div>
       ${this._error ? html`<div class="banner error">${this._error} <button @click=${() => this._load()}>Retry</button></div>` : nothing}
@@ -222,14 +237,32 @@ class SextantPanel extends LitElement {
   _renderFloorAndStamp(floors) {
     return html`
       ${floors.length && FLOOR_MODES.has(this._mode) ? html`
-        <label class="floor-pick">
-          <span class="sr">Floor</span>
-          <select @change=${(e) => { if (!this._mayLeaveEdit(`Switch to ${e.target.value}`)) { e.target.value = this._floor; return; } this._floor = e.target.value; }}>
-            ${sortFloors(floors).map((f) => html`<option value=${f.name} ?selected=${f.name === this._floor}>${f.name}</option>`)}
-          </select>
-        </label>` : nothing}
+        <div class="floor-tabs" role="tablist" aria-label="Floor">
+          ${sortFloors(floors, true).map((f) => {
+            const on = f.name === this._floor;
+            const n = this._mode === "live" ? this._thingsOn(f.name) : null;
+            return html`<button role="tab" class=${on ? "active" : ""} aria-selected=${on}
+              title=${n === null ? f.name : `${f.name}: ${n} thing${n === 1 ? "" : "s"} here now`}
+              @click=${() => this._pickFloor(f.name)}>${f.name}${n ? html`<span class="n">${n}</span>` : nothing}</button>`;
+          })}
+        </div>` : nothing}
       ${this._renderStamp()}
     `;
+  }
+
+  /** One click to another floor. It goes through the same unsaved-draft guard
+   * the dropdown did: in Edit a floor switch is an unsaved plan being left. */
+  _pickFloor(name) {
+    if (name === this._floor) return;
+    if (!this._mayLeaveEdit(`Switch to ${name}`)) return;
+    this._floor = name;
+  }
+
+  /** How many things are on a floor right now, for the Live tabs: where
+   * everyone is, without switching to look. */
+  _thingsOn(floorName) {
+    const rows = this._positions?.positions || [];
+    return rows.filter((r) => r.floor === floorName).length;
   }
 
   /** Seconds until the next positioning cycle, once two cycles have shown how
@@ -248,7 +281,7 @@ class SextantPanel extends LitElement {
     if (!this._data && !this._error) return html`<div class="empty">Loading…</div>`;
     switch (this._mode) {
       case "edit":
-        return html`<sextant-edit .hass=${this.hass} .data=${this._data} .floor=${this._floor} .narrow=${this.narrow} .spots=${this._spots || []}
+        return html`<sextant-edit .hass=${this.hass} .data=${this._data} .floor=${this._floor} .narrow=${this.narrow} .spots=${this._spots || NO_SPOTS}
                                   @layout-changed=${() => this._onLayoutChanged()} @floor-changed=${(e) => { this._floor = e.detail; }}></sextant-edit>`;
       case "things":
       case "bermuda":
@@ -284,8 +317,29 @@ class SextantPanel extends LitElement {
     .modes button.active { opacity: 1; border-bottom-color: currentColor; }
     .modes button:hover { opacity: 1; }
     .spacer { flex: 1; }
-    .floor-pick select { font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.4); background: rgba(255,255,255,0.12); color: inherit; }
-    .floor-pick select option { color: #111; }
+    /* Floors as one-click tabs rather than a dropdown: every floor is on
+       screen, and switching is one click instead of two. A segmented control,
+       so it reads as "which floor" and not as another page like the modes. */
+    .floorstamp { display: flex; align-items: center; gap: 10px; }
+    /* The tabs sit in the header, whose colours are the theme's: a dark bar
+     * with light text, or in a light theme a white bar with dark text. Every
+     * colour here is a tint of the header's TEXT colour, and the picked tab
+     * is that colour inverted - so it is a white pill on a dark header and a
+     * dark pill on a white one. Hard-coded white pills vanished on a white
+     * header, taking the floor you were on with them. */
+    .floor-tabs { --ink: var(--app-header-text-color, var(--primary-text-color, #212121)); --paper: var(--app-header-background-color, var(--card-background-color, #fff));
+      display: flex; gap: 2px; padding: 3px; border-radius: 9px; background: color-mix(in srgb, var(--ink) 12%, transparent); flex: none; }
+    .floor-tabs button { display: flex; align-items: center; gap: 6px; background: transparent; border: 0; color: inherit; font: inherit; font-size: 13px; padding: 5px 12px; border-radius: 7px; cursor: pointer; opacity: 0.85; white-space: nowrap; }
+    .floor-tabs button:hover { opacity: 1; background: color-mix(in srgb, var(--ink) 10%, transparent); }
+    .floor-tabs button.active { opacity: 1; font-weight: 600; background: var(--ink); color: var(--paper); }
+    .floor-tabs button:focus-visible { outline: 2px solid currentColor; outline-offset: 1px; }
+    .floor-tabs .n { font-size: 11px; font-weight: 600; min-width: 16px; padding: 0 4px; border-radius: 8px; background: color-mix(in srgb, var(--ink) 18%, transparent); text-align: center; }
+    .floor-tabs button.active .n { background: color-mix(in srgb, var(--paper) 28%, transparent); color: inherit; }
+    .bottombar .floor-tabs { background: var(--secondary-background-color, rgba(0,0,0,0.05)); }
+    .bottombar .floor-tabs button:hover { background: rgba(0,0,0,0.05); }
+    .bottombar .floor-tabs button.active { background: var(--primary-color, #03a9f4); color: var(--text-primary-color, #fff); }
+    .bottombar .floor-tabs .n { background: rgba(0,0,0,0.08); }
+    .bottombar .floor-tabs button.active .n { background: rgba(255,255,255,0.25); color: inherit; }
     .stamp { display: inline-flex; align-items: center; gap: 3px; font-variant-numeric: tabular-nums; opacity: 0.8; font-size: 12px; min-width: 40px; justify-content: flex-end; }
     .stamp ha-icon { --mdc-icon-size: 16px; }
     ha-menu-button { --mdc-icon-button-size: 40px; }
@@ -299,7 +353,6 @@ class SextantPanel extends LitElement {
     .sr { position: absolute; left: -9999px; }
     .narrow-only { display: none; }
     .bottombar { align-items: center; justify-content: flex-end; gap: 10px; padding: 6px 10px; background: var(--card-background-color); border-top: 1px solid var(--divider-color); flex: none; padding-bottom: max(6px, env(safe-area-inset-bottom)); }
-    .bottombar .floor-pick select { padding: 6px 8px; }
     .bottombar .stamp { color: var(--secondary-text-color); }
     @media (max-width: 960px) { .mode-label { display: none; } .modes button { padding: 0 8px; } }
     /* Below 720px the topbar has only the brand mark, the mode tabs and the
@@ -428,7 +481,9 @@ class SextantLive extends LitElement {
       if (this._selected !== ent) return;   // selection moved on while this was in flight
       this._timeline = { ent, at: Date.now(), ...r };
     } catch (_e) {
-      this._timeline = null;   // older backend: the card just leaves the timeline out
+      // Older backend: the card just leaves the timeline out. Marked failed
+      // rather than cleared so the once-a-minute throttle holds off retries.
+      if (this._selected === ent) this._timeline = { ent, at: Date.now(), failed: true };
     }
   }
 
@@ -498,7 +553,7 @@ class SextantLive extends LitElement {
     const here = h?.byFloor[this.floor];
     const elsewhere = h ? Object.entries(h.byFloor).filter(([f]) => f !== this.floor).map(([f, v]) => `${f} ${shortSpan(v.total)}`) : [];
     return html`<div class="row heat">
-      ${uiSelect({ label: "Activity", value: String(this._heatHours || 0), options: [["0", "Off"], ["1", "Last hour"], ["6", "Last 6 hours"], ["24", "Last 24 hours"], ["168", "Last week"]].map(([value, label]) => ({ value, label })), onChange: (v) => this._loadHeat(sel.ent, Number(v)), style: "width: 170px" })}
+      ${uiSegmented({ label: "Location heatmap", value: this._heatHours || 0, options: [{ value: 0, label: "Off" }, { value: 6, label: "6h", title: "Where it has been in the last 6 hours" }, { value: 24, label: "24h", title: "The last 24 hours" }, { value: 168, label: "7d", title: "The last 7 days" }], onChange: (v) => this._loadHeat(sel.ent, Number(v)) })}
       ${h ? html`<span class="muted small">${here ? html`${shortSpan(here.total)} on this floor, longest ${shortSpan(here.max)} in one place (red)` : "Not on this floor"}${elsewhere.length ? html` · ${elsewhere.join(", ")}` : nothing}${h.keptSecs && h.hours * 3600 > h.keptSecs + 60 ? html` · history only goes back ${shortSpan(h.keptSecs)}` : nothing}</span>` : nothing}
     </div>`;
   }
@@ -624,7 +679,9 @@ class SextantLive extends LitElement {
     if (!rx?.entity_id) return;
     this._proxy = { slug: rx.entity_id, loading: true };
     try {
-      const info = await callWS(this, this.hass, { type: "sextant/proxy/info", proxy: rx.entity_id });
+      // Straight to hass: the helper turns a failure into null, which would
+      // read as a proxy that publishes nothing rather than as an error.
+      const info = await this.hass.callWS({ type: "sextant/proxy/info", proxy: rx.entity_id });
       if (this._proxy?.slug === rx.entity_id) this._proxy = { ...info, slug: rx.entity_id };
     } catch (e) {
       this._proxy = { slug: rx.entity_id, error: e?.message || String(e) };
@@ -824,9 +881,13 @@ class SextantLive extends LitElement {
                 const badge = st.away ? html`<ha-icon class="viabadge ghostbadge" icon="mdi:ghost-outline"></ha-icon>`
                   : st.ghost ? html`<ha-icon class="viabadge waitbadge" icon="mdi:timer-sand"></ha-icon>`
                   : who ? html`<ha-icon class="viabadge" icon="mdi:map-marker"></ha-icon>` : nothing;
-                if (badge === nothing) return this._avatar(p.ent);
-                const why = st.away ? lastSeen : st.ghost ? `Last heard ${fmtAge(st.age)} ago` : `Where ${who} is read from right now`;
-                return html`<span class="avslot" title=${why}>${this._avatar(p.ent)}${badge}</span>`;
+                // A low battery gets its own corner: it is a separate question
+                // from the status above, and both can be true at once - a tag
+                // going quiet BECAUSE its battery is dying is the whole point.
+                const battery = this._batteryBadge(p.ent);
+                if (badge === nothing && battery === nothing) return this._avatar(p.ent);
+                const why = badge === nothing ? "" : st.away ? lastSeen : st.ghost ? `Last heard ${fmtAge(st.age)} ago` : `Where ${who} is read from right now`;
+                return html`<span class="avslot" title=${why}>${this._avatar(p.ent)}${badge}${battery}</span>`;
               })()}
               <span class="name">${this._label(p.ent)}</span>
               <span class="where">${p.zone ? html`${this._roomIcon(p.floor, p.zone) ? html`<ha-icon class="roomicon" icon=${this._roomIcon(p.floor, p.zone)}></ha-icon>` : nothing}${p.zone}` : html`<span class="muted">away</span>`}</span>
@@ -920,11 +981,28 @@ class SextantLive extends LitElement {
     ];
     // The map's own switches, as the pressed buttons the Edit tools and a
     // thing's quick actions use: an icon with its word under it.
-    const optBtn = ([k, label, tip, icon]) => html`<button class="qa opt ${this._options[k] ? "on" : ""}" title=${tip}
+    const optBtn = ([k, label, tip, icon]) => html`<button class="qa opt ${this._options[k] ? "on" : ""}" title=${`${label}: ${tip}`}
       aria-label=${label} aria-pressed=${!!this._options[k]} @click=${() => this._setOption(k, !this._options[k])}>
       <ha-icon icon=${icon}></ha-icon><span>${label}</span></button>`;
     const gridPicker = uiSelect({ label: "Grid", value: this._options.grid, options: [{ value: "off", label: "No grid" }, { value: "m", label: "Metres" }, { value: "ft", label: "Feet" }], onChange: (v) => this._setOption("grid", v), style: "min-width: 120px" });
-    const fitButton = uiButton({ label: "Fit map", kind: "text", icon: "mdi:fit-to-screen", onClick: () => this._map.fit() });
+    // The grid as one button that steps No grid -> Metres -> Feet, so it sits in
+    // the icon toolbar with everything else instead of a dropdown in the middle
+    // of it. The narrow sheet keeps the dropdown, where there is room for words.
+    const GRID = [["off", "No grid"], ["m", "Metres"], ["ft", "Feet"]];
+    const gi = Math.max(0, GRID.findIndex(([v]) => v === this._options.grid));
+    const [, gridName] = GRID[gi];
+    const [nextGrid, nextName] = GRID[(gi + 1) % GRID.length];
+    const gridBtn = html`<button class="qa opt ${this._options.grid && this._options.grid !== "off" ? "on" : ""}"
+      title=${`Grid: ${gridName}. Click for ${nextName}`} aria-label=${`Grid: ${gridName}`}
+      @click=${() => this._setOption("grid", nextGrid)}>
+      <ha-icon icon=${this._options.grid && this._options.grid !== "off" ? "mdi:grid" : "mdi:grid-off"}></ha-icon>${this._options.grid && this._options.grid !== "off" ? html`<b class="unit">${this._options.grid}</b>` : nothing}</button>`;
+    // Fit, in and out, as their own small cluster in the bottom corner - out of
+    // the way of the switches, and where every map puts them.
+    const zoom = html`<div class="zoom ${this._history ? "lifted" : ""}" role="group" aria-label="Zoom">
+      <button title="Fit the whole floor into view" aria-label="Fit the whole floor" @click=${() => this._map.fit()}><ha-icon icon="mdi:fit-to-screen-outline"></ha-icon></button>
+      <button title="Zoom in" aria-label="Zoom in" @click=${() => this._map.zoomBy(1.3)}><ha-icon icon="mdi:plus"></ha-icon></button>
+      <button title="Zoom out" aria-label="Zoom out" @click=${() => this._map.zoomBy(1 / 1.3)}><ha-icon icon="mdi:minus"></ha-icon></button>
+    </div>`;
     return html`
       <div class="quick-actions">
         ${uiButton({ label: "Self-test", kind: "outline", icon: "mdi:clipboard-check-outline", onClick: () => this._goto("proxies") })}
@@ -933,14 +1011,14 @@ class SextantLive extends LitElement {
           ${uiButton({ label: "Calibrate", kind: "outline", icon: "mdi:tune-vertical", onClick: () => this._goto("calibration") })}` : nothing}
       </div>
       <div class="stage ${this._mapOpen ? "" : "collapsed"}"><canvas></canvas>${this._renderProxyCard()}
-        <div class="overlay">
+        <div class="overlay" role="toolbar" aria-label="Map">
           <div class="chips wide-only">${switches.map(optBtn)}</div>
-          <span class="wide-only">${gridPicker}</span>
-          <span class="wide-only">${fitButton}</span>
-          <button class="iconbtn narrow-only" title="Map options" @click=${() => { this._optionsOpen = !this._optionsOpen; }}><ha-icon icon="mdi:tune-variant"></ha-icon></button>
-          <span class="narrow-only">${fitButton}</span>
+          <span class="sep wide-only"></span>
+          <span class="wide-only">${gridBtn}</span>
+          <button class="iconbtn narrow-only" title="Map options" aria-label="Map options" @click=${() => { this._optionsOpen = !this._optionsOpen; }}><ha-icon icon="mdi:tune-variant"></ha-icon></button>
           <button class="iconbtn narrow-only" title="Hide the map" aria-label="Hide the map" @click=${() => { this._mapOpen = false; }}><ha-icon icon="mdi:map-minus"></ha-icon></button>
         </div>
+        ${zoom}
         ${this._optionsOpen ? html`
           <div class="opts-backdrop narrow-only" @click=${() => { this._optionsOpen = false; }}></div>
           <div class="opts-sheet narrow-only">
@@ -971,20 +1049,36 @@ class SextantLive extends LitElement {
           ${this._renderGroupedRows(rows)}
           ${rows.length ? nothing : html`<li class="muted">No positions yet.</li>`}
         </ul>
+      </aside>
         ${sel ? html`
-          <div class="card detail">
-            <h4>${this._label(sel.ent)} <span class="muted small">click the row again to unfocus</span></h4>
+          <div class="card detail ${this._history ? "lifted" : ""}">
+            <h4>${this._label(sel.ent)}<span class="grow"></span>
+              <span class="iconbar">
+                ${/* Three states in the first slot. Away: nothing is here to
+                      correct and it may never be, so Forget. Quiet (not heard
+                      for a while, but not gone): there is nothing recent to
+                      re-solve, so the slot shows why, greyed. Live: "here". */ ""}
+                ${this._state(sel).away
+                  ? uiIconButton({ icon: "mdi:delete-outline", title: `Forget ${this._label(sel.ent)}: remove ${this._pn(sel.ent).poss} last sighting, history and - if nothing tracks ${this._pn(sel.ent).obj} any more - settings`, onClick: () => this._forget(sel.ent) })
+                  : this._state(sel).ghost
+                    ? uiIconButton({ icon: "mdi:timer-sand", disabled: true, title: `Not heard for ${fmtAge(this._state(sel).age)}: nothing recent to correct. "${this._label(sel.ent)} is actually here…" comes back once ${this._pn(sel.ent).subj} ${this._pn(sel.ent).is} heard again`, onClick: () => {} })
+                    : uiIconButton({ icon: "mdi:map-marker-check", active: this._marking, title: this._marking ? `Marking where ${this._label(sel.ent)} really is - tap the plan` : `${this._label(sel.ent)} is actually here… Tell Sextant where ${this._pn(sel.ent).subj} really ${this._pn(sel.ent).is}; the last few minutes are re-solved under every setting to show which fits best`, onClick: () => { this._marking = !this._marking; } })}
+                ${this._isAdmin() ? uiIconButton({ icon: "mdi:pencil-outline", title: `Edit ${this._label(sel.ent)}: name, class, icon, owner`, onClick: () => this._goto({ mode: "things", thing: sel.ent }) }) : nothing}
+                ${uiIconButton({ icon: "mdi:history", title: `Scrub history: replay where ${this._label(sel.ent)} has been on the plan`, disabled: h?.ent === sel.ent, onClick: () => this._loadHistory(sel.ent) })}
+                <button class="iconbtn" title="Close" aria-label="Close" @click=${() => this._select(null)}><ha-icon icon="mdi:close"></ha-icon></button>
+              </span></h4>
             <dl>
               <dt>Room</dt><dd>${sel.zone} ${sel.zone_locked ? html`<ha-icon icon="mdi:lock" title="stationary lock: still for a while, so the room holds"></ha-icon>` : nothing}</dd>
               <dt>Spot</dt><dd>${sel.sub_zone && sel.sub_zone !== "unknown" ? sel.sub_zone : "—"}</dd>
               <dt>Floor</dt><dd>${sel.floor}</dd>
               <dt>Proxies</dt><dd>${sel.radii?.length ?? 0} in the solve${sel.anchor ? html`<br><span class="pill ok" title=${`one proxy reads ${this._label(sel.ent)} within arm's reach and no other comes close: placed on that proxy`}>anchored to ${proxyName(this.data, sel.anchor)}</span>` : nothing}</dd>
               ${this._renderHere(sel)}
-              <dt>Updated</dt><dd>${fmtAge(Date.now() / 1000 - sel.updated)} ago${staleness(sel, this._staleAfter()).ghost ? html` <span class="pill warn" title=${`Nothing has heard ${this._label(sel.ent)} since; this is where ${this._pn(sel.ent).subj} ${this._pn(sel.ent).was} last placed`}>not heard</span>` : nothing}</dd>
+              ${this._battery(sel.ent) === null ? nothing : html`<dt>Battery</dt><dd class=${this._battery(sel.ent) <= BATTERY_CRITICAL ? "crit" : this._battery(sel.ent) <= BATTERY_LOW ? "warn" : ""}>${Math.round(this._battery(sel.ent))}%</dd>`}
+              <dt>Updated</dt><dd>${typeof sel.updated === "number" && sel.updated > 0 ? html`${fmtAge(Date.now() / 1000 - sel.updated)} ago` : html`<span class="muted">not heard since the last restart</span>`}${staleness(sel, this._staleAfter()).ghost ? html` <span class="pill warn" title=${`Nothing has heard ${this._label(sel.ent)} since; this is where ${this._pn(sel.ent).subj} ${this._pn(sel.ent).was} last placed`}>not heard</span>` : nothing}</dd>
             </dl>
             ${this._renderTimeline(sel)}
             <details class="telemetry">
-              <summary>Details <span class="muted small">how sure Sextant is, and why</span></summary>
+              <summary>Confidence <span class="muted small">how sure Sextant is, and why</span></summary>
               <dl>
                 <dt>Floor odds</dt><dd>${sel.floors ? Object.entries(sel.floors).sort((a, b) => b[1] - a[1]).map(([f, p]) => `${f} ${(p * 100).toFixed(0)}%`).join(" · ") : "—"}</dd>
                 <dt>Spot shares</dt><dd>${sel.sub_zones ? Object.entries(sel.sub_zones).sort((a, b) => b[1] - a[1]).map(([s, p]) => `${s === "unknown" ? "none" : s} ${(p * 100).toFixed(0)}%`).join(" · ") : "—"}</dd>
@@ -997,20 +1091,15 @@ class SextantLive extends LitElement {
             ${this._renderHeat(sel)}
             ${this._renderBlend(sel)}
             ${this._renderTruth(sel)}
-            <div class="row">
-              ${this._isAdmin() ? uiButton({ label: "Edit", icon: "mdi:pencil-outline", onClick: () => this._goto({ mode: "things", thing: sel.ent }) }) : nothing}
-              ${uiButton({ label: "Scrub history", icon: "mdi:history", disabled: h?.ent === sel.ent, onClick: () => this._loadHistory(sel.ent) })}
-            </div>
             ${this._renderLinks(sel.ent)}
           </div>` : nothing}
-      </aside>
     `;
   }
 
   /** The stays from the timeline, with the current one reaching to now while it is still heard. */
   _stays(sel) {
     const tl = this._timeline;
-    if (!tl || tl.ent !== sel.ent) return null;
+    if (!tl || tl.failed || tl.ent !== sel.ent) return null;
     const stays = (tl.stays || []).map((s) => ({ ...s }));
     const last = stays[stays.length - 1];
     const heard = !staleness(sel, this._staleAfter()).ghost;
@@ -1018,8 +1107,32 @@ class SextantLive extends LitElement {
     return stays;
   }
 
+  /** The thing's battery level (0-100), or null when it has no battery sensor
+   * or the sensor has nothing to say. */
+  _battery(ent) {
+    const id = this.data?.layout?.thing_battery_entity?.[ent];
+    const v = id ? parseFloat(this.hass?.states?.[id]?.state) : NaN;
+    return Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : null;
+  }
+
+  /** A badge only once the battery is low: a full one would put a badge on
+   * every pet and say nothing. Amber from BATTERY_LOW, red from BATTERY_CRITICAL. */
+  _batteryBadge(ent) {
+    const level = this._battery(ent);
+    if (level === null || level > BATTERY_LOW) return nothing;
+    const crit = level <= BATTERY_CRITICAL;
+    return html`<ha-icon class="batterybadge ${crit ? "crit" : ""}" icon=${crit ? "mdi:battery-alert-variant-outline" : "mdi:battery-low"}
+      title=${`Battery ${Math.round(level)}%${crit ? " - replace it soon; a dead tag reads exactly like one that has left" : ""}`}></ha-icon>`;
+  }
+
   /** "Meg's Cafe for 1h 12m · in Catwalk for 3h" - how long it has been where it is. */
   _renderHere(sel) {
+    // A thing nothing is hearing is not "here" anywhere, and certainly has not
+    // "just arrived": say where it was last heard, if that is known at all.
+    if (sel.away) {
+      const where = (sel.sub_zone && sel.sub_zone !== "unknown" ? sel.sub_zone : null) || sel.zone;
+      return where ? html`<dt>Last heard</dt><dd>${where}${sel.floor ? html` <span class="muted small">${sel.floor}</span>` : nothing}</dd>` : nothing;
+    }
     const stays = this._stays(sel);
     if (!stays) return nothing;
     const spot = sel.sub_zone && sel.sub_zone !== "unknown" ? sel.sub_zone : null;
@@ -1086,13 +1199,28 @@ class SextantLive extends LitElement {
     </div>`;
   }
 
+  /** Forget a ghost. The server decides how much goes: a thing Bermuda no
+   * longer tracks (a phone after an IRK swap, a Tile after its ID rotated)
+   * loses its sighting, history and settings and is gone for good; one that
+   * is merely away loses the sighting and history and comes back, settings
+   * intact, the next time it is heard. */
+  async _forget(ent) {
+    const name = this._label(ent), pn = this._pn(ent);
+    if (!confirmDialog(`Forget ${name}?\n\nRemoves where ${pn.subj} ${pn.was} last seen and ${pn.poss} history. If nothing tracks ${pn.obj} any more, ${pn.poss} name, class and other settings go too and ${pn.subj} ${pn.is} gone for good; if ${pn.subj} ${pn.is} only away, ${pn.subj} ${pn.is} back - settings kept - the next time ${pn.subj} ${pn.is} heard.`)) return;
+    const r = await callWS(this, this.hass, { type: "sextant/thing/forget", entity: ent });
+    if (!r) return;
+    toast(this, r.tracked ? `${name}: last sighting and history forgotten; ${pn.subj} will be back when heard` : `${name} forgotten${r.settings_dropped?.length ? " - settings removed too" : ""}`, 6000);
+    this._select(null);
+    this.dispatchEvent(new CustomEvent("layout-changed"));
+  }
+
   _renderTruth(sel) {
     const ent = sel.ent;
     const t = this._truth && this._truth.mark?.entity === ent ? this._truth : null;
     const rows = (t?.rows || []).slice(0, 6);
     return html`<div class="truth">
       ${this._marking ? nothing
-        : html`<div class="row">${uiButton({ label: `${this._label(ent)} is actually here…`, icon: "mdi:map-marker-check", onClick: () => { this._marking = true; }, title: `Tell Sextant where ${this._label(ent)} really is; Sextant re-solves the last few minutes under every setting and shows which fits best` })}
+        : html`<div class="row">
             ${this._marks.length ? html`<span class="muted small">${this._marks.length} pin${this._marks.length === 1 ? "" : "s"}</span>` : nothing}</div>`}
       ${t ? html`<div class="card inner">
         <h4>Mark ${t.mark.id} <span class="muted small">${t.mark.samples} cycles re-solved · now ${Math.round((t.current_weight ?? 0) * 100)}% fingerprint</span></h4>
@@ -1122,7 +1250,7 @@ class SextantLive extends LitElement {
     const everything = row.receivers || [];
     const recs = everything.filter((r) => placedSlugs.has(r.scanner) || placedAddr.has(String(addrOf(r.scanner) || "").toLowerCase()));
     const dropped = everything.length - recs.length;
-    return html`<details open class="links">
+    return html`<details class="links">
       <summary>Heard by ${recs.length} placed ${recs.length === 1 ? "proxy" : "proxies"}${dropped ? html` <span class="muted small">(+${dropped} unplaced and ignored)</span>` : nothing}</summary>
       <table class="small"><tr><th>Proxy</th><th class="num">Distance</th></tr>
         ${recs.slice(0, 16).map((r) => html`<tr><td>${proxyName(this.data, r.scanner)}</td><td class="num">${fmtLen(r.distance, this.hass)}</td></tr>`)}
@@ -1132,20 +1260,43 @@ class SextantLive extends LitElement {
   }
 
   static styles = [sharedStyles, widgetStyles, css`
-    :host { display: grid; grid-template-columns: 1fr 300px; min-height: 0; }
+    /* The list floats over the map rather than taking a column from it: the
+       plan runs the full width, and what is on it is read on top. The focused
+       thing's detail floats in the opposite corner, out of the toolbar's way.
+       Under 720px both go back to being stacked blocks (see the end). */
+    :host { display: grid; grid-template-columns: 1fr; min-height: 0; position: relative; }
     .quick-actions { display: none; }
     .narrow-only { display: none; }
     .stage { position: relative; min-width: 0; }
     canvas { width: 100%; height: 100%; display: block; --sextant-map-bg: var(--card-background-color, #fff); }
-    .overlay { position: absolute; left: 10px; top: 10px; display: flex; flex-wrap: wrap; gap: 8px 12px; padding: 6px 10px; border-radius: 8px; background: var(--card-background-color); box-shadow: var(--ha-card-box-shadow, 0 1px 4px rgba(0,0,0,0.2)); font-size: 12px; align-items: center; max-width: calc(100% - 20px); }
+    /* The map's toolbar: one compact floating panel of icon-only buttons, the
+       active ones filled. The names are in each button's tooltip and aria
+       label; the narrow sheet below keeps its labelled buttons. */
+    .overlay { position: absolute; left: 10px; top: 10px; display: flex; flex-wrap: wrap; gap: 2px; padding: 4px; border-radius: 12px; background: var(--card-background-color); box-shadow: var(--ha-card-box-shadow, 0 2px 6px rgba(0,0,0,0.25)); font-size: 12px; align-items: center; max-width: calc(100% - 20px); z-index: 2; }
+    .overlay .chips { display: flex; flex-wrap: wrap; gap: 2px; }
+    .overlay .qa.opt { flex-direction: row; min-width: 0; width: 34px; height: 34px; padding: 0; gap: 0; justify-content: center; border: 0; border-radius: 8px; background: transparent; position: relative; }
+    .overlay .qa.opt > span { display: none; }
+    .overlay .qa.opt:hover { background: var(--secondary-background-color, rgba(0,0,0,0.06)); filter: none; }
+    .overlay .qa.opt.on { background: var(--primary-color, #03a9f4); color: var(--text-primary-color, #fff); }
+    .overlay .qa.opt .unit { position: absolute; right: 2px; bottom: 1px; font-size: 8px; line-height: 1; }
+    .overlay .sep { width: 1px; align-self: stretch; margin: 4px 3px; background: var(--divider-color, rgba(0,0,0,0.12)); }
+    .zoom { position: absolute; right: 10px; bottom: 10px; display: flex; gap: 2px; padding: 4px; border-radius: 12px; background: var(--card-background-color); box-shadow: var(--ha-card-box-shadow, 0 2px 6px rgba(0,0,0,0.25)); z-index: 2; }
+    .zoom.lifted { bottom: 62px; }
+    .zoom button { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--primary-text-color); cursor: pointer; }
+    .zoom button:hover { background: var(--secondary-background-color, rgba(0,0,0,0.06)); }
+    .zoom button:focus-visible, .overlay .qa.opt:focus-visible { outline: 2px solid var(--primary-color, #03a9f4); outline-offset: 1px; }
+    .zoom ha-icon { --mdc-icon-size: 20px; }
     .overlay ha-formfield { --mdc-typography-body2-font-size: 12px; }
     .chipwrap { display: inline-flex; }
     .chipwrap > ha-formfield, .chipwrap > label.inline { border: 1px solid var(--divider-color); border-radius: 999px; padding: 0 12px 0 2px; }
     .chipwrap > label.inline { padding: 4px 12px 4px 8px; }
     .links table { margin-top: 6px; }
-    .scrub { position: absolute; left: 10px; right: 10px; bottom: 10px; display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 8px; background: var(--card-background-color); box-shadow: var(--ha-card-box-shadow, 0 1px 4px rgba(0,0,0,0.2)); font-size: 12px; font-variant-numeric: tabular-nums; }
+    .scrub { position: absolute; left: 10px; right: 320px; bottom: 10px; display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 8px; background: var(--card-background-color); box-shadow: var(--ha-card-box-shadow, 0 1px 4px rgba(0,0,0,0.2)); font-size: 12px; font-variant-numeric: tabular-nums; }
     .scrub input { flex: 1; }
-    .side { border-left: 1px solid var(--divider-color); overflow: auto; padding: 12px; }
+    .side { position: absolute; right: 10px; top: 10px; bottom: 10px; width: 300px; z-index: 3; overflow: auto; padding: 10px 12px; border-radius: 12px; background: var(--card-background-color); box-shadow: var(--ha-card-box-shadow, 0 2px 8px rgba(0,0,0,0.3)); }
+    .detail { position: absolute; left: 10px; bottom: 10px; width: 340px; max-width: calc(100% - 340px); max-height: min(62%, calc(100% - 86px)); overflow: auto; z-index: 3; margin: 0; }
+    .detail.lifted { bottom: 62px; max-height: min(62%, calc(100% - 138px)); }
+    .detail h4 { display: flex; align-items: center; gap: 6px; }
     .list { list-style: none; margin: 0 0 12px; padding: 0; }
     .list li { display: grid; grid-template-columns: 30px 1fr auto; grid-template-rows: auto auto; column-gap: 10px; align-items: center; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
     .avatar { grid-row: 1 / 3; width: 30px; height: 30px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,0.15); display: flex; align-items: center; justify-content: center; overflow: hidden; color: #fff; }
@@ -1159,6 +1310,10 @@ class SextantLive extends LitElement {
     .list .avslot { grid-row: 1 / 3; position: relative; display: inline-flex; }
     .list .avslot .viabadge.waitbadge { background: var(--warning-color, #e6a100); color: #23272e; }
     .list .avslot .viabadge.ghostbadge { background: var(--secondary-background-color, #666); color: var(--secondary-text-color); }
+    .list .avslot .batterybadge { position: absolute; right: -3px; bottom: -3px; --mdc-icon-size: 12px; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--warning-color, #e6a100); color: #23272e; box-shadow: 0 0 0 2px var(--card-background-color, #fff); }
+    .list .avslot .batterybadge.crit { background: var(--error-color, #db4437); color: #fff; }
+    dd.warn { color: var(--warning-color, #e6a100); font-weight: 600; }
+    dd.crit { color: var(--error-color, #db4437); font-weight: 600; }
     .list .avslot .viabadge { position: absolute; right: -3px; top: -3px; --mdc-icon-size: 13px; width: 17px; height: 17px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--primary-color, #03a9f4); color: var(--text-primary-color, #fff); box-shadow: 0 0 0 2px var(--card-background-color, #fff); }
     /* A flex row so the icon centres on the text instead of sitting on its baseline. */
     .list .where { grid-column: 3; display: flex; align-items: center; justify-content: flex-end; gap: 4px; text-align: right; font-size: 12px; }
@@ -1265,7 +1420,9 @@ class SextantLive extends LitElement {
          below it, above the selected thing's own detail card. */
       :host { display: flex; flex-direction: column; }
       .quick-actions { order: 0; display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px; background: var(--card-background-color); border-bottom: 1px solid var(--divider-color); }
-      .side { order: 1; flex: 1 1 auto; min-height: 0; overflow: auto; border-left: 0; border-top: 1px solid var(--divider-color); max-height: none; }
+      .side { position: static; order: 1; flex: 1 1 auto; width: auto; min-height: 0; overflow: auto; border-left: 0; border-top: 1px solid var(--divider-color); max-height: none; border-radius: 0; box-shadow: none; padding: 12px; }
+      .detail, .detail.lifted { position: static; order: 3; width: auto; max-width: none; max-height: none; margin: 0 10px 10px; }
+      .scrub { right: 10px; }
       /* Things, and with it Hide map, stays reachable however far the list
          is scrolled - it used to scroll away and leave no way to close a map
          taking half the screen. */

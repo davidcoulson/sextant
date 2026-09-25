@@ -25,6 +25,9 @@ lookup:
 | `room` | always the room, whether the state is the spot or the room |
 | `spot` | the spot, or `None` |
 | `floor` | the elected floor |
+| `area_id`, `floor_id` | the linked Home Assistant area and floor, or `None` where unlinked |
+| `presence` | `here` (heard within `stale_after_secs`, 2 min), `quiet` (until `away_after_secs`, 15 min), `away` — on every one of the five sensors |
+| `last_heard` | when the thing was last heard, ISO 8601 UTC; not recorded, since it moves every cycle |
 
 When the state is a spot, `room` is the room that spot belongs to rather
 than the separately elected room. The two disagree for a cycle or so while
@@ -38,6 +41,41 @@ period (`position_timeout`, five minutes by default) so a brief gap does
 not blink someone out of a room; after it the thing leaves the map and
 all three read `unknown`. `sensor.sextant_position_accuracy` is the global
 self-test result.
+
+## People
+
+Give things an owner on the Things page and each person gets three sensors
+of the same shape — `sensor.<person>_sextant_person_location`, `_room` and
+`_floor` — placed by whichever of their things speaks for them (`via`), and a
+`device_tracker.<person>_sextant`.
+
+While Sextant hears any of the person's things they are placed by BLE
+(`source: ble`). Not heard for a couple of minutes, the last place they were
+put stands (`source: held`): they have not left the house. Once Sextant has
+lost them (`presence: away`) the first GPS tracker in their list that is
+neither broken nor stale gives the zone (`source: gps`), or the state is
+`away` with nothing usable (`source: none`). The list is set per person on
+the Things page (People card) and lives in the layout as `person_trackers`;
+a tracker that is unknown, unavailable, or has not reported within
+`gps_stale_secs` (two hours by default) is passed over, and `gps_ignored`
+names the ones that were and why.
+
+| Attribute (location sensor) | Value |
+|---|---|
+| `source` | `ble`, `held`, `gps` or `none` |
+| `presence` | as for things: the most present of the person's things |
+| `via`, `considered` | the thing that placed them, and every thing that was in the running |
+| `zone`, `latitude`, `longitude`, `gps_accuracy`, `tracker` | the GPS side, carried whichever source is speaking |
+| `distance_m` | from Home Assistant's home location, when there are coordinates |
+| `gps_ignored` | `[{entity, reason}, …]` |
+
+`device_tracker.<person>_sextant` says the same in Home Assistant's own
+currency: `home` while presence is `here` or `quiet` (source type
+`bluetooth_le`), the GPS fix once it is `away` (source type `gps`, so the
+state is the zone), `not_home` with nothing usable. Add it to the person
+entity, the map card, or a zone automation.
+
+[Recipes](recipes.md) has automations and cards built on all of this.
 
 ## Map card
 
@@ -82,7 +120,9 @@ file in `config/sextant_maps/`) overrides the floor's plan.
   `history/get`, `history/clear`, `kpi`, `kpi/baselines`,
   `kpi/baseline/save`, `kpi/baseline/delete`, `tuning/set`,
   `thing/tune`, `selftest`, `truth/mark`, `truth/list`,
-  `truth/delete`, `truth/evaluate`, `truth/apply`, and under `bermuda/`: `candidates`,
+  `truth/delete`, `truth/evaluate`, `truth/apply`, `proxy/info`, `advice`,
+  `snapshots/list`, `snapshots/restore`, `thing/forget`,
+  `person/trackers/set`, and under `bermuda/`: `candidates`,
   `tracked`, `track`, `scanners`, `scanner_ranging`, `options`,
   `options/set`, `findmy`, `findmy/add`, `findmy/remove`, `tiles`,
   `tile_identities`, `tile/bind`, `tile/adopt`. All are prefixed

@@ -366,6 +366,24 @@ def test_layout_save_keeps_what_the_server_owns(tmp_path):
     assert "correction" not in recs["new"]
 
 
+def test_a_proxy_out_of_calibration_owns_its_correction_through_a_save(tmp_path):
+    """The server owns corrections so a stale editor cannot undo calibration -
+    but a proxy switched out of calibration is the exception, or its number
+    could be looked at and never changed. The laundry tablet, 2026-09-22."""
+    current = {"floor": [{"name": "F", "scale": 100.0, "zones": [], "subzones": [],
+                          "receivers": [{"entity_id": "tablet", "cords": {"x": 0, "y": 0}, "correction": 5.0},
+                                        {"entity_id": "r0", "cords": {"x": 1, "y": 1}, "correction": 0.9}]}]}
+    hass = _hass_with_layout(tmp_path, current)
+    editor = {"floor": [{"name": "F", "scale": 100.0, "zones": [], "subzones": [],
+                         "receivers": [{"entity_id": "tablet", "cords": {"x": 0, "y": 0}, "correction": 1.0, "calibrate": False},
+                                       {"entity_id": "r0", "cords": {"x": 1, "y": 1}, "correction": 0.5}]}]}
+    conn = _Conn()
+    run(ws.ws_layout_save(hass, conn, {"id": 9, "type": "sextant/layout/save", "layout": editor}))
+    recs = {r["entity_id"]: r for r in st.get_layout(hass)["floor"][0]["receivers"]}
+    assert recs["tablet"]["correction"] == 1.0 and recs["tablet"]["calibrate"] is False
+    assert recs["r0"]["correction"] == 0.9      # everything else still the server's
+
+
 def test_layout_save_on_a_fresh_install_takes_the_editor_layout_whole(tmp_path):
     hass = _hass_with_layout(tmp_path)
     conn = _Conn()
@@ -598,6 +616,22 @@ def test_thing_tune_sets_and_clears_an_on_charger_sensor(tmp_path):
     assert conn.errors and st.get_layout(hass)["thing_charging_entity"] == {"watch": "sensor.david_apple_watch_battery_status"}
     run(ws.ws_thing_tune(hass, conn, {"id": 3, "type": "sextant/thing/tune", "entity": "watch", "charging_entity": None}))
     assert st.get_layout(hass)["thing_charging_entity"] == {}
+
+
+def test_thing_tune_sets_and_clears_a_battery_sensor(tmp_path):
+    """Socks's tag sat at 1% and nothing on the Live page said so: he just
+    went quiet, which reads exactly like a cat that has left the house."""
+    hass = _hass_with_layout(tmp_path, _layout())
+    conn = _Conn()
+    run(ws.ws_thing_tune(hass, conn, {"id": 1, "type": "sextant/thing/tune", "entity": "socks",
+                                        "battery_entity": "sensor.great_room_holy_iot_sensors_socks_battery"}))
+    assert st.get_layout(hass)["thing_battery_entity"] == {"socks": "sensor.great_room_holy_iot_sensors_socks_battery"}
+    # A battery LEVEL is a sensor; anything else is refused and nothing changes.
+    run(ws.ws_thing_tune(hass, conn, {"id": 2, "type": "sextant/thing/tune", "entity": "socks",
+                                        "battery_entity": "binary_sensor.socks_low"}))
+    assert conn.errors and st.get_layout(hass)["thing_battery_entity"] == {"socks": "sensor.great_room_holy_iot_sensors_socks_battery"}
+    run(ws.ws_thing_tune(hass, conn, {"id": 3, "type": "sextant/thing/tune", "entity": "socks", "battery_entity": None}))
+    assert st.get_layout(hass)["thing_battery_entity"] == {}
 
 
 def test_history_can_be_kept_to_admins(tmp_path):

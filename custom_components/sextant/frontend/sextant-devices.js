@@ -260,6 +260,19 @@ class SextantDevices extends LitElement {
     return ids.sort();
   }
 
+  /** Percentage battery sensors to offer for "Battery sensor"; the current choice always included.
+   * Ranked by name so a thing's own sensor comes first: a pet's Holy-IoT tag is
+   * sensor.great_room_holy_iot_sensors_<pet>_battery. */
+  _levelSensors(current, slug) {
+    const states = this.hass?.states || {};
+    const ids = Object.keys(states).filter((e) => e.startsWith("sensor.")
+      && (states[e]?.attributes?.device_class === "battery" || /_battery(_level)?$/.test(e))
+      && states[e]?.attributes?.unit_of_measurement === "%");
+    if (current && !ids.includes(current)) ids.push(current);
+    const mine = (e) => (slug && e.includes(slug) ? 0 : 1);
+    return ids.sort((a, b) => mine(a) - mine(b) || a.localeCompare(b));
+  }
+
   _openWizard(slug, address) {
     const layout = this.data?.layout || {};
     this._wizard = {
@@ -271,6 +284,7 @@ class SextantDevices extends LitElement {
       owner: layout.thing_owners?.[slug] || "",
       locates: typeof layout.thing_locates_owner?.[slug] === "boolean" ? (layout.thing_locates_owner[slug] ? "yes" : "no") : "",
       charging: layout.thing_charging_entity?.[slug] || "",
+      battery: layout.thing_battery_entity?.[slug] || "",
       height: toDisplayLen(layout.thing_heights?.[slug], this.hass),
       ref: layout.thing_ref_offsets?.[slug] ?? "",
       icon: layout.thing_icons?.[slug] || "",
@@ -370,6 +384,7 @@ class SextantDevices extends LitElement {
       owner: w.owner || null,
       locates_owner: w.locates === "yes" ? true : w.locates === "no" ? false : null,
       charging_entity: w.charging || null,
+      battery_entity: w.battery || null,
       height: w.height === "" || w.height == null ? null : fromDisplayLen(w.height, this.hass),
       ref_offset_db: w.ref === "" || w.ref == null ? null : Number(w.ref),
       icon: w.icon || null,
@@ -438,6 +453,13 @@ class SextantDevices extends LitElement {
           ], onChange: (v) => { w.charging = v; this.requestUpdate(); }, style: "width: 320px" })}
           <span class="small muted">While this says Charging (or Charged / Full), ${w.name || w.placeholder || "this thing"} is on a charger and doesn't give its owner's location. Unavailable counts as not charging.</span>
         </div>` : nothing}
+        <div class="row">
+          ${uiSelect({ label: "Battery sensor", value: w.battery || "", options: [
+            { value: "", label: "None" },
+            ...this._levelSensors(w.battery, w.slug).map((e) => ({ value: e, label: `${this.hass?.states?.[e]?.attributes?.friendly_name || e} (${this.hass?.states?.[e]?.state ?? "?"}%)` })),
+          ], onChange: (v) => { w.battery = v; this.requestUpdate(); }, style: "width: 320px" })}
+          <span class="small muted">Shown on the Live page, with a badge once it drops to 20%. A tag that goes quiet looks exactly like a thing that has left, until the battery says why.</span>
+        </div>
         <div class="row colour">
           <span class="avatar-preview" style="background: ${thingColor(w.slug, w.color || null)}" title="how this thing will look">${w.preview || w.icon ? html`<img src=${w.preview || w.icon} alt="">` : classIcon(w.thing_class) ? html`<ha-icon icon=${classIcon(w.thing_class)}></ha-icon>` : html`<span class="initials">${(w.name || w.placeholder || "?").slice(0, 2).toUpperCase()}</span>`}</span>
           <span class="small">Colour</span>
@@ -791,8 +813,58 @@ class SextantDevices extends LitElement {
 
       <section class="card wide">
         <h3>Tiles</h3>
+        ${this._renderPeople()}
         ${this._renderTiles()}
       </section>
+    </div>`;
+  }
+
+  /** Each owner, where they read as being, and their GPS sources in order:
+   * their things place them while home; away, the first source that is
+   * neither broken nor stale (persons.judge_source) gives the zone. */
+  _people() {
+    return [...new Set(Object.values(this.data?.layout?.thing_owners || {}).filter((p) => typeof p === "string" && p.startsWith("person.")))].sort();
+  }
+
+  _gpsTrackerOptions(chosen) {
+    return Object.values(this.hass?.states || {})
+      .filter((s) => s.entity_id.startsWith("device_tracker.") && !s.entity_id.endsWith("_sextant") && !chosen.includes(s.entity_id)
+        && (s.attributes?.source_type === "gps" || s.attributes?.latitude != null))
+      .map((s) => ({ value: s.entity_id, label: `${s.attributes?.friendly_name || s.entity_id} · ${s.state}` }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }
+
+  async _setPersonTrackers(person, trackers) {
+    const r = await callWS(this, this.hass, { type: "sextant/person/trackers/set", person, trackers });
+    if (r) { toast(this, "Saved; the person's location follows on the next cycle"); this.dispatchEvent(new CustomEvent("layout-changed")); }
+  }
+
+  _renderPeople() {
+    const people = this._people();
+    if (!people.length) return nothing;
+    const table = this.data?.layout?.person_trackers || {};
+    return html`<div class="card">
+      <h4>People <span class="muted small">their things place them at home; a GPS tracker takes over when Sextant loses them</span></h4>
+      ${people.map((p) => {
+        const slug = p.split(".", 1)[1] || p.slice(7);
+        const name = this.hass?.states?.[p]?.attributes?.friendly_name || slug;
+        const loc = this.hass?.states?.[`sensor.${slug}_sextant_person_location`];
+        const a = loc?.attributes || {};
+        const chosen = Array.isArray(table[p]) ? table[p] : [];
+        const ignored = Array.isArray(a.gps_ignored) ? a.gps_ignored : [];
+        return html`<div class="person" style="padding: 6px 0; border-top: 1px solid var(--divider-color)">
+          <div class="row"><b>${name}</b>
+            <span class="muted small">${loc ? html`${loc.state}${a.source ? ` · via ${a.source === "ble" ? "Sextant" : a.source === "held" ? "Sextant (last place, not heard for a bit)" : a.source === "gps" ? (this.hass?.states?.[a.tracker]?.attributes?.friendly_name || a.tracker) : "nothing usable"}` : ""}${a.distance_m != null && a.source === "gps" ? ` · ${a.distance_m >= 1000 ? `${(a.distance_m / 1000).toFixed(1)} km` : `${a.distance_m} m`} from home` : ""}` : "no location yet"}</span>
+            <span class="grow"></span>
+            <span class="muted small">device_tracker.${slug}_sextant</span></div>
+          <div class="row"><span class="muted small">GPS sources, first usable wins</span>
+            ${chosen.map((t, i) => html`<span class="pill">${i + 1}. ${this.hass?.states?.[t]?.attributes?.friendly_name || t}
+              <button class="iconbtn" title="Remove this source" aria-label="Remove this source" @click=${() => this._setPersonTrackers(p, chosen.filter((x) => x !== t))}><ha-icon icon="mdi:close" style="--mdc-icon-size: 14px"></ha-icon></button></span>`)}
+            ${uiSelect({ label: chosen.length ? "Add another" : "Add a source", value: "", options: [{ value: "", label: "…" }, ...this._gpsTrackerOptions(chosen)], onChange: (v) => { if (v) this._setPersonTrackers(p, [...chosen, v]); }, style: "width: 280px" })}
+          </div>
+          ${ignored.length ? html`<div class="muted small">Disregarded right now: ${ignored.map((g) => `${this.hass?.states?.[g.entity]?.attributes?.friendly_name || g.entity} (${g.reason})`).join(", ")}</div>` : nothing}
+        </div>`;
+      })}
     </div>`;
   }
 

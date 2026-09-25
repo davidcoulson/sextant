@@ -23,6 +23,84 @@ const HIT_SLOP = 8;
 const MAX_ZOOM = 20;
 const THING_RADIUS = 12;
 const HUES = [205, 25, 140, 95, 320, 45, 260, 180, 0, 60];
+// Who wins a crowded patch of plan when labels are laid out (see _flushLabels).
+// The thing you picked out first, then the things, then the plan they sit on.
+const LABEL_PRIO = { focus: 4, thing: 3, place: 2, other: 2, proxy: 1 };
+const LABEL_TRIES = 7;           // how far a label may step from its marker before it is dropped
+
+/** Where each label of a frame goes so that no two overlap.
+ *
+ * Markers never move - a marker is a measurement, and shifting one would be a
+ * lie about where something is - so it is the labels that give way. Each takes
+ * its anchor if it is free, then steps below and above it in turn, and is
+ * dropped if it can find nowhere clear: one readable label and a marker you
+ * can click beats two labels printed through each other.
+ *
+ * Each label carries `x`, `y` (the anchor), `w`, `h` (its plate), `gap` (the
+ * breathing room between stacked labels), `prio` (who gets first refusal) and
+ * `order` (the tiebreak, so a frame draws the same way twice running).
+ * Returns `{label, y}` for the ones that found room, in paint order. */
+export function placeLabels(labels, tries = LABEL_TRIES) {
+  const clash = (a, b) => a.x0 < b.x1 && a.x1 > b.x0 && a.y0 < b.y1 && a.y1 > b.y0;
+  const taken = [], out = [];
+  for (const L of [...labels].sort((a, b) => b.prio - a.prio || a.order - b.order)) {
+    const halfW = L.w / 2, halfH = L.h / 2, step = L.h + (L.gap || 0);
+    let at = null;
+    for (let ring = 0; ring < tries && at === null; ring++) {
+      for (const dy of ring === 0 ? [0] : [ring * step, -ring * step]) {
+        const box = { x0: L.x - halfW, x1: L.x + halfW, y0: L.y + dy - halfH, y1: L.y + dy + halfH };
+        if (!taken.some((t) => clash(box, t))) { at = { y: L.y + dy, box }; break; }
+      }
+    }
+    if (at === null) continue;
+    taken.push(at.box);
+    out.push({ label: L, y: at.y });
+  }
+  return out;
+}
+
+/** Things whose markers would sit on top of each other, gathered into one.
+ *
+ * A nightstand with a phone, a watch and an AirPods case on it drew three
+ * dots in one place and three labels fighting for the space under them. At
+ * that zoom they are one thing to look at: a marker with a count. Zoom in
+ * and they come apart on their own, because `radius` is a screen size
+ * converted to map units. Greedy: each thing joins the first cluster whose
+ * centre is within `radius`, else starts one; `skip` names the things to
+ * leave out (the one you clicked stays its own marker). Returns clusters of
+ * two or more, with the centroid and the members in input order. */
+export function clusterThings(things, radius, skip = new Set()) {
+  const clusters = [];
+  for (const t of things) {
+    if (!t.cords || skip.has(t.ent)) continue;
+    const [x, y] = t.cords;
+    const home = clusters.find((c) => Math.hypot(c.x - x, c.y - y) < radius);
+    if (home) {
+      home.members.push(t);
+      const n = home.members.length;
+      home.x += (x - home.x) / n;
+      home.y += (y - home.y) / n;
+    } else {
+      clusters.push({ x, y, members: [t] });
+    }
+  }
+  return clusters.filter((c) => c.members.length > 1);
+}
+
+/** The proxies a thing marker is sitting on top of, each with `cover`: the
+ * radius of the widest thing covering it. A proxy buried under a thing reads
+ * as a proxy that is GONE, so the map draws these ones again over the top. */
+export function coveredProxies(proxies, things) {
+  const out = [];
+  for (const p of proxies) {
+    let cover = 0;
+    for (const t of things) {
+      if (Math.hypot(t.x - p.x, t.y - p.y) < t.r + p.s * 0.25) cover = Math.max(cover, t.r);
+    }
+    if (cover) out.push({ ...p, cover });
+  }
+  return out;
+}
 
 // --- Material Design Icons on the canvas ------------------------------------
 // The panel classes things (person, dog, phone...) and draws that class's
@@ -437,6 +515,10 @@ export class SextantMap {
   destroy() {
     this._resize.disconnect();
     cancelAnimationFrame(this._raf);
+    this._raf = 0;
+    for (const [type, fn, opts] of this._listeners || []) this.canvas.removeEventListener(type, fn, opts);
+    this._listeners = [];
+    this._planCache = null;
   }
 
   // --- data ------------------------------------------------------------------
@@ -547,13 +629,18 @@ export class SextantMap {
   _bind() {
     const c = this.canvas;
     c.style.touchAction = "none";
-    c.addEventListener("pointerdown", (e) => this._down(e));
-    c.addEventListener("pointermove", (e) => this._move(e));
-    c.addEventListener("pointerup", (e) => this._up(e));
-    c.addEventListener("pointercancel", (e) => this._up(e));
-    c.addEventListener("wheel", (e) => this._wheel(e), { passive: false });
-    c.addEventListener("dblclick", (e) => this._dblclick(e));
-    c.addEventListener("contextmenu", (e) => { e.preventDefault(); const hit = this.hitTest(this._local(e)); if (this.host.onContextMenu) this.host.onContextMenu(hit, e); });
+    // Kept so destroy() can take them off again: a card that reconnects
+    // builds a new map on the same canvas.
+    this._listeners = [
+      ["pointerdown", (e) => this._down(e)],
+      ["pointermove", (e) => this._move(e)],
+      ["pointerup", (e) => this._up(e)],
+      ["pointercancel", (e) => this._up(e)],
+      ["wheel", (e) => this._wheel(e), { passive: false }],
+      ["dblclick", (e) => this._dblclick(e)],
+      ["contextmenu", (e) => { e.preventDefault(); const hit = this.hitTest(this._local(e)); if (this.host.onContextMenu) this.host.onContextMenu(hit, e); }],
+    ];
+    for (const [type, fn, opts] of this._listeners) c.addEventListener(type, fn, opts);
   }
 
   _local(e) { const r = this.canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
@@ -709,6 +796,12 @@ export class SextantMap {
       const corner = e.altKey ? null : snapToVertex(raw, f.zones, (HIT_SLOP * 1.5) / this.view.k);
       f.pins[hit.index].cords = corner || raw;
       this._pinSnap = corner;
+    } else if (hit.kind === "remark") {
+      // A note has to be caught here: the branch below is rooms-or-spots, and
+      // a note used to fall into it and have its one point written over the
+      // spot at the same index. That is how two bedside tables lost every
+      // corner but one and vanished from the plan (2026-09-22).
+      f.remarks[hit.index].cords = { x: d.origin[0].x + dx, y: d.origin[0].y + dy };
     } else {
       const list = hit.kind === "zone" ? f.zones : f.subzones;
       const item = list[hit.index];
@@ -748,9 +841,22 @@ export class SextantMap {
       const round = (q) => ({ x: Math.round(q.x * 1000) / 1000, y: Math.round(q.y * 1000) / 1000 });
       if (hit.kind === "receiver") f.receivers[hit.index].cords = round(f.receivers[hit.index].cords);
       else if (hit.kind === "pin") f.pins[hit.index].cords = round(f.pins[hit.index].cords);
+      else if (hit.kind === "remark") f.remarks[hit.index].cords = round(f.remarks[hit.index].cords);
       else { const list = hit.kind === "zone" ? f.zones : f.subzones; list[hit.index].cords = list[hit.index].cords.map(round); }
       if (this.host.onChange) this.host.onChange(hit.kind, hit.index);
     }
+    this.invalidate();
+  }
+
+  /** Zoom by a factor about the centre of the view, for the + and − buttons -
+   * the same maths as the wheel, anchored where the eye already is. */
+  zoomBy(factor) {
+    const rect = this.canvas.getBoundingClientRect();
+    const p = { x: rect.width / 2, y: rect.height / 2 };
+    const k = Math.max(0.05, Math.min(MAX_ZOOM, this.view.k * factor));
+    const m = this.toMap(p);
+    this.view = { k, tx: p.x - m.x * k, ty: p.y - m.y * k };
+    this._fitted = true;
     this.invalidate();
   }
 
@@ -850,6 +956,11 @@ export class SextantMap {
     ctx.clearRect(0, 0, rect.width, rect.height);
     const f = this.floor;
     if (!f) return;
+    // Per-frame collections: labels are placed together at the end so they can
+    // dodge each other, and the marks let a covered proxy be redrawn on top.
+    this._labels = [];
+    this._proxyMarks = [];
+    this._thingMarks = [];
     const v = this.view;
     ctx.save();
     ctx.translate(v.tx, v.ty);
@@ -863,9 +974,14 @@ export class SextantMap {
       // dark room, so it is inverted to white on black; the hue rotation puts
       // any colour in the drawing back where it was, and the walls are taken
       // down to a grey that reads as a drawing rather than a light source.
-      if (this.dark) { ctx.save(); ctx.filter = "invert(1) hue-rotate(180deg) brightness(0.62)"; ctx.globalAlpha = 0.85; }
-      ctx.drawImage(this.image, 0, 0, size.w, size.h);
-      if (this.dark) ctx.restore();
+      if (this.dark) {
+        ctx.save();
+        ctx.globalAlpha = 0.85;
+        ctx.drawImage(this._darkPlan(), 0, 0, size.w, size.h);
+        ctx.restore();
+      } else {
+        ctx.drawImage(this.image, 0, 0, size.w, size.h);
+      }
     }
     this._drawGrid(ctx, size);
     this._drawPolygons(ctx, f.zones || [], "zone");
@@ -882,6 +998,10 @@ export class SextantMap {
     // standing in the room with the Live page open, which is the whole point.
     this._drawRemarks(ctx, f.remarks || []);
     if (this.suggestions.length) {
+      // Everything labelled so far belongs to the plan, so it goes down before
+      // the scrim and fades with it. Labels queued after this line are the
+      // advice, and land on top.
+      this._flushLabels(ctx);
       // A house plan is busy: walls, room fills, dozens of proxies. Fade all
       // of it back behind a scrim of the page's own background so the advised
       // spots drawn next are the only thing at full strength - the plan stays
@@ -894,7 +1014,26 @@ export class SextantMap {
       this._drawSuggestions(ctx);
     }
     if (this.mode !== "edit") { this._drawThings(ctx); this._drawMarks(ctx); }
+    this._drawProxyPeeks(ctx);
+    this._flushLabels(ctx);
     ctx.restore();
+  }
+
+  /** The floor plan with the dark-theme filter already applied, made once per
+   * image: filtering the whole plan on every frame is most of a frame's cost. */
+  _darkPlan() {
+    const img = this.image;
+    if (this._planCache?.image === img) return this._planCache.canvas;
+    const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+    if (!w || !h) return img;
+    const c = document.createElement("canvas");
+    c.width = w; c.height = h;
+    const cx = c.getContext("2d");
+    if (!cx) return img;
+    cx.filter = "invert(1) hue-rotate(180deg) brightness(0.62)";
+    cx.drawImage(img, 0, 0);
+    this._planCache = { image: img, canvas: c };
+    return c;
   }
 
   /** Whether the page this map is drawn on is dark, from its own background:
@@ -971,7 +1110,7 @@ export class SextantMap {
         const c = polygonCentroid(pts);
         const icon = kind === "zone" ? this.areaIcons[item.area_id] : null;
         this._label(ctx, item.entity_id, c.x, c.y, kind === "subzone" ? 11 : 13, kind === "subzone" ? 0.75 : 0.9,
-          icon ? mdiPath(icon, () => this.invalidate()) : null);
+          icon ? mdiPath(icon, () => this.invalidate()) : null, LABEL_PRIO.place);
       }
       if (this.mode === "edit" && selected) {
         for (let v = 0; v < pts.length; v++) this._handle(ctx, pts[v], VERTEX_SIZE / k, "#ffffff", ctx.strokeStyle);
@@ -1008,28 +1147,61 @@ export class SextantMap {
   }
 
   /** A label on its white plate; `glyph` (a 24-unit MDI Path2D) sits before the text. */
-  _label(ctx, text, x, y, px, alpha = 0.9, glyph = null) {
+  /** Queue a label rather than paint it. Every label of a frame is placed
+   * together in _flushLabels, so they can dodge each other; painting here
+   * would make that impossible. The ambient alpha of whatever queued the
+   * label (a faded thing, a locked proxy) is folded in now, because by flush
+   * time that ctx.save() block is long gone.
+   *
+   * `prio` decides who gets first refusal on a crowded spot: the things you
+   * are looking at outrank the furniture they are sitting on. */
+  _label(ctx, text, x, y, px, alpha = 0.9, glyph = null, prio = LABEL_PRIO.other) {
+    (this._labels ||= []).push({
+      text, x, y, px, glyph, prio,
+      alpha: alpha * ctx.globalAlpha,
+      order: this._labels.length,
+    });
+  }
+
+  /** Place and paint the frame's labels so that no two sit on top of each
+   * other. Markers never move - a marker is a measurement - so it is the
+   * labels that give way: each tries its anchor, then steps below and above
+   * it, and is dropped if it can find nowhere clear. Two labels printed over
+   * one another are worse than one label and a marker you can click. */
+  _flushLabels(ctx) {
+    const queue = this._labels || [];
+    this._labels = [];
+    if (!queue.length) return;
     const k = this.view.k;
+    // Measuring needs the canvas; deciding where things go does not, so the
+    // decision lives in placeLabels where it can be tested without one.
+    const measured = queue.map((L) => {
+      const size = L.px / k, pad = 4 / k;
+      ctx.font = `600 ${size}px system-ui, sans-serif`;
+      const gs = L.glyph ? size * 1.15 : 0, gap = L.glyph ? size * 0.3 : 0;
+      const total = ctx.measureText(L.text).width + gs + gap;
+      return { ...L, m: { size, pad, total, gs, gap },
+               w: total + pad * 2, h: size + pad, gap: 2 / k };
+    });
+    for (const { label, y } of placeLabels(measured)) this._paintLabel(ctx, label, y, label.m);
+  }
+
+  _paintLabel(ctx, L, y, m) {
     const plate = this.dark ? "18,22,28" : "255,255,255";
     const ink = this.dark ? "235,240,246" : "20,24,32";
-    const size = px / k;
-    ctx.font = `600 ${size}px system-ui, sans-serif`;
+    ctx.font = `600 ${m.size}px system-ui, sans-serif`;
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    const w = ctx.measureText(text).width;
-    const gs = glyph ? size * 1.15 : 0, gap = glyph ? size * 0.3 : 0;   // glyph size and its gap
-    const total = w + gs + gap;
-    ctx.fillStyle = `rgba(${plate},${alpha * 0.85})`;
-    const pad = 4 / k;
-    ctx.fillRect(x - total / 2 - pad, y - size / 2 - pad / 2, total + pad * 2, size + pad);
-    ctx.fillStyle = `rgba(${ink},${alpha})`;
-    if (glyph) {
+    ctx.fillStyle = `rgba(${plate},${L.alpha * 0.85})`;
+    ctx.fillRect(L.x - m.total / 2 - m.pad, y - m.size / 2 - m.pad / 2, m.total + m.pad * 2, m.size + m.pad);
+    ctx.fillStyle = `rgba(${ink},${L.alpha})`;
+    if (L.glyph) {
       ctx.save();
-      ctx.translate(x - total / 2, y - gs / 2);
-      ctx.scale(gs / 24, gs / 24);
-      ctx.fill(glyph);
+      ctx.translate(L.x - m.total / 2, y - m.gs / 2);
+      ctx.scale(m.gs / 24, m.gs / 24);
+      ctx.fill(L.glyph);
       ctx.restore();
     }
-    ctx.fillText(text, x + (gs + gap) / 2, y);
+    ctx.fillText(L.text, L.x + (m.gs + m.gap) / 2, y);
   }
 
   _drawReceivers(ctx, receivers) {
@@ -1043,20 +1215,49 @@ export class SextantMap {
       const unmatched = r.unmatched;
       const locked = edit && this.locks.receiver;
       const s = (hovered || selected ? base * 1.4 : base) / k;
+      const face = offline ? "#d9534f" : unmatched ? "#e0a54a" : "#1f7a8c";
       ctx.save();
       ctx.translate(r.cords.x, r.cords.y);
       ctx.rotate(Math.PI / 4);
       ctx.globalAlpha = locked ? 0.55 : 1;
-      ctx.fillStyle = offline ? "#d9534f" : unmatched ? "#e0a54a" : "#1f7a8c";
+      ctx.fillStyle = face;
       ctx.strokeStyle = selected ? "#ffd166" : "#ffffff";
       ctx.lineWidth = (selected ? 3 : 1.5) / k;
       ctx.fillRect(-s / 2, -s / 2, s, s);
       ctx.strokeRect(-s / 2, -s / 2, s, s);
       ctx.restore();
+      this._proxyMarks.push({ x: r.cords.x, y: r.cords.y, s, color: face });
       if (this.options.labels && (edit || hovered || selected)) {
-        this._label(ctx, r.label || r.entity_id, r.cords.x, r.cords.y + (base + 9) / k, 10, 0.8);
+        // The proxy under the pointer, or the one being edited, always gets
+        // its name: in Edit that label is how you tell which one you grabbed.
+        this._label(ctx, r.label || r.entity_id, r.cords.x, r.cords.y + (base + 9) / k, 10, 0.8, null,
+                    hovered || selected ? LABEL_PRIO.focus : LABEL_PRIO.proxy);
       }
     });
+  }
+
+  /** Proxies that a thing is sitting on top of, drawn again over it.
+   *
+   * Things are the subject of the Live map, so they keep the foreground. But
+   * a proxy that disappears completely under one reads as a proxy that is
+   * GONE - a nightstand with a proxy, a watch and an AirPods case on it
+   * showed no proxy at all, and it took a DOM dump to prove it was still
+   * there. So a covered proxy comes back as a hollow diamond drawn wide
+   * enough to ring whatever is covering it: same centre, same measurement,
+   * just no longer invisible. */
+  _drawProxyPeeks(ctx) {
+    const k = this.view.k;
+    for (const p of coveredProxies(this._proxyMarks, this._thingMarks)) {
+      const s = Math.max(p.s, (p.cover + 5 / k) * 2);
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(Math.PI / 4);
+      ctx.lineWidth = 4 / k; ctx.strokeStyle = "rgba(255,255,255,0.85)";
+      ctx.strokeRect(-s / 2, -s / 2, s, s);
+      ctx.lineWidth = 2 / k; ctx.strokeStyle = p.color;
+      ctx.strokeRect(-s / 2, -s / 2, s, s);
+      ctx.restore();
+    }
   }
 
   /** Alignment pins: a surveyor's crosshair, so it reads as a reference mark
@@ -1300,6 +1501,12 @@ export class SextantMap {
   _drawThings(ctx) {
     const k = this.view.k;
     const focus = this.options.focus || null;
+    // Markers that would overlap at this zoom become one marker with a count
+    // (see clusterThings). The thing you picked out always stays its own.
+    const picked = new Set([focus, this.selection?.kind === "thing" ? this.selection.ent : null].filter(Boolean));
+    const clusters = this.options.cluster === false ? [] : clusterThings(this.things, (THING_RADIUS * 1.8) / k, picked);
+    const clustered = new Map();
+    for (const c of clusters) for (const m of c.members) clustered.set(m.ent, c);
     for (const t of this.things) {
       if (!t.cords) continue;
       const custom = t.color || null;
@@ -1343,6 +1550,9 @@ export class SextantMap {
         ctx.beginPath(); ctx.arc(t.raw[0], t.raw[1], 4 / k, 0, Math.PI * 2);
         ctx.fillStyle = paint(0.6); ctx.fill();
       }
+      // Trails, rings and fixes are drawn for every thing; the dot and label
+      // of a clustered one are drawn once for the cluster, below.
+      if (clustered.has(t.ent)) { ctx.restore(); continue; }
       const selected = focused || (this.selection && this.selection.kind === "thing" && this.selection.ent === t.ent);
       const r = (focused ? THING_RADIUS * 1.6 : THING_RADIUS) / k;
       if (focused) {
@@ -1376,8 +1586,42 @@ export class SextantMap {
         ctx.fillText((t.label || t.ent).slice(0, 2).toUpperCase(), t.cords[0], t.cords[1]);
       }
       const label = ghost ? `${t.label || t.ent} · ${shortAge(age)} ago` : (t.label || t.ent);
-      if (this.options.labels || focused || ghost) this._label(ctx, label, t.cords[0], t.cords[1] + r + 9 / k, focused ? 13 : 11, 0.9);
+      if (this.options.labels || focused || ghost) {
+        this._label(ctx, label, t.cords[0], t.cords[1] + r + 9 / k, focused ? 13 : 11, 0.9, null,
+                    focused ? LABEL_PRIO.focus : LABEL_PRIO.thing);
+      }
+      // Where the dot ended up, so a proxy hidden underneath it can come back
+      // over the top: see _drawProxyPeeks.
+      this._thingMarks.push({ x: t.cords[0], y: t.cords[1], r });
       ctx.restore();
     }
+    for (const c of clusters) this._drawCluster(ctx, c, focus);
+  }
+
+  /** One marker for several things in one place: a dot in the first member's
+   * colour carrying the count, and a label that names the first two. */
+  _drawCluster(ctx, c, focus) {
+    const k = this.view.k, r = (THING_RADIUS * 1.15) / k;
+    const lead = c.members[0];
+    const custom = lead.color || null;
+    const stale = c.members.every((t) => staleness(t, this.options.staleAfter).ghost);
+    ctx.save();
+    if (focus) ctx.globalAlpha = 0.28;   // a cluster is never the focused thing
+    if (stale) ctx.globalAlpha *= 0.4;
+    ctx.beginPath(); ctx.arc(c.x, c.y, r * 1.9, 0, Math.PI * 2);
+    ctx.fillStyle = thingRgba(lead.ent, custom, 0.18); ctx.fill();
+    ctx.beginPath(); ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
+    ctx.fillStyle = thingColor(lead.ent, custom); ctx.fill();
+    if (stale) ctx.setLineDash([4 / k, 3 / k]);
+    ctx.lineWidth = 2 / k; ctx.strokeStyle = "#ffffff"; ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = "#ffffff"; ctx.font = `700 ${13 / k}px system-ui, sans-serif`;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(String(c.members.length), c.x, c.y);
+    const names = c.members.map((t) => t.label || t.ent);
+    const label = names.length > 2 ? `${names[0]}, ${names[1]} +${names.length - 2}` : names.join(", ");
+    if (this.options.labels) this._label(ctx, label, c.x, c.y + r + 9 / k, 11, 0.9, null, LABEL_PRIO.thing);
+    this._thingMarks.push({ x: c.x, y: c.y, r });
+    ctx.restore();
   }
 }

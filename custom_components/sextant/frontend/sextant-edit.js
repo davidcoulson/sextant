@@ -9,8 +9,9 @@
  */
 import { LitElement, html, css, nothing } from "./lit.js";
 import { SextantMap, polygonCentroid, snapToVertex, squareUp } from "./sextant-map.js";
-import { sharedStyles, widgetStyles, toast, callWS, confirmDialog, fmtNum, fmtLen, uiField, uiSelect, uiSwitch, uiButton, proxyName, lenUnit, toDisplayLen, fromDisplayLen, fmtScale, isImperial, THING_CLASSES, CLASS_FAMILIES } from "./sextant-ui.js";
+import { sharedStyles, widgetStyles, toast, callWS, confirmDialog, fmtNum, fmtLen, uiField, uiSelect, uiSwitch, uiButton, uiMenu, proxyName, lenUnit, toDisplayLen, fromDisplayLen, fmtScale, isImperial, THING_CLASSES, CLASS_FAMILIES } from "./sextant-ui.js";
 import { mapUrlFor } from "./sextant-panel.js";
+import { lostShapes } from "./sextant-shapes.js";
 
 // [id, label under the icon, icon, tooltip]
 /** The Anchor tool's "New anchor" choice (not a name any anchor can have). */
@@ -38,6 +39,17 @@ const UNDO_DEPTH = 50;
 
 function uid(prefix) { return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`; }
 
+/** A layout as a string to compare, without the display-only fields the
+ * editor hangs on proxies and pins (the ones _cleanDraft drops before a save). */
+function layoutKey(layout) {
+  const copy = JSON.parse(JSON.stringify(layout || {}));
+  for (const f of copy.floor || []) {
+    for (const r of f.receivers || []) { delete r.unmatched; delete r.label; }
+    for (const q of f.pins || []) { delete q.linked; delete q.miss; delete q.missLabel; }
+  }
+  return JSON.stringify(copy);
+}
+
 class SextantEdit extends LitElement {
   static properties = {
     hass: { attribute: false },
@@ -57,6 +69,7 @@ class SextantEdit extends LitElement {
     _busy: { state: true },
     _locks: { state: true },
     _undo: { state: true },
+    _history: { state: true },     // the kept copies of the plan, once asked for
     _alignment: { state: true },
   };
 
@@ -90,7 +103,7 @@ class SextantEdit extends LitElement {
     const prev = this._undo[this._undo.length - 1];
     this._undo = this._undo.slice(0, -1);
     this._draft = JSON.parse(prev);
-    this._dirty = JSON.stringify(this._draft) !== JSON.stringify(this.data?.layout || { floor: [] });
+    this._dirty = layoutKey(this._draft) !== layoutKey(this.data?.layout || { floor: [] });
     this._proposal = null;
     this._pushFloor();
   }
@@ -581,7 +594,8 @@ class SextantEdit extends LitElement {
     const item = list[sel.index];
     this._snapshot();
     if (sel.kind === "pin") this._refreshAlignment();
-    if (field === "height" || field === "correction") item[field] = value === "" || value == null ? undefined : Number(value);
+    if (field === "calibrate") { if (value === undefined) delete item.calibrate; else item.calibrate = value; }
+    else if (field === "height" || field === "correction") item[field] = value === "" || value == null ? undefined : Number(value);
     else if (field === "no_go") item.no_go = !!value;
     else item[field] = value;
     if (item.height === undefined) delete item.height;
@@ -626,22 +640,74 @@ class SextantEdit extends LitElement {
     const maps = this.data?.maps || [];
     const url = mapUrlFor(f.name, maps);
     const mapFile = url ? decodeURIComponent(url.split("/").pop()) : null;
-    this._draft.floor = this._draft.floor.filter((x) => x !== f);
-    await this._save(mapFile);
+    const before = this._draft.floor;
+    this._draft.floor = before.filter((x) => x !== f);
+    // A failed save leaves the floor where it was, in the draft as in the store.
+    if (!(await this._save(mapFile))) { this._draft.floor = before; this._pushFloor(); this.requestUpdate(); return; }
     this.dispatchEvent(new CustomEvent("floor-changed", { detail: this._draft.floor[0]?.name || null }));
   }
 
   async _save(removeMap = null) {
     const draft = this._cleanDraft();
+    // Asked before anything is sent. The server keeps a copy of the plan it
+    // replaces, but a spot that draws as nothing is still a spot you have to
+    // notice is missing: this is the question that would have caught the two
+    // bedside tables that went out as one point each.
+    const lost = lostShapes(this.data?.layout, draft);
+    if (lost.length && !confirmDialog(`This save would break ${lost.length === 1 ? "a shape" : `${lost.length} shapes`}:\n\n${lost.join("\n")}\n\nSave anyway? The plan as it is now is kept under History.`)) return null;
     this._busy = true;
     const r = await callWS(this, this.hass, { type: "sextant/layout/save", layout: draft, ...(removeMap ? { remove_map: removeMap } : {}) });
     this._busy = false;
     if (r) {
       const n = r.confined?.length || 0;
       toast(this, n ? `Floor plan saved; ${n === 1 ? `${r.confined[0]} was` : `${n} spots were`} fitted inside ${n === 1 ? "its room" : "their rooms"}` : "Floor plan saved");
+      // The server's own check, in case a shape went wrong on the way in.
+      if (r.lost?.length) toast(this, `Saved, but ${r.lost.length === 1 ? "a shape was" : `${r.lost.length} shapes were`} lost: ${r.lost[0]}${r.lost.length > 1 ? " …" : ""}. Restore the earlier copy from History if that was not meant.`, 10000);
+      this._history = null;   // stale now: a copy was just added
       this._dirty = false;
       this.dispatchEvent(new CustomEvent("layout-changed"));
     }
+    return r;
+  }
+
+  /** The kept copies of the plan (see snapshots.py): every save keeps the plan
+   * it replaced - all of today's, hourly for a week, daily for three months. */
+  async _toggleHistory() {
+    if (this._history) { this._history = null; return; }
+    const r = await callWS(this, this.hass, { type: "sextant/snapshots/list" });
+    if (r) this._history = r.snapshots || [];
+  }
+
+  async _restoreSnapshot(snap) {
+    const when = new Date(snap.at * 1000).toLocaleString();
+    if (this._dirty && !confirmDialog(`You have unsaved changes; restoring throws them away. Restore the plan from ${when}?`)) return;
+    if (!this._dirty && !confirmDialog(`Restore the plan from ${when}? The plan as it is now is kept, so this can be undone the same way.`)) return;
+    this._busy = true;
+    const r = await callWS(this, this.hass, { type: "sextant/snapshots/restore", id: snap.id });
+    this._busy = false;
+    if (!r) return;
+    toast(this, `Restored the plan from ${when}`);
+    // Not dirty: the fresh layout the panel fetches next replaces the draft
+    // (see updated()), the same way a discard does.
+    this._dirty = false;
+    this._history = null;
+    this.dispatchEvent(new CustomEvent("layout-changed"));
+  }
+
+  _renderHistory() {
+    const h = this._history;
+    const fmt = (s) => `${new Date(s.at * 1000).toLocaleString()} · v${s.version}${s.bytes ? ` · ${Math.round(s.bytes / 1024)} KB` : ""}`;
+    return html`<div class="card small">
+      <h4>History<span class="grow"></span>${uiButton({ label: h ? "Hide" : "Show", kind: "text", disabled: this._busy, onClick: () => this._toggleHistory() })}</h4>
+      ${h === null || h === undefined
+        ? html`<div class="muted">Every save keeps the plan it replaced: all of today's, hourly for a week, daily for three months. Any of them can be put back.</div>`
+        : h.length
+          ? html`<ul class="plain">${h.slice(0, 40).map((s) => html`<li class="row">
+              <span class="grow">${fmt(s)}</span>
+              ${uiButton({ label: "Restore", kind: "outline", disabled: this._busy, onClick: () => this._restoreSnapshot(s), title: "Put this copy of the plan back; the current one is kept" })}
+            </li>`)}</ul>${h.length > 40 ? html`<div class="muted">…and ${h.length - 40} older</div>` : nothing}`
+          : html`<div class="muted">No kept copies yet: the first one is made the next time the plan is saved.</div>`}
+    </div>`;
   }
 
   _discard() {
@@ -679,15 +745,18 @@ class SextantEdit extends LitElement {
     return html`
       <div class="stage">
         <canvas @click=${(e) => this._onCanvasClick(e)}></canvas>
+        <div class="zoom" role="group" aria-label="Zoom">
+          <button title="Fit the whole floor into view" aria-label="Fit the whole floor" @click=${() => this._map.fit()}><ha-icon icon="mdi:fit-to-screen-outline"></ha-icon></button>
+          <button title="Zoom in" aria-label="Zoom in" @click=${() => this._map.zoomBy(1.3)}><ha-icon icon="mdi:plus"></ha-icon></button>
+          <button title="Zoom out" aria-label="Zoom out" @click=${() => this._map.zoomBy(1 / 1.3)}><ha-icon icon="mdi:minus"></ha-icon></button>
+        </div>
         <div class="toolbar">
-          ${TOOLS.map(([id, label, icon, tip]) => html`<button class="tool ${this._tool === id ? "active" : ""}" title=${tip} @click=${() => this._setTool(id)}><ha-icon icon=${icon}></ha-icon><span>${label}</span></button>`)}
+          ${TOOLS.map(([id, label, icon, tip]) => html`<button class="tool ${this._tool === id ? "active" : ""}" title=${`${label}: ${tip}`} aria-label=${label} aria-pressed=${this._tool === id} @click=${() => this._setTool(id)}><ha-icon icon=${icon}></ha-icon><span>${label}</span></button>`)}
           <span class="sep"></span>
-          <button class="tool" title="Fit the whole map into the view" @click=${() => this._map.fit()}><ha-icon icon="mdi:fit-to-screen"></ha-icon><span>Fit</span></button>
-          <span class="sep"></span>
-          ${LOCKS.map(([kind, label, icon]) => html`<button class="tool lock ${this._locks[kind] ? "locked" : ""}" title=${this._locks[kind] ? `${label} are locked: click to allow selecting and moving them` : `${label} can be moved: click to lock them`} @click=${() => this._setLock(kind, !this._locks[kind])}>
+          ${LOCKS.map(([kind, label, icon]) => html`<button class="tool lock ${this._locks[kind] ? "locked" : ""}" aria-label=${`${label} ${this._locks[kind] ? "locked" : "unlocked"}`} aria-pressed=${!!this._locks[kind]} title=${this._locks[kind] ? `${label} are locked: click to allow selecting and moving them` : `${label} can be moved: click to lock them`} @click=${() => this._setLock(kind, !this._locks[kind])}>
             <span class="lockicons"><ha-icon icon=${icon}></ha-icon><ha-icon class="badge" icon=${this._locks[kind] ? "mdi:lock" : "mdi:lock-open-variant-outline"}></ha-icon></span><span>${label}</span></button>`)}
           <span class="sep"></span>
-          <button class="tool" title="Undo the last change (${this._undo.length} step${this._undo.length === 1 ? "" : "s"})" ?disabled=${!this._undo.length} @click=${() => this._undoLast()}><ha-icon icon="mdi:undo"></ha-icon><span>Undo</span></button>
+          <button class="tool" aria-label="Undo" title="Undo the last change (${this._undo.length} step${this._undo.length === 1 ? "" : "s"})" ?disabled=${!this._undo.length} @click=${() => this._undoLast()}><ha-icon icon="mdi:undo"></ha-icon><span>Undo</span></button>
           ${uiButton({ label: "Save", kind: "primary", disabled: !this._dirty || this._busy, onClick: () => this._save(), title: "Write the floor plan to the store" })}
           ${uiButton({ label: "Discard", kind: "text", disabled: !this._dirty, onClick: () => this._discard() })}
         </div>
@@ -706,7 +775,14 @@ class SextantEdit extends LitElement {
       <aside class="side">
         ${f ? html`
           <div class="card">
-            <h4>${f.name} <span class="muted small">${fmtScale(f.scale, this.hass)}</span></h4>
+            <h4>${f.name} <span class="muted small">${fmtScale(f.scale, this.hass)}</span><span class="grow"></span>
+              ${uiMenu({ items: [
+                { label: "Link rooms to areas", icon: "mdi:link-variant", disabled: this._busy, onClick: () => this._linkAreasByName(), title: "Link every unlinked room on this floor to the Home Assistant area of the same name" },
+                { label: "Adjust rooms", icon: "mdi:vector-square", disabled: this._busy, onClick: () => this._adjust("zones"), title: "Square up rooms and snap shared walls" },
+                { label: "Adjust spots", icon: "mdi:vector-rectangle", disabled: this._busy, onClick: () => this._adjust("subzones") },
+                { divider: true },
+                { label: "Delete floor", icon: "mdi:delete-outline", danger: true, disabled: this._busy, onClick: () => this._removeFloor() },
+              ] })}</h4>
             <div class="row small muted">${(f.receivers || []).length} proxies · ${(f.zones || []).filter((z) => !z.no_go).length} rooms · ${(f.zones || []).filter((z) => z.no_go).length} no-go · ${(f.subzones || []).length} spots</div>
             <div class="row small muted">Level: storey number, 0 = ground, -1 = basement; orders the floor picker top-down. Elevation: this floor's finished floor above the ground floor's, so ceiling height plus the floor structure; blank assumes 3 m a storey. Bias: election prior, 1.2 = a 20 % head start every cycle.</div>
             <div class="row">
@@ -718,10 +794,6 @@ class SextantEdit extends LitElement {
               ${uiField({ label: `Elevation (${lenUnit(this.hass)})`, type: "number", step: 0.05, value: toDisplayLen(f.elevation, this.hass), placeholder: String(toDisplayLen((f.level || 0) * 3, this.hass)), onChange: (v) => { this._snapshot(); const m = fromDisplayLen(v, this.hass); if (m == null || isNaN(m)) delete f.elevation; else f.elevation = m; this._dirty = true; this._refreshAlignment(); this.requestUpdate(); }, style: "width: 130px" })}
               ${uiField({ label: "Election bias", type: "number", step: 0.05, min: 0.25, max: 4, value: f.bias ?? "", placeholder: "1", onChange: (v) => { if (v === "" || v == null) delete f.bias; else f.bias = Number(v); this._dirty = true; this.requestUpdate(); }, style: "width: 120px" })}
               ${Object.keys(this.hass?.floors || {}).length ? uiSelect({ label: "Home Assistant floor", value: f.floor_id || "", options: [{ value: "", label: "not linked" }, ...Object.values(this.hass.floors).map((x) => ({ value: x.floor_id, label: x.name }))], onChange: (v) => { this._snapshot(); if (v) f.floor_id = v; else delete f.floor_id; this._dirty = true; this.requestUpdate(); }, style: "width: 170px" }) : nothing}
-              ${uiButton({ label: "Link rooms to areas", disabled: this._busy, onClick: () => this._linkAreasByName(), title: "Link every unlinked room on this floor to the Home Assistant area of the same name" })}
-              ${uiButton({ label: "Adjust rooms", disabled: this._busy, onClick: () => this._adjust("zones"), title: "Square up rooms and snap shared walls" })}
-              ${uiButton({ label: "Adjust spots", disabled: this._busy, onClick: () => this._adjust("subzones") })}
-              ${uiButton({ label: "Delete floor", kind: "danger", disabled: this._busy, onClick: () => this._removeFloor() })}
             </div>
           </div>` : html`<div class="card muted">No floor yet. Add one below.</div>`}
         ${f ? this._renderBiasView(f) : nothing}
@@ -739,6 +811,7 @@ class SextantEdit extends LitElement {
             <div class="row">${uiButton({ label: "Add floor", kind: "primary", disabled: this._busy, onClick: (e) => e.target.closest("form").requestSubmit() })}<span class="muted small">The image is stored as the floor's map.</span></div>
           </form>
         </div>
+        ${this._renderHistory()}
         ${(this.data?.scanner_diagnostics?.unplaced_scanners || []).length ? html`<div class="card small"><h4>Proxies reporting, not placed</h4>${this.data.scanner_diagnostics.unplaced_scanners.map((s) => proxyName(this.data, s)).join(", ")}</div>` : nothing}
       </aside>
     `;
@@ -794,7 +867,7 @@ class SextantEdit extends LitElement {
         : row.rms_m != null && row.implied_scale && row.agree_rms_m != null && row.agree_rms_m <= 0.3 ? html`<div class="warn">The anchors agree with each other (within ${fmtLen(row.agree_rms_m, this.hass, 2)}) but not at this floor's scale, so the floor cannot be lined up yet. That points at the scale, not at any anchor.</div>`
         : row.rms_m != null ? html`<div class="warn">The anchors disagree by ${fmtLen(row.rms_m, this.hass, 2)} - too much to use. Check <b>${row.worst}</b> first (${fmtLen(row.max_m, this.hass, 2)} off), or anchors that sit very close together.</div>`
         : html`<div class="muted">Not lined up yet: ${row.why}.</div>`}
-      ${off >= 0.01 ? html`<div class="row">The anchors fit best at <b>${fmtScale(row.implied_scale, this.hass)}</b>; this floor is set to ${fmtScale(row.scale, this.hass)} (${fmtNum(off * 100, 1)} % apart). ${uiButton({ label: "Use the anchors' scale", onClick: () => useScale(row.implied_scale), title: "Set this floor's scale from its anchors. Four or more well-spread anchors usually beat one tape measurement" })}</div>` : nothing}
+      ${off >= 0.01 ? html`<div class="row">The anchors fit best at <b>${fmtScale(row.implied_scale, this.hass)}</b>; this floor is set to ${fmtScale(row.scale, this.hass)} (${fmtNum(off * 100, 1)} % apart). ${uiButton({ label: "Use the anchors' scale", kind: "text", onClick: () => useScale(row.implied_scale), title: "Set this floor's scale from its anchors. Four or more well-spread anchors usually beat one tape measurement" })}</div>` : nothing}
       ${waiting.length ? html`<div class="muted">Anchored on other floors, not here yet: ${waiting.join(", ")}.</div>` : nothing}
       ${(rep?.unlinked || []).filter((n) => pins.some((q) => q.name === n)).length ? html`<div class="muted">Only on this floor so far: ${rep.unlinked.filter((n) => pins.some((q) => q.name === n)).join(", ")}.</div>` : nothing}
     </div>`;
@@ -837,6 +910,9 @@ class SextantEdit extends LitElement {
           ${uiField({ label: `Mount height (${lenUnit(this.hass)})`, type: "number", step: 0.05, min: 0, max: isImperial(this.hass) ? 33 : 10, value: toDisplayLen(item.height, this.hass), onChange: (v) => this._edit("height", v === "" ? "" : fromDisplayLen(v, this.hass)), style: "width: 150px" })}
           ${uiField({ label: "Correction ×", type: "number", step: 0.001, min: 0.5, max: 2, value: item.correction ?? "", onChange: (v) => this._edit("correction", v), style: "width: 150px" })}
         </div>
+        ${uiSwitch({ label: "Leave this proxy's correction alone", checked: item.calibrate === false,
+          onChange: (v) => this._edit("calibrate", v ? false : undefined) })}
+        <div class="muted small">Calibration skips it: it is left out of the fit and its correction is never overwritten. For a radio whose distances are the wrong shape rather than the wrong scale - a tablet or a phone, which read long up close and far too short across a room - where no single multiplier fits.</div>
         <div class="muted small">${item.unmatched ? "Bermuda does not report this proxy right now." : "Linked."} x ${fmtNum(item.cords?.x, 0)}, y ${fmtNum(item.cords?.y, 0)}</div>` : nothing}
       ${sel.kind === "zone" ? uiSwitch({ label: "No-go area (things can never be here)", checked: !!item.no_go, onChange: (v) => this._edit("no_go", v) }) : nothing}
       ${sel.kind === "zone" && !item.no_go ? this._renderAreaLink(item) : nothing}
@@ -935,23 +1011,35 @@ class SextantEdit extends LitElement {
     :host { display: grid; grid-template-columns: 1fr 320px; min-height: 0; }
     .stage { position: relative; min-width: 0; }
     canvas { width: 100%; height: 100%; display: block; --sextant-map-bg: var(--card-background-color, #fff); }
-    .toolbar { position: absolute; left: 10px; top: 10px; display: flex; gap: 4px; padding: 6px; border-radius: 8px; background: var(--card-background-color); box-shadow: var(--ha-card-box-shadow, 0 1px 4px rgba(0,0,0,0.2)); align-items: center; }
-    .toolbar button.tool { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 62px; padding: 4px 6px; font-size: 11px; line-height: 1.1; }
-    .toolbar button.tool ha-icon { --mdc-icon-size: 22px; }
+    /* The tools as one compact floating panel of icon-only buttons, the
+       active one filled - names in the tooltips and aria labels. Save and
+       Discard keep their words: they are actions, not modes. */
+    .toolbar { position: absolute; left: 10px; top: 10px; display: flex; gap: 2px; padding: 4px; border-radius: 12px; background: var(--card-background-color); box-shadow: var(--ha-card-box-shadow, 0 2px 6px rgba(0,0,0,0.25)); align-items: center; z-index: 2; }
+    .toolbar button.tool { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; min-width: 0; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--primary-text-color); cursor: pointer; }
+    .toolbar button.tool > span:not(.lockicons) { display: none; }
+    .toolbar button.tool:hover:not([disabled]) { background: var(--secondary-background-color, rgba(0,0,0,0.06)); }
+    .toolbar button.tool[disabled] { opacity: 0.4; cursor: default; }
+    .toolbar button.tool:focus-visible, .zoom button:focus-visible { outline: 2px solid var(--primary-color, #03a9f4); outline-offset: 1px; }
+    .toolbar button.tool ha-icon { --mdc-icon-size: 21px; }
+    .zoom { position: absolute; right: 10px; bottom: 10px; display: flex; gap: 2px; padding: 4px; border-radius: 12px; background: var(--card-background-color); box-shadow: var(--ha-card-box-shadow, 0 2px 6px rgba(0,0,0,0.25)); z-index: 2; }
+    .zoom button { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--primary-text-color); cursor: pointer; }
+    .zoom button:hover { background: var(--secondary-background-color, rgba(0,0,0,0.06)); }
+    .zoom ha-icon { --mdc-icon-size: 20px; }
     .toolbar button.active { background: var(--primary-color); color: var(--text-primary-color, #fff); border-color: var(--primary-color); }
     .toolbar button.lock.locked { background: var(--secondary-background-color); color: var(--secondary-text-color); }
+    .card h4 { display: flex; align-items: center; gap: 6px; }
     .lockicons { position: relative; display: inline-block; }
     .lockicons .badge { position: absolute; right: -8px; bottom: -4px; --mdc-icon-size: 13px; background: var(--card-background-color); border-radius: 50%; }
     .toolbar button.lock.locked .lockicons .badge { color: var(--error-color, #b00020); }
     .sep { width: 1px; height: 24px; background: var(--divider-color); margin: 0 4px; }
-    .hint { position: absolute; left: 10px; bottom: 10px; right: 10px; padding: 8px 10px; border-radius: 8px; background: var(--card-background-color); box-shadow: var(--ha-card-box-shadow, 0 1px 4px rgba(0,0,0,0.2)); font-size: 13px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .hint { position: absolute; left: 10px; bottom: 10px; right: 128px; padding: 8px 10px; border-radius: 8px; background: var(--card-background-color); box-shadow: var(--ha-card-box-shadow, 0 1px 4px rgba(0,0,0,0.2)); font-size: 13px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     .hint select { max-width: 100%; }
     .chip { padding: 2px 9px; border-radius: 999px; border: 1px solid var(--divider-color); background: var(--secondary-background-color); color: var(--primary-text-color); font: inherit; font-size: 12px; cursor: pointer; }
     .chip:hover { border-color: var(--primary-color); }
     .warn { color: var(--warning-color, #9a5b00); }
     .side { border-left: 1px solid var(--divider-color); overflow: auto; padding: 12px; }
     ul.plain { list-style: none; padding: 0; margin: 4px 0; }
-    @media (max-width: 720px) { :host { grid-template-columns: 1fr; grid-template-rows: 1fr auto; } .side { border-left: 0; border-top: 1px solid var(--divider-color); max-height: 45vh; } .toolbar { flex-wrap: wrap; max-width: calc(100% - 20px); gap: 3px; padding: 4px; } .toolbar button.tool { min-width: 52px; } }
+    @media (max-width: 720px) { :host { grid-template-columns: 1fr; grid-template-rows: 1fr auto; } .side { border-left: 0; border-top: 1px solid var(--divider-color); max-height: 45vh; } .toolbar { flex-wrap: wrap; max-width: calc(100% - 20px); gap: 3px; padding: 4px; } .toolbar button.tool { width: 34px; height: 34px; } }
   `];
 }
 

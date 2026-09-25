@@ -276,6 +276,13 @@ def _build_receiver_map(coords, floor_name=None) -> dict:
             continue
         for receiver in floor.get("receivers", []):
             cords = receiver.get("cords") or {}
+            # "calibrate": false keeps a proxy out of the pair fit entirely.
+            # A radio whose distances are the wrong SHAPE - the laundry
+            # tablet reads long up close and far too short across the room -
+            # cannot be described by one multiplier, and letting the solver
+            # try drags every other proxy's correction with it.
+            if receiver.get("calibrate") is False:
+                continue
             if receiver.get("entity_id") and cords.get("x") is not None and cords.get("y") is not None:
                 uid = receiver.get("scanner_uid")
                 height = receiver.get("height")
@@ -973,7 +980,7 @@ async def _auto_solve_and_apply_locked(hass, cal: dict) -> None:
         decisions[floor_name] = {"action": action, "reason": reason, "at": now_iso, **({"selftest": result.get("selftest")} if result.get("selftest") else {})}
         if action == "apply":
             try:
-                _write_floor_corrections(hass, coords, floor, result, auto=True)
+                await _write_floor_corrections(hass, coords, floor, result, auto=True)
             except ValueError as err:
                 _LOGGER.warning("Auto-calibration could not apply for %s: %s", floor_name, err)
                 continue
@@ -1172,7 +1179,7 @@ def _calibration_target(coords) -> str:
     return target if target in ("sextant", "bermuda") else "sextant"
 
 
-def _push_corrections_to_bermuda(hass, coords, floor, result) -> int:
+def _push_corrections_to_bermuda(hass, coords, floor, result) -> tuple[dict, set]:
     """Write one floor's solved corrections into Bermuda as rssi offsets.
 
     A per-receiver distance multiplier ``c`` is exactly an rssi offset of
@@ -1200,7 +1207,10 @@ def _push_corrections_to_bermuda(hass, coords, floor, result) -> int:
     current = {str(k).lower(): float(v) for k, v in (info.get("offsets") or {}).items()}
     base = coords.setdefault("bermuda_offset_base", {})
     updates = {}
+    pushed = set()
     for receiver in floor.get("receivers", []):
+        if receiver.get("calibrate") is False:
+            continue
         slug = str(receiver.get("entity_id") or "")
         correction = result["receivers"].get(slug)
         address = slug_to_addr.get(slug)
@@ -1213,24 +1223,43 @@ def _push_corrections_to_bermuda(hass, coords, floor, result) -> int:
         old = current.get(address, 0.0)
         base.setdefault(address, old)
         updates[address] = round(old + delta_db, 1)
-    if updates:
-        bermuda_source.async_set_rssi_offsets(hass, updates)
-    return len(updates)
+        pushed.add(slug)
+    return updates, pushed
 
 
-def _write_floor_corrections(hass, coords, floor, result, *, auto: bool) -> int:
-    """Apply a solve result to one floor, per calibration_target. Returns the
-    number of receivers (or Bermuda scanners) updated."""
+def _commit_bermuda_offsets(hass, updates: dict, pushed: set) -> None:
+    """Write planned offsets to Bermuda. Called AFTER the layout carrying
+    their baseline is saved, so reset can always find the values to restore."""
+    if not updates:
+        return
+    bermuda_source.async_set_rssi_offsets(hass, updates)
+    # The windows these receivers heard into predate the new offsets, and
+    # hold hours of samples: left in, the next solve fitted the SAME
+    # residual again and added it a second time, every cycle, until the
+    # window turned over. Start them over so it fits only what is left.
+    samples = get_calibration_state(hass).get("samples") or {}
+    for key in [k for k in samples if k.rpartition("|")[2] in pushed]:
+        del samples[key]
+
+
+async def _write_floor_corrections(hass, coords, floor, result, *, auto: bool) -> int:
+    """Apply a solve result to one floor, per calibration_target, and save the
+    layout. Returns the number of receivers (or Bermuda scanners) updated."""
     target = _calibration_target(coords)
     if target == "bermuda":
-        updated = _push_corrections_to_bermuda(hass, coords, floor, result)
+        updates, pushed = _push_corrections_to_bermuda(hass, coords, floor, result)
+        updated = len(updates)
         # The correction now lives in Bermuda's distances; a multiplier here
-        # would apply it twice.
+        # would apply it twice. Except on a proxy taken out of calibration:
+        # nothing was pushed for it, and its multiplier is the user's own.
         for receiver in floor.get("receivers", []):
-            receiver.pop("correction", None)
+            if receiver.get("calibrate") is not False:
+                receiver.pop("correction", None)
     else:
         updated = 0
         for receiver in floor.get("receivers", []):
+            if receiver.get("calibrate") is False:
+                continue           # its correction is the user's, not ours
             correction = result["receivers"].get(str(receiver.get("entity_id")))
             if correction is not None:
                 receiver["correction"] = correction
@@ -1243,6 +1272,12 @@ def _write_floor_corrections(hass, coords, floor, result, *, auto: bool) -> int:
         "error_factor_before": result["error_factor_before"],
         "error_factor_after": result["error_factor_after"],
     }
+    # Saved before Bermuda is touched: a push whose baseline never reached
+    # disk (auto turned off mid-loop, a later step raising) left offsets in
+    # Bermuda that reset could no longer undo.
+    await save_layout(hass, coords)
+    if target == "bermuda":
+        _commit_bermuda_offsets(hass, updates, pushed)
     return updated
 
 
@@ -1267,10 +1302,8 @@ async def _apply_result_locked(hass, cal: dict, result: dict) -> int:
     if floor is None:
         raise ValueError(f'Floor "{result["floor"]}" no longer exists.')
 
-    updated = _write_floor_corrections(hass, coords, floor, result, auto=False)
+    updated = await _write_floor_corrections(hass, coords, floor, result, auto=False)
     cal["applied"][floor.get("name")] = dict(result["receivers"])
-
-    await save_layout(hass, coords)
     return updated
 
 
@@ -1357,6 +1390,13 @@ async def async_calibration_action(hass, data: dict) -> dict:
             cal["error"] = None
     elif action == "solve":
         floor_name = data.get("floor") or cal.get("floor")
+        if cal["state"] != "sampling":
+            # Outside a run the map is whatever the last one left: empty after
+            # a restart, or another floor's after a manual run there.
+            coords = await _read_coords(hass)
+            if coords:
+                cal["receivers"] = _build_receiver_map(coords)
+                cal["all_placed_slugs"] = _all_placed_slugs(coords)
         result = await async_solve(hass, cal, floor_name)
         coords = await _read_coords(hass)
         floor = _find_floor(coords, result["floor"]) if coords else None

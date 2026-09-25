@@ -51,6 +51,7 @@ distances in metres.
 | `spot_proxy_far_m` | 2.0 | ...and not at all from this far |
 | `spot_proxy_ratio` | 2.0 | every other proxy this many times farther for full weight (none within 1.25×) |
 | `floor_switch_secs` | 60 | a challenger floor must lead this long |
+| `floor_switch_margin` | 0.05 | the lead a challenger floor needs before that dwell starts; raise to 0.10 when a still thing drifts between two near-tied floors |
 | `floor_tenure_bonus` | 0.05 | extra margin at full tenure |
 | `floor_tenure_full_secs` | 600 | tenure counted up to this |
 | `floor_proximity_weight` | 0.5 | how much proximity scales a floor's score (0 = fit only) |
