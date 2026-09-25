@@ -59,6 +59,34 @@ export function placeLabels(labels, tries = LABEL_TRIES) {
   return out;
 }
 
+/** Things whose markers would sit on top of each other, gathered into one.
+ *
+ * A nightstand with a phone, a watch and an AirPods case on it drew three
+ * dots in one place and three labels fighting for the space under them. At
+ * that zoom they are one thing to look at: a marker with a count. Zoom in
+ * and they come apart on their own, because `radius` is a screen size
+ * converted to map units. Greedy: each thing joins the first cluster whose
+ * centre is within `radius`, else starts one; `skip` names the things to
+ * leave out (the one you clicked stays its own marker). Returns clusters of
+ * two or more, with the centroid and the members in input order. */
+export function clusterThings(things, radius, skip = new Set()) {
+  const clusters = [];
+  for (const t of things) {
+    if (!t.cords || skip.has(t.ent)) continue;
+    const [x, y] = t.cords;
+    const home = clusters.find((c) => Math.hypot(c.x - x, c.y - y) < radius);
+    if (home) {
+      home.members.push(t);
+      const n = home.members.length;
+      home.x += (x - home.x) / n;
+      home.y += (y - home.y) / n;
+    } else {
+      clusters.push({ x, y, members: [t] });
+    }
+  }
+  return clusters.filter((c) => c.members.length > 1);
+}
+
 /** The proxies a thing marker is sitting on top of, each with `cover`: the
  * radius of the widest thing covering it. A proxy buried under a thing reads
  * as a proxy that is GONE, so the map draws these ones again over the top. */
@@ -1473,6 +1501,12 @@ export class SextantMap {
   _drawThings(ctx) {
     const k = this.view.k;
     const focus = this.options.focus || null;
+    // Markers that would overlap at this zoom become one marker with a count
+    // (see clusterThings). The thing you picked out always stays its own.
+    const picked = new Set([focus, this.selection?.kind === "thing" ? this.selection.ent : null].filter(Boolean));
+    const clusters = this.options.cluster === false ? [] : clusterThings(this.things, (THING_RADIUS * 1.8) / k, picked);
+    const clustered = new Map();
+    for (const c of clusters) for (const m of c.members) clustered.set(m.ent, c);
     for (const t of this.things) {
       if (!t.cords) continue;
       const custom = t.color || null;
@@ -1516,6 +1550,9 @@ export class SextantMap {
         ctx.beginPath(); ctx.arc(t.raw[0], t.raw[1], 4 / k, 0, Math.PI * 2);
         ctx.fillStyle = paint(0.6); ctx.fill();
       }
+      // Trails, rings and fixes are drawn for every thing; the dot and label
+      // of a clustered one are drawn once for the cluster, below.
+      if (clustered.has(t.ent)) { ctx.restore(); continue; }
       const selected = focused || (this.selection && this.selection.kind === "thing" && this.selection.ent === t.ent);
       const r = (focused ? THING_RADIUS * 1.6 : THING_RADIUS) / k;
       if (focused) {
@@ -1558,5 +1595,33 @@ export class SextantMap {
       this._thingMarks.push({ x: t.cords[0], y: t.cords[1], r });
       ctx.restore();
     }
+    for (const c of clusters) this._drawCluster(ctx, c, focus);
+  }
+
+  /** One marker for several things in one place: a dot in the first member's
+   * colour carrying the count, and a label that names the first two. */
+  _drawCluster(ctx, c, focus) {
+    const k = this.view.k, r = (THING_RADIUS * 1.15) / k;
+    const lead = c.members[0];
+    const custom = lead.color || null;
+    const stale = c.members.every((t) => staleness(t, this.options.staleAfter).ghost);
+    ctx.save();
+    if (focus) ctx.globalAlpha = 0.28;   // a cluster is never the focused thing
+    if (stale) ctx.globalAlpha *= 0.4;
+    ctx.beginPath(); ctx.arc(c.x, c.y, r * 1.9, 0, Math.PI * 2);
+    ctx.fillStyle = thingRgba(lead.ent, custom, 0.18); ctx.fill();
+    ctx.beginPath(); ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
+    ctx.fillStyle = thingColor(lead.ent, custom); ctx.fill();
+    if (stale) ctx.setLineDash([4 / k, 3 / k]);
+    ctx.lineWidth = 2 / k; ctx.strokeStyle = "#ffffff"; ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = "#ffffff"; ctx.font = `700 ${13 / k}px system-ui, sans-serif`;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(String(c.members.length), c.x, c.y);
+    const names = c.members.map((t) => t.label || t.ent);
+    const label = names.length > 2 ? `${names[0]}, ${names[1]} +${names.length - 2}` : names.join(", ");
+    if (this.options.labels) this._label(ctx, label, c.x, c.y + r + 9 / k, 11, 0.9, null, LABEL_PRIO.thing);
+    this._thingMarks.push({ x: c.x, y: c.y, r });
+    ctx.restore();
   }
 }

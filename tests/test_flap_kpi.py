@@ -27,6 +27,18 @@ def test_a_stationary_thing_scores_zero_changes():
     assert m["median_dwell_s"] is None
 
 
+def test_a_restart_is_not_a_change():
+    """Kitchen, unavailable, unknown, Kitchen is the sensor going away and
+    coming back where it was: no change, the dead rows counted on their own."""
+    m = kpi.compute_metrics(
+        _rows((0, "Kitchen"), (100, "unavailable"), (101, "unknown"), (102, "Kitchen"), (200, "Office")),
+        window_hours=1,
+    )
+    assert m["changes"] == 1
+    assert m["dead"] == 2
+    assert m["top_pairs"] == [{"pair": ["Kitchen", "Office"], "count": 1}]
+
+
 def test_flips_and_dwells_are_counted():
     # Kitchen 30s -> Dining 20s -> Kitchen 600s -> Office: two flips? No - one
     # A-B-A (Kitchen/Dining/Kitchen); Dining/Kitchen/Office is not a round trip.

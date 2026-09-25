@@ -90,13 +90,27 @@ def compute_metrics(rows, window_hours=None):
             continue
         seq.append((ts, state))
 
-    changes = max(len(seq) - 1, 0)
     if window_hours:
         hours = float(window_hours)
     elif len(seq) >= 2:
         hours = max((seq[-1][0] - seq[0][0]).total_seconds() / 3600.0, 1e-9)
     else:
         hours = 0.0
+
+    # A pass through unavailable or unknown is the sensor going away and coming
+    # back - a restart, a reload - and says nothing about where the thing is.
+    # Those rows go before anything is counted: Kitchen, unavailable, Kitchen is
+    # no change at all, and Kitchen, unavailable, Office is the one change it
+    # always was. Counted as they were, one restart added two changes to every
+    # sensor, and a day with three restarts read as a fleet-wide flap.
+    dead = sum(1 for _ts, s in seq if s in DEAD_STATES)
+    live = []
+    for ts, s in seq:
+        if s in DEAD_STATES or (live and live[-1][1] == s):
+            continue
+        live.append((ts, s))
+    seq = live
+    changes = max(len(seq) - 1, 0)
 
     # A -> B -> A within the next change: the boundary-flap signature.
     flips = sum(
@@ -106,13 +120,8 @@ def compute_metrics(rows, window_hours=None):
     )
     dwells = [(seq[i + 1][0] - seq[i][0]).total_seconds() for i in range(len(seq) - 1)]
     short = sum(1 for d in dwells if d < 60.0)
-    dead = sum(1 for _ts, s in seq[1:] if s in DEAD_STATES)
 
-    transitions = Counter(
-        (seq[i][1], seq[i + 1][1])
-        for i in range(len(seq) - 1)
-        if seq[i][1] not in DEAD_STATES and seq[i + 1][1] not in DEAD_STATES
-    )
+    transitions = Counter((seq[i][1], seq[i + 1][1]) for i in range(len(seq) - 1))
     # Fold A->B and B->A together: the pair is what flaps, not the direction.
     pairs = Counter()
     for (a, b), n in transitions.items():

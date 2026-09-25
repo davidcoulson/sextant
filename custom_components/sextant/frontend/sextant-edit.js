@@ -11,6 +11,7 @@ import { LitElement, html, css, nothing } from "./lit.js";
 import { SextantMap, polygonCentroid, snapToVertex, squareUp } from "./sextant-map.js";
 import { sharedStyles, widgetStyles, toast, callWS, confirmDialog, fmtNum, fmtLen, uiField, uiSelect, uiSwitch, uiButton, uiMenu, proxyName, lenUnit, toDisplayLen, fromDisplayLen, fmtScale, isImperial, THING_CLASSES, CLASS_FAMILIES } from "./sextant-ui.js";
 import { mapUrlFor } from "./sextant-panel.js";
+import { lostShapes } from "./sextant-shapes.js";
 
 // [id, label under the icon, icon, tooltip]
 /** The Anchor tool's "New anchor" choice (not a name any anchor can have). */
@@ -68,6 +69,7 @@ class SextantEdit extends LitElement {
     _busy: { state: true },
     _locks: { state: true },
     _undo: { state: true },
+    _history: { state: true },     // the kept copies of the plan, once asked for
     _alignment: { state: true },
   };
 
@@ -647,16 +649,65 @@ class SextantEdit extends LitElement {
 
   async _save(removeMap = null) {
     const draft = this._cleanDraft();
+    // Asked before anything is sent. The server keeps a copy of the plan it
+    // replaces, but a spot that draws as nothing is still a spot you have to
+    // notice is missing: this is the question that would have caught the two
+    // bedside tables that went out as one point each.
+    const lost = lostShapes(this.data?.layout, draft);
+    if (lost.length && !confirmDialog(`This save would break ${lost.length === 1 ? "a shape" : `${lost.length} shapes`}:\n\n${lost.join("\n")}\n\nSave anyway? The plan as it is now is kept under History.`)) return null;
     this._busy = true;
     const r = await callWS(this, this.hass, { type: "sextant/layout/save", layout: draft, ...(removeMap ? { remove_map: removeMap } : {}) });
     this._busy = false;
     if (r) {
       const n = r.confined?.length || 0;
       toast(this, n ? `Floor plan saved; ${n === 1 ? `${r.confined[0]} was` : `${n} spots were`} fitted inside ${n === 1 ? "its room" : "their rooms"}` : "Floor plan saved");
+      // The server's own check, in case a shape went wrong on the way in.
+      if (r.lost?.length) toast(this, `Saved, but ${r.lost.length === 1 ? "a shape was" : `${r.lost.length} shapes were`} lost: ${r.lost[0]}${r.lost.length > 1 ? " …" : ""}. Restore the earlier copy from History if that was not meant.`, 10000);
+      this._history = null;   // stale now: a copy was just added
       this._dirty = false;
       this.dispatchEvent(new CustomEvent("layout-changed"));
     }
     return r;
+  }
+
+  /** The kept copies of the plan (see snapshots.py): every save keeps the plan
+   * it replaced - all of today's, hourly for a week, daily for three months. */
+  async _toggleHistory() {
+    if (this._history) { this._history = null; return; }
+    const r = await callWS(this, this.hass, { type: "sextant/snapshots/list" });
+    if (r) this._history = r.snapshots || [];
+  }
+
+  async _restoreSnapshot(snap) {
+    const when = new Date(snap.at * 1000).toLocaleString();
+    if (this._dirty && !confirmDialog(`You have unsaved changes; restoring throws them away. Restore the plan from ${when}?`)) return;
+    if (!this._dirty && !confirmDialog(`Restore the plan from ${when}? The plan as it is now is kept, so this can be undone the same way.`)) return;
+    this._busy = true;
+    const r = await callWS(this, this.hass, { type: "sextant/snapshots/restore", id: snap.id });
+    this._busy = false;
+    if (!r) return;
+    toast(this, `Restored the plan from ${when}`);
+    // Not dirty: the fresh layout the panel fetches next replaces the draft
+    // (see updated()), the same way a discard does.
+    this._dirty = false;
+    this._history = null;
+    this.dispatchEvent(new CustomEvent("layout-changed"));
+  }
+
+  _renderHistory() {
+    const h = this._history;
+    const fmt = (s) => `${new Date(s.at * 1000).toLocaleString()} · v${s.version}${s.bytes ? ` · ${Math.round(s.bytes / 1024)} KB` : ""}`;
+    return html`<div class="card small">
+      <h4>History<span class="grow"></span>${uiButton({ label: h ? "Hide" : "Show", kind: "text", disabled: this._busy, onClick: () => this._toggleHistory() })}</h4>
+      ${h === null || h === undefined
+        ? html`<div class="muted">Every save keeps the plan it replaced: all of today's, hourly for a week, daily for three months. Any of them can be put back.</div>`
+        : h.length
+          ? html`<ul class="plain">${h.slice(0, 40).map((s) => html`<li class="row">
+              <span class="grow">${fmt(s)}</span>
+              ${uiButton({ label: "Restore", kind: "outline", disabled: this._busy, onClick: () => this._restoreSnapshot(s), title: "Put this copy of the plan back; the current one is kept" })}
+            </li>`)}</ul>${h.length > 40 ? html`<div class="muted">…and ${h.length - 40} older</div>` : nothing}`
+          : html`<div class="muted">No kept copies yet: the first one is made the next time the plan is saved.</div>`}
+    </div>`;
   }
 
   _discard() {
@@ -760,6 +811,7 @@ class SextantEdit extends LitElement {
             <div class="row">${uiButton({ label: "Add floor", kind: "primary", disabled: this._busy, onClick: (e) => e.target.closest("form").requestSubmit() })}<span class="muted small">The image is stored as the floor's map.</span></div>
           </form>
         </div>
+        ${this._renderHistory()}
         ${(this.data?.scanner_diagnostics?.unplaced_scanners || []).length ? html`<div class="card small"><h4>Proxies reporting, not placed</h4>${this.data.scanner_diagnostics.unplaced_scanners.map((s) => proxyName(this.data, s)).join(", ")}</div>` : nothing}
       </aside>
     `;
