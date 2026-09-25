@@ -64,13 +64,16 @@ def test_a_thing_that_goes_quiet_gets_the_transition_written_once(monkeypatch):
     assert loc._attrs["presence"] == "away"
 
 
-def test_a_thing_still_heard_is_left_to_its_own_cycle():
+def test_a_thing_still_heard_is_written_once_not_every_cycle(monkeypatch):
     ent = "thing"
     hass = _hass_with_sensors(ent)
     sextant._last_seen.clear(); sextant._presence_published.clear()
     sextant._last_seen[ent] = {"updated": time.time() - 5}
-    sextant._publish_presence(hass, LAYOUT)
-    assert "presence" not in hass.data["sextant_sensors"][f"sensor.{ent}_sextant_location"]._attrs
+    calls = []
+    orig = sextant.update_sextant_sensor_state
+    monkeypatch.setattr(sextant, "update_sextant_sensor_state", lambda h, e, s, a=None: (calls.append(e), orig(h, e, s, a)))
+    sextant._publish_presence(hass, LAYOUT); sextant._publish_presence(hass, LAYOUT)
+    assert len(calls) == len(sextant.THING_SENSOR_SUFFIXES)
 
 
 def test_a_thing_with_sensors_but_no_remembered_sighting_is_away():
@@ -83,6 +86,18 @@ def test_a_thing_with_sensors_but_no_remembered_sighting_is_away():
     loc = hass.data["sextant_sensors"][f"sensor.{ent}_sextant_location"]
     assert loc._attrs["presence"] == "away" and loc._attrs["last_heard"] is None
     assert sextant._presence_published[ent] == "away"
+
+
+def test_a_thing_heard_but_not_located_still_reads_here():
+    """Eilee's watch: heard, so its sighting is fresh, but too few proxies for
+    a fix, so its sensors read unknown and the per-thing write never runs."""
+    ent = "heard_unlocated"
+    hass = _hass_with_sensors(ent)
+    sextant._last_seen.clear(); sextant._presence_published.clear()
+    sextant._last_seen[ent] = {"updated": time.time() - 5}
+    sextant._publish_presence(hass, LAYOUT)
+    loc = hass.data["sextant_sensors"][f"sensor.{ent}_sextant_location"]
+    assert loc._attrs["presence"] == "here" and loc._attrs["last_heard"]
 
 
 def test_forgetting_clears_the_published_presence():

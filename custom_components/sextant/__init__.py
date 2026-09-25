@@ -3027,7 +3027,10 @@ def _publish_presence(hass, layout):
         seen = _last_seen.get(ent)
         seen = seen if isinstance(seen, dict) else {}
         presence = _presence_of(seen.get("updated"), now, layout)
-        if presence == "here" or _presence_published.get(ent) == presence:
+        # "here" is normally written with the position; a thing heard but not
+        # located (too few proxies for a fix) never gets that write, so it is
+        # covered here too. The published gate keeps it to one write.
+        if _presence_published.get(ent) == presence:
             continue
         attrs = _presence_attrs(seen.get("updated"), now, layout)
         for suffix in THING_SENSOR_SUFFIXES:
