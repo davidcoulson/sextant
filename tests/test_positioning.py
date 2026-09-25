@@ -2185,3 +2185,10 @@ def test_a_spot_remembers_when_it_was_entered():
         got = _sub("e", (300, 900), t + dt)
     assert got == ("unknown", "Living")
     assert sextant._subzone_state["e"]["since"] > entered
+
+
+def test_the_floor_switch_margin_is_tunable():
+    """A near-tie between two floors drifted on a half-hour period at 0.05;
+    the margin has to be settable without a release."""
+    assert sextant.TUNING_SPEC["floor_switch_margin"][0] == sextant.FLOOR_SWITCH_MARGIN == 0.05
+    assert sextant._tuning({"tuning": {"floor_switch_margin": 0.1}}, "floor_switch_margin") == 0.1

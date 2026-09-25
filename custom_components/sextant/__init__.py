@@ -446,6 +446,11 @@ TUNING_SPEC = {
     "spot_proxy_ratio": (2.0, float, 1.3, 10.0),
     # Floor election dwell (see _elect_floor).
     "floor_switch_secs": (FLOOR_SWITCH_SECS, float, 0.0, 3600.0),
+    # The lead a challenger floor needs before its dwell starts. 0.05 lets a
+    # near-tie (a phone on the floor above a strong proxy) drift between two
+    # floors on a half-hour period; 0.10 held Eilee's phone on its floor all
+    # night in replay with the cats' moves untouched.
+    "floor_switch_margin": (FLOOR_SWITCH_MARGIN, float, 0.0, 0.5),
     "floor_tenure_bonus": (0.05, float, 0.0, 0.5),      # extra margin at full tenure
     "floor_tenure_full_secs": (600.0, float, 1.0, 86400.0),
     # How much a floor's confidence is scaled by how near its nearest receiver
@@ -2467,7 +2472,7 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
     # (up to floor_tenure_bonus at floor_tenure_full_secs), so a floor that
     # has been right for ten minutes is not unseated by one geometry fluke.
     tenure = max(0.0, now - _floor_since.get(entity, now))
-    margin = FLOOR_SWITCH_MARGIN + _tuning(layout, "floor_tenure_bonus") * min(
+    margin = _tuning(layout, "floor_switch_margin") + _tuning(layout, "floor_tenure_bonus") * min(
         1.0, tenure / _tuning(layout, "floor_tenure_full_secs")
     )
     lowest_floor_name, challenge = _elect_floor(
