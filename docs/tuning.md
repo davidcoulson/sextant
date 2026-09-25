@@ -55,6 +55,7 @@ distances in metres.
 | `floor_tenure_bonus` | 0.05 | extra margin at full tenure |
 | `floor_tenure_full_secs` | 600 | tenure counted up to this |
 | `floor_proximity_weight` | 0.5 | how much proximity scales a floor's score (0 = fit only) |
+| `floor_proximity_blend` | `gated` | how that weight combines a floor's fit with its proximity: `gated` (fit × ((1 − w) + w × proximity): a poor fit caps the floor) or `geometric` (fit^(1 − w) × proximity^w: the nearest proxies can carry a floor whose fit is poor). Try `geometric` at weight 0.7 with `floor_switch_margin` 0.10 when a still thing next to an open foyer or landing keeps reading the floor below |
 | `floor_proximity_k` | 3 | nearest proxies averaged for proximity |
 | `anchor_max_m` | 0.8 | anchor when one proxy reads closer than this (0 = off) |
 | `anchor_ratio` | 2 | every other proxy at least this many times farther |
@@ -71,6 +72,7 @@ distances in metres.
 | `history_hours` | 6 | hours of position history kept (scrubber, timeline, Activity), 1 to 168 |
 | `history_admin_only` | off | only administrators may read where things have been (scrubber, timeline, Activity) |
 | `stale_after_secs` | 120 | unheard this long, a thing is drawn as a ghost on Live (display only) |
+| `election_log_hours` | 0 | keep every floor election (each cycle's per-floor candidates, odds and winner, per thing) for this many hours in `config/sextant_election_log`, for `tools/replay_floors.py`; about 60 MB a day for thirty things, so 0 (off) unless you are chasing a wrong floor |
 
 Two more live at the top level of the layout: `position_timeout` (seconds
 before an unheard thing leaves the map, 300) and `thing_height` (the

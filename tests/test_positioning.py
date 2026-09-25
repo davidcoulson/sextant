@@ -1162,6 +1162,27 @@ def test_proximity_weighting_favours_the_floor_with_the_nearest_receiver():
     assert out == scores
 
 
+def test_geometric_blend_lets_the_nearest_proxies_outweigh_a_poor_fit():
+    """Eilee's phone at 05:37: its own floor's fit was cut to 0.15 by the
+    no-go penalty (a fix a metre over the foyer void) while the floor below,
+    hearing it through the slab at much the same range, fitted at 0.72.
+    Gated, the poor fit caps her floor (0.27 against 0.56); geometric at the
+    same weight, the nearer proxies carry it (0.77 against 0.73)."""
+    scores, nearest = {"Second": 0.273, "Ground": 0.717}, {"Second": 2.4, "Ground": 3.3}
+    gated = sextant._proximity_weighted_scores(scores, nearest, 0.8, "gated")
+    assert gated["Ground"] > gated["Second"]
+    geo = sextant._proximity_weighted_scores(scores, nearest, 0.8, "geometric")
+    assert geo["Second"] > geo["Ground"]
+    assert abs(geo["Second"] - 0.273 ** 0.2) < 1e-9, "prox 1 on the nearest floor: conf^(1-w)"
+    assert abs(geo["Ground"] - 0.717 ** 0.2 * (2.4 / 3.3) ** 0.8) < 1e-9
+    # Weight 0 and a lone floor pass through under either blend; a negative
+    # confidence (never produced, but never a complex number either) is floored.
+    assert sextant._proximity_weighted_scores(scores, nearest, 0.0, "geometric") == scores
+    assert sextant._proximity_weighted_scores({"Ground": 0.5}, nearest, 0.7, "geometric") == {"Ground": 0.5}
+    assert sextant._proximity_weighted_scores({"A": -0.1, "B": 0.5}, {"A": 1.0, "B": 2.0}, 0.5, "geometric")["A"] == 0.0
+    assert sextant.TUNING_SPEC["floor_proximity_blend"][0] == "gated", "the default is unchanged"
+
+
 def test_full_cycle_floor_switches_on_proximity_when_fits_tie(monkeypatch):
     """Two floors explain the receivers equally well (open foyer); the one
     whose receivers are nearest must win the election within the dwell."""

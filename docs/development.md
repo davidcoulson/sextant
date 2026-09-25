@@ -83,6 +83,12 @@ pytest tests
   shell (`--hours 12 --json before.json`, later `--baseline before.json`).
 - `tools/sextant_eval.py` replays a layout against recorded readings;
   `tools/solver_bench.py` benchmarks the numpy solver against SciPy.
+- `tools/replay_floors.py` replays every thing's floor election from an
+  election log (set `election_log_hours` on the Tuning page, then point it at
+  `config/sextant_election_log`) under other margins, dwells and proximity
+  weights, and grades a thing against where it really was;
+  `tools/floor_capture.py` records the same cycles from outside, over the
+  websocket, when the log is not on.
 - `tools/brand/` builds the logo from the same compass rose the sidebar uses.
 - The panel is plain Lit modules under `custom_components/sextant/frontend/`
   with no build step. The backend registers the panel module with the

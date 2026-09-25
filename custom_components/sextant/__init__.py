@@ -71,6 +71,7 @@ from .storage import (
 from .const import ACCURACY_ENTITY_ID
 from . import history as history_mod
 from . import bermuda_source
+from . import election_log
 from . import fingerprint
 from . import floor_field
 from . import registration
@@ -457,6 +458,17 @@ TUNING_SPEC = {
     # is, relative to the nearest receiver on any competing floor (see
     # _proximity_weighted_scores). 0 = pure fit-quality election.
     "floor_proximity_weight": (0.5, float, 0.0, 1.0),
+    # How that weight combines fit and proximity (see _proximity_weighted_scores).
+    # "gated": conf x ((1 - w) + w x prox) - a poor fit caps the floor however
+    # near its proxies. "geometric": conf^(1 - w) x prox^w - the weighted
+    # geometric mean, where a poor fit costs a floor less than a far nearest
+    # proxy does. A phone on a bedside table next to an open foyer solves a
+    # metre over the void every few cycles; the no-go penalty then cut its
+    # own floor's fit to 0.15 and the floor below, hearing it through the
+    # slab at much the same range, won for half the night. Geometric at 0.7
+    # with floor_switch_margin 0.10 replayed that night at 0 % wrong and
+    # halved every floor change in the house; gated at any weight did not.
+    "floor_proximity_blend": ("gated", str, ("gated", "geometric")),
     # How many of a floor's nearest receivers that proximity term averages.
     # One receiver straight through a wood floor can read nearer than the
     # receivers in the room (a dog on the sun-room floor: basement 1.7 m,
@@ -534,6 +546,11 @@ TUNING_SPEC = {
     # (see persons.judge_source): a Companion app that lost its location
     # permission sat on "home" for six days.
     "gps_stale_secs": (7200.0, float, 60.0, 604800.0),
+    # Keep every floor election (each cycle's per-floor candidates, the odds
+    # and the winner, per thing) for this many hours in
+    # config/sextant_election_log, for tools/replay_floors.py. 0 = off. About
+    # 60 MB a day for thirty things; see election_log.py.
+    "election_log_hours": (0.0, float, 0.0, 168.0),
     # Hours of position history kept per thing: the history scrubber, the
     # timeline and Activity reach back this far. Applied on the next
     # cycle; an explicit top-level history_max_age (seconds) still wins.
@@ -2432,6 +2449,7 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
         {f: s["conf"] for f, s in solved.items()},
         {c["name"]: c.get("near_k_m", c.get("nearest_m")) for c in candidates},
         _tuning(layout, "floor_proximity_weight"),
+        _tuning(layout, "floor_proximity_blend"),
     )
     # The floor's own prior (layout floor["bias"], default 1): in a house the
     # ground floor is where things usually are, and a phone on the kitchen
@@ -2560,9 +2578,7 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
             _floor_sub_zone_polygons(hass, new_global_data, entity, lowest_floor_name), scale, layout, now=now,
             fp=elected.get("fp"),
         )
-        apitricords = update_or_add_entry(
-            apitricords,
-            {
+        row = {
                 "ent": entity,
                 "cords": [avg_x, avg_y],
                 "zone": zone,
@@ -2605,9 +2621,12 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
                 "estimator": estimator,
                 "fp": elected.get("fp"),
                 "updated": time.time(),
-            },
-        )
+        }
+        apitricords = update_or_add_entry(apitricords, row)
         await update_apitricords(hass, apitricords)
+        # Opt-in: keep this cycle's election for replay (election_log.py).
+        if _tuning(layout, "election_log_hours") > 0:
+            election_log.get(hass).add(row, row["updated"])
         # Feed the position history. Stored in METRES in this floor's frame, so
         # a later map re-export (which changes every pixel) cannot move the
         # past; the pixel projection happens at render time. A floor with no
@@ -2984,6 +3003,11 @@ async def process_entities(hass, new_global_data):
         _publish_presence(hass, layout if isinstance(layout, dict) else {})
     except Exception as e:  # noqa: BLE001 - an attribute must never stop the things'
         _LOGGER.debug("Presence not published: %s", e)
+    try:
+        layout = get_layout(hass)
+        await election_log.get(hass).flush(_tuning(layout, "election_log_hours"))
+    except Exception as e:  # noqa: BLE001 - a log must never stop the things'
+        _LOGGER.debug("Election log not flushed: %s", e)
 
 
 # thing -> {"floor", "x", "y", "since", "away"}: where an owned thing has
@@ -3544,20 +3568,24 @@ def floor_bias_map(layout, frames, floor_name, other_name, cell_m=0.5):
     return {"cell_px": step, "registered": registered, "cells": cells, "min": min(ratios), "max": max(ratios)}
 
 
-def _proximity_weighted_scores(scores, nearest_by_floor, weight):
+def _proximity_weighted_scores(scores, nearest_by_floor, weight, blend="gated"):
     """Scale each solved floor's confidence by receiver proximity.
 
     ``prox`` for a floor is the nearest measured distance on ANY competing
     floor divided by this floor's own nearest, so the floor with the nearest
     receiver scores 1 and a floor whose closest receiver is twice as far
-    scores 0.5; the confidence is then multiplied by
-    ``(1 - weight) + weight * prox``. With one solved floor, an unusable
-    distance, or weight 0, the scores pass through unchanged. Distances are
-    the raw slants (metres) the candidate ranking already uses, so a
-    through-slab reading directly below a thing counts against the floor
-    below it just as it did in the old nearest-receiver election - but now
-    as one weighted term inside the fit competition, behind the same margin
-    and dwell, rather than as the whole answer.
+    scores 0.5. "gated" multiplies the confidence by
+    ``(1 - weight) + weight * prox``; "geometric" takes the weighted
+    geometric mean ``conf ** (1 - weight) * prox ** weight``, so a floor
+    whose fit is poor (a fix a metre over a void, the no-go penalty applied)
+    is not capped by that fit when its proxies are plainly the nearest. With
+    one solved floor, an unusable distance, or weight 0, the scores pass
+    through unchanged. Distances are the raw slants (metres) the candidate
+    ranking already uses, so a through-slab reading directly below a thing
+    counts against the floor below it just as it did in the old
+    nearest-receiver election - but now as one weighted term inside the fit
+    competition, behind the same margin and dwell, rather than as the whole
+    answer.
     """
     if not scores or not weight or weight <= 0:
         return dict(scores)
@@ -3572,7 +3600,10 @@ def _proximity_weighted_scores(scores, nearest_by_floor, weight):
     out = {}
     for floor, conf in scores.items():
         prox = best / usable[floor] if floor in usable else 1.0
-        out[floor] = conf * ((1.0 - weight) + weight * prox)
+        if blend == "geometric":
+            out[floor] = (max(conf, 0.0) ** (1.0 - weight)) * (prox ** weight)
+        else:
+            out[floor] = conf * ((1.0 - weight) + weight * prox)
     return out
 
 
