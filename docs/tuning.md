@@ -72,7 +72,7 @@ distances in metres.
 | `history_hours` | 6 | hours of position history kept (scrubber, timeline, Activity), 1 to 168 |
 | `history_admin_only` | off | only administrators may read where things have been (scrubber, timeline, Activity) |
 | `stale_after_secs` | 120 | unheard this long, a thing is drawn as a ghost on Live (display only) |
-| `election_log_hours` | 0 | keep every floor election (each cycle's per-floor candidates, odds and winner, per thing) for this many hours in `config/sextant_election_log`, for `tools/replay_floors.py`; about 60 MB a day for thirty things, so 0 (off) unless you are chasing a wrong floor |
+| `election_log_hours` | 0 | keep every floor election (each cycle's per-floor candidates, odds and winner, per thing) for this many hours in `config/sextant_election_log`, for `tools/replay_floors.py`; about 150 MB a day for twenty things, so 0 (off) unless you are chasing a wrong floor |
 
 Two more live at the top level of the layout: `position_timeout` (seconds
 before an unheard thing leaves the map, 300) and `thing_height` (the

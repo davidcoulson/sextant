@@ -549,7 +549,7 @@ TUNING_SPEC = {
     # Keep every floor election (each cycle's per-floor candidates, the odds
     # and the winner, per thing) for this many hours in
     # config/sextant_election_log, for tools/replay_floors.py. 0 = off. About
-    # 60 MB a day for thirty things; see election_log.py.
+    # 150 MB a day for twenty things; see election_log.py.
     "election_log_hours": (0.0, float, 0.0, 168.0),
     # Hours of position history kept per thing: the history scrubber, the
     # timeline and Activity reach back this far. Applied on the next
@@ -3454,6 +3454,12 @@ def _score_floor_fit(fix, weighted, scale):
     coverage): the thing's true floor tends to explain its whole receiver
     ensemble, while a wrong floor fits one loud through-slab reading and
     contradicts the rest.
+
+    Not always, measured: a wood floor shortens every through-slab reading by
+    about the same factor (0.65x the true 3D range), so the floor below can
+    fit a still phone as well as its own floor does, and better once the
+    phone's own fix strays over a void and takes the no-go penalty. That is
+    what the proximity term and floor_proximity_blend are for.
     """
     x, y = fix
     n = len(weighted)

@@ -11,8 +11,9 @@ With ``election_log_hours`` set on the Tuning page, Sextant keeps them itself:
 one JSON line per thing per cycle, in hourly files under
 ``config/sextant_election_log``, dropped once they are older than the window.
 tools/replay_floors.py reads the directory and replays the elections under
-other settings. About 2.5 MB an hour for thirty things at fifteen-second
-cycles; a day is some 60 MB, a week 400, which is why it is off by default.
+other settings. Measured at about 6 MB an hour for twenty things at
+fifteen-second cycles (1.2 KB a row, most of it the per-floor candidates); a
+day is some 150 MB, a week a gigabyte, which is why it is off by default.
 
 This module imports nothing from the rest of the package.
 """
