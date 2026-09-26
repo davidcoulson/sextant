@@ -72,6 +72,7 @@ distances in metres.
 | `history_hours` | 6 | hours of position history kept (scrubber, timeline, Activity), 1 to 168 |
 | `history_admin_only` | off | only administrators may read where things have been (scrubber, timeline, Activity) |
 | `stale_after_secs` | 120 | unheard this long, a thing is drawn as a ghost on Live (display only) |
+| `robot_poll_secs` | 30 | how often a robot vacuum that is out is asked where it is; each ask costs the Roborock integration a map parse (a few hundred ms on the event loop), a docked robot is never asked |
 | `election_log_hours` | 0 | keep every floor election (each cycle's per-floor candidates, odds and winner, per thing) for this many hours in `config/sextant_election_log`, for `tools/replay_floors.py`; about 150 MB a day for twenty things, so 0 (off) unless you are chasing a wrong floor |
 
 Two more live at the top level of the layout: `position_timeout` (seconds

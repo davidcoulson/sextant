@@ -72,6 +72,7 @@ from .const import ACCURACY_ENTITY_ID
 from . import history as history_mod
 from . import bermuda_source
 from . import election_log
+from . import robots as robots_mod
 from . import fingerprint
 from . import floor_field
 from . import registration
@@ -559,6 +560,12 @@ TUNING_SPEC = {
     # config/sextant_election_log, for tools/replay_floors.py. 0 = off. About
     # 150 MB a day for twenty things; see election_log.py.
     "election_log_hours": (0.0, float, 0.0, 168.0),
+    # How often a robot vacuum that is out cleaning is asked where it is
+    # (robots.py). Each ask makes the Roborock integration fetch and parse the
+    # vacuum's map, which holds Home Assistant's event loop for a few hundred
+    # milliseconds, so this is a trade between a smooth trail and a quiet
+    # loop. A docked robot is never asked: it is at its dock.
+    "robot_poll_secs": (30.0, float, 10.0, 600.0),
     # Hours of position history kept per thing: the history scrubber, the
     # timeline and Activity reach back this far. Applied on the next
     # cycle; an explicit top-level history_max_age (seconds) still wins.
@@ -1380,7 +1387,8 @@ async def update_tracked_entities(hass):
                 # carries for a device outside it (untracked while HA was down)
                 # is an orphan and goes. One set comparison per cycle.
                 from .sensor import prune_sensors_for_untracked  # noqa: PLC0415 - sensor imports this package
-                prune_sensors_for_untracked(hass, tracked_prefixes)
+                # Robots are Sextant's own things, not Bermuda's: keep theirs.
+                prune_sensors_for_untracked(hass, set(tracked_prefixes) | set(robot_things(get_layout(hass))))
                 unique_values = sorted(tracked_prefixes)
                 readings = bermuda_source.async_get_readings(hass) or {}
                 # Count device<->scanner pairs with a live distance, which is
@@ -3040,6 +3048,136 @@ async def process_entities(hass, new_global_data):
         await election_log.get(hass).flush(_tuning(layout, "election_log_hours"))
     except Exception as e:  # noqa: BLE001 - a log must never stop the things'
         _LOGGER.debug("Election log not flushed: %s", e)
+    try:
+        await _robot_cycle(hass, get_layout(hass))
+    except Exception as e:  # noqa: BLE001 - a vacuum must never stop the things'
+        _LOGGER.debug("Robots not placed: %s", e)
+
+
+# --- Robot vacuums (robots.py) ------------------------------------------------
+#
+# A robot is configured per vacuum entity in the layout's "robots" map:
+# {"floor", "fit" (robots.fit, with the transform), "dock_map" (the dock in
+# the robot's map, millimetres), "dock_plan" (where the user marked it)}. It
+# is published as a thing of its own, vacuum.rocky -> "vacuum_rocky", with
+# the same sensors and Live row as any other; its position is not solved but
+# asked of the robot, and put through the fitted transform.
+
+# The vacuum states in which a robot is somewhere other than its dock.
+ROBOT_OUT_STATES = frozenset({"cleaning", "returning", "paused", "idle", "error"})
+# vacuum entity -> {"inflight", "last_poll", "map" (x, y) mm, "at", "fails"}
+_robot_state = {}
+
+
+def robot_thing(vacuum_entity_id):
+    """The thing a robot is published as: vacuum.rocky -> vacuum_rocky."""
+    return str(vacuum_entity_id).replace(".", "_")
+
+
+def _robots(layout):
+    robots = layout.get("robots") if isinstance(layout, dict) else None
+    return robots if isinstance(robots, dict) else {}
+
+
+def robot_things(layout):
+    """The things of every robot that has been lined up with a floor."""
+    return [robot_thing(v) for v, cfg in _robots(layout).items()
+            if isinstance(cfg, dict) and (cfg.get("fit") or {}).get("transform") and cfg.get("floor")]
+
+
+async def _robot_cycle(hass, layout):
+    """Place every lined-up robot: at its dock while docked, else where it last
+    said it was, asking again every robot_poll_secs (in the background, so a
+    slow map fetch never holds up the cycle)."""
+    if not isinstance(layout, dict):
+        return
+    now = time.time()
+    for vac, cfg in _robots(layout).items():
+        if not isinstance(cfg, dict) or not (cfg.get("fit") or {}).get("transform") or not cfg.get("floor"):
+            continue
+        st = hass.states.get(vac)
+        state = st.state if st is not None else None
+        rs = _robot_state.setdefault(vac, {"inflight": False, "last_poll": 0.0, "map": None, "at": None, "fails": 0})
+        if state == "docked" and cfg.get("dock_map"):
+            await _publish_robot(hass, layout, vac, cfg, cfg["dock_map"], now, state)
+            continue
+        if state not in ROBOT_OUT_STATES:
+            continue  # unavailable or unknown: publish nothing, and it goes quiet
+        if not rs["inflight"] and now - rs["last_poll"] >= _tuning(layout, "robot_poll_secs"):
+            rs["inflight"], rs["last_poll"] = True, now
+            hass.async_create_background_task(_robot_poll(hass, vac), f"sextant robot poll {vac}")
+        if rs["map"] is not None and rs["at"] is not None:
+            await _publish_robot(hass, layout, vac, cfg, rs["map"], rs["at"], state)
+
+
+async def _robot_poll(hass, vac):
+    """Ask one robot where it is (the Roborock integration's
+    get_vacuum_current_position) and remember the answer."""
+    rs = _robot_state.setdefault(vac, {"inflight": False, "last_poll": 0.0, "map": None, "at": None, "fails": 0})
+    try:
+        resp = await hass.services.async_call(
+            "roborock", "get_vacuum_current_position", {"entity_id": vac},
+            blocking=True, return_response=True,
+        )
+        pos = (resp or {}).get(vac) if isinstance(resp, dict) else None
+        if isinstance(pos, dict) and isinstance(pos.get("x"), (int, float)) and isinstance(pos.get("y"), (int, float)):
+            rs["map"], rs["at"], rs["fails"] = (float(pos["x"]), float(pos["y"])), time.time(), 0
+    except Exception as e:  # noqa: BLE001 - a failed map fetch keeps the last position
+        rs["fails"] = rs.get("fails", 0) + 1
+        if rs["fails"] in (1, 10) or rs["fails"] % 100 == 0:
+            _LOGGER.info("Robot %s: position not read (%d in a row): %s", vac, rs["fails"], e)
+    finally:
+        rs["inflight"] = False
+
+
+async def _publish_robot(hass, layout, vac, cfg, map_xy, at, state):
+    """A robot's map position on the plan, published like any placed thing."""
+    global apitricords
+    thing = robot_thing(vac)
+    floor = cfg["floor"]
+    scale = next((f.get("scale") for f in layout.get("floor", []) if f.get("name") == floor), None)
+    x, y = robots_mod.apply(cfg["fit"]["transform"], map_xy)
+    data = [{"entity": thing, "data": layout}]
+    point = Point(float(x), float(y))
+    zone_polys = _floor_zone_polygons(hass, data, thing, floor)
+    previous = next((r.get("zone") for r in apitricords if r.get("ent") == thing), None)
+    snapped = snap_point_into_zones(
+        zone_polys, point, prefer=previous,
+        prefer_margin_px=NO_GO_SNAP_STICK_M * (scale if isinstance(scale, (int, float)) and scale > 0 else 0.0),
+    )
+    if snapped is not None:
+        point = snapped
+    zone = find_zone_for_point(hass, data, thing, floor, point)
+    nearest = find_nearest_zone(hass, data, thing, floor, point)
+    sub_zone, parent_zone = find_sub_zone_for_point(hass, data, thing, floor, point)
+    cords = [float(point.x), float(point.y)]
+    row = {
+        "ent": thing, "cords": cords, "zone": zone, "zone_raw": zone, "zone_locked": False,
+        "since": None, "spot_since": None, "sub_zone": sub_zone, "sub_zones": None, "anchor": None,
+        "speed": None, "floor": floor, "radii": [], "floors": {floor: 1.0}, "floor_cands": {},
+        "raw": [round(float(x), 2), round(float(y), 2)], "rms_m": (cfg.get("fit") or {}).get("rms_m"),
+        "conf": 1.0, "estimator": "robot", "fp": None, "updated": float(at),
+        # Which vacuum this is, and what it is doing: the Live page offers
+        # "mark the dock" on a robot instead of "it's actually here".
+        "robot": vac, "robot_state": state,
+    }
+    apitricords = update_or_add_entry(apitricords, row)
+    await update_apitricords(hass, apitricords)
+    from .sensor import ensure_sensors_for_things  # noqa: PLC0415 - sensor.py imports this package
+    ensure_sensors_for_things(hass, [thing])
+    if isinstance(scale, (int, float)) and scale > 0:
+        try:
+            get_position_history(hass).record(thing, float(at), cords[0] / scale, cords[1] / scale, floor, scale, zone, sub_zone)
+        except Exception as e:  # noqa: BLE001 - history must never break placing
+            _LOGGER.debug("Position history record failed for %s: %s", thing, e)
+    here = _presence_attrs(float(at), time.time(), layout)
+    _presence_published[thing] = here["presence"]
+    loc_state, loc_attrs = _location_state(zone, sub_zone, parent_zone, floor, layout)
+    update_sextant_sensor_state(hass, f"sensor.{thing}_sextant_room", zone, {"area_id": room_area(layout, floor, zone)[0], **here})
+    update_sextant_sensor_state(hass, f"sensor.{thing}_sextant_nearest_room", nearest, dict(here))
+    update_sextant_sensor_state(hass, f"sensor.{thing}_sextant_floor", floor, dict(here))
+    update_sextant_sensor_state(hass, f"sensor.{thing}_sextant_spot", sub_zone, {"room": parent_zone, **here})
+    update_sextant_sensor_state(hass, f"sensor.{thing}_sextant_location", loc_state, {**loc_attrs, **here, "vacuum_state": state})
 
 
 # thing -> {"floor", "x", "y", "since", "away"}: where an owned thing has

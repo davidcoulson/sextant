@@ -80,3 +80,39 @@ Life360 or any `device_tracker` with coordinates; the first one that is
 neither broken nor stale is used once Sextant has lost the person. The card
 also says which sources are being passed over right now, and why. See
 [People](automation.md#people) for what the sensors then carry.
+
+## Robot vacuums
+
+Roborock vacuums do not advertise over Bluetooth, but each knows exactly
+where it is on its own map. The **Robot vacuums** card at the bottom of the
+Things page lines that map up with one of your floors:
+
+1. Pick the floor the vacuum cleans and press **Line up**. Sextant reads
+   the robot's map once, pairs the rooms both maps name - by room name, or
+   by the Home Assistant area a room is linked to, so the robot's "Jack
+   Bedroom" finds the room linked to `jack_bedroom` - and fits the robot's
+   map onto the plan: turned, moved and (usually) mirrored, never stretched,
+   because the robot's millimetres are real ones. The card shows how well
+   the rooms agree (a few tenths of a metre is good) and any room left out
+   because the two maps disagree about it; a Foyer that is the front hall on
+   one map and the whole open ground floor on the other is typical.
+2. On Live, select the robot and use **Mark dock**
+   (<ha-icon icon="mdi:home-import-outline"></ha-icon>), then tap where
+   its dock is. The robot reports its dock itself, so it need not be on it.
+   The dock counts for three rooms, and it is the only way to settle a map
+   with just two matching rooms, which cannot tell a mirrored map from a
+   turned one.
+
+After that the robot is a thing like any other - `sensor.vacuum_<name>_sextant_room`,
+`_floor`, `_spot`, `_location` (with the vacuum's own state in
+`vacuum_state`), a trail on Live and a history. While docked it is at its
+dock and costs nothing; while out it is asked where it is every
+`robot_poll_secs` (30 s). Each ask makes the Roborock integration fetch and
+parse the map, which holds Home Assistant's event loop for a few hundred
+milliseconds, so raise it if a vacuum's cleaning shows up in the loop's
+timings. A read that fails keeps the last position.
+
+This needs the `roborock.get_vacuum_map_rooms` action, which Home Assistant's
+built-in Roborock integration does not have yet; the
+[roborock override](https://github.com/davidcoulson/ha-roborock-override)
+2026.9.3.2 or later adds it.

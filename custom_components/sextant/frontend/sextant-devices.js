@@ -49,6 +49,8 @@ class SextantDevices extends LitElement {
     _findmyWizard: { state: true },
     _addWizard: { state: true },
     _loaded: { state: true },
+    _robots: { state: true },
+    _robotFloor: { state: true },
   };
 
   constructor() {
@@ -133,6 +135,7 @@ class SextantDevices extends LitElement {
       this.hass.callWS({ type: "sextant/bermuda/options" }).catch(() => null),
       this.hass.callWS({ type: "sextant/bermuda/tile_identities" }).catch(() => null),
     ]);
+    this._loadRobots();
     this._tracked = tracked?.tracked ?? null;
     this._candidates = candidates?.candidates ?? null;
     this._tiles = tiles?.tiles ?? null;
@@ -816,7 +819,64 @@ class SextantDevices extends LitElement {
         ${this._renderPeople()}
         ${this._renderTiles()}
       </section>
+
+      ${this._renderRobots()}
     </div>`;
+  }
+
+  async _loadRobots() {
+    const r = await this.hass.callWS({ type: "sextant/robot/list" }).catch(() => null);
+    this._robots = r;
+  }
+
+  async _alignRobot(vacuum, floor) {
+    this._busy = `robot:${vacuum}`;
+    const r = await callWS(this, this.hass, { type: "sextant/robot/align", vacuum, floor });
+    this._busy = null;
+    if (!r) return;
+    const f = r.fit;
+    toast(this, f ? `${r.name}: ${f.pairs.length} point${f.pairs.length === 1 ? "" : "s"} agree to ${fmtNum(f.rms_m, 2)} m` : `${r.name}: fewer than two rooms match by name`);
+    this._loadRobots();
+    this.dispatchEvent(new CustomEvent("layout-changed", { bubbles: true, composed: true }));
+  }
+
+  async _removeRobot(vacuum, name) {
+    if (!confirmDialog(`Stop placing ${name} on the plan?`)) return;
+    const r = await callWS(this, this.hass, { type: "sextant/robot/remove", vacuum });
+    if (r) { this._loadRobots(); this.dispatchEvent(new CustomEvent("layout-changed", { bubbles: true, composed: true })); }
+  }
+
+  /** Robot vacuums: each Roborock's own map lined up with a floor, from the
+   * rooms both maps name and the dock marked on Live (robots.py). */
+  _renderRobots() {
+    const list = this._robots?.robots || [];
+    if (!list.length) return nothing;
+    const floors = (this.data?.layout?.floor || []).map((f) => f.name);
+    return html`<section class="card wide">
+      <h3>Robot vacuums <span class="muted small">placed from their own maps, asked every ${fmtNum(this.data?.layout?.tuning?.robot_poll_secs ?? 30, 0)} s while out and put at the dock otherwise</span></h3>
+      ${this._robots?.action_available ? nothing : html`<p class="small warn">The Roborock integration here has no <code>get_vacuum_map_rooms</code> action: install the roborock override 2026.9.3.2 or later.</p>`}
+      <p class="small muted">Line up pairs the rooms both maps name - by room name, or by the Home Assistant area a room is linked to - and fits the robot's map onto the floor. Then, on Live, select the robot and use <b>Mark dock</b> (<ha-icon icon="mdi:home-import-outline" style="--mdc-icon-size: 16px"></ha-icon>): the dock is the most trusted point, and the only way to settle a map with just two matching rooms.</p>
+      ${list.map((r) => {
+        const f = r.fit, busy = this._busy === `robot:${r.vacuum}`;
+        const floor = this._robotFloor?.[r.vacuum] || r.floor || floors[0];
+        return html`<div class="robot" style="padding: 8px 0; border-top: 1px solid var(--divider-color)">
+          <div class="row"><b>${r.name}</b><span class="muted small">${r.state || "unknown"}${r.map_name ? ` · map "${r.map_name}"` : ""}</span><span class="grow"></span>
+            ${uiSelect({ label: "Floor", value: floor, options: floors.map((n) => ({ value: n, label: n })), onChange: (v) => { this._robotFloor = { ...(this._robotFloor || {}), [r.vacuum]: v }; }, style: "width: 180px" })}
+            ${uiButton({ label: busy ? "Reading its map…" : f ? "Line up again" : "Line up", kind: "primary", icon: "mdi:vector-link", disabled: busy || !this._robots?.action_available, onClick: () => this._alignRobot(r.vacuum, floor) })}
+            ${r.floor ? html`<button class="iconbtn danger" title="Stop placing ${r.name}" @click=${() => this._removeRobot(r.vacuum, r.name)}><ha-icon icon="mdi:trash-can-outline"></ha-icon></button>` : nothing}
+          </div>
+          ${r.floor && !f ? html`<div class="small warn">Fewer than two of its rooms match a room on ${r.floor} by name. Name them alike (in the Roborock app or here), or link the rooms to Home Assistant areas of the same name, and line up again.</div>` : nothing}
+          ${f ? html`<div class="small">
+              <b>${f.pairs.length}</b> point${f.pairs.length === 1 ? "" : "s"} agree to <b>${fmtNum(f.rms_m, 2)} m</b> (RMS)${f.transform.reflect ? ", mirrored" : ""}, rotated ${fmtNum(f.transform.theta * 180 / Math.PI, 1)}°${f.scale_ratio ? html` · the rooms imply ${fmtNum(f.scale_ratio, 2)}× the floor's scale` : nothing}
+              ${r.dock_marked ? html` · <span class="pill ok">dock marked</span>` : html` · <span class="pill warn" title="On Live, select ${r.name} and use Mark dock">dock not marked</span>`}
+              <div class="muted">${f.pairs.map((p) => html`<span class="pill" title="${fmtNum(p.residual_m, 2)} m apart after the fit">${p.pair} ${fmtNum(p.residual_m, 1)} m</span> `)}</div>
+              ${f.dropped?.length ? html`<div class="muted">Left out, the two maps disagree about them: ${f.dropped.map((d) => `${d.pair} (${fmtNum(d.residual_m, 1)} m)`).join(", ")}</div>` : nothing}
+              ${f.pairs.length <= 2 && !r.dock_marked ? html`<div class="warn">Two points cannot tell a mirrored map from a turned one: mark the dock to settle it.</div>` : nothing}
+            </div>` : nothing}
+          ${r.unmatched && (r.unmatched.robot?.length || r.unmatched.plan?.length) ? html`<div class="small muted">No match: ${r.unmatched.robot?.length ? html`robot's <i>${r.unmatched.robot.join(", ")}</i>` : nothing}${r.unmatched.robot?.length && r.unmatched.plan?.length ? "; " : ""}${r.unmatched.plan?.length ? html`plan's <i>${r.unmatched.plan.join(", ")}</i>` : nothing}</div>` : nothing}
+        </div>`;
+      })}
+    </section>`;
   }
 
   /** Each owner, where they read as being, and their GPS sources in order:

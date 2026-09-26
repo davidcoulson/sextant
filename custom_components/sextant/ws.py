@@ -30,6 +30,7 @@ from . import history as history_mod
 from .const import PROBE_BEACON_UUID
 from . import fingerprint as fingerprint_mod
 from . import truth as truth_mod
+from . import robots as robots_mod
 from .storage import (
     maps_dir,
     LAYOUT_LOCK, get_layout, get_layout_for_edit, get_layout_version, load_kpi_baselines, save_kpi_baselines,
@@ -193,6 +194,13 @@ async def ws_layout_get(hass, connection, msg):
             tracked = set()
     directory = bermuda_source.async_get_scanner_directory(hass) or {}
     dom = hass.data.get(core.DOMAIN, {})
+    robot_names = {}
+    for vac in ((layout or {}).get("robots") or {}) if isinstance(layout, dict) else {}:
+        st = hass.states.get(vac)
+        robot_names[core.robot_thing(vac)] = (st.attributes.get("friendly_name") if st else None) or vac
+    names = _safe(lambda: _thing_names(hass, tracked, layout), {})
+    names = {**robot_names, **(names if isinstance(names, dict) else {})}
+    tracked = set(tracked) | set(core.robot_things(layout))
     connection.send_result(msg["id"], {
         "layout": layout if isinstance(layout, dict) else None,
         "version": get_layout_version(hass),
@@ -200,8 +208,9 @@ async def ws_layout_get(hass, connection, msg):
         "icons": icons,
         "entities": sorted(tracked),
         # Display names: what Bermuda calls the device, overridden by the name
-        # the user gave the device in Home Assistant (device registry).
-        "names": _safe(lambda: _thing_names(hass, tracked, layout), {}),
+        # the user gave the device in Home Assistant (device registry); a
+        # robot is called what its vacuum entity is called.
+        "names": names,
         # The installed integration version, and the one Home Assistant is
         # running: installed but not running needs a restart; running but
         # newer than the page only needs a reload.
@@ -1678,9 +1687,162 @@ async def ws_snapshots_restore(hass, connection, msg):
     connection.send_result(msg["id"], {"version": get_layout_version(hass)})
 
 
+# --- Robot vacuums (robots.py) ------------------------------------------------
+
+ROBOT_INTEGRATION = "roborock"
+
+
+def _robot_vacuums(hass):
+    """Every Roborock vacuum entity Home Assistant knows."""
+    from homeassistant.helpers import entity_registry as er  # noqa: PLC0415
+
+    return sorted(e.entity_id for e in er.async_get(hass).entities.values()
+                  if e.platform == ROBOT_INTEGRATION and e.domain == "vacuum" and not e.disabled_by)
+
+
+def _robot_public(hass, vac, cfg):
+    st = hass.states.get(vac)
+    return {
+        "vacuum": vac,
+        "thing": _core().robot_thing(vac),
+        "name": (st.attributes.get("friendly_name") if st else None) or vac,
+        "state": st.state if st else None,
+        "floor": (cfg or {}).get("floor"),
+        "fit": (cfg or {}).get("fit"),
+        "dock_marked": bool((cfg or {}).get("dock_plan")),
+        "map_name": (cfg or {}).get("map_name"),
+        "unmatched": (cfg or {}).get("unmatched"),
+        "aligned_at": (cfg or {}).get("aligned_at"),
+    }
+
+
+@websocket_api.websocket_command({vol.Required("type"): "sextant/robot/list"})
+@websocket_api.async_response
+async def ws_robot_list(hass, connection, msg):
+    """The Roborock vacuums, and how each is lined up with the plan (if it is)."""
+    robots = (get_layout(hass) or {}).get("robots") or {}
+    vacuums = sorted(set(_robot_vacuums(hass)) | set(robots))
+    connection.send_result(msg["id"], {
+        "robots": [_robot_public(hass, v, robots.get(v)) for v in vacuums],
+        "action_available": hass.services.has_service(ROBOT_INTEGRATION, "get_vacuum_map_rooms"),
+    })
+
+
+async def _robot_align(hass, vac, floor_name, dock_plan=None):
+    """Read the robot's map, match its rooms to the floor's, fit, and store.
+    Returns (config, error). ``dock_plan`` replaces the stored dock mark."""
+    try:
+        resp = await hass.services.async_call(
+            ROBOT_INTEGRATION, "get_vacuum_map_rooms", {"entity_id": vac},
+            blocking=True, return_response=True,
+        )
+    except Exception as e:  # noqa: BLE001 - the integration's own message says what went wrong
+        return None, f"{vac} did not give its map: {e}"
+    data = (resp or {}).get(vac) if isinstance(resp, dict) else None
+    if not isinstance(data, dict) or not isinstance(data.get("rooms"), list):
+        return None, f"{vac} did not give its map"
+    async with LAYOUT_LOCK:
+        layout = get_layout_for_edit(hass)
+        if not isinstance(layout, dict):
+            return None, "No layout yet"
+        floor = next((f for f in layout.get("floor", []) if f.get("name") == floor_name), None)
+        if floor is None or not isinstance(floor.get("scale"), (int, float)) or floor["scale"] <= 0:
+            return None, f"{floor_name} has no scale yet; set it on the Edit page first"
+        table = layout.setdefault("robots", {})
+        cfg = dict(table.get(vac) or {})
+        if cfg.get("floor") != floor_name:
+            cfg.pop("dock_plan", None)  # a dock marked on another floor means nothing here
+        if dock_plan is not None:
+            cfg["dock_plan"] = [round(float(dock_plan[0]), 2), round(float(dock_plan[1]), 2)]
+        charger = data.get("charger")
+        dock_map = [float(charger["x"]), float(charger["y"])] if isinstance(charger, dict) else None
+        matches = robots_mod.match_rooms(data["rooms"], floor)
+        dock = (dock_map, cfg["dock_plan"]) if dock_map and cfg.get("dock_plan") else None
+        result = robots_mod.fit(matches, floor["scale"], dock)
+        matched = {m[0] for m in matches}
+        plan_matched = {m[1] for m in matches}
+        cfg.update({
+            "floor": floor_name,
+            "fit": result,
+            "dock_map": dock_map,
+            "map_name": data.get("map_name"),
+            "unmatched": {
+                "robot": [r.get("name") or f"segment {r.get('segment_id')}" for r in data["rooms"] if r.get("name") not in matched],
+                "plan": [n for n, _a, _c in robots_mod.plan_rooms(floor) if n not in plan_matched],
+            },
+            "aligned_at": time.time(),
+        })
+        table[vac] = cfg
+        # A robot's thing is a robot vacuum unless the user has said otherwise.
+        classes = layout.setdefault("thing_classes", {})
+        classes.setdefault(_core().robot_thing(vac), "robot")
+        await save_layout(hass, layout)
+    return cfg, None
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): "sextant/robot/align",
+    vol.Required("vacuum"): str,
+    vol.Required("floor"): str,
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_robot_align(hass, connection, msg):
+    """Line a vacuum's map up with a floor from the rooms both name (and the
+    dock, once marked). Reads the map once through the Roborock integration's
+    get_vacuum_map_rooms action."""
+    vac = str(msg["vacuum"])
+    if not vac.startswith("vacuum."):
+        return _error(connection, msg, "vacuum must be a vacuum.* entity")
+    if not hass.services.has_service(ROBOT_INTEGRATION, "get_vacuum_map_rooms"):
+        return _error(connection, msg, "The Roborock integration has no get_vacuum_map_rooms action; install the roborock override 2026.9.3.2 or later")
+    cfg, err = await _robot_align(hass, vac, str(msg["floor"]))
+    if err:
+        return _error(connection, msg, err)
+    connection.send_result(msg["id"], _robot_public(hass, vac, cfg))
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): "sextant/robot/dock",
+    vol.Required("vacuum"): str,
+    vol.Required("floor"): str,
+    vol.Required("x"): vol.Coerce(float),
+    vol.Required("y"): vol.Coerce(float),
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_robot_dock(hass, connection, msg):
+    """Where the vacuum's dock is on the plan: the fit's most trusted point.
+    The robot reports its dock itself, so it need not be on it."""
+    vac = str(msg["vacuum"])
+    if not (math.isfinite(msg["x"]) and math.isfinite(msg["y"])):
+        return _error(connection, msg, "x and y must be finite numbers")
+    cfg, err = await _robot_align(hass, vac, str(msg["floor"]), dock_plan=(msg["x"], msg["y"]))
+    if err:
+        return _error(connection, msg, err)
+    connection.send_result(msg["id"], _robot_public(hass, vac, cfg))
+
+
+@websocket_api.websocket_command({vol.Required("type"): "sextant/robot/remove", vol.Required("vacuum"): str})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_robot_remove(hass, connection, msg):
+    """Stop placing a vacuum. Its sensors go with the next reconcile."""
+    vac = str(msg["vacuum"])
+    async with LAYOUT_LOCK:
+        layout = get_layout_for_edit(hass)
+        if isinstance(layout, dict) and vac in (layout.get("robots") or {}):
+            layout["robots"].pop(vac, None)
+            if not layout["robots"]:
+                layout.pop("robots", None)
+            await save_layout(hass, layout)
+    connection.send_result(msg["id"], {"vacuum": vac, "removed": True})
+
+
 COMMANDS = (
     ws_advice,
     ws_snapshots_list, ws_snapshots_restore, ws_thing_forget, ws_person_trackers_set,
+    ws_robot_list, ws_robot_align, ws_robot_dock, ws_robot_remove,
     ws_layout_get, ws_layout_save, ws_tuning_set, ws_thing_tune,
     ws_history_index, ws_history_get, ws_history_timeline, ws_history_clear, ws_thing_readings, ws_floor_bias_map,
     ws_calibration_status, ws_calibration_action, ws_selftest, ws_scanner_linking, ws_receivers, ws_beacon_links,

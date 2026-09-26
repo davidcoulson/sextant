@@ -339,6 +339,7 @@ export const THING_CLASSES = [
   ["tag", "Tag / Tile", "mdi:tag"],
   ["car", "Car", "mdi:car"],
   ["bike", "Bike", "mdi:bike"],
+  ["robot", "Robot vacuum", "mdi:robot-vacuum"],
 ];
 export function classIcon(cls) { return (THING_CLASSES.find(([k]) => k === cls) || [])[2] || null; }
 
