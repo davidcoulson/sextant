@@ -778,7 +778,8 @@ class SextantDevices extends LitElement {
           ${candidates.length ? nothing : html`<tr><td colspan="7" class="muted">${this._candidates ? (this._showAll ? "No matching devices." : `Nothing heard in the last ${RECENT_SECS} s matches; switch on "Show all" for everything Bermuda remembers.`) : "Loading…"}</td></tr>`}
         </table></div>
         <p class="small muted">Only what two or more placed proxies hear is listed: one proxy cannot position a device, and anything heard solely by an unplaced proxy (a kiosk, a test board) is left out; "Show all" lifts both. Apple FindMy tags are not in this list: they need their pairing keys, added on the Bermuda page.</p>
-      </section>`;
+      </section>
+      ${this._renderRobots()}`;
   }
 
   _renderBermuda() {
@@ -819,8 +820,6 @@ class SextantDevices extends LitElement {
         ${this._renderPeople()}
         ${this._renderTiles()}
       </section>
-
-      ${this._renderRobots()}
     </div>`;
   }
 
