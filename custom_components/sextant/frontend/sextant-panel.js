@@ -1091,13 +1091,13 @@ class SextantLive extends LitElement {
               <dt>Room</dt><dd>${sel.zone} ${sel.zone_locked ? html`<ha-icon icon="mdi:lock" title="stationary lock: still for a while, so the room holds"></ha-icon>` : nothing}</dd>
               <dt>Spot</dt><dd>${sel.sub_zone && sel.sub_zone !== "unknown" ? sel.sub_zone : "—"}</dd>
               <dt>Floor</dt><dd>${sel.floor}</dd>
-              <dt>Proxies</dt><dd>${sel.radii?.length ?? 0} in the solve${sel.anchor ? html`<br><span class="pill ok" title=${`one proxy reads ${this._label(sel.ent)} within arm's reach and no other comes close: placed on that proxy`}>anchored to ${proxyName(this.data, sel.anchor)}</span>` : nothing}</dd>
+              ${sel.robot ? html`<dt>Placed from</dt><dd>its own map <span class="muted small">(${this.hass?.states?.[sel.robot]?.state || sel.robot_state || "unknown"}; the map fits this floor to ${fmtLen(sel.rms_m, this.hass)})</span></dd>` : html`<dt>Proxies</dt><dd>${sel.radii?.length ?? 0} in the solve${sel.anchor ? html`<br><span class="pill ok" title=${`one proxy reads ${this._label(sel.ent)} within arm's reach and no other comes close: placed on that proxy`}>anchored to ${proxyName(this.data, sel.anchor)}</span>` : nothing}</dd>`}
               ${this._renderHere(sel)}
               ${this._battery(sel.ent) === null ? nothing : html`<dt>Battery</dt><dd class=${this._battery(sel.ent) <= BATTERY_CRITICAL ? "crit" : this._battery(sel.ent) <= BATTERY_LOW ? "warn" : ""}>${Math.round(this._battery(sel.ent))}%</dd>`}
               <dt>Updated</dt><dd>${typeof sel.updated === "number" && sel.updated > 0 ? html`${fmtAge(Date.now() / 1000 - sel.updated)} ago` : html`<span class="muted">not heard since the last restart</span>`}${staleness(sel, this._staleAfter()).ghost ? html` <span class="pill warn" title=${`Nothing has heard ${this._label(sel.ent)} since; this is where ${this._pn(sel.ent).subj} ${this._pn(sel.ent).was} last placed`}>not heard</span>` : nothing}</dd>
             </dl>
             ${this._renderTimeline(sel)}
-            <details class="telemetry">
+            ${sel.robot ? nothing : html`<details class="telemetry">
               <summary>Confidence <span class="muted small">how sure Sextant is, and why</span></summary>
               <dl>
                 <dt>Floor odds</dt><dd>${sel.floors ? Object.entries(sel.floors).sort((a, b) => b[1] - a[1]).map(([f, p]) => `${f} ${(p * 100).toFixed(0)}%`).join(" · ") : "—"}</dd>
@@ -1107,11 +1107,11 @@ class SextantLive extends LitElement {
                 <dt>Trust</dt><dd>${sel.fp?.trust != null ? `${Math.round(sel.fp.trust * 100)}%` : "—"} <span class="muted small">${sel.fp?.ratio != null ? `ratio ${fmtNum(sel.fp.ratio, 2)}` : ""}</span></dd>
                 <dt>Speed</dt><dd>${fmtSpeed(sel.speed, this.hass)}</dd>
               </dl>
-            </details>
+            </details>`}
             ${this._renderHeat(sel)}
-            ${this._renderBlend(sel)}
-            ${this._renderTruth(sel)}
-            ${this._renderLinks(sel.ent)}
+            ${sel.robot ? nothing : this._renderBlend(sel)}
+            ${sel.robot ? nothing : this._renderTruth(sel)}
+            ${sel.robot ? nothing : this._renderLinks(sel.ent)}
           </div>` : nothing}
     `;
   }
