@@ -835,7 +835,7 @@ class SextantLive extends LitElement {
   /** live, waiting (heard, but not lately) or away (long gone, or not heard at all). */
   /** The vacuum entity a thing is placed from, when it is a robot (robots.py). */
   _robotOf(ent) {
-    return (this._positions?.positions || []).find((p) => p.ent === ent)?.robot || null;
+    return (this.positions?.positions || []).find((p) => p.ent === ent)?.robot || null;
   }
 
   _state(p) {
