@@ -337,6 +337,14 @@ NO_GO_CONF_PENALTY = 0.15
 # exactly on it — otherwise the snapped point still reads as "in the no-go
 # zone" to covers()-based tests.
 NO_GO_SNAP_MARGIN_PX = 3.0
+# A fix inside a no-go void says nothing about which side of the void the
+# thing is on, so the snap out of it keeps the thing's current room while that
+# room's wall is within this many metres of the nearest one. Eilee's watch on
+# her bedside table solved into the foyer void between her room and Jack's,
+# about equally far from both walls; snapped memorylessly it went to her wall,
+# then his, 2.5 m apart, and the room flipped 50 times in a morning. Really
+# crossing a void means walking round it, through rooms, where nothing snaps.
+NO_GO_SNAP_STICK_M = 1.5
 
 # Per-thing election state, all reset when the thing is pruned:
 # smoothed floor probabilities (entity -> {floor name: P}), the pending
@@ -2565,7 +2573,13 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
         # the filter state keeps the raw fix, so smoothing is not biased toward
         # the boundary.
         test_point = Point(float(avg_x), float(avg_y))
-        snapped = snap_point_into_zones(zone_polys, test_point)
+        # Out of a void, stay on the side the thing is already on.
+        zst = _zone_state.get(entity)
+        incumbent_room = zst.get("zone") if isinstance(zst, dict) and zst.get("floor") == lowest_floor_name else None
+        snapped = snap_point_into_zones(
+            zone_polys, test_point, prefer=incumbent_room,
+            prefer_margin_px=NO_GO_SNAP_STICK_M * (scale if isinstance(scale, (int, float)) and scale > 0 else 0.0),
+        )
         if snapped is not None:
             test_point = snapped
             avg_x, avg_y = float(snapped.x), float(snapped.y)
@@ -4487,11 +4501,14 @@ def find_zone_for_point(hass, data, entity, floor_name, point):
     return "unknown"
 
 
-def snap_point_into_zones(zone_polys, point):
+def snap_point_into_zones(zone_polys, point, prefer=None, prefer_margin_px=0.0):
     """Project a point onto valid (allowed, non-no-go) space.
 
     Returns the snapped Point, or None when the point is already in valid
-    space (or there is nowhere valid to put it). No-go zones (issue #60) are
+    space (or there is nowhere valid to put it). ``prefer`` names a zone (the
+    thing's current room): when the point has to be snapped and that zone's
+    valid part is no more than ``prefer_margin_px`` farther than the nearest
+    valid space, the point goes to that zone instead (NO_GO_SNAP_STICK_M). No-go zones (issue #60) are
     subtracted from the allowed region — grown by NO_GO_SNAP_MARGIN_PX first —
     so a fix in dead space is pushed to the nearest genuinely-allowed point,
     clear of the boundary-inclusive no-go edge. This holds even when a no-go
@@ -4509,6 +4526,10 @@ def snap_point_into_zones(zone_polys, point):
         if valid.covers(point):
             return None  # already in valid space
         snapped, _ = nearest_points(valid, point)
+        if prefer is not None and prefer_margin_px > 0:
+            own = _preferred_snap_target(zone_polys, prefer, nogo_union)
+            if own is not None and own.distance(point) <= valid.distance(point) + prefer_margin_px:
+                snapped, _ = nearest_points(own, point)
         return snapped
 
     # No allowed space to land in. If the point sits in declared dead space,
@@ -4517,6 +4538,18 @@ def snap_point_into_zones(zone_polys, point):
         snapped, _ = nearest_points(nogo_union.buffer(NO_GO_SNAP_MARGIN_PX).boundary, point)
         return snapped
     return None
+
+
+def _preferred_snap_target(zone_polys, zone_id, nogo_union):
+    """The valid part of one allowed zone (its polygon less the grown no-go
+    union), or None when the floor has no such allowed zone."""
+    polys = [polygon for zid, polygon, _buffer_size, no_go in zone_polys if zid == zone_id and not no_go]
+    if not polys:
+        return None
+    own = unary_union(polys)
+    if nogo_union is not None:
+        own = own.difference(nogo_union.buffer(NO_GO_SNAP_MARGIN_PX))
+    return None if own.is_empty else own
 
 
 def find_nearest_zone(hass, data, entity, floor_name, point):

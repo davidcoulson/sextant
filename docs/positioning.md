@@ -20,7 +20,9 @@ once three remain. Beyond eight metres a BLE range is mostly noise.
 pure numpy (`solver_numpy.py`, benchmarked against SciPy on a 48-proxy
 layout), run in the executor. Spiky readings are down-weighted rather
 than dropped. A fix that lands outside every room is snapped to the
-nearest room; a fix in a no-go area is snapped out of it.
+nearest room; a fix in a no-go area is snapped out of it, to the room the
+thing is already in while that room's wall is within 1.5 m of the nearest one
+(a fix inside a void is no evidence for either side of it).
 
 **Fingerprints.** Every proxy that advertises is heard by every other
 proxy, so Bermuda continuously measures a labelled vector of ranges at a
