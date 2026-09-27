@@ -20,7 +20,9 @@ once three remain. Beyond eight metres a BLE range is mostly noise.
 pure numpy (`solver_numpy.py`, benchmarked against SciPy on a 48-proxy
 layout), run in the executor. Spiky readings are down-weighted rather
 than dropped. A fix that lands outside every room is snapped to the
-nearest room; a fix in a no-go area is snapped out of it.
+nearest room; a fix in a no-go area is snapped out of it, to the room the
+thing is already in while that room's wall is within 1.5 m of the nearest one
+(a fix inside a void is no evidence for either side of it).
 
 **Fingerprints.** Every proxy that advertises is heard by every other
 proxy, so Bermuda continuously measures a labelled vector of ranges at a
@@ -49,9 +51,11 @@ change or an absence.
 solved and scored by how well its fit explains all of its proxies. A
 through-ceiling reading fits one proxy and contradicts the rest. Scores
 are scaled by proximity (the mean of the `floor_proximity_k` nearest
-distances on this floor against the best competing floor) and by the
-floor's `bias`, then smoothed; a challenger must lead for
-`floor_switch_secs`, by a margin that grows with the incumbent's tenure.
+distances on this floor against the best competing floor; `gated`, or the
+weighted `geometric` mean of fit and proximity, see
+[`floor_proximity_blend`](tuning.md)) and by the floor's `bias`, then
+smoothed; a challenger must lead for `floor_switch_secs`, by a margin that
+grows with the incumbent's tenure.
 
 **Bias fields.** A floor's `bias` is one prior for the whole plan, and a
 house is not uniform. Over a slab the floor below is attenuated and the
@@ -81,6 +85,9 @@ publishes each contending floor's own fix and score as `floor_cands`, and
 `tools/floor_field_replay.py` re-scores a log of those under a proposed
 field, so a stroke can be graded against what really happened before it
 ships.
+`election_log_hours` on the Tuning page keeps those cycles on disk, and
+`tools/replay_floors.py` replays the whole election - margin, dwell,
+proximity weight - over them (see [Tuning](tuning.md)).
 
 **Rooms.** Membership, not a point test: samples on the filter's error
 ellipse are attributed to rooms and the shares smoothed. The current room

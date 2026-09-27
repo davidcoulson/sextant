@@ -204,6 +204,28 @@ def test_snap_uses_the_cached_union_and_still_takes_a_plain_list(tmp_path):
     assert sextant.snap_point_into_zones([], Point(15, 5)) is None
 
 
+def test_out_of_a_void_the_snap_keeps_the_room_the_thing_is_in(tmp_path):
+    """Eilee's watch: a fix in the foyer void about equally far from her wall
+    and Jack's. Memoryless, it snaps to whichever is nearer this cycle; with
+    her room preferred it stays hers until his wall is clearly nearer."""
+    hass = make_hass(tmp_path)
+    data = _new_global_data(_two_room_layout())
+    zones = sextant._floor_zone_polygons(hass, data, "pet", "Ground Floor")
+    near_hall = Point(16, 5)  # 6 from the Kitchen's wall, 4 from the Hall's
+    assert sextant.snap_point_into_zones(zones, near_hall).x >= 20, "memoryless: the nearer wall"
+    kept = sextant.snap_point_into_zones(zones, near_hall, prefer="Kitchen", prefer_margin_px=3.0)
+    assert kept.x <= 10, "the Kitchen is only 2 farther: stay in the Kitchen"
+    left = sextant.snap_point_into_zones(zones, near_hall, prefer="Kitchen", prefer_margin_px=1.0)
+    assert left.x >= 20, "past the margin the nearer wall wins after all"
+    # No preference, an unknown or a no-go "room", or a point already in a
+    # room: exactly the old behaviour.
+    for prefer in (None, "Nowhere", "Void"):
+        assert sextant.snap_point_into_zones(zones, near_hall, prefer=prefer, prefer_margin_px=3.0).x >= 20
+    assert sextant.snap_point_into_zones(zones, Point(25, 5), prefer="Kitchen", prefer_margin_px=100.0) is None
+    # The plain tuple list takes the same path.
+    assert sextant.snap_point_into_zones(list(zones), near_hall, prefer="Kitchen", prefer_margin_px=3.0).x <= 10
+
+
 def test_floor_without_allowed_zones_answers_unknown(tmp_path):
     hass = make_hass(tmp_path)
     layout = _two_room_layout()

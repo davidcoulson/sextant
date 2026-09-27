@@ -15,6 +15,7 @@ one real house; swap in your own.
 | whether a person is **home** | `device_tracker.<person>_sextant` | `home` on Sextant's word, the GPS zone once Sextant has lost them |
 | where a **thing** is | `sensor.<thing>_sextant_location` (or `_room`, `_floor`, `_spot`) | same shape as the person sensors, one per thing |
 | whether a thing is still **heard** | attribute `presence` on any of its sensors | `here` / `quiet` (2–15 min) / `away` |
+| where a **robot vacuum** is | `sensor.vacuum_<name>_sextant_room` | placed from the robot's own map, not Bluetooth; `vacuum_state` rides along on `_location` |
 | how long since it was heard | attribute `last_heard` | an ISO timestamp; see [seconds since](#seconds-since-a-thing-was-heard) |
 
 Trigger on `_room` rather than `_location` when you act on a room: the
@@ -185,6 +186,46 @@ actions:
 
 Watch a tag's battery the same way: a tag that goes `quiet` more and more
 often before it goes `away` is a battery on its way out.
+
+### A robot vacuum that has stopped moving
+
+A robot placed on the plan (see [Robot vacuums](things.md#robot-vacuums)) has
+the same room sensor as anything else, and its location sensor carries the
+vacuum's own state. Stuck under the dining table for twenty minutes:
+
+```yaml
+alias: Rocky is stuck
+triggers:
+  - trigger: state
+    entity_id: sensor.vacuum_rocky_sextant_room
+    for: "00:20:00"
+conditions:
+  - condition: state
+    entity_id: vacuum.rocky
+    state: cleaning
+actions:
+  - action: notify.mobile_app_davids_iphone
+    data:
+      message: "Rocky has been in the {{ states('sensor.vacuum_rocky_sextant_room') }} for 20 minutes"
+```
+
+And one that waits for a room to be empty before cleaning it:
+
+```yaml
+alias: Clean the master bedroom once nobody is in it
+triggers:
+  - trigger: time
+    at: "10:00:00"
+conditions:
+  - condition: template
+    value_template: >
+      {{ states.sensor | selectattr('entity_id', 'search', '_sextant_person_room$')
+         | selectattr('state', 'eq', 'Master Bedroom') | list | count == 0 }}
+actions:
+  - action: vacuum.start
+    target:
+      entity_id: vacuum.katniss_everclean_s8
+```
 
 ### Seconds since a thing was heard
 

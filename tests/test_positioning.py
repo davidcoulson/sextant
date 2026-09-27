@@ -1162,6 +1162,27 @@ def test_proximity_weighting_favours_the_floor_with_the_nearest_receiver():
     assert out == scores
 
 
+def test_geometric_blend_lets_the_nearest_proxies_outweigh_a_poor_fit():
+    """Eilee's phone at 05:37: its own floor's fit was cut to 0.15 by the
+    no-go penalty (a fix a metre over the foyer void) while the floor below,
+    hearing it through the slab at much the same range, fitted at 0.72.
+    Gated, the poor fit caps her floor (0.27 against 0.56); geometric at the
+    same weight, the nearer proxies carry it (0.77 against 0.73)."""
+    scores, nearest = {"Second": 0.273, "Ground": 0.717}, {"Second": 2.4, "Ground": 3.3}
+    gated = sextant._proximity_weighted_scores(scores, nearest, 0.8, "gated")
+    assert gated["Ground"] > gated["Second"]
+    geo = sextant._proximity_weighted_scores(scores, nearest, 0.8, "geometric")
+    assert geo["Second"] > geo["Ground"]
+    assert abs(geo["Second"] - 0.273 ** 0.2) < 1e-9, "prox 1 on the nearest floor: conf^(1-w)"
+    assert abs(geo["Ground"] - 0.717 ** 0.2 * (2.4 / 3.3) ** 0.8) < 1e-9
+    # Weight 0 and a lone floor pass through under either blend; a negative
+    # confidence (never produced, but never a complex number either) is floored.
+    assert sextant._proximity_weighted_scores(scores, nearest, 0.0, "geometric") == scores
+    assert sextant._proximity_weighted_scores({"Ground": 0.5}, nearest, 0.7, "geometric") == {"Ground": 0.5}
+    assert sextant._proximity_weighted_scores({"A": -0.1, "B": 0.5}, {"A": 1.0, "B": 2.0}, 0.5, "geometric")["A"] == 0.0
+    assert sextant.TUNING_SPEC["floor_proximity_blend"][0] == "gated", "the default is unchanged"
+
+
 def test_full_cycle_floor_switches_on_proximity_when_fits_tie(monkeypatch):
     """Two floors explain the receivers equally well (open foyer); the one
     whose receivers are nearest must win the election within the dwell."""
@@ -2192,3 +2213,45 @@ def test_the_floor_switch_margin_is_tunable():
     the margin has to be settable without a release."""
     assert sextant.TUNING_SPEC["floor_switch_margin"][0] == sextant.FLOOR_SWITCH_MARGIN == 0.05
     assert sextant._tuning({"tuning": {"floor_switch_margin": 0.1}}, "floor_switch_margin") == 0.1
+
+
+# --- "Use in positioning" off -------------------------------------------------
+
+def _solve_layout(idle_slug=None):
+    """Three placed proxies on one floor, all hearing the thing; one may be
+    kept out of positioning with "solve": false."""
+    rxs = [
+        {"entity_id": "a", "cords": {"x": 100.0, "y": 100.0, "r": 100.0}, "distance": 1.0},
+        {"entity_id": "b", "cords": {"x": 400.0, "y": 100.0, "r": 200.0}, "distance": 2.0},
+        {"entity_id": "c", "cords": {"x": 100.0, "y": 500.0, "r": 300.0}, "distance": 3.0},
+    ]
+    for r in rxs:
+        if r["entity_id"] == idle_slug:
+            r["solve"] = False
+    return {"floor": [{"name": "F", "scale": 100.0, "receivers": rxs, "zones": [], "subzones": []}], "tuning": {"floor_proximity_k": 1}}
+
+
+def test_a_proxy_kept_out_of_positioning_is_not_a_solver_input_nor_the_nearest():
+    """The kitchen Shelly: placed and heard at 1 m, self-tested 9 m from its
+    plug. Off, the solve and the proximity term no longer see it."""
+    on = sextant.extract_candidate_floors([{"entity": "e", "data": _solve_layout()}], "e")[0]
+    assert len(on["cords"]) == 3 and on["nearest_m"] == 1.0
+    off = sextant.extract_candidate_floors([{"entity": "e", "data": _solve_layout("a")}], "e")[0]
+    assert len(off["cords"]) == 2 and off["nearest_m"] == 2.0
+    assert [h[0] for h in off["heard"]] == ["b", "c"]
+
+
+def test_a_proxy_kept_out_of_positioning_gives_no_spot_or_anchor_evidence():
+    layout = _solve_layout("a")
+    assert sextant._spot_proxy_evidence(layout, "a") == 0.0, "its own spot gets nothing from it"
+    layout_on = _solve_layout()
+    assert sextant._spot_proxy_evidence(layout_on, "a") > 0.0
+    sextant._anchor_state.pop("w", None)
+    rxs = [{"entity_id": "a", "cords": {"x": 100.0, "y": 100.0}, "distance": 0.5, "solve": False},
+           {"entity_id": "b", "cords": {"x": 400.0, "y": 100.0}, "distance": 2.0},
+           {"entity_id": "c", "cords": {"x": 100.0, "y": 500.0}, "distance": 2.5}]
+    lay = {"floor": [{"name": "F", "scale": 100.0, "zones": [], "subzones": [], "receivers": rxs}], "tuning": {"anchor_secs": 20}}
+    for dt in (0, 10, 21, 30):
+        assert sextant._elect_anchor("w", "F", rxs, lay, now=1000.0 + dt) is None, "never anchors to a proxy that is off"
+    sextant._anchor_state.pop("w", None)
+    assert sextant._solves({"entity_id": "x"}) and sextant._solves({"solve": True}) and not sextant._solves({"solve": False})

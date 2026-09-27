@@ -71,6 +71,8 @@ from .storage import (
 from .const import ACCURACY_ENTITY_ID
 from . import history as history_mod
 from . import bermuda_source
+from . import election_log
+from . import robots as robots_mod
 from . import fingerprint
 from . import floor_field
 from . import registration
@@ -336,6 +338,14 @@ NO_GO_CONF_PENALTY = 0.15
 # exactly on it — otherwise the snapped point still reads as "in the no-go
 # zone" to covers()-based tests.
 NO_GO_SNAP_MARGIN_PX = 3.0
+# A fix inside a no-go void says nothing about which side of the void the
+# thing is on, so the snap out of it keeps the thing's current room while that
+# room's wall is within this many metres of the nearest one. Eilee's watch on
+# her bedside table solved into the foyer void between her room and Jack's,
+# about equally far from both walls; snapped memorylessly it went to her wall,
+# then his, 2.5 m apart, and the room flipped 50 times in a morning. Really
+# crossing a void means walking round it, through rooms, where nothing snaps.
+NO_GO_SNAP_STICK_M = 1.5
 
 # Per-thing election state, all reset when the thing is pruned:
 # smoothed floor probabilities (entity -> {floor name: P}), the pending
@@ -457,6 +467,17 @@ TUNING_SPEC = {
     # is, relative to the nearest receiver on any competing floor (see
     # _proximity_weighted_scores). 0 = pure fit-quality election.
     "floor_proximity_weight": (0.5, float, 0.0, 1.0),
+    # How that weight combines fit and proximity (see _proximity_weighted_scores).
+    # "gated": conf x ((1 - w) + w x prox) - a poor fit caps the floor however
+    # near its proxies. "geometric": conf^(1 - w) x prox^w - the weighted
+    # geometric mean, where a poor fit costs a floor less than a far nearest
+    # proxy does. A phone on a bedside table next to an open foyer solves a
+    # metre over the void every few cycles; the no-go penalty then cut its
+    # own floor's fit to 0.15 and the floor below, hearing it through the
+    # slab at much the same range, won for half the night. Geometric at 0.7
+    # with floor_switch_margin 0.10 replayed that night at 0 % wrong and
+    # halved every floor change in the house; gated at any weight did not.
+    "floor_proximity_blend": ("gated", str, ("gated", "geometric")),
     # How many of a floor's nearest receivers that proximity term averages.
     # One receiver straight through a wood floor can read nearer than the
     # receivers in the room (a dog on the sun-room floor: basement 1.7 m,
@@ -534,6 +555,17 @@ TUNING_SPEC = {
     # (see persons.judge_source): a Companion app that lost its location
     # permission sat on "home" for six days.
     "gps_stale_secs": (7200.0, float, 60.0, 604800.0),
+    # Keep every floor election (each cycle's per-floor candidates, the odds
+    # and the winner, per thing) for this many hours in
+    # config/sextant_election_log, for tools/replay_floors.py. 0 = off. About
+    # 150 MB a day for twenty things; see election_log.py.
+    "election_log_hours": (0.0, float, 0.0, 168.0),
+    # How often a robot vacuum that is out cleaning is asked where it is
+    # (robots.py). Each ask makes the Roborock integration fetch and parse the
+    # vacuum's map, which holds Home Assistant's event loop for a few hundred
+    # milliseconds, so this is a trade between a smooth trail and a quiet
+    # loop. A docked robot is never asked: it is at its dock.
+    "robot_poll_secs": (30.0, float, 10.0, 600.0),
     # Hours of position history kept per thing: the history scrubber, the
     # timeline and Activity reach back this far. Applied on the next
     # cycle; an explicit top-level history_max_age (seconds) still wins.
@@ -789,6 +821,24 @@ def _tuning(data, key):
     if not isinstance(tuning, dict) or key not in tuning:
         return default
     return _coerce_tuning(key, tuning[key], default)
+
+
+def _solves(receiver):
+    """Whether a placed proxy takes part in positioning.
+
+    ``"solve": false`` on a receiver (the "Use in positioning" switch in its
+    panel on the Edit page) keeps it out of the solve, the floor election,
+    the near-field anchor and spot evidence, while it stays placed, drawn,
+    calibrated and self-tested. For a proxy that hears fine but reads wrong
+    where it sits - a Shelly in a metal-lined kitchen corner that the
+    self-test put 9 m from its plug and that was the nearest reading in one
+    kitchen cycle in five - so its readings stop steering the fix without
+    losing what the proxy still tells you about itself. The fingerprint
+    match keeps using it on purpose: it compares patterns, not geometry, and
+    a receiver dropped from the thing's vector would read as "far away"
+    (fingerprint.similarity's missing_m), which is the one thing it is not.
+    """
+    return receiver.get("solve") is not False
 
 
 def _close_range_correction(correction, raw_m, data):
@@ -1337,7 +1387,8 @@ async def update_tracked_entities(hass):
                 # carries for a device outside it (untracked while HA was down)
                 # is an orphan and goes. One set comparison per cycle.
                 from .sensor import prune_sensors_for_untracked  # noqa: PLC0415 - sensor imports this package
-                prune_sensors_for_untracked(hass, tracked_prefixes)
+                # Robots are Sextant's own things, not Bermuda's: keep theirs.
+                prune_sensors_for_untracked(hass, set(tracked_prefixes) | set(robot_things(get_layout(hass))))
                 unique_values = sorted(tracked_prefixes)
                 readings = bermuda_source.async_get_readings(hass) or {}
                 # Count device<->scanner pairs with a live distance, which is
@@ -2432,6 +2483,7 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
         {f: s["conf"] for f, s in solved.items()},
         {c["name"]: c.get("near_k_m", c.get("nearest_m")) for c in candidates},
         _tuning(layout, "floor_proximity_weight"),
+        _tuning(layout, "floor_proximity_blend"),
     )
     # The floor's own prior (layout floor["bias"], default 1): in a house the
     # ground floor is where things usually are, and a phone on the kitchen
@@ -2529,7 +2581,13 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
         # the filter state keeps the raw fix, so smoothing is not biased toward
         # the boundary.
         test_point = Point(float(avg_x), float(avg_y))
-        snapped = snap_point_into_zones(zone_polys, test_point)
+        # Out of a void, stay on the side the thing is already on.
+        zst = _zone_state.get(entity)
+        incumbent_room = zst.get("zone") if isinstance(zst, dict) and zst.get("floor") == lowest_floor_name else None
+        snapped = snap_point_into_zones(
+            zone_polys, test_point, prefer=incumbent_room,
+            prefer_margin_px=NO_GO_SNAP_STICK_M * (scale if isinstance(scale, (int, float)) and scale > 0 else 0.0),
+        )
         if snapped is not None:
             test_point = snapped
             avg_x, avg_y = float(snapped.x), float(snapped.y)
@@ -2560,9 +2618,7 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
             _floor_sub_zone_polygons(hass, new_global_data, entity, lowest_floor_name), scale, layout, now=now,
             fp=elected.get("fp"),
         )
-        apitricords = update_or_add_entry(
-            apitricords,
-            {
+        row = {
                 "ent": entity,
                 "cords": [avg_x, avg_y],
                 "zone": zone,
@@ -2605,9 +2661,12 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
                 "estimator": estimator,
                 "fp": elected.get("fp"),
                 "updated": time.time(),
-            },
-        )
+        }
+        apitricords = update_or_add_entry(apitricords, row)
         await update_apitricords(hass, apitricords)
+        # Opt-in: keep this cycle's election for replay (election_log.py).
+        if _tuning(layout, "election_log_hours") > 0:
+            election_log.get(hass).add(row, row["updated"])
         # Feed the position history. Stored in METRES in this floor's frame, so
         # a later map re-export (which changes every pixel) cannot move the
         # past; the pixel projection happens at render time. A floor with no
@@ -2984,6 +3043,153 @@ async def process_entities(hass, new_global_data):
         _publish_presence(hass, layout if isinstance(layout, dict) else {})
     except Exception as e:  # noqa: BLE001 - an attribute must never stop the things'
         _LOGGER.debug("Presence not published: %s", e)
+    try:
+        layout = get_layout(hass)
+        await election_log.get(hass).flush(_tuning(layout, "election_log_hours"))
+    except Exception as e:  # noqa: BLE001 - a log must never stop the things'
+        _LOGGER.debug("Election log not flushed: %s", e)
+    try:
+        await _robot_cycle(hass, get_layout(hass))
+    except Exception as e:  # noqa: BLE001 - a vacuum must never stop the things'
+        _LOGGER.debug("Robots not placed: %s", e)
+
+
+# --- Robot vacuums (robots.py) ------------------------------------------------
+#
+# A robot is configured per vacuum entity in the layout's "robots" map:
+# {"floor", "fit" (robots.fit, with the transform), "dock_map" (the dock in
+# the robot's map, millimetres), "dock_plan" (where the user marked it)}. It
+# is published as a thing of its own, vacuum.rocky -> "vacuum_rocky", with
+# the same sensors and Live row as any other; its position is not solved but
+# asked of the robot, and put through the fitted transform.
+
+# The vacuum states in which a robot is somewhere other than its dock.
+ROBOT_OUT_STATES = frozenset({"cleaning", "returning", "paused", "idle", "error"})
+# vacuum entity -> {"inflight", "last_poll", "map" (x, y) mm, "at", "fails" (in a row),
+# "reads_ok", "reads_failed" (since start), "last_error"}
+_robot_state = {}
+
+
+def _new_robot_state():
+    return {"inflight": False, "last_poll": 0.0, "map": None, "at": None, "fails": 0,
+            "reads_ok": 0, "reads_failed": 0, "last_error": None}
+
+
+def robot_thing(vacuum_entity_id):
+    """The thing a robot is published as: vacuum.rocky -> vacuum_rocky."""
+    return str(vacuum_entity_id).replace(".", "_")
+
+
+def _robots(layout):
+    robots = layout.get("robots") if isinstance(layout, dict) else None
+    return robots if isinstance(robots, dict) else {}
+
+
+def robot_things(layout):
+    """The things of every robot that has been lined up with a floor."""
+    return [robot_thing(v) for v, cfg in _robots(layout).items()
+            if isinstance(cfg, dict) and (cfg.get("fit") or {}).get("transform") and cfg.get("floor")]
+
+
+async def _robot_cycle(hass, layout):
+    """Place every lined-up robot: at its dock while docked, else where it last
+    said it was, asking again every robot_poll_secs (in the background, so a
+    slow map fetch never holds up the cycle)."""
+    if not isinstance(layout, dict):
+        return
+    now = time.time()
+    for vac, cfg in _robots(layout).items():
+        if not isinstance(cfg, dict) or not (cfg.get("fit") or {}).get("transform") or not cfg.get("floor"):
+            continue
+        st = hass.states.get(vac)
+        state = st.state if st is not None else None
+        rs = _robot_state.setdefault(vac, _new_robot_state())
+        if state == "docked" and cfg.get("dock_map"):
+            await _publish_robot(hass, layout, vac, cfg, cfg["dock_map"], now, state)
+            continue
+        if state not in ROBOT_OUT_STATES:
+            continue  # unavailable or unknown: publish nothing, and it goes quiet
+        if not rs["inflight"] and now - rs["last_poll"] >= _tuning(layout, "robot_poll_secs"):
+            rs["inflight"], rs["last_poll"] = True, now
+            hass.async_create_background_task(_robot_poll(hass, vac), f"sextant robot poll {vac}")
+        if rs["map"] is not None and rs["at"] is not None:
+            await _publish_robot(hass, layout, vac, cfg, rs["map"], rs["at"], state)
+
+
+async def _robot_poll(hass, vac):
+    """Ask one robot where it is (the Roborock integration's
+    get_vacuum_current_position) and remember the answer."""
+    rs = _robot_state.setdefault(vac, _new_robot_state())
+    try:
+        resp = await hass.services.async_call(
+            "roborock", "get_vacuum_current_position", {"entity_id": vac},
+            blocking=True, return_response=True,
+        )
+        pos = (resp or {}).get(vac) if isinstance(resp, dict) else None
+        if isinstance(pos, dict) and isinstance(pos.get("x"), (int, float)) and isinstance(pos.get("y"), (int, float)):
+            rs["map"], rs["at"], rs["fails"] = (float(pos["x"]), float(pos["y"])), time.time(), 0
+            rs["reads_ok"] = rs.get("reads_ok", 0) + 1
+        else:
+            rs["reads_failed"] = rs.get("reads_failed", 0) + 1
+            rs["last_error"] = "no position in the answer"
+    except Exception as e:  # noqa: BLE001 - a failed map fetch keeps the last position
+        rs["fails"] = rs.get("fails", 0) + 1
+        rs["reads_failed"] = rs.get("reads_failed", 0) + 1
+        rs["last_error"] = str(e)[:200]
+        if rs["fails"] in (1, 10) or rs["fails"] % 100 == 0:
+            _LOGGER.info("Robot %s: position not read (%d in a row): %s", vac, rs["fails"], e)
+    finally:
+        rs["inflight"] = False
+
+
+async def _publish_robot(hass, layout, vac, cfg, map_xy, at, state):
+    """A robot's map position on the plan, published like any placed thing."""
+    global apitricords
+    thing = robot_thing(vac)
+    floor = cfg["floor"]
+    scale = next((f.get("scale") for f in layout.get("floor", []) if f.get("name") == floor), None)
+    x, y = robots_mod.apply(cfg["fit"]["transform"], map_xy)
+    data = [{"entity": thing, "data": layout}]
+    point = Point(float(x), float(y))
+    zone_polys = _floor_zone_polygons(hass, data, thing, floor)
+    previous = next((r.get("zone") for r in apitricords if r.get("ent") == thing), None)
+    snapped = snap_point_into_zones(
+        zone_polys, point, prefer=previous,
+        prefer_margin_px=NO_GO_SNAP_STICK_M * (scale if isinstance(scale, (int, float)) and scale > 0 else 0.0),
+    )
+    if snapped is not None:
+        point = snapped
+    zone = find_zone_for_point(hass, data, thing, floor, point)
+    nearest = find_nearest_zone(hass, data, thing, floor, point)
+    sub_zone, parent_zone = find_sub_zone_for_point(hass, data, thing, floor, point)
+    cords = [float(point.x), float(point.y)]
+    row = {
+        "ent": thing, "cords": cords, "zone": zone, "zone_raw": zone, "zone_locked": False,
+        "since": None, "spot_since": None, "sub_zone": sub_zone, "sub_zones": None, "anchor": None,
+        "speed": None, "floor": floor, "radii": [], "floors": {floor: 1.0}, "floor_cands": {},
+        "raw": [round(float(x), 2), round(float(y), 2)], "rms_m": (cfg.get("fit") or {}).get("rms_m"),
+        "conf": 1.0, "estimator": "robot", "fp": None, "updated": float(at),
+        # Which vacuum this is, and what it is doing: the Live page offers
+        # "mark the dock" on a robot instead of "it's actually here".
+        "robot": vac, "robot_state": state,
+    }
+    apitricords = update_or_add_entry(apitricords, row)
+    await update_apitricords(hass, apitricords)
+    from .sensor import ensure_sensors_for_things  # noqa: PLC0415 - sensor.py imports this package
+    ensure_sensors_for_things(hass, [thing])
+    if isinstance(scale, (int, float)) and scale > 0:
+        try:
+            get_position_history(hass).record(thing, float(at), cords[0] / scale, cords[1] / scale, floor, scale, zone, sub_zone)
+        except Exception as e:  # noqa: BLE001 - history must never break placing
+            _LOGGER.debug("Position history record failed for %s: %s", thing, e)
+    here = _presence_attrs(float(at), time.time(), layout)
+    _presence_published[thing] = here["presence"]
+    loc_state, loc_attrs = _location_state(zone, sub_zone, parent_zone, floor, layout)
+    update_sextant_sensor_state(hass, f"sensor.{thing}_sextant_room", zone, {"area_id": room_area(layout, floor, zone)[0], **here})
+    update_sextant_sensor_state(hass, f"sensor.{thing}_sextant_nearest_room", nearest, dict(here))
+    update_sextant_sensor_state(hass, f"sensor.{thing}_sextant_floor", floor, dict(here))
+    update_sextant_sensor_state(hass, f"sensor.{thing}_sextant_spot", sub_zone, {"room": parent_zone, **here})
+    update_sextant_sensor_state(hass, f"sensor.{thing}_sextant_location", loc_state, {**loc_attrs, **here, "vacuum_state": state})
 
 
 # thing -> {"floor", "x", "y", "since", "away"}: where an owned thing has
@@ -3393,6 +3599,8 @@ def extract_candidate_floors(new_global_data, tmpentity):
                 distance = receiver.get("distance")
                 if distance is None or "r" not in receiver.get("cords", {}):
                     continue
+                if receiver.get("solve") is False:
+                    continue  # placed and heard, but kept out of positioning (see _solves)
                 quality = receiver.get("quality")
                 if not isinstance(quality, (int, float)) or isinstance(quality, bool) \
                         or not 0 < quality <= 1:
@@ -3430,6 +3638,12 @@ def _score_floor_fit(fix, weighted, scale):
     coverage): the thing's true floor tends to explain its whole receiver
     ensemble, while a wrong floor fits one loud through-slab reading and
     contradicts the rest.
+
+    Not always, measured: a wood floor shortens every through-slab reading by
+    about the same factor (0.65x the true 3D range), so the floor below can
+    fit a still phone as well as its own floor does, and better once the
+    phone's own fix strays over a void and takes the no-go penalty. That is
+    what the proximity term and floor_proximity_blend are for.
     """
     x, y = fix
     n = len(weighted)
@@ -3544,20 +3758,24 @@ def floor_bias_map(layout, frames, floor_name, other_name, cell_m=0.5):
     return {"cell_px": step, "registered": registered, "cells": cells, "min": min(ratios), "max": max(ratios)}
 
 
-def _proximity_weighted_scores(scores, nearest_by_floor, weight):
+def _proximity_weighted_scores(scores, nearest_by_floor, weight, blend="gated"):
     """Scale each solved floor's confidence by receiver proximity.
 
     ``prox`` for a floor is the nearest measured distance on ANY competing
     floor divided by this floor's own nearest, so the floor with the nearest
     receiver scores 1 and a floor whose closest receiver is twice as far
-    scores 0.5; the confidence is then multiplied by
-    ``(1 - weight) + weight * prox``. With one solved floor, an unusable
-    distance, or weight 0, the scores pass through unchanged. Distances are
-    the raw slants (metres) the candidate ranking already uses, so a
-    through-slab reading directly below a thing counts against the floor
-    below it just as it did in the old nearest-receiver election - but now
-    as one weighted term inside the fit competition, behind the same margin
-    and dwell, rather than as the whole answer.
+    scores 0.5. "gated" multiplies the confidence by
+    ``(1 - weight) + weight * prox``; "geometric" takes the weighted
+    geometric mean ``conf ** (1 - weight) * prox ** weight``, so a floor
+    whose fit is poor (a fix a metre over a void, the no-go penalty applied)
+    is not capped by that fit when its proxies are plainly the nearest. With
+    one solved floor, an unusable distance, or weight 0, the scores pass
+    through unchanged. Distances are the raw slants (metres) the candidate
+    ranking already uses, so a through-slab reading directly below a thing
+    counts against the floor below it just as it did in the old
+    nearest-receiver election - but now as one weighted term inside the fit
+    competition, behind the same margin and dwell, rather than as the whole
+    answer.
     """
     if not scores or not weight or weight <= 0:
         return dict(scores)
@@ -3572,7 +3790,10 @@ def _proximity_weighted_scores(scores, nearest_by_floor, weight):
     out = {}
     for floor, conf in scores.items():
         prox = best / usable[floor] if floor in usable else 1.0
-        out[floor] = conf * ((1.0 - weight) + weight * prox)
+        if blend == "geometric":
+            out[floor] = (max(conf, 0.0) ** (1.0 - weight)) * (prox ** weight)
+        else:
+            out[floor] = conf * ((1.0 - weight) + weight * prox)
     return out
 
 
@@ -3890,7 +4111,7 @@ def _spot_proxy_evidence(layout, proxies):
     for floor in layout.get("floor") or []:
         for receiver in floor.get("receivers") or []:
             d = receiver.get("distance")
-            if not isinstance(d, (int, float)) or isinstance(d, bool) or not d > 0:
+            if not isinstance(d, (int, float)) or isinstance(d, bool) or not d > 0 or not _solves(receiver):
                 continue
             (mine if receiver.get("entity_id") in proxies else others).append(float(d))
     if not mine:
@@ -4026,7 +4247,7 @@ def _elect_anchor(entity, floor_name, receivers, layout, now=None):
     for rx in receivers:
         d = rx.get("distance")
         cords = rx.get("cords") or {}
-        if not isinstance(d, (int, float)) or isinstance(d, bool) or not d > 0 or cords.get("x") is None:
+        if not isinstance(d, (int, float)) or isinstance(d, bool) or not d > 0 or cords.get("x") is None or not _solves(rx):
             continue
         ranked.append((float(d), rx))
         by_slug[rx.get("entity_id")] = (float(d), rx)
@@ -4430,11 +4651,14 @@ def find_zone_for_point(hass, data, entity, floor_name, point):
     return "unknown"
 
 
-def snap_point_into_zones(zone_polys, point):
+def snap_point_into_zones(zone_polys, point, prefer=None, prefer_margin_px=0.0):
     """Project a point onto valid (allowed, non-no-go) space.
 
     Returns the snapped Point, or None when the point is already in valid
-    space (or there is nowhere valid to put it). No-go zones (issue #60) are
+    space (or there is nowhere valid to put it). ``prefer`` names a zone (the
+    thing's current room): when the point has to be snapped and that zone's
+    valid part is no more than ``prefer_margin_px`` farther than the nearest
+    valid space, the point goes to that zone instead (NO_GO_SNAP_STICK_M). No-go zones (issue #60) are
     subtracted from the allowed region — grown by NO_GO_SNAP_MARGIN_PX first —
     so a fix in dead space is pushed to the nearest genuinely-allowed point,
     clear of the boundary-inclusive no-go edge. This holds even when a no-go
@@ -4452,6 +4676,10 @@ def snap_point_into_zones(zone_polys, point):
         if valid.covers(point):
             return None  # already in valid space
         snapped, _ = nearest_points(valid, point)
+        if prefer is not None and prefer_margin_px > 0:
+            own = _preferred_snap_target(zone_polys, prefer, nogo_union)
+            if own is not None and own.distance(point) <= valid.distance(point) + prefer_margin_px:
+                snapped, _ = nearest_points(own, point)
         return snapped
 
     # No allowed space to land in. If the point sits in declared dead space,
@@ -4460,6 +4688,18 @@ def snap_point_into_zones(zone_polys, point):
         snapped, _ = nearest_points(nogo_union.buffer(NO_GO_SNAP_MARGIN_PX).boundary, point)
         return snapped
     return None
+
+
+def _preferred_snap_target(zone_polys, zone_id, nogo_union):
+    """The valid part of one allowed zone (its polygon less the grown no-go
+    union), or None when the floor has no such allowed zone."""
+    polys = [polygon for zid, polygon, _buffer_size, no_go in zone_polys if zid == zone_id and not no_go]
+    if not polys:
+        return None
+    own = unary_union(polys)
+    if nogo_union is not None:
+        own = own.difference(nogo_union.buffer(NO_GO_SNAP_MARGIN_PX))
+    return None if own.is_empty else own
 
 
 def find_nearest_zone(hass, data, entity, floor_name, point):

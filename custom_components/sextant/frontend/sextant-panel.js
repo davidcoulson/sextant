@@ -503,7 +503,9 @@ class SextantLive extends LitElement {
     const btn = (icon, label, title, on, onClick) => html`<button class="qa ${on ? "on" : ""}" title=${title} aria-label=${title} aria-pressed=${on} @click=${onClick}>
       <ha-icon icon=${icon}></ha-icon><span>${label}</span></button>`;
     return html`<div class="quick">
-      ${btn("mdi:map-marker-check", "Here", `Tap where ${name} really is`, this._marking, () => { this._marking = !this._marking; })}
+      ${this._robotOf(ent)
+        ? btn("mdi:home-import-outline", "Dock", `Tap where ${name}'s dock is`, this._marking, () => { this._marking = !this._marking; })
+        : btn("mdi:map-marker-check", "Here", `Tap where ${name} really is`, this._marking, () => { this._marking = !this._marking; })}
       ${btn("mdi:fire", "Activity", `Where ${name} ${pn.has} spent ${pn.poss} time`, heatOn, () => this._loadHeat(ent, heatOn ? 0 : (this._lastHeatHours || 6)))}
       ${btn("mdi:history", "History", `Scrub ${name}'s history`, h?.ent === ent, () => this._loadHistory(h?.ent === ent ? null : ent))}
       ${this._isAdmin() ? btn("mdi:pencil-outline", "Edit", "Edit this thing", false, () => this._goto({ mode: "things", thing: ent })) : nothing}
@@ -513,7 +515,7 @@ class SextantLive extends LitElement {
 
   _renderMarkingPrompt(ent) {
     return html`
-<div class="marking">Tap where ${this._label(ent)} really is on the ${this.floor} plan. Pinch to zoom, or zoom straight to a spot:
+<div class="marking">${this._robotOf(ent) ? html`Tap where ${this._label(ent)}'s dock is on the ${this.floor} plan (the robot need not be on it).` : html`Tap where ${this._label(ent)} really is on the ${this.floor} plan.`} Pinch to zoom, or zoom straight to a spot:
           <div class="zoomto">${(this._floorObj()?.subzones || []).filter((s) => (s.cords || []).length >= 3)
             .sort((a, b) => String(a.entity_id).localeCompare(String(b.entity_id)))
             .map((s) => uiButton({ label: s.entity_id, kind: "text", onClick: () => this._map?.zoomTo(s.cords) }))}
@@ -568,6 +570,17 @@ class SextantLive extends LitElement {
     if (!this._marking || !this._selected) return false;
     this._marking = false;
     const ent = this._selected;
+    const vacuum = this._robotOf(ent);
+    if (vacuum) {
+      (async () => {
+        const r = await callWS(this, this.hass, { type: "sextant/robot/dock", vacuum, floor: this.floor, x: m.x, y: m.y });
+        if (!r) return;
+        const f = r.fit;
+        toast(this, f ? `Dock marked: ${f.pairs.length} points agree to ${fmtNum(f.rms_m, 2)} m` : "Dock marked");
+        this.dispatchEvent(new CustomEvent("layout-changed"));
+      })();
+      return true;
+    }
     (async () => {
       const r = await callWS(this, this.hass, { type: "sextant/truth/mark", entity: ent, floor: this.floor, x: m.x, y: m.y });
       if (!r) return;
@@ -820,6 +833,11 @@ class SextantLive extends LitElement {
   }
 
   /** live, waiting (heard, but not lately) or away (long gone, or not heard at all). */
+  /** The vacuum entity a thing is placed from, when it is a robot (robots.py). */
+  _robotOf(ent) {
+    return (this.positions?.positions || []).find((p) => p.ent === ent)?.robot || null;
+  }
+
   _state(p) {
     const st = staleness(p, this._staleAfter());
     if (p.away || (this._awayAfter() > 0 && st.age > this._awayAfter())) return { ...st, away: true, ghost: true };
@@ -1058,7 +1076,9 @@ class SextantLive extends LitElement {
                       correct and it may never be, so Forget. Quiet (not heard
                       for a while, but not gone): there is nothing recent to
                       re-solve, so the slot shows why, greyed. Live: "here". */ ""}
-                ${this._state(sel).away
+                ${sel.robot
+                  ? uiIconButton({ icon: "mdi:home-import-outline", active: this._marking, title: this._marking ? `Marking ${this._label(sel.ent)}'s dock - tap the plan` : `Mark the dock: tap where ${this._label(sel.ent)}'s dock is. It is the most trusted point when its map is lined up with this floor`, onClick: () => { this._marking = !this._marking; } })
+                  : this._state(sel).away
                   ? uiIconButton({ icon: "mdi:delete-outline", title: `Forget ${this._label(sel.ent)}: remove ${this._pn(sel.ent).poss} last sighting, history and - if nothing tracks ${this._pn(sel.ent).obj} any more - settings`, onClick: () => this._forget(sel.ent) })
                   : this._state(sel).ghost
                     ? uiIconButton({ icon: "mdi:timer-sand", disabled: true, title: `Not heard for ${fmtAge(this._state(sel).age)}: nothing recent to correct. "${this._label(sel.ent)} is actually here…" comes back once ${this._pn(sel.ent).subj} ${this._pn(sel.ent).is} heard again`, onClick: () => {} })
@@ -1071,13 +1091,13 @@ class SextantLive extends LitElement {
               <dt>Room</dt><dd>${sel.zone} ${sel.zone_locked ? html`<ha-icon icon="mdi:lock" title="stationary lock: still for a while, so the room holds"></ha-icon>` : nothing}</dd>
               <dt>Spot</dt><dd>${sel.sub_zone && sel.sub_zone !== "unknown" ? sel.sub_zone : "—"}</dd>
               <dt>Floor</dt><dd>${sel.floor}</dd>
-              <dt>Proxies</dt><dd>${sel.radii?.length ?? 0} in the solve${sel.anchor ? html`<br><span class="pill ok" title=${`one proxy reads ${this._label(sel.ent)} within arm's reach and no other comes close: placed on that proxy`}>anchored to ${proxyName(this.data, sel.anchor)}</span>` : nothing}</dd>
+              ${sel.robot ? html`<dt>Placed from</dt><dd>its own map <span class="muted small">(${this.hass?.states?.[sel.robot]?.state || sel.robot_state || "unknown"}; the map fits this floor to ${fmtLen(sel.rms_m, this.hass)})</span></dd>` : html`<dt>Proxies</dt><dd>${sel.radii?.length ?? 0} in the solve${sel.anchor ? html`<br><span class="pill ok" title=${`one proxy reads ${this._label(sel.ent)} within arm's reach and no other comes close: placed on that proxy`}>anchored to ${proxyName(this.data, sel.anchor)}</span>` : nothing}</dd>`}
               ${this._renderHere(sel)}
               ${this._battery(sel.ent) === null ? nothing : html`<dt>Battery</dt><dd class=${this._battery(sel.ent) <= BATTERY_CRITICAL ? "crit" : this._battery(sel.ent) <= BATTERY_LOW ? "warn" : ""}>${Math.round(this._battery(sel.ent))}%</dd>`}
               <dt>Updated</dt><dd>${typeof sel.updated === "number" && sel.updated > 0 ? html`${fmtAge(Date.now() / 1000 - sel.updated)} ago` : html`<span class="muted">not heard since the last restart</span>`}${staleness(sel, this._staleAfter()).ghost ? html` <span class="pill warn" title=${`Nothing has heard ${this._label(sel.ent)} since; this is where ${this._pn(sel.ent).subj} ${this._pn(sel.ent).was} last placed`}>not heard</span>` : nothing}</dd>
             </dl>
             ${this._renderTimeline(sel)}
-            <details class="telemetry">
+            ${sel.robot ? nothing : html`<details class="telemetry">
               <summary>Confidence <span class="muted small">how sure Sextant is, and why</span></summary>
               <dl>
                 <dt>Floor odds</dt><dd>${sel.floors ? Object.entries(sel.floors).sort((a, b) => b[1] - a[1]).map(([f, p]) => `${f} ${(p * 100).toFixed(0)}%`).join(" · ") : "—"}</dd>
@@ -1087,11 +1107,11 @@ class SextantLive extends LitElement {
                 <dt>Trust</dt><dd>${sel.fp?.trust != null ? `${Math.round(sel.fp.trust * 100)}%` : "—"} <span class="muted small">${sel.fp?.ratio != null ? `ratio ${fmtNum(sel.fp.ratio, 2)}` : ""}</span></dd>
                 <dt>Speed</dt><dd>${fmtSpeed(sel.speed, this.hass)}</dd>
               </dl>
-            </details>
+            </details>`}
             ${this._renderHeat(sel)}
-            ${this._renderBlend(sel)}
-            ${this._renderTruth(sel)}
-            ${this._renderLinks(sel.ent)}
+            ${sel.robot ? nothing : this._renderBlend(sel)}
+            ${sel.robot ? nothing : this._renderTruth(sel)}
+            ${sel.robot ? nothing : this._renderLinks(sel.ent)}
           </div>` : nothing}
     `;
   }
