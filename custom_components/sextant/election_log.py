@@ -129,6 +129,32 @@ class ElectionLog:
                 _LOGGER.debug("Election log %s not removed: %s", name, e)
 
 
+async def clear(dirpath: str):
+    """Delete every log file (ours only), returning (files, bytes) removed.
+
+    Turning the log off stops the writing but keeps what was written - the
+    window prunes only while it writes - so this is how the files go.
+    """
+    def _clear():
+        files = size = 0
+        try:
+            names = os.listdir(dirpath)
+        except FileNotFoundError:
+            return 0, 0
+        for name in names:
+            if hour_of(name) is None:
+                continue
+            path = os.path.join(dirpath, name)
+            try:
+                size += os.path.getsize(path)
+                os.remove(path)
+                files += 1
+            except OSError as e:
+                _LOGGER.debug("Election log %s not removed: %s", name, e)
+        return files, size
+    return await asyncio.to_thread(_clear)
+
+
 def get(hass) -> ElectionLog:
     """The one log for this hass, under config/sextant_election_log."""
     log = hass.data.get("sextant_election_log")

@@ -240,3 +240,23 @@ def test_line_up_then_mark_the_dock(tmp_path):
     # A floor without a scale cannot be lined up with.
     run(ws.ws_robot_align(hass, conn, {"id": 3, "type": "sextant/robot/align", "vacuum": "vacuum.rocky", "floor": "Nowhere"}))
     assert conn.errors and "no scale" in conn.errors[-1][2]
+
+
+def test_reads_are_counted_ok_and_failed(tmp_path):
+    hass, _calls, tasks = _hass_with_robot(tmp_path, "cleaning", position=(1000.0, 1000.0))
+    run(sextant._robot_cycle(hass, st.get_layout(hass)))
+    run(tasks.pop())
+    rs = sextant._robot_state["vacuum.rocky"]
+    assert (rs["reads_ok"], rs["reads_failed"], rs["last_error"]) == (1, 0, None)
+
+    async def broken(*_a, **_k):
+        raise RuntimeError("Something went wrong creating the map")
+    hass.services.async_call = broken
+    rs["last_poll"] = 0.0
+    run(sextant._robot_cycle(hass, st.get_layout(hass)))
+    run(tasks.pop())
+    assert (rs["reads_ok"], rs["reads_failed"]) == (1, 1) and "went wrong" in rs["last_error"]
+    assert rs["map"] == (1000.0, 1000.0), "the last good position is kept"
+    from sextant import ws
+    pub = ws._robot_public(hass, "vacuum.rocky", st.get_layout(hass)["robots"]["vacuum.rocky"])
+    assert pub["reads"]["ok"] == 1 and pub["reads"]["failed"] == 1

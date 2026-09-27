@@ -779,6 +779,7 @@ class SextantDevices extends LitElement {
         </table></div>
         <p class="small muted">Only what two or more placed proxies hear is listed: one proxy cannot position a device, and anything heard solely by an unplaced proxy (a kiosk, a test board) is left out; "Show all" lifts both. Apple FindMy tags are not in this list: they need their pairing keys, added on the Bermuda page.</p>
       </section>
+      ${this._renderPeople()}
       ${this._renderRobots()}`;
   }
 
@@ -817,7 +818,6 @@ class SextantDevices extends LitElement {
 
       <section class="card wide">
         <h3>Tiles</h3>
-        ${this._renderPeople()}
         ${this._renderTiles()}
       </section>
     </div>`;
@@ -872,6 +872,7 @@ class SextantDevices extends LitElement {
               ${f.dropped?.length ? html`<div class="muted">Left out, the two maps disagree about them: ${f.dropped.map((d) => `${d.pair} (${fmtNum(d.residual_m, 1)} m)`).join(", ")}</div>` : nothing}
               ${f.pairs.length <= 2 && !r.dock_marked ? html`<div class="warn">Two points cannot tell a mirrored map from a turned one: mark the dock to settle it.</div>` : nothing}
             </div>` : nothing}
+          ${r.floor && r.reads && (r.reads.ok || r.reads.failed) ? html`<div class="small muted" title=${r.reads.last_error ? `Last failure: ${r.reads.last_error}` : ""}>Position reads since Home Assistant started: <b>${r.reads.ok}</b> ok, <b>${r.reads.failed}</b> failed${r.reads.ok + r.reads.failed ? ` (${Math.round(100 * r.reads.failed / (r.reads.ok + r.reads.failed))}%)` : ""}${r.reads.failed ? " · a failed read keeps the last position" : ""}</div>` : nothing}
           ${r.unmatched && (r.unmatched.robot?.length || r.unmatched.plan?.length) ? html`<div class="small muted">No match: ${r.unmatched.robot?.length ? html`robot's <i>${r.unmatched.robot.join(", ")}</i>` : nothing}${r.unmatched.robot?.length && r.unmatched.plan?.length ? "; " : ""}${r.unmatched.plan?.length ? html`plan's <i>${r.unmatched.plan.join(", ")}</i>` : nothing}</div>` : nothing}
         </div>`;
       })}
@@ -902,8 +903,8 @@ class SextantDevices extends LitElement {
     const people = this._people();
     if (!people.length) return nothing;
     const table = this.data?.layout?.person_trackers || {};
-    return html`<div class="card">
-      <h4>People <span class="muted small">their things place them at home; a GPS tracker takes over when Sextant loses them</span></h4>
+    return html`<section class="card wide">
+      <h3>People <span class="muted small">their things place them at home; a GPS tracker takes over when Sextant loses them</span></h3>
       ${people.map((p) => {
         const slug = p.split(".", 1)[1] || p.slice(7);
         const name = this.hass?.states?.[p]?.attributes?.friendly_name || slug;
@@ -924,7 +925,7 @@ class SextantDevices extends LitElement {
           ${ignored.length ? html`<div class="muted small">Disregarded right now: ${ignored.map((g) => `${this.hass?.states?.[g.entity]?.attributes?.friendly_name || g.entity} (${g.reason})`).join(", ")}</div>` : nothing}
         </div>`;
       })}
-    </div>`;
+    </section>`;
   }
 
   _renderTiles() {

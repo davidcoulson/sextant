@@ -3065,8 +3065,14 @@ async def process_entities(hass, new_global_data):
 
 # The vacuum states in which a robot is somewhere other than its dock.
 ROBOT_OUT_STATES = frozenset({"cleaning", "returning", "paused", "idle", "error"})
-# vacuum entity -> {"inflight", "last_poll", "map" (x, y) mm, "at", "fails"}
+# vacuum entity -> {"inflight", "last_poll", "map" (x, y) mm, "at", "fails" (in a row),
+# "reads_ok", "reads_failed" (since start), "last_error"}
 _robot_state = {}
+
+
+def _new_robot_state():
+    return {"inflight": False, "last_poll": 0.0, "map": None, "at": None, "fails": 0,
+            "reads_ok": 0, "reads_failed": 0, "last_error": None}
 
 
 def robot_thing(vacuum_entity_id):
@@ -3097,7 +3103,7 @@ async def _robot_cycle(hass, layout):
             continue
         st = hass.states.get(vac)
         state = st.state if st is not None else None
-        rs = _robot_state.setdefault(vac, {"inflight": False, "last_poll": 0.0, "map": None, "at": None, "fails": 0})
+        rs = _robot_state.setdefault(vac, _new_robot_state())
         if state == "docked" and cfg.get("dock_map"):
             await _publish_robot(hass, layout, vac, cfg, cfg["dock_map"], now, state)
             continue
@@ -3113,7 +3119,7 @@ async def _robot_cycle(hass, layout):
 async def _robot_poll(hass, vac):
     """Ask one robot where it is (the Roborock integration's
     get_vacuum_current_position) and remember the answer."""
-    rs = _robot_state.setdefault(vac, {"inflight": False, "last_poll": 0.0, "map": None, "at": None, "fails": 0})
+    rs = _robot_state.setdefault(vac, _new_robot_state())
     try:
         resp = await hass.services.async_call(
             "roborock", "get_vacuum_current_position", {"entity_id": vac},
@@ -3122,8 +3128,14 @@ async def _robot_poll(hass, vac):
         pos = (resp or {}).get(vac) if isinstance(resp, dict) else None
         if isinstance(pos, dict) and isinstance(pos.get("x"), (int, float)) and isinstance(pos.get("y"), (int, float)):
             rs["map"], rs["at"], rs["fails"] = (float(pos["x"]), float(pos["y"])), time.time(), 0
+            rs["reads_ok"] = rs.get("reads_ok", 0) + 1
+        else:
+            rs["reads_failed"] = rs.get("reads_failed", 0) + 1
+            rs["last_error"] = "no position in the answer"
     except Exception as e:  # noqa: BLE001 - a failed map fetch keeps the last position
         rs["fails"] = rs.get("fails", 0) + 1
+        rs["reads_failed"] = rs.get("reads_failed", 0) + 1
+        rs["last_error"] = str(e)[:200]
         if rs["fails"] in (1, 10) or rs["fails"] % 100 == 0:
             _LOGGER.info("Robot %s: position not read (%d in a row): %s", vac, rs["fails"], e)
     finally:

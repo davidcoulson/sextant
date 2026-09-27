@@ -110,7 +110,9 @@ dock and costs nothing; while out it is asked where it is every
 `robot_poll_secs` (30 s). Each ask makes the Roborock integration fetch and
 parse the map, which holds Home Assistant's event loop for a few hundred
 milliseconds, so raise it if a vacuum's cleaning shows up in the loop's
-timings. A read that fails keeps the last position.
+timings. A read that fails keeps the last position; the card counts reads
+that worked and failed since Home Assistant started, which is how to tell
+whether the interval is too short.
 
 This needs the `roborock.get_vacuum_map_rooms` action, which Home Assistant's
 built-in Roborock integration does not have yet; the

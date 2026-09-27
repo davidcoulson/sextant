@@ -88,3 +88,17 @@ def test_one_log_per_hass_under_the_config_directory(tmp_path):
     log = el.get(hass)
     assert log is el.get(hass)
     assert log.dirpath == str(tmp_path / el.LOG_DIRNAME)
+
+
+def test_clear_removes_our_files_and_nothing_else(tmp_path):
+    d = tmp_path / "log"
+    d.mkdir()
+    ours = [d / el.file_for(NOW - h * HOUR) for h in range(3)]
+    for p in ours:
+        p.write_text("x" * 10)
+    other = d / "notes.txt"
+    other.write_text("keep")
+    files, size = run(el.clear(str(d)))
+    assert files == 3 and size == 30
+    assert not any(p.exists() for p in ours) and other.exists()
+    assert run(el.clear(str(tmp_path / "missing"))) == (0, 0)

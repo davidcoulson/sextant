@@ -1702,8 +1702,12 @@ def _robot_vacuums(hass):
 
 def _robot_public(hass, vac, cfg):
     st = hass.states.get(vac)
+    rs = getattr(_core(), "_robot_state", {}).get(vac) or {}
     return {
         "vacuum": vac,
+        # Position reads since Home Assistant started: how often the robot's
+        # map fetch fails, which decides whether robot_poll_secs is right.
+        "reads": {"ok": rs.get("reads_ok", 0), "failed": rs.get("reads_failed", 0), "last_error": rs.get("last_error")},
         "thing": _core().robot_thing(vac),
         "name": (st.attributes.get("friendly_name") if st else None) or vac,
         "state": st.state if st else None,
@@ -1823,6 +1827,17 @@ async def ws_robot_dock(hass, connection, msg):
     connection.send_result(msg["id"], _robot_public(hass, vac, cfg))
 
 
+@websocket_api.websocket_command({vol.Required("type"): "sextant/election_log/clear"})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_election_log_clear(hass, connection, msg):
+    """Delete the election log's files (config/sextant_election_log)."""
+    from . import election_log  # noqa: PLC0415
+
+    files, size = await election_log.clear(election_log.get(hass).dirpath)
+    connection.send_result(msg["id"], {"files": files, "bytes": size})
+
+
 @websocket_api.websocket_command({vol.Required("type"): "sextant/robot/remove", vol.Required("vacuum"): str})
 @websocket_api.require_admin
 @websocket_api.async_response
@@ -1842,7 +1857,7 @@ async def ws_robot_remove(hass, connection, msg):
 COMMANDS = (
     ws_advice,
     ws_snapshots_list, ws_snapshots_restore, ws_thing_forget, ws_person_trackers_set,
-    ws_robot_list, ws_robot_align, ws_robot_dock, ws_robot_remove,
+    ws_robot_list, ws_robot_align, ws_robot_dock, ws_robot_remove, ws_election_log_clear,
     ws_layout_get, ws_layout_save, ws_tuning_set, ws_thing_tune,
     ws_history_index, ws_history_get, ws_history_timeline, ws_history_clear, ws_thing_readings, ws_floor_bias_map,
     ws_calibration_status, ws_calibration_action, ws_selftest, ws_scanner_linking, ws_receivers, ws_beacon_links,
