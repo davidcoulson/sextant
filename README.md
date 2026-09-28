@@ -12,7 +12,7 @@ room** when the fix sits between two.
 
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=davidcoulson&repository=sextant&category=Integration)
 
-![The Live page: the floor plan with every tracked thing, the selected one focused with a halo, and its room, spot, floor and proxies in the side panel](img/screenshots/sextant-live.png)
+![The Live page: the floor plan with every tracked thing, the list grouped by person with pets on their own, and the selected dog's card with its room, spot, floor, proxies and timeline](img/screenshots/sextant-live.png)
 
 ## TL;DR
 
@@ -24,7 +24,13 @@ room** when the fix sits between two.
   room to room, heating that knows the bedroom is empty, a nudge when the
   dog is on the couch again, a TV that pauses when you walk out. Every
   tracked thing gets five sensors: where it is (spot if it is in one,
-  room if not), plus floor, room, spot and nearest room.
+  room if not), plus floor, room, spot and nearest room. Give things an
+  owner and each person gets the same, placed by whichever of their things
+  is with them, plus a device tracker.
+- 📡 **More than Bluetooth.** An mmWave presence sensor on the plan puts
+  the phone in front of it on the exact spot, pins locations by itself and
+  counts people who carry nothing. Roborock vacuums are placed from their
+  own maps.
 - 🔧 **Set up in an afternoon.** Install from HACS, upload a floor plan,
   draw your rooms, drop your Bluetooth proxies where they sit in the house,
   choose what to track. That is all.
@@ -35,8 +41,9 @@ room** when the fix sits between two.
   really is and Sextant works out which settings fit that thing best.
 - 🤖 **Built with AI, tested in a real house.** Sextant was developed with
   Claude as a coding partner, and every change runs in the author's home
-  before it ships: more than 60 Bluetooth proxies, 16 tracked people, pets
-  and things, 21 rooms on three floors. See
+  before it ships: more than 60 Bluetooth proxies, 23 tracked phones,
+  watches, pets and belongings plus three robot vacuums, 20 rooms on three
+  floors. See
   [AI-assisted development](#ai-assisted-development).
 
 ## Docs
@@ -79,9 +86,9 @@ token, in Home Assistant's own theme and unit system. Eight pages:
 
 | Page | For |
 |---|---|
-| [Live](docs/live.md) | every tracked thing on the plan; focus one for its room, spot, floor and proxies; blend slider and location pins |
-| [Edit](docs/edit.md) | place proxies, draw rooms, spots and no-go areas, set the scale and floor levels |
-| [Things](docs/things.md) | what is tracked and everything Bermuda hears; name, class, colour, photo, height and estimator per thing |
+| [Live](docs/live.md) | every tracked thing on the plan, grouped by person; focus one for its room, spot, floor, proxies, timeline and activity heatmap; location pins; a refresh menu on the countdown |
+| [Edit](docs/edit.md) | place proxies and mmWave sensors, draw rooms, spots and no-go areas, set the scale and floor levels, line the floors up with anchors |
+| [Things](docs/things.md) | what is tracked and everything Bermuda hears; name, class, colour, photo, height, owner and estimator per thing; people and their GPS fallbacks; robot vacuums |
 | [Bermuda](docs/bermuda.md) | Bermuda's global options, Find My accessories, Tiles |
 | [Proxies](docs/proxies.md) | proxy health by floor and room, what each proxy hears, the self-test |
 | [Calibration](docs/calibration.md) | proxies calibrate each other; apply into Sextant or into Bermuda |
@@ -103,6 +110,15 @@ token, in Home Assistant's own theme and unit system. Eight pages:
 - Proxy calibration with 3D heights, written into Bermuda if you like.
 - Location pins: say where a thing really is and Sextant finds the settings
   that fit it, and reports accuracy in metres.
+- People: things given an owner place that person, by whichever of them is
+  moving or most recently arrived, with a GPS tracker to fall back on when
+  the house has lost them.
+- mmWave presence sensors (Everything Presence, Apollo R PRO-1 and other
+  LD2450 boards) on the plan: a thing near a target is put on it, a still
+  target and a still thing make a pin nobody had to tap, and a target no
+  device accounts for counts as an untracked person.
+- Roborock vacuums placed from their own maps, lined up with the plan by
+  the rooms both maps name.
 - Bermuda management from the panel: track, untrack, Find My accessories,
   Tiles followed across address rotation (with the fork).
 - Five sensors per thing, a map card, services and a websocket push per
@@ -114,9 +130,10 @@ Sextant was written with [Claude](https://claude.ai) as a pair programmer,
 through Claude Code. Claude wrote most of the code, the tests and these
 docs. What keeps that honest is the test bed: every change runs in the
 author's house before it ships, with more than 60 Bluetooth proxies (bare
-ESP boards and Shellys, all running ESPHome), 21 rooms with 12 spots across
-three floors, and a tracked mix of people, phones, watches, Find My
-accessories and seven animals on iBeacon collar tags. The author sets the
+ESP boards and Shellys, all running ESPHome), 20 rooms with 13 spots across
+three floors, an mmWave sensor, three Roborock vacuums, and a tracked mix of
+people, phones, watches, Find My accessories and seven animals on iBeacon
+collar tags. The author sets the
 direction, watches what the things do on the real floor plan, and
 decides what ships. Expect the codebase to read the way an AI writes it:
 long comments explaining why, a consistent shape from file to file, and a

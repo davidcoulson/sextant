@@ -2,7 +2,7 @@
 
 # Edit
 
-![The Edit page: rooms, spots and proxies on the plan, with padlocks per layer and undo](../img/screenshots/sextant-edit.png)
+![The Edit page: rooms, spots, proxies, alignment anchors and an mmWave sensor's field of view on the plan, with padlocks per layer and undo](../img/screenshots/sextant-edit.png)
 
 A room can be linked to a **Home Assistant area** (and a floor to a Home
 Assistant floor): pick it on the selected room, or press **Link rooms to
