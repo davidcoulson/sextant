@@ -64,9 +64,9 @@ export const sharedStyles = css`
   button.iconbtn.box { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 0; border-radius: 8px;
     border: 1px solid var(--divider-color, rgba(127,127,127,0.35)); color: var(--primary-text-color); }
   button.iconbtn.box ha-icon { --mdc-icon-size: 20px; }
-  button.iconbtn.box.on { border-color: var(--primary-text-color); }
+  button.iconbtn.box.on { background: var(--primary-text-color); color: var(--card-background-color); border-color: var(--primary-text-color); }
   button.iconbtn:focus-visible { outline: 2px solid var(--primary-color, #03a9f4); outline-offset: 1px; }
-  .iconrow { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+  .iconrow { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 4px 0 8px; }
   .iconrow .gap { width: 10px; }
   .iconbar { display: flex; align-items: center; gap: 2px; }
   .segctl-wrap { display: inline-flex; align-items: center; gap: 8px; }

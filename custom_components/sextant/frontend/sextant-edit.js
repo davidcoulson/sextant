@@ -364,8 +364,8 @@ class SextantEdit extends LitElement {
         ${[["mdi:arrow-up", 0, "up"], ["mdi:arrow-right", 90, "right"], ["mdi:arrow-down", 180, "down"], ["mdi:arrow-left", 270, "left"]].map(([icon, a, way]) =>
           uiIconButton({ icon, box: true, active: (item.heading ?? 0) === a, title: `Face ${way} the plan (${a}°)`, onClick: () => { this._edit("heading", a); this._pollRadar(); } }))}
         <span class="gap"></span>
-        ${uiIconButton({ icon: "mdi:rotate-left", box: true, title: "Turn 15° anticlockwise", onClick: () => { turn(-15); this._pollRadar(); } })}
-        ${uiIconButton({ icon: "mdi:rotate-right", box: true, title: "Turn 15° clockwise", onClick: () => { turn(15); this._pollRadar(); } })}
+        ${uiIconButton({ icon: "mdi:rotate-left-variant", box: true, title: "Turn 15° anticlockwise", onClick: () => { turn(-15); this._pollRadar(); } })}
+        ${uiIconButton({ icon: "mdi:rotate-right-variant", box: true, title: "Turn 15° clockwise", onClick: () => { turn(15); this._pollRadar(); } })}
       </div>
       ${uiSwitch({ label: "Flip left/right", checked: !!item.flip, onChange: (v) => { this._edit("flip", !!v); this._pollRadar(); } })}
       <div class="row">
