@@ -7,7 +7,7 @@ import types
 
 import sextant  # noqa: F401
 from sextant import sensor as sn
-from sextant.const import ACCURACY_ENTITY_ID
+from sextant.const import ACCURACY_ENTITY_ID, GLOBAL_ENTITY_IDS, UNTRACKED_ENTITY_ID
 
 from conftest import make_hass
 from homeassistant.helpers import device_registry as dr
@@ -65,7 +65,7 @@ def test_setup_creates_sensors_and_the_accuracy_diagnostic(tmp_path, monkeypatch
     added, add = _added()
     run(sn.async_setup_entry(hass, None, add))
     ids = sorted(e.entity_id for e in added)
-    assert ids == sorted([ACCURACY_ENTITY_ID] + [f"sensor.{t}_{k}" for t in ("cat", "watch") for k, _ in sn.SENSOR_KINDS])
+    assert ids == sorted(list(GLOBAL_ENTITY_IDS) + [f"sensor.{t}_{k}" for t in ("cat", "watch") for k, _ in sn.SENSOR_KINDS])
     cat_room = hass.data["sextant_sensors"]["sensor.cat_sextant_room"]
     assert cat_room.name == "cat Sextant Room" and cat_room.unique_id == "sextant_room_cat"
     assert cat_room.state == "unknown" and cat_room.extra_state_attributes == {"area_id": None}
@@ -75,9 +75,11 @@ def test_setup_creates_sensors_and_the_accuracy_diagnostic(tmp_path, monkeypatch
     assert hass.data["sextant_add_entities"] is add
     # Second setup: nothing is created twice, the old listener is replaced.
     run(sn.async_setup_entry(hass, None, add))
-    # One per kind per thing, plus the single accuracy diagnostic. Derived
-    # rather than counted, so adding a sensor kind does not fail here.
-    assert len(added) == 2 * len(sn.SENSOR_KINDS) + 1 and "state_changed" in hass.bus.listeners
+    # One per kind per thing, plus the global sensors (accuracy, untracked
+    # people). Derived rather than counted, so adding a kind does not fail here.
+    assert len(added) == 2 * len(sn.SENSOR_KINDS) + len(GLOBAL_ENTITY_IDS) and "state_changed" in hass.bus.listeners
+    unt = hass.data["sextant_sensors"][UNTRACKED_ENTITY_ID]
+    assert unt.native_value is None and unt._attr_unique_id == "sextant_untracked_people"
 
 
 def test_setup_nests_under_the_bermuda_device_when_it_can_find_one(tmp_path, monkeypatch):
@@ -149,16 +151,16 @@ def test_new_distance_entity_and_bermuda_updates_create_sensors_later(tmp_path, 
     _patch_bermuda(monkeypatch, hass, subscribe)
     added, add = _added()
     run(sn.async_setup_entry(hass, None, add))
-    assert [e.entity_id for e in added] == [ACCURACY_ENTITY_ID]
+    assert sorted(e.entity_id for e in added) == sorted(GLOBAL_ENTITY_IDS)
 
     # A brand-new Bermuda distance entity appears on the state bus.
     er.async_get(hass).add("sensor.dog_distance_to_hall", platform="bermuda")
     hass.states.states["sensor.dog_distance_to_hall"] = "2"
     listener = hass.bus.listeners["state_changed"]
     listener(types.SimpleNamespace(data={"entity_id": "sensor.dog_distance_to_hall", "old_state": "1"}))  # an update: ignored
-    assert len(added) == 1
+    assert len(added) == len(GLOBAL_ENTITY_IDS)
     listener(types.SimpleNamespace(data={"entity_id": "sensor.dog_distance_to_hall", "old_state": None}))
-    assert sorted(e.entity_id for e in added if e.entity_id != ACCURACY_ENTITY_ID) == sorted(f"sensor.dog_{k}" for k, _ in sn.SENSOR_KINDS)
+    assert sorted(e.entity_id for e in added if e.entity_id not in GLOBAL_ENTITY_IDS) == sorted(f"sensor.dog_{k}" for k, _ in sn.SENSOR_KINDS)
 
     # Bermuda's coordinator reports a new tracked set: only the change is acted on.
     hass._tracked = {"dog", "cat"}

@@ -62,17 +62,19 @@ from .storage import (
     load_layout,
     load_runtime,
     load_truth,
+    save_truth,
     save_fp_gains,
     save_runtime,
     migrate_from_bps,
     migrate_legacy,
     save_layout,
 )
-from .const import ACCURACY_ENTITY_ID
+from .const import ACCURACY_ENTITY_ID, UNTRACKED_ENTITY_ID
 from . import history as history_mod
 from . import bermuda_source
 from . import election_log
 from . import robots as robots_mod
+from . import radars as radars_mod
 from . import fingerprint
 from . import floor_field
 from . import registration
@@ -103,6 +105,76 @@ tracked_listeners = {}
 tracked_entities = []
 new_global_data = {}
 secToUpdate = DEFAULT_UPDATE_INTERVAL
+
+# A refresh interval set for a while from the panel's countdown menu, to watch
+# something move; it lapses by itself back to the configured interval. The
+# smoothing and hold timers are wall clock (see SMOOTHING_REF_S), so a faster
+# refresh gives more fixes, not jumpier ones.
+INTERVAL_CHOICES = (5, 10, 30, 60)
+INTERVAL_OVERRIDE_S = 15 * 60
+_interval_override = {"secs": None, "until": 0.0}
+_cycle_wake = None          # asyncio.Event: set to cut the current wait short
+_cycle_last = {"at": None, "ms": None}   # when the last cycle finished, and how long it took
+
+
+def cycle_interval(now=None):
+    """Seconds between cycles right now: the panel's override while it lasts,
+    else the configured interval."""
+    now = time.time() if now is None else now
+    o = _interval_override
+    if o["secs"] and now < o["until"]:
+        return float(o["secs"])
+    o["secs"], o["until"] = None, 0.0
+    return float(secToUpdate)
+
+
+def set_interval_override(secs, now=None):
+    """Refresh every ``secs`` for INTERVAL_OVERRIDE_S, or back to the configured
+    interval (None, or the configured value). Takes effect at once: the wait
+    for the next cycle is re-timed."""
+    now = time.time() if now is None else now
+    if secs is None or float(secs) == float(secToUpdate):
+        _interval_override.update(secs=None, until=0.0)
+    else:
+        _interval_override.update(secs=float(secs), until=now + INTERVAL_OVERRIDE_S)
+    if _cycle_wake is not None:
+        _cycle_wake.set()
+    return interval_info(now)
+
+
+def interval_info(now=None):
+    """The interval as the panel shows it."""
+    secs = cycle_interval(now)
+    return {
+        "secs": secs,
+        "configured": float(secToUpdate),
+        "until": _interval_override["until"] if _interval_override["secs"] else None,
+        "choices": sorted({*INTERVAL_CHOICES, int(secToUpdate)}),
+        "last_cycle_at": _cycle_last["at"],
+        "last_cycle_ms": _cycle_last["ms"],
+    }
+
+
+async def _wait_for_next_cycle():
+    """Sleep the interval, re-timing when the panel changes it (a switch from
+    60 s to 5 s should not sit out the rest of the minute) and when an
+    override lapses mid-wait."""
+    global _cycle_wake
+    if _cycle_wake is None:
+        _cycle_wake = asyncio.Event()
+    started = time.time()
+    while True:
+        _cycle_wake.clear()
+        now = time.time()
+        left = cycle_interval(now) - (now - started)
+        if left <= 0:
+            return
+        if _interval_override["secs"]:
+            left = min(left, max(_interval_override["until"] - now, 0.05))
+        try:
+            await asyncio.wait_for(_cycle_wake.wait(), timeout=left)
+        except asyncio.TimeoutError:
+            pass
 # A scanner Bermuda hasn't heard for this long is treated as offline; the
 # liveness is polled from dump_devices every RECEIVER_DUMP_INTERVAL seconds.
 RECEIVER_OFFLINE_SECS = 30
@@ -173,11 +245,13 @@ KF_ACCEL_NOISE_MS2 = 0.5     # expected acceleration (m/s^2) while moving; large
 # lands further from the prediction than KF_MOVE_NIS allows (a normalised
 # innovation, chi-squared with two degrees of freedom: 6 is about the 95th
 # percentile), the thing is moving: the responsive noise takes over at once
-# and stays for KF_MOVE_HOLD_CYCLES after the innovations calm down, so a
-# pause mid-walk does not freeze the track.
+# and stays for KF_MOVE_HOLD_S after the innovations calm down, so a
+# pause mid-walk does not freeze the track. The hold is wall clock (it was
+# three cycles, 45 s at the 15 s interval) so a faster refresh does not
+# shorten it.
 KF_ACCEL_NOISE_STILL_MS2 = 0.0005
 KF_MOVE_NIS = 4.0
-KF_MOVE_HOLD_CYCLES = 3
+KF_MOVE_HOLD_S = 45.0
 KF_INIT_VEL_UNC_MS = 1.0     # initial velocity uncertainty (m/s) at (re)init
 KF_MAX_DT_S = 10.0           # cap the prediction step so a gap can't blow up P
 # Gap beyond which the state is reset (the thing was away). This was 30 s on
@@ -318,7 +392,26 @@ FLOOR_SWITCH_MARGIN = 0.05   # probability lead that starts/keeps a challenge
 # The default lives in TUNING_SPEC ("floor_switch_secs") so it can be changed
 # live; this is the fallback when _elect_floor is called without one.
 FLOOR_SWITCH_SECS = 60.0
-FLOOR_DARK_GRACE_CYCLES = 3  # cycles a dark incumbent holds everything frozen
+FLOOR_DARK_GRACE_S = 45.0    # how long a dark incumbent holds everything frozen (was 3 cycles at 15 s)
+
+# The smoothing weights (FLOOR_PROB_SMOOTHING, zone_prob_smoothing) are the
+# weight kept per SMOOTHING_REF_S of wall clock - the interval they were tuned
+# at - not per cycle. A cycle dt seconds after the last keeps
+# weight ** (dt / SMOOTHING_REF_S), so a faster refresh gives more, smaller
+# steps and the same smoothing in seconds: the data is not made jumpier.
+SMOOTHING_REF_S = 15.0
+# A longer gap counts as this long: a thing unheard for ten minutes should not
+# have its whole smoothed history replaced by the one fix it comes back with.
+SMOOTHING_MAX_STEP_S = 60.0
+
+
+def _step_weight(weight, last, now):
+    """The smoothing weight to keep for a step from ``last`` to ``now`` (see
+    SMOOTHING_REF_S). With no previous step, the weight as tuned."""
+    if last is None or now is None:
+        return weight
+    dt = min(max(float(now) - float(last), 0.0), SMOOTHING_MAX_STEP_S)
+    return weight ** (dt / SMOOTHING_REF_S)
 FLOOR_RESIDUAL_SCALE_M = 2.0 # weighted RMS residual (m) at which fit quality = 0.5
 COVERAGE_TARGET_N = 5.0      # heard receivers at which the coverage term saturates
 
@@ -350,9 +443,10 @@ NO_GO_SNAP_STICK_M = 1.5
 # Per-thing election state, all reset when the thing is pruned:
 # smoothed floor probabilities (entity -> {floor name: P}), the pending
 # challenge (a floor out-scoring the incumbent, counted per cycle: entity ->
-# {"floor": name, "count": n}), and how many consecutive cycles the incumbent
-# floor has been dark (unsolvable) while a competitor solved.
+# {"floor": name, "count": n}), and since when the incumbent floor has been
+# dark (unsolvable) while a competitor solved (entity -> wall clock).
 _floor_probability = {}
+_floor_probability_at = {}   # entity -> when its probabilities last moved
 _floor_challenge = {}
 _floor_dark_cycles = {}
 # When the incumbent floor was elected (wall clock), for the tenure bonus.
@@ -382,13 +476,14 @@ def _new_zone_state(floor_name, now):
         "floor": floor_name, "zone": None, "since": now, "probs": {},
         "challenge": None, "still_since": None, "moving_since": None,
         "away_since": None, "outvoted_since": None, "locked": False, "born": now,
+        "probs_at": None,
     }
 
 
 def _new_subzone_state(floor_name, zone, now):
     """A thing's spot election, before it has any evidence (see _new_zone_state)."""
     return {"floor": floor_name, "zone": zone, "value": ("unknown", zone), "probs": {},
-            "pending": None, "since": now}
+            "pending": None, "since": now, "probs_at": None}
 
 
 # Near-field anchor per thing: {"slug", "floor", "since", "pending": (slug, since) | None}
@@ -566,6 +661,13 @@ TUNING_SPEC = {
     # milliseconds, so this is a trade between a smooth trail and a quiet
     # loop. A docked robot is never asked: it is at its dock.
     "robot_poll_secs": (30.0, float, 10.0, 600.0),
+    # mmWave radars placed on the plan (radars.py). Fusion: a thing whose
+    # Bluetooth fix is within mmwave_pair_m of a radar target is placed on
+    # the target. Auto pins: one target and one thing, both still for a
+    # minute, is a location pin (at most one per thing per half hour).
+    "mmwave_fusion": (True, bool),
+    "mmwave_auto_pins": (True, bool),
+    "mmwave_pair_m": (1.5, float, 0.3, 5.0),
     # Hours of position history kept per thing: the history scrubber, the
     # timeline and Activity reach back this far. Applied on the next
     # cycle; an explicit top-level history_max_age (seconds) still wins.
@@ -1228,20 +1330,22 @@ def _kalman_position_update(entity, floor_name, meas, scale, bounds):
         }
         return _clip(zx, zy)
 
-    dt = min(max(now - st["ts"], 1e-3), KF_MAX_DT_S)
+    elapsed = max(now - st["ts"], 1e-3)
+    dt = min(elapsed, KF_MAX_DT_S)
     a_still = (KF_ACCEL_NOISE_STILL_MS2 * s) ** 2
     x, P, moving, nis = _kf_step(st["x"], st["P"], (zx, zy), dt, r_var, a_var, a_still,
-                                 st.get("moving", 0), KF_MOVE_NIS, KF_MOVE_HOLD_CYCLES)
+                                 st.get("moving", 0), KF_MOVE_NIS, KF_MOVE_HOLD_S, elapsed=elapsed)
     st["x"], st["P"], st["ts"], st["floor"], st["moving"], st["nis"] = x, P, now, floor_name, moving, nis
     return _clip(float(x[0]), float(x[1]))
 
 
-def _kf_step(x, P, meas, dt, r_var, a_var_move, a_var_still, moving, move_nis, hold_cycles):
+def _kf_step(x, P, meas, dt, r_var, a_var_move, a_var_still, moving, move_nis, hold_s, elapsed=None):
     """One constant-velocity Kalman step with two process-noise levels.
 
     Pure, so it can be replayed over a logged track and unit-tested: state in,
-    state out. ``moving`` is how many more cycles the responsive noise is held
-    for (0 = quiet). The measurement is judged against the QUIET prediction:
+    state out. ``moving`` is how many more seconds the responsive noise is
+    held for (0 = quiet); each quiet step spends the wall clock since the last
+    (``elapsed``; ``dt`` itself is capped at KF_MAX_DT_S). The measurement is judged against the QUIET prediction:
     if its normalised innovation exceeds ``move_nis`` the thing has moved, the
     step is redone with the responsive noise so the estimate follows at once,
     and the hold is (re)armed. Returns ``(x, P, moving, nis)``.
@@ -1271,9 +1375,9 @@ def _kf_step(x, P, meas, dt, r_var, a_var_move, a_var_still, moving, move_nis, h
     nu = z - H @ xq
     nis = float(nu @ np.linalg.inv(H @ Pq @ H.T + R) @ nu)
     if nis > move_nis:
-        moving = hold_cycles                 # moved: follow now, and keep following for a while
+        moving = hold_s                      # moved: follow now, and keep following for a while
     elif moving > 0:
-        moving -= 1
+        moving = max(0.0, moving - (dt if elapsed is None else elapsed))
     xn, Pn = update(*predict(a_var_move)) if moving > 0 else update(xq, Pq)
     return xn, Pn, moving, nis
 
@@ -1420,7 +1524,9 @@ async def update_tracked_entities(hass):
             _refresh_fingerprint_references(hass, layout, now_ts)
             new_global_data = [{"entity": ent, "data": _thing_layout(layout)} for ent in unique_values]
 
+            started = time.perf_counter()
             await process_entities(hass, new_global_data)
+            _cycle_last.update(at=time.time(), ms=round((time.perf_counter() - started) * 1000.0))
             async_dispatcher_send(hass, SIGNAL_BPS_UPDATE, _push_payload(hass))
 
         except Exception as e:  # noqa: BLE001 - one bad cycle must not end the loop
@@ -1441,7 +1547,7 @@ async def update_tracked_entities(hass):
                 _cycle_error_last, _cycle_error_count = message, 1
                 _LOGGER.exception("Positioning cycle failed: %s", message)
 
-        await asyncio.sleep(secToUpdate)  # Run every X seconds, set timer in global variables
+        await _wait_for_next_cycle()
 
 
 # State strings that mean "not working" when a status/availability entity is read.
@@ -2452,6 +2558,7 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
     # fresh scores elect the renamed floor immediately.
     if incumbent is not None and incumbent not in valid_floors:
         _floor_probability.pop(entity, None)
+        _floor_probability_at.pop(entity, None)
         _floor_challenge.pop(entity, None)
         _floor_dark_cycles.pop(entity, None)
         _floor_since.pop(entity, None)
@@ -2468,9 +2575,8 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
     # floor is adopted on its merits.
     if incumbent is not None and incumbent not in solved \
             and incumbent in _floor_probability.get(entity, {}):
-        dark = _floor_dark_cycles.get(entity, 0) + 1
-        if dark <= FLOOR_DARK_GRACE_CYCLES:
-            _floor_dark_cycles[entity] = dark
+        dark_since = _floor_dark_cycles.setdefault(entity, time.time())
+        if time.time() - dark_since < FLOOR_DARK_GRACE_S:
             return
         incumbent = None  # dark beyond grace: incumbency lapses
     _floor_dark_cycles.pop(entity, None)
@@ -2565,6 +2671,14 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
     if anchor is not None and tricords is not None:
         tricords = (anchor["x"], anchor["y"])
         elected["conf"] = max(elected["conf"], ANCHOR_CONF)
+    # The Bluetooth answer, kept as "raw" even when a radar target replaces
+    # it: the radar pairing is made against it, so it must not become the
+    # target it was paired with, or a thing would stick to a target for good.
+    ble_fix = tricords
+    radar_claim = _radar_claim(entity, lowest_floor_name, layout)
+    if radar_claim is not None and tricords is not None:
+        tricords = tuple(radar_claim["cords"])
+        elected["conf"] = max(elected["conf"], ANCHOR_CONF)
 
     if tricords is not None:
         # Constant-velocity Kalman smoothing of the published position. The RAW
@@ -2652,7 +2766,9 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
                 # bias can be told apart from filter lag; plus this fix's
                 # weighted RMS residual (m) and the elected floor's confidence.
                 # Both frontends read named fields, so these keys are inert.
-                "raw": [round(float(tricords[0]), 2), round(float(tricords[1]), 2)],
+                "raw": [round(float(ble_fix[0]), 2), round(float(ble_fix[1]), 2)],
+                # The mmWave radar this thing was placed by this cycle, or None.
+                "radar": None if radar_claim is None else radar_claim.get("radar_name"),
                 "rms_m": None if elected["rms_m"] is None else round(elected["rms_m"], 3),
                 "conf": round(elected["conf"], 3),
                 # Fingerprint fusion telemetry: which estimator ran, the
@@ -2837,7 +2953,7 @@ def _forget_thing_state(ent):
     the Live page can say "away since". For a thing being forgotten on purpose
     (see ws_thing_forget) that memory is the point."""
     for table in (_kf_position_state, _zone_state, _subzone_state, _anchor_state, _floor_probability,
-                  _floor_challenge, _floor_dark_cycles, _floor_since, _arrivals, _last_seen, _presence_published):
+                  _floor_probability_at, _floor_challenge, _floor_dark_cycles, _floor_since, _arrivals, _last_seen, _presence_published):
         table.pop(ent, None)
     getattr(update_trilateration_and_zone, "last_floor", {}).pop(ent, None)
     getattr(update_trilateration_and_zone, "last_r_values", {}).pop(ent, None)
@@ -2897,6 +3013,7 @@ async def prune_stale_positions(hass):
         _subzone_state.pop(ent, None)
         _anchor_state.pop(ent, None)
         _floor_probability.pop(ent, None)
+        _floor_probability_at.pop(ent, None)
         _floor_challenge.pop(ent, None)
         _floor_dark_cycles.pop(ent, None)
         _floor_since.pop(ent, None)
@@ -3021,6 +3138,10 @@ async def process_entities(hass, new_global_data):
     chunk. The cycle takes a little longer end to end and has fifteen seconds
     to do it in.
     """
+    try:
+        await _radar_cycle(hass, get_layout(hass))
+    except Exception as e:  # noqa: BLE001 - a radar must never stop the things'
+        _LOGGER.debug("Radars not read: %s", e)
     for eids in new_global_data:
         ent = eids.get("entity")
         try:
@@ -3073,6 +3194,181 @@ _robot_state = {}
 def _new_robot_state():
     return {"inflight": False, "last_poll": 0.0, "map": None, "at": None, "fails": 0,
             "reads_ok": 0, "reads_failed": 0, "last_error": None}
+
+
+# --- mmWave radars (radars.py) ---------------------------------------------------
+#
+# A floor's "radars" are placed on the Edit page: {"radar_id", "device_id",
+# "cords", "heading", "flip"}. Each cycle reads every placed radar's targets,
+# puts them on the plan and pairs them with the things whose Bluetooth fix
+# (last cycle's "raw") is nearest. A paired thing is placed on its target;
+# an unpaired target is someone Sextant has no device for.
+
+RADAR_SPECS_TTL_S = 60.0
+RADAR_FRESH_S = 30.0          # a thing's last fix older than this cannot claim a target
+AUTO_PIN_STILL_S = 60.0       # both still this long before a pin is taken
+AUTO_PIN_EVERY_S = 1800.0     # at most one automatic pin per thing per half hour
+AUTO_PIN_MIN_GAP_M = 1.0      # nor one within a metre of that thing's last
+AUTO_PIN_KEEP = 30            # automatic pins kept per thing, newest first
+AUTO_PIN_SOURCE = "mmwave"
+_radar_specs_cache = {"at": 0.0, "specs": {}}
+# The last cycle's targets and claims: {"t", "targets": [...], "claims": {thing: target}}
+_radar_frame = {"t": 0.0, "targets": [], "claims": {}}
+# thing -> {"radar", "cords", "since"} while one target and that thing stay still
+_radar_still = {}
+_radar_last_pin = {}
+
+
+def _radar_specs(hass, now=None):
+    """Every device that reports mmWave target coordinates: {device_id: spec}.
+
+    Found from the registries (no configuration): any device with
+    target_N_x / target_N_y entities, cached for a minute.
+    """
+    now = time.time() if now is None else now
+    if now - _radar_specs_cache["at"] < RADAR_SPECS_TTL_S and _radar_specs_cache["specs"]:
+        return _radar_specs_cache["specs"]
+    ent_reg = er.async_get(hass)
+    dev_reg = dr.async_get(hass)
+    by_device = {}
+    for entry in ent_reg.entities.values():
+        if entry.device_id and not entry.disabled_by:
+            by_device.setdefault(entry.device_id, []).append(entry.entity_id)
+    specs = {}
+    for device_id, ids in by_device.items():
+        spec = radars_mod.device_spec(ids)
+        if spec is None:
+            continue
+        dev = dev_reg.async_get(device_id)
+        spec["name"] = (dev.name_by_user or dev.name) if dev else device_id
+        spec["model"] = dev.model if dev else None
+        spec["area_id"] = dev.area_id if dev else None
+        specs[device_id] = spec
+    _radar_specs_cache.update(at=now, specs=specs)
+    return specs
+
+
+def _radar_claim(entity, floor_name, layout):
+    """The target this thing claimed this cycle, if fusion is on and it is fresh."""
+    if not _tuning(layout, "mmwave_fusion"):
+        return None
+    t = (_radar_frame.get("claims") or {}).get(entity)
+    if not t or t.get("floor") != floor_name or time.time() - _radar_frame.get("t", 0) > RADAR_FRESH_S:
+        return None
+    return t
+
+
+async def _radar_cycle(hass, layout, now=None):
+    """Read every placed radar, pair its targets with things, publish the
+    untracked count, and take automatic pins."""
+    global _radar_frame
+    now = time.time() if now is None else now
+    if not isinstance(layout, dict):
+        return
+    placed = [(f, r) for f in layout.get("floor", []) for r in (f.get("radars") or [])
+              if isinstance(r, dict) and r.get("device_id") and isinstance(r.get("cords"), dict)]
+    if not placed:
+        if _radar_frame["targets"]:
+            _radar_frame = {"t": now, "targets": [], "claims": {}}
+            update_sextant_sensor_state(hass, UNTRACKED_ENTITY_ID, 0, {"rooms": [], "targets": []})
+        return
+    specs = _radar_specs(hass, now)
+    targets = []
+    for floor, radar in placed:
+        scale = floor.get("scale")
+        spec = specs.get(radar["device_id"])
+        if spec is None or not isinstance(scale, (int, float)) or scale <= 0:
+            continue
+        for index, x, y, speed in radars_mod.read_targets(spec, hass.states.get):
+            px, py = radars_mod.to_plan(radar, x, y, scale)
+            targets.append({"floor": floor["name"], "radar": radar.get("radar_id"), "radar_name": spec.get("name"),
+                            "index": index, "cords": [round(px, 1), round(py, 1)], "speed": speed, "thing": None})
+    # Pair per floor, against each thing's Bluetooth fix from the last cycle.
+    rows = [r for r in apitricords if isinstance(r, dict) and now - (r.get("updated") or 0) <= RADAR_FRESH_S]
+    radius_m = _tuning(layout, "mmwave_pair_m")
+    for floor in {t["floor"] for t in targets}:
+        scale = next((f.get("scale") for f in layout["floor"] if f.get("name") == floor), None)
+        mine = [(i, tuple(t["cords"])) for i, t in enumerate(targets) if t["floor"] == floor]
+        things = [(r["ent"], tuple(r.get("raw") or r.get("cords"))) for r in rows
+                  if r.get("floor") == floor and (r.get("raw") or r.get("cords"))]
+        pairs, _free = radars_mod.pair(mine, things, radius_m * scale)
+        for i, ent in pairs.items():
+            targets[i]["thing"] = ent
+    robots = {r["ent"] for r in rows if r.get("robot")}
+    claims = {t["thing"]: t for t in targets if t["thing"] and t["thing"] not in robots}
+    _radar_frame = {"t": now, "targets": targets, "claims": claims}
+    untracked = [t for t in targets if not t["thing"]]
+    rooms = []
+    for t in untracked:
+        room = find_zone_for_point(hass, [{"entity": "_radar", "data": layout}], "_radar", t["floor"], Point(*t["cords"]))
+        t["room"] = room
+        rooms.append(room)
+    update_sextant_sensor_state(hass, UNTRACKED_ENTITY_ID, len(untracked), {
+        "rooms": sorted(set(r for r in rooms if r and r != "unknown")),
+        "targets": [{"room": t.get("room"), "floor": t["floor"], "radar": t["radar_name"]} for t in untracked],
+    })
+    if _tuning(layout, "mmwave_auto_pins"):
+        await _radar_auto_pins(hass, layout, targets, rows, now)
+
+
+async def _radar_auto_pins(hass, layout, targets, rows, now):
+    """A location pin wherever one radar sees exactly one target, one thing
+    has claimed it, and both have been still for AUTO_PIN_STILL_S."""
+    by_radar = {}
+    for t in targets:
+        by_radar.setdefault(t["radar"], []).append(t)
+    still_speed = _tuning(layout, "stationary_speed")
+    row_of = {r["ent"]: r for r in rows}
+    seen = set()
+    for radar, ts in by_radar.items():
+        if len(ts) != 1 or not ts[0]["thing"] or row_of.get(ts[0]["thing"], {}).get("robot"):
+            continue
+        t = ts[0]
+        ent = t["thing"]
+        row = row_of.get(ent) or {}
+        scale = next((f.get("scale") for f in layout["floor"] if f.get("name") == t["floor"]), None) or 1.0
+        still = (row.get("speed") is not None and row["speed"] < still_speed) and (t["speed"] is None or t["speed"] < 0.15)
+        prev = _radar_still.get(ent)
+        if not still:
+            _radar_still.pop(ent, None)
+            continue
+        seen.add(ent)
+        if not prev or prev["radar"] != radar or math.hypot(prev["cords"][0] - t["cords"][0], prev["cords"][1] - t["cords"][1]) > 0.5 * scale:
+            _radar_still[ent] = {"radar": radar, "cords": t["cords"], "since": now}
+            continue
+        if now - prev["since"] < AUTO_PIN_STILL_S or now - _radar_last_pin.get(ent, 0.0) < AUTO_PIN_EVERY_S:
+            continue
+        if await _add_auto_pin(hass, ent, t, scale, now):
+            _radar_last_pin[ent] = now
+    for ent in [e for e in _radar_still if e not in seen]:
+        _radar_still.pop(ent, None)
+
+
+async def _add_auto_pin(hass, ent, target, scale, now):
+    """Record an automatic location pin at a radar target. False when there
+    are too few recent cycles to pin, or a recent pin is already that close."""
+    samples = _truth_buffer.samples(ent, since=now - truth_mod.DEFAULT_WINDOW_SECS, floor=target["floor"])
+    if len(samples) < truth_mod.MIN_SAMPLES:
+        return False
+    x, y = target["cords"]
+    store = await load_truth(hass)
+    marks = store.setdefault("marks", [])
+    mine = [m for m in marks if m.get("entity") == ent and str(m.get("source") or "").startswith(AUTO_PIN_SOURCE)]
+    if any(m.get("floor") == target["floor"] and math.hypot(m["x"] - x, m["y"] - y) < AUTO_PIN_MIN_GAP_M * scale for m in mine[-5:]):
+        return False
+    mark = {"id": int(store.get("next_id") or 1), "entity": ent, "floor": target["floor"], "x": round(float(x), 2),
+            "y": round(float(y), 2), "t": now, "samples": samples,
+            "source": f"{AUTO_PIN_SOURCE}:{target.get('radar_name') or target.get('radar')}"}
+    store["next_id"] = mark["id"] + 1
+    marks.append(mark)
+    extra = len(mine) + 1 - AUTO_PIN_KEEP
+    if extra > 0:
+        drop = {id(m) for m in mine[:extra]}
+        store["marks"] = [m for m in marks if id(m) not in drop]
+    await save_truth(hass, store)
+    _set_truth_marks(store["marks"])
+    _LOGGER.info("mmWave pin for %s on %s at (%.0f, %.0f) from %s", ent, target["floor"], x, y, target.get("radar_name"))
+    return True
 
 
 def robot_thing(vacuum_entity_id):
@@ -3797,7 +4093,7 @@ def _proximity_weighted_scores(scores, nearest_by_floor, weight, blend="gated"):
     return out
 
 
-def _update_floor_probabilities(entity, scores, valid_floors=None):
+def _update_floor_probabilities(entity, scores, valid_floors=None, now=None):
     """Fold this cycle's per-floor confidences into smoothed probabilities.
 
     Each floor's probability moves 1-FLOOR_PROB_SMOOTHING of the way toward
@@ -3809,14 +4105,17 @@ def _update_floor_probabilities(entity, scores, valid_floors=None):
     normalized copy.
     """
     probs = _floor_probability.setdefault(entity, {})
+    now = time.time() if now is None else now
+    # No history (new, or just reset): the step is a whole one, as tuned.
+    keep = _step_weight(FLOOR_PROB_SMOOTHING, _floor_probability_at.get(entity) if probs else None, now)
+    _floor_probability_at[entity] = now
     if valid_floors is not None:
         for floor in [f for f in probs if f not in valid_floors]:
             del probs[floor]
     total = sum(scores.values())
     for floor in set(probs) | set(scores):
         target = (scores.get(floor, 0.0) / total) if total > 0 else 0.0
-        probs[floor] = FLOOR_PROB_SMOOTHING * probs.get(floor, 0.0) \
-            + (1.0 - FLOOR_PROB_SMOOTHING) * target
+        probs[floor] = keep * probs.get(floor, 0.0) + (1.0 - keep) * target
     for floor in [f for f, p in probs.items() if p < 0.01]:
         del probs[floor]
     norm = sum(probs.values())
@@ -3988,7 +4287,8 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
     shares = _zone_membership(zone_polys, samples)
     if not shares and instant_zone in valid:
         shares = {instant_zone: 1.0}
-    alpha = _tuning(layout, "zone_prob_smoothing")
+    alpha = _step_weight(_tuning(layout, "zone_prob_smoothing"), st.get("probs_at") if st["probs"] else None, now)
+    st["probs_at"] = now
     probs = st["probs"]
     for z in set(probs) | set(shares):
         probs[z] = alpha * probs.get(z, 0.0) + (1.0 - alpha) * shares.get(z, 0.0)
@@ -4385,7 +4685,8 @@ def _elect_subzone(entity, floor_name, zone, zone_locked, point, kf_state, sub_p
             keep = (1.0 - p) / (1.0 - old) if old < 1.0 else 0.0
             shares = {s: v * keep for s, v in shares.items()}
             shares[sid] = p
-    alpha = _tuning(layout, "zone_prob_smoothing")
+    alpha = _step_weight(_tuning(layout, "zone_prob_smoothing"), st.get("probs_at") if st["probs"] else None, now)
+    st["probs_at"] = now
     probs = st["probs"]
     for s in set(probs) | set(shares):
         probs[s] = alpha * probs.get(s, 0.0) + (1.0 - alpha) * shares.get(s, 0.0)
@@ -4847,6 +5148,12 @@ def _push_payload(hass):
         "stamp": time.time(),
         "positions": list(dom.get("apitricords") or []),
         "offline_receivers": list(dom.get("rl_offline") or []),
+        # mmWave radar targets on the plan: {floor, cords, radar_name, thing,
+        # room}; a target with no thing is someone Sextant has no device for.
+        "radar_targets": [t for t in (_radar_frame.get("targets") or [])] if time.time() - _radar_frame.get("t", 0) <= RADAR_FRESH_S else [],
+        # The refresh interval and when the last cycle ran, for the countdown
+        # (and its menu, which sets a temporary interval).
+        "interval": interval_info(),
     }
 
 

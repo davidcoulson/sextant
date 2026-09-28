@@ -55,7 +55,9 @@ distances on this floor against the best competing floor; `gated`, or the
 weighted `geometric` mean of fit and proximity, see
 [`floor_proximity_blend`](tuning.md)) and by the floor's `bias`, then
 smoothed; a challenger must lead for `floor_switch_secs`, by a margin that
-grows with the incumbent's tenure.
+grows with the incumbent's tenure. All the smoothing here (floors, rooms,
+spots) and the hold timers are per second of wall clock, tuned at the 15 s
+cycle, so a faster refresh gives more fixes rather than jumpier ones.
 
 **Bias fields.** A floor's `bias` is one prior for the whole plan, and a
 house is not uniform. Over a slab the floor below is attenuated and the

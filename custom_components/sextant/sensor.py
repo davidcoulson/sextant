@@ -7,7 +7,7 @@ import logging
 
 from homeassistant.helpers.event import async_call_later
 
-from .const import ACCURACY_ENTITY_ID  # single source of truth (shared with __init__)
+from .const import ACCURACY_ENTITY_ID, GLOBAL_ENTITY_IDS, UNTRACKED_ENTITY_ID  # single source of truth (shared with __init__)
 from . import bermuda_source
 
 _LOGGER = logging.getLogger(__name__)
@@ -215,13 +215,13 @@ def prune_sensors_for_untracked(hass, tracked):
     ent_reg = er.async_get(hass)
     stale = set()
     for entry in list(ent_reg.entities.values()):
-        if entry.platform != "sextant" or entry.entity_id == ACCURACY_ENTITY_ID:
+        if entry.platform != "sextant" or entry.entity_id in GLOBAL_ENTITY_IDS:
             continue
         thing = thing_of_unique_id(entry.unique_id)
         if thing is not None and thing not in tracked:
             stale.add(thing)
     for entity_id, sensor in list((hass.data.get("sextant_sensors") or {}).items()):
-        if entity_id == ACCURACY_ENTITY_ID:
+        if entity_id in GLOBAL_ENTITY_IDS:
             continue
         thing = thing_of_unique_id(getattr(sensor, "unique_id", None))
         if thing is not None and thing not in tracked:
@@ -325,6 +325,38 @@ class CustomDistanceSensor(SensorEntity):
     def extra_state_attributes(self):
         # Used by the spot sensor to carry "room"; empty for the rest.
         return self._attrs
+
+class SextantUntrackedSensor(SensorEntity):
+    """How many people the mmWave radars see that no tracked thing accounts for.
+
+    A guest, or someone whose phone is on the charger in another room. The
+    rooms they are in are an attribute. 0 with no radars placed.
+    """
+
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:account-question"
+
+    def __init__(self):
+        self._attr_name = "Untracked People"
+        self._attr_unique_id = "sextant_untracked_people"
+        self.entity_id = UNTRACKED_ENTITY_ID
+        self._state = None
+        self._attrs = {}
+        self._attr_device_info = DeviceInfo(
+            identifiers={("sextant", "sextant_system")},
+            name="Sextant",
+            manufacturer="Sextant",
+            model="Sextant (BLE Positioning)",
+        )
+
+    @property
+    def native_value(self):
+        return self._state
+
+    @property
+    def extra_state_attributes(self):
+        return self._attrs
+
 
 class SextantAccuracySensor(SensorEntity):
     """Receiver self-localization accuracy (CEP95 in metres), a global diagnostic.
@@ -560,7 +592,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             entry.entity_id
             for entry in entity_registry.entities.values()
             if entry.platform == "sextant" and entry.entity_id not in expected_entity_ids
-            and entry.entity_id != ACCURACY_ENTITY_ID  # keep the global diagnostic
+            and entry.entity_id not in GLOBAL_ENTITY_IDS  # keep the global sensors
             and not (isinstance(entry.unique_id, str) and entry.unique_id.startswith(person_prefixes))
         ]
         for entity_id in stale_sextant_ids:
@@ -580,6 +612,10 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         accuracy = SextantAccuracySensor()
         hass.data["sextant_sensors"][ACCURACY_ENTITY_ID] = accuracy
         new_sensors.append(accuracy)
+    if UNTRACKED_ENTITY_ID not in hass.data["sextant_sensors"]:
+        untracked = SextantUntrackedSensor()
+        hass.data["sextant_sensors"][UNTRACKED_ENTITY_ID] = untracked
+        new_sensors.append(untracked)
     for entity in entities:
         ensure_sensors_for_entity(hass, entity, hass.data["sextant_sensors"], new_sensors)
 

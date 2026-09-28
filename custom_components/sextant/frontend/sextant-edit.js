@@ -25,6 +25,7 @@ const TOOLS = [
   ["nogo", "No-go", "mdi:cancel", "Draw an area things can never be in (a void, a wall)"],
   ["measure", "Scale", "mdi:ruler", "Set the map scale from a known distance"],
   ["pin", "Anchor", "mdi:crosshairs-gps", "Anchor a point that lines up through the house - an outside corner, a stair post. The same name on another floor says how the floors stack. It lands on a room corner when one is near; hold Alt to place it freely"],
+  ["radar", "mmWave", "mdi:radar", "Place an mmWave presence sensor (Everything Presence, Apollo R PRO-1) and set the way it faces. Its targets land on the plan: a thing near one is placed on it, one still target and one still thing make a location pin, and a target no thing accounts for is someone Sextant has no device for"],
   ["remark", "Note", "mdi:note-text-outline", "Leave a note on the plan - where a proxy is going, what to check, what a room is really called. Notes are for people; nothing about positioning reads them"],
 ];
 // Layers that can be locked against selection and dragging, so a finished
@@ -71,6 +72,8 @@ class SextantEdit extends LitElement {
     _undo: { state: true },
     _history: { state: true },     // the kept copies of the plan, once asked for
     _alignment: { state: true },
+    _radarDevices: { state: true },   // devices reporting mmWave target coordinates
+    _radarLive: { state: true },      // the selected radar's targets right now
   };
 
   constructor() {
@@ -128,6 +131,7 @@ class SextantEdit extends LitElement {
     this._map.setOptions({ labels: true, subzones: true, receivers: true, trails: false });
     this._map.setLocks(this._locks);
     this._syncDraft(true);
+    this._loadRadarDevices();
     // A reload or a closed tab would take the draft with it.
     this._warnUnload = (ev) => { if (this._dirty) { ev.preventDefault(); ev.returnValue = ""; } };
     window.addEventListener("beforeunload", this._warnUnload);
@@ -136,6 +140,7 @@ class SextantEdit extends LitElement {
   disconnectedCallback() {
     super.disconnectedCallback();
     clearTimeout(this._alignTimer);
+    clearInterval(this._radarTimer);
     window.removeEventListener("beforeunload", this._warnUnload);
     this._map?.destroy();
   }
@@ -156,7 +161,8 @@ class SextantEdit extends LitElement {
     if (changed.has("hass")) this._map.setAreas(this.hass?.areas);
     if (changed.has("floor") || changed.has("data")) this._loadBiasView();
     if (changed.has("spots") || changed.has("floor")) this._map.setSuggestions((this.spots || []).filter((s) => s.floor === this.floor).map((s) => ({ x: s.x, y: s.y, label: `add a proxy here · ${s.room}` })));
-    if (changed.has("_tool")) { this._map.setTool(["measure", "receiver", "pin", "remark"].includes(this._tool) ? "select" : this._tool); }
+    if (changed.has("_tool")) { this._map.setTool(["measure", "receiver", "pin", "remark", "radar"].includes(this._tool) ? "select" : this._tool); }
+    if (changed.has("_selection")) this._watchRadar();
   }
 
   _syncDraft(replace) {
@@ -295,6 +301,70 @@ class SextantEdit extends LitElement {
     this.updateComplete.then(() => this.renderRoot?.querySelector(".remark-text input, .remark-text textarea")?.focus());
   }
 
+  /** An mmWave sensor where the click was, facing up the plan until told
+   * otherwise; the device is picked in the inspector. */
+  _placeRadar(e) {
+    const f = this._floorObj();
+    if (!f || this._map.hover?.kind === "radar") return;   // a click on one selects it
+    const p = this._mapPoint(e);
+    this._snapshot();
+    f.radars = f.radars || [];
+    f.radars.push({ radar_id: uid("radar"), device_id: null, heading: 0, flip: false, cords: { x: Math.round(p.x * 1000) / 1000, y: Math.round(p.y * 1000) / 1000 } });
+    this._dirty = true;
+    this._selection = { kind: "radar", index: f.radars.length - 1 };
+    this._map.setSelection(this._selection);
+    this.requestUpdate();
+  }
+
+  async _loadRadarDevices() {
+    const r = await this.hass?.callWS({ type: "sextant/radar/devices" }).catch(() => null);
+    this._radarDevices = r?.devices || [];
+    this._map?.setRadarInfo(Object.fromEntries(this._radarDevices.map((d) => [d.device_id, { name: d.name, range_m: d.range_m, fov_deg: d.fov_deg }])));
+  }
+
+  /** While an mmWave sensor is selected, show its targets as they are now,
+   * placed as the draft has it: walk in front of it and watch yourself move. */
+  _watchRadar() {
+    clearInterval(this._radarTimer);
+    this._radarTimer = null;
+    if (this._selection?.kind !== "radar") { this._radarLive = null; this._map?.setRadarLive(null); return; }
+    this._pollRadar();
+    this._radarTimer = setInterval(() => this._pollRadar(), 2000);
+  }
+
+  async _pollRadar() {
+    const f = this._floorObj(), sel = this._selection;
+    const item = sel?.kind === "radar" ? f?.radars?.[sel.index] : null;
+    if (!item?.device_id || !item.cords) { this._radarLive = null; this._map?.setRadarLive(null); return; }
+    const r = await this.hass.callWS({ type: "sextant/radar/targets", device_id: item.device_id, floor: this.floor,
+      x: item.cords.x, y: item.cords.y, heading: item.heading || 0, flip: !!item.flip }).catch(() => null);
+    if (this._selection !== sel) return;
+    this._radarLive = r?.targets || [];
+    this._map?.setRadarLive({ radar_id: item.radar_id, targets: this._radarLive });
+  }
+
+  _renderRadar(item) {
+    const devices = this._radarDevices || [];
+    const dev = devices.find((d) => d.device_id === item.device_id);
+    const placed = new Set((this._draft?.floor || []).flatMap((fl) => (fl.radars || []).filter((r) => r !== item).map((r) => r.device_id)));
+    const turn = (deg) => this._edit("heading", ((((item.heading || 0) + deg) % 360) + 360) % 360);
+    const live = this._radarLive || [];
+    return html`<div class="card">
+      <h4>mmWave sensor</h4>
+      <div class="row">${uiSelect({ label: "Device", value: item.device_id || "", options: [{ value: "", label: devices.length ? "pick one" : "no mmWave sensors found" }, ...devices.map((d) => ({ value: d.device_id, label: `${d.name}${d.model ? ` · ${d.model}` : ""}${placed.has(d.device_id) ? " (placed elsewhere)" : ""}` }))], onChange: (v) => { this._edit("device_id", v || null); this._pollRadar(); }, style: "flex: 1" })}</div>
+      <div class="row">
+        ${uiField({ label: "Facing (degrees clockwise from up)", type: "number", step: 1, min: 0, max: 359, value: item.heading ?? 0, onChange: (v) => { this._edit("heading", (((Number(v) || 0) % 360) + 360) % 360); this._pollRadar(); }, style: "width: 230px" })}
+        ${[["↑", 0], ["→", 90], ["↓", 180], ["←", 270]].map(([label, a]) => uiButton({ label, kind: "text", title: `Face ${a}°`, onClick: () => { this._edit("heading", a); this._pollRadar(); } }))}
+        ${uiButton({ label: "−15°", kind: "text", onClick: () => { turn(-15); this._pollRadar(); } })}${uiButton({ label: "+15°", kind: "text", onClick: () => { turn(15); this._pollRadar(); } })}
+      </div>
+      ${uiSwitch({ label: "Flip left/right", checked: !!item.flip, onChange: (v) => { this._edit("flip", !!v); this._pollRadar(); } })}
+      <div class="muted small">${dev ? html`Sees ${fmtLen(dev.range_m, this.hass)} out, ±${Math.round((dev.fov_deg || 120) / 2)}° either side (the range set on the device).${dev.installation_angle ? html` Its installation angle is set to ${dev.installation_angle}° on the device, which already turns the coordinates it reports: face this marker the way that turned frame points.` : nothing}` : "Pick the device, then turn the marker the way the sensor faces."}</div>
+      ${item.device_id ? html`<div class="small"><b>${live.length}</b> target${live.length === 1 ? "" : "s"} right now${live.length ? html` - the pink dots. Walk straight away from it: the dot should move along the wedge's centre line; if it goes off at an angle, turn the marker; if it moves the wrong way sideways, flip.` : html` - walk in front of it to see yourself as a pink dot.`}</div>` : nothing}
+      <div class="muted small">Save the plan to put it to work: a thing whose Bluetooth fix is near a target is placed on the target, one still target and one still thing make a location pin, and a target nobody's device accounts for counts in sensor.sextant_untracked_people.</div>
+      <div class="row"><span class="grow"></span>${uiButton({ label: "Delete", kind: "danger", onClick: () => this._deleteSelection() })}</div>
+    </div>`;
+  }
+
   /** The draft as it should be stored: without the marks the map draws with.
    * Both save paths go through here - adding a floor posts the draft too, and
    * used to send `unmatched`, `label` and the pin marks along with it. */
@@ -307,7 +377,7 @@ class SextantEdit extends LitElement {
     return draft;
   }
 
-  _listFor(kind, f) { return kind === "receiver" ? f.receivers : kind === "zone" ? f.zones : kind === "pin" ? f.pins : kind === "remark" ? f.remarks : f.subzones; }
+  _listFor(kind, f) { return kind === "receiver" ? f.receivers : kind === "zone" ? f.zones : kind === "pin" ? f.pins : kind === "remark" ? f.remarks : kind === "radar" ? (f.radars = f.radars || []) : f.subzones; }
 
   // --- tools -------------------------------------------------------------------
 
@@ -315,7 +385,7 @@ class SextantEdit extends LitElement {
     this._tool = tool;
     this._measure = null;
     if (tool !== "receiver") this._placing = null;
-    if (["receiver", "measure", "pin", "remark"].includes(tool)) this._map.setTool("select");
+    if (["receiver", "measure", "pin", "remark", "radar"].includes(tool)) this._map.setTool("select");
     if (tool === "pin" && this._locks.pin) this._setLock("pin", false);   // you are placing pins: they must be reachable
   }
 
@@ -325,6 +395,7 @@ class SextantEdit extends LitElement {
     else if (this._tool === "measure") this._measureClick(e);
     else if (this._tool === "pin") this._placePin(e);
     else if (this._tool === "remark") this._placeRemark(e);
+    else if (this._tool === "radar") this._placeRadar(e);
   }
 
   _mapPoint(e) {
@@ -573,7 +644,7 @@ class SextantEdit extends LitElement {
     if (!sel || !f) return;
     const list = this._listFor(sel.kind, f);
     const item = list[sel.index];
-    const what = { receiver: "proxy", zone: "room", pin: "anchor", remark: "note" }[sel.kind] || "spot";
+    const what = { receiver: "proxy", zone: "room", pin: "anchor", remark: "note", radar: "mmWave sensor" }[sel.kind] || "spot";
     // An empty note has nothing to name and nothing to lose: no dialog for it.
     const named = item.entity_id ?? item.name ?? item.text;
     if (named && !confirmDialog(`Delete ${what} "${named}"?`)) return;
@@ -877,6 +948,7 @@ class SextantEdit extends LitElement {
     const list = this._listFor(sel.kind, f);
     const item = list?.[sel.index];
     if (!item) return nothing;
+    if (sel.kind === "radar") return this._renderRadar(item);
     if (sel.kind === "remark") {
       return html`<div class="card">
         <h4>Note</h4>

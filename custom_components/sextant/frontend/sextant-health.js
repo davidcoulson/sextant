@@ -55,6 +55,10 @@ const TUNING_LABELS = {
   away_after_secs: ["Away after (s)", "unheard this long, the Live list stops waiting for a thing and calls it away; between ghost and this it is shown where it was last seen"],
   restore_state_secs: ["Resume after a restart within (s)", "a restart shorter than this resumes the elections; longer starts cold (raise before a host reboot)"],
   gps_stale_secs: ["GPS source stale after (s)", "a person's GPS tracker that has not reported for this long is passed over for the next one"],
+  robot_poll_secs: ["Robot position every (s)", "how often a robot vacuum that is out is asked where it is; each ask is a map parse in the Roborock integration"],
+  mmwave_fusion: ["Place things on mmWave targets", "a thing whose Bluetooth fix is near a radar target is placed on the target"],
+  mmwave_auto_pins: ["Pins from mmWave", "one still target and one still thing make a location pin (at most one per thing per half hour)"],
+  mmwave_pair_m: ["Claim a target within (m)", "how near a thing's Bluetooth fix must be to an mmWave target to be placed on it"],
   election_log_hours: ["Election log (hours)", "keep every floor election on disk for this long (config/sextant_election_log, ~6 MB an hour for twenty things) for tools/replay_floors.py; 0 = off"],
   stale_after_secs: ["Ghost after (s)", "a thing unheard this long is drawn faded on Live, with how long ago it was heard"],
   spot_proxy_near_m: ["Spot proxy: full within (m)", "a spot's own proxy hearing a thing this close counts fully as the thing being on the spot"],
@@ -623,6 +627,7 @@ class SextantHealth extends LitElement {
       ["Near-field anchor", ["anchor_max_m", "anchor_ratio", "anchor_secs", "anchor_release_m"]],
       ["Floors", ["floor_switch_secs", "floor_switch_margin", "floor_tenure_bonus", "floor_tenure_full_secs", "floor_proximity_weight", "floor_proximity_blend", "floor_proximity_k"]],
       ["People", ["gps_stale_secs"]],
+      ["Robots and mmWave", ["robot_poll_secs", "mmwave_fusion", "mmwave_auto_pins", "mmwave_pair_m"]],
       ["Calibration", ["calibration_target", "correction_close_fade", "correction_fade_near_m", "correction_fade_far_m"]],
       ["History and display", ["history_hours", "history_admin_only", "stale_after_secs", "away_after_secs", "restore_state_secs", "election_log_hours"]],
     ];

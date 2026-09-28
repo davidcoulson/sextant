@@ -1827,6 +1827,56 @@ async def ws_robot_dock(hass, connection, msg):
     connection.send_result(msg["id"], _robot_public(hass, vac, cfg))
 
 
+@websocket_api.websocket_command({vol.Required("type"): "sextant/radar/devices"})
+@websocket_api.async_response
+async def ws_radar_devices(hass, connection, msg):
+    """Every device that reports mmWave target coordinates, for the Edit page:
+    its name, model, area, range and installation angle as set on the device."""
+    core = _core()
+    specs = core._radar_specs(hass)
+    out = []
+    for device_id, spec in specs.items():
+        angle = None
+        if spec.get("angle_entity"):
+            st = hass.states.get(spec["angle_entity"])
+            try:
+                angle = float(st.state) if st else None
+            except (TypeError, ValueError):
+                angle = None
+        out.append({"device_id": device_id, "name": spec.get("name"), "model": spec.get("model"),
+                    "area_id": spec.get("area_id"), "targets": len(spec.get("targets") or []),
+                    "range_m": core.radars_mod.radar_range_m(spec, hass.states.get),
+                    "installation_angle": angle, "fov_deg": core.radars_mod.FOV_DEG})
+    connection.send_result(msg["id"], {"devices": sorted(out, key=lambda d: str(d["name"]))})
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): "sextant/radar/targets",
+    vol.Required("device_id"): str,
+    vol.Required("floor"): str,
+    vol.Required("x"): vol.Coerce(float),
+    vol.Required("y"): vol.Coerce(float),
+    vol.Optional("heading", default=0.0): vol.Coerce(float),
+    vol.Optional("flip", default=False): bool,
+})
+@websocket_api.async_response
+async def ws_radar_targets(hass, connection, msg):
+    """One radar's targets right now, placed as the Edit page has it (which
+    may not be saved yet): what you see while you walk past it to check the
+    direction."""
+    core = _core()
+    spec = core._radar_specs(hass).get(msg["device_id"])
+    floor = next((f for f in (get_layout(hass) or {}).get("floor", []) if f.get("name") == msg["floor"]), None)
+    if spec is None or floor is None or not isinstance(floor.get("scale"), (int, float)):
+        return connection.send_result(msg["id"], {"targets": []})
+    radar = {"cords": {"x": msg["x"], "y": msg["y"]}, "heading": msg["heading"], "flip": msg["flip"]}
+    out = []
+    for index, x, y, speed in core.radars_mod.read_targets(spec, hass.states.get):
+        px, py = core.radars_mod.to_plan(radar, x, y, floor["scale"])
+        out.append({"index": index, "cords": [round(px, 1), round(py, 1)], "x_m": round(x, 2), "y_m": round(y, 2), "speed": speed})
+    connection.send_result(msg["id"], {"targets": out})
+
+
 @websocket_api.websocket_command({vol.Required("type"): "sextant/election_log/clear"})
 @websocket_api.require_admin
 @websocket_api.async_response
@@ -1836,6 +1886,24 @@ async def ws_election_log_clear(hass, connection, msg):
 
     files, size = await election_log.clear(election_log.get(hass).dirpath)
     connection.send_result(msg["id"], {"files": files, "bytes": size})
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): "sextant/interval/set",
+    # Seconds between cycles for the next quarter hour; null goes back to the
+    # configured interval at once.
+    vol.Required("secs"): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=1, max=600))),
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_interval_set(hass, connection, msg):
+    """Refresh faster (or slower) for a while, from the countdown's menu."""
+    core = _core()
+    secs = msg["secs"]
+    if secs is not None and int(secs) not in core.INTERVAL_CHOICES and float(secs) != float(core.secToUpdate):
+        return _error(connection, msg, f"Pick one of {sorted(core.INTERVAL_CHOICES)} seconds")
+    info = core.set_interval_override(secs)
+    connection.send_result(msg["id"], info)
 
 
 @websocket_api.websocket_command({vol.Required("type"): "sextant/robot/remove", vol.Required("vacuum"): str})
@@ -1857,7 +1925,8 @@ async def ws_robot_remove(hass, connection, msg):
 COMMANDS = (
     ws_advice,
     ws_snapshots_list, ws_snapshots_restore, ws_thing_forget, ws_person_trackers_set,
-    ws_robot_list, ws_robot_align, ws_robot_dock, ws_robot_remove, ws_election_log_clear,
+    ws_robot_list, ws_robot_align, ws_robot_dock, ws_robot_remove, ws_election_log_clear, ws_interval_set,
+    ws_radar_devices, ws_radar_targets,
     ws_layout_get, ws_layout_save, ws_tuning_set, ws_thing_tune,
     ws_history_index, ws_history_get, ws_history_timeline, ws_history_clear, ws_thing_readings, ws_floor_bias_map,
     ws_calibration_status, ws_calibration_action, ws_selftest, ws_scanner_linking, ws_receivers, ws_beacon_links,

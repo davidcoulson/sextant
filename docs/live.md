@@ -28,9 +28,15 @@ distance circles and the fingerprint fix; each lights up while it is on.
 Labels names the rooms and the things (and whichever proxy you point at),
 while Proxies draws the proxies themselves, which a busy plan is often
 better without. In the corner, a countdown says how many seconds until the
-next positioning cycle - measured from the gap between cycles, so it
-follows whatever Bermuda is doing - and falls back to how long ago the last
-one was when a cycle is late. A history scrubber under
+next positioning cycle, and falls back to how long ago the last one was
+when a cycle is late. For an admin it is also a menu: pick 5 or 10 seconds
+to watch something move (or 30 or 60 to go easy on the box) and Sextant
+refreshes that often for the next 15 minutes, then goes back to the
+configured interval by itself; the countdown shows "every 5s" meanwhile, and
+picking "normal" ends it early. The menu also says how long the last cycle
+took. A faster refresh does not make the rooms or floors jumpier: their
+smoothing and hold timers run on seconds, not cycles, so three 5 s cycles
+move them as far as one 15 s cycle did. A history scrubber under
 the map replays where a thing has been over the retention window, with a
 room band, playback and a jump-to-time picker.
 

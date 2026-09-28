@@ -36,7 +36,7 @@ distances in metres.
 | `solver_max_range` | 12 | drop readings beyond this once three remain (0 = never) |
 | `solver_near_always` | 3 | proxies within this always count |
 | `zone_hysteresis` | true | off publishes the instantaneous room |
-| `zone_prob_smoothing` | 0.6 | weight on the previous room shares |
+| `zone_prob_smoothing` | 0.6 | weight kept on the previous room shares per 15 s (a faster refresh compounds it, so the smoothing is the same in seconds) |
 | `zone_switch_margin` | 0.15 | lead a challenger room needs |
 | `zone_switch_secs` | 20 | held that long before switching |
 | `stationary_speed` | 0.3 | m/s; slower is "still" |
@@ -72,6 +72,9 @@ distances in metres.
 | `history_hours` | 6 | hours of position history kept (scrubber, timeline, Activity), 1 to 168 |
 | `history_admin_only` | off | only administrators may read where things have been (scrubber, timeline, Activity) |
 | `stale_after_secs` | 120 | unheard this long, a thing is drawn as a ghost on Live (display only) |
+| `mmwave_fusion` | on | a thing whose Bluetooth fix is near an mmWave target is placed on the target |
+| `mmwave_auto_pins` | on | one still target and one still thing make a location pin |
+| `mmwave_pair_m` | 1.5 | how near a thing's Bluetooth fix must be to claim a target |
 | `robot_poll_secs` | 30 | how often a robot vacuum that is out is asked where it is; each ask costs the Roborock integration a map parse (a few hundred ms on the event loop), a docked robot is never asked |
 | `election_log_hours` | 0 | keep every floor election (each cycle's per-floor candidates, odds and winner, per thing) for this many hours in `config/sextant_election_log`, for `tools/replay_floors.py`; about 150 MB a day for twenty things, so 0 (off) unless you are chasing a wrong floor. Setting it back to 0 stops the writing but keeps the files; `sextant/election_log/clear` deletes them |
 

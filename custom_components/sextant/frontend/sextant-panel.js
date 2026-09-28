@@ -79,6 +79,7 @@ class SextantPanel extends LitElement {
     _data: { state: true },
     _positions: { state: true },
     _now: { state: true },        // ticks every second, for the countdown
+    _intervalMenu: { state: true }, // the countdown's refresh menu is open
     _floor: { state: true },
     _error: { state: true },
   };
@@ -265,16 +266,66 @@ class SextantPanel extends LitElement {
     return rows.filter((r) => r.floor === floorName).length;
   }
 
-  /** Seconds until the next positioning cycle, once two cycles have shown how
-   * far apart they are; the age of the last one until then, and while a cycle
-   * is overdue (a proxy went quiet, the house is asleep). */
+  /** Seconds until the next positioning cycle; the age of the last one while
+   * a cycle is overdue (a proxy went quiet, the house is asleep). The backend
+   * says what the interval is; an older one did not, and then the gap between
+   * cycles is measured instead. For an admin the countdown is also a menu that
+   * sets a faster (or slower) refresh for a quarter of an hour. */
   _renderStamp() {
-    const stamp = this._positions.stamp;
-    const age = stamp ? this._now - stamp : null;
-    const left = this._cycleSecs && age != null ? Math.ceil(this._cycleSecs - age) : null;
+    const info = this._positions?.interval;
+    const at = info?.last_cycle_at ?? this._positions.stamp;
+    const age = at ? this._now - at : null;
+    const every = info?.secs ?? this._cycleSecs;
+    const left = every && age != null ? Math.ceil(every - age) : null;
     const counting = left != null && left >= 0;
-    return html`<span class="stamp" title=${counting ? "Seconds until the next positioning cycle" : "Time since the last positioning cycle"}>
-      <ha-icon icon=${counting ? "mdi:timer-sand" : "mdi:update"}></ha-icon>${age == null ? "—" : counting ? `${left}s` : fmtAge(age)}</span>`;
+    const override = !!info?.until;
+    const content = html`<ha-icon icon=${counting ? "mdi:timer-sand" : "mdi:update"}></ha-icon>${age == null ? "—" : counting ? `${left}s` : fmtAge(age)}`;
+    if (!info || !this._isAdmin()) {
+      return html`<span class="stamp" title=${counting ? "Seconds until the next positioning cycle" : "Time since the last positioning cycle"}>${content}</span>`;
+    }
+    const title = override
+      ? `Refreshing every ${every} s until ${this._clockTime(info.until)}, then every ${info.configured} s. Click to change`
+      : `Refreshing every ${every} s. Click to refresh faster for a while`;
+    return html`<span class="stampwrap" @keydown=${(e) => { if (e.key === "Escape") this._intervalMenu = false; }}>
+      <button class="stamp stampbtn ${override ? "override" : ""}" aria-haspopup="menu" aria-expanded=${this._intervalMenu ? "true" : "false"}
+              title=${title} @click=${() => { this._intervalMenu = !this._intervalMenu; }}>
+        ${content}${override ? html`<span class="every">every ${every}s</span>` : nothing}<ha-icon class="caret" icon="mdi:menu-down"></ha-icon>
+      </button>
+      ${this._intervalMenu ? this._renderIntervalMenu(info) : nothing}
+    </span>`;
+  }
+
+  _clockTime(epoch) {
+    return new Date(epoch * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  }
+
+  _renderIntervalMenu(info) {
+    return html`<div class="imenu-backdrop" @click=${() => { this._intervalMenu = false; }}></div>
+      <div class="imenu" role="menu" aria-label="Refresh every">
+        <div class="imenu-head">Refresh every</div>
+        ${info.choices.map((secs) => {
+          const on = secs === info.secs;
+          const normal = secs === info.configured;
+          return html`<button role="menuitemradio" aria-checked=${on ? "true" : "false"} class=${on ? "on" : ""}
+                              @click=${() => this._setInterval(normal ? null : secs)}>
+            <span class="tick">${on ? html`<ha-icon icon="mdi:check"></ha-icon>` : nothing}</span>
+            <span>${secs} s</span>${normal ? html`<span class="dim">normal</span>` : nothing}
+          </button>`;
+        })}
+        <div class="imenu-foot">
+          ${info.until ? `Back to ${info.configured} s at ${this._clockTime(info.until)}.` : `Anything but normal lasts 15 minutes.`}
+          ${info.last_cycle_ms != null ? html`<br>The last cycle took ${info.last_cycle_ms} ms.` : nothing}
+        </div>
+      </div>`;
+  }
+
+  async _setInterval(secs) {
+    this._intervalMenu = false;
+    const info = await callWS(this, this.hass, { type: "sextant/interval/set", secs });
+    if (info) {
+      this._positions = { ...this._positions, interval: info };
+      toast(this, secs == null ? `Back to every ${info.configured} s` : `Refreshing every ${secs} s until ${this._clockTime(info.until)}`);
+    }
   }
 
   _renderMode() {
@@ -342,6 +393,27 @@ class SextantPanel extends LitElement {
     .bottombar .floor-tabs button.active .n { background: rgba(255,255,255,0.25); color: inherit; }
     .stamp { display: inline-flex; align-items: center; gap: 3px; font-variant-numeric: tabular-nums; opacity: 0.8; font-size: 12px; min-width: 40px; justify-content: flex-end; }
     .stamp ha-icon { --mdc-icon-size: 16px; }
+    /* The countdown as a menu button (admins): it keeps the stamp's look, and
+       says so when a temporary interval is on. */
+    .stampwrap { position: relative; display: inline-flex; }
+    .stampbtn { background: transparent; border: 0; color: inherit; font: inherit; font-size: 12px; cursor: pointer; padding: 4px 4px 4px 6px; border-radius: 6px; }
+    .stampbtn:hover, .stampbtn[aria-expanded="true"] { opacity: 1; background: color-mix(in srgb, currentColor 12%, transparent); }
+    .stampbtn:focus-visible { outline: 2px solid currentColor; outline-offset: 1px; }
+    .stampbtn.override { opacity: 1; font-weight: 600; }
+    .stampbtn .every { font-weight: 400; opacity: 0.8; margin-left: 4px; }
+    .stampbtn .caret { --mdc-icon-size: 16px; margin-left: -1px; opacity: 0.8; }
+    .imenu-backdrop { position: fixed; inset: 0; z-index: 9; }
+    .imenu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 10; min-width: 190px; padding: 6px 0; border-radius: 10px;
+      background: var(--card-background-color, #fff); color: var(--primary-text-color); box-shadow: 0 6px 24px rgba(0,0,0,0.28); font-size: 14px; font-weight: 400; }
+    .bottombar .imenu { top: auto; bottom: calc(100% + 6px); }
+    .imenu-head { padding: 6px 14px 4px; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--secondary-text-color); }
+    .imenu button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 14px; background: transparent; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; font-variant-numeric: tabular-nums; }
+    .imenu button:hover, .imenu button:focus-visible { background: var(--secondary-background-color, rgba(0,0,0,0.06)); outline: none; }
+    .imenu button.on { font-weight: 600; }
+    .imenu .tick { width: 18px; display: inline-flex; color: var(--primary-color); }
+    .imenu .tick ha-icon { --mdc-icon-size: 18px; }
+    .imenu .dim { margin-left: auto; font-size: 12px; font-weight: 400; color: var(--secondary-text-color); }
+    .imenu-foot { padding: 8px 14px 4px; margin-top: 4px; border-top: 1px solid var(--divider-color); font-size: 12px; line-height: 1.45; color: var(--secondary-text-color); }
     ha-menu-button { --mdc-icon-button-size: 40px; }
     .repo { color: inherit; opacity: 0.85; display: flex; align-items: center; }
     .repo:hover { opacity: 1; }
@@ -674,6 +746,8 @@ class SextantLive extends LitElement {
     }
     this._map.setThings(things);
     this._map.setOffline(this.positions?.offline_receivers || []);
+    // mmWave targets on this floor: the map draws the ones no thing claimed.
+    this._map.setRadarTargets((this.positions?.radar_targets || []).filter((t) => t.floor === this.floor));
   }
 
   _label(ent) { return thingName(this.data, ent); }
@@ -1091,7 +1165,7 @@ class SextantLive extends LitElement {
               <dt>Room</dt><dd>${sel.zone} ${sel.zone_locked ? html`<ha-icon icon="mdi:lock" title="stationary lock: still for a while, so the room holds"></ha-icon>` : nothing}</dd>
               <dt>Spot</dt><dd>${sel.sub_zone && sel.sub_zone !== "unknown" ? sel.sub_zone : "—"}</dd>
               <dt>Floor</dt><dd>${sel.floor}</dd>
-              ${sel.robot ? html`<dt>Placed from</dt><dd>its own map <span class="muted small">(${this.hass?.states?.[sel.robot]?.state || sel.robot_state || "unknown"}; the map fits this floor to ${fmtLen(sel.rms_m, this.hass)})</span></dd>` : html`<dt>Proxies</dt><dd>${sel.radii?.length ?? 0} in the solve${sel.anchor ? html`<br><span class="pill ok" title=${`one proxy reads ${this._label(sel.ent)} within arm's reach and no other comes close: placed on that proxy`}>anchored to ${proxyName(this.data, sel.anchor)}</span>` : nothing}</dd>`}
+              ${sel.robot ? html`<dt>Placed from</dt><dd>its own map <span class="muted small">(${this.hass?.states?.[sel.robot]?.state || sel.robot_state || "unknown"}; the map fits this floor to ${fmtLen(sel.rms_m, this.hass)})</span></dd>` : html`<dt>Proxies</dt><dd>${sel.radii?.length ?? 0} in the solve${sel.anchor ? html`<br><span class="pill ok" title=${`one proxy reads ${this._label(sel.ent)} within arm's reach and no other comes close: placed on that proxy`}>anchored to ${proxyName(this.data, sel.anchor)}</span>` : nothing}${sel.radar ? html`<br><span class="pill ok" title=${`an mmWave sensor sees someone where Bluetooth puts ${this._label(sel.ent)}: placed on the radar's target, to a few tens of centimetres`}>placed by ${sel.radar}</span>` : nothing}</dd>`}
               ${this._renderHere(sel)}
               ${this._battery(sel.ent) === null ? nothing : html`<dt>Battery</dt><dd class=${this._battery(sel.ent) <= BATTERY_CRITICAL ? "crit" : this._battery(sel.ent) <= BATTERY_LOW ? "warn" : ""}>${Math.round(this._battery(sel.ent))}%</dd>`}
               <dt>Updated</dt><dd>${typeof sel.updated === "number" && sel.updated > 0 ? html`${fmtAge(Date.now() / 1000 - sel.updated)} ago` : html`<span class="muted">not heard since the last restart</span>`}${staleness(sel, this._staleAfter()).ghost ? html` <span class="pill warn" title=${`Nothing has heard ${this._label(sel.ent)} since; this is where ${this._pn(sel.ent).subj} ${this._pn(sel.ent).was} last placed`}>not heard</span>` : nothing}</dd>

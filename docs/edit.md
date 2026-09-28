@@ -100,6 +100,45 @@ heavily as a wall, and `--dashes` drops dashed lines, which mark what is
 not built on this storey. Keep the original — every plan is drawn
 differently, and this is a one-way trip.
 
+## mmWave sensors
+
+An mmWave presence sensor that tracks people as coordinates - an Everything
+Presence Pro or Lite, an Apollo R PRO-1, anything reporting
+`target_1_x` / `target_1_y` - can be put on the plan with the **mmWave**
+tool. Click where it is mounted, pick the device (Sextant finds every
+device that reports target coordinates), and turn the marker the way the
+sensor faces: 0° is straight up the plan, clockwise from there, with quick
+buttons for the four walls and 15° nudges. The wedge drawn from it is what
+it sees: the range set on the device, ±60° either side.
+
+While it is selected, its targets show as pink dots, placed as the draft
+has it, refreshed every two seconds. Walk straight away from the sensor:
+your dot should follow the wedge's centre line. Off at an angle, turn the
+marker; moving the wrong way sideways, turn on **Flip left/right** (makers
+disagree on which side positive x is). An installation angle set on the
+device already turns the coordinates it reports, so face the marker the way
+that turned frame points.
+
+Saved, a placed sensor does three things every cycle:
+
+- **Places things.** A thing whose Bluetooth fix is within
+  `mmwave_pair_m` (1.5 m) of a target is put on the target, to a few tens of
+  centimetres. Its Live card says "placed by" the sensor.
+- **Takes location pins.** When a sensor sees exactly one target, one thing
+  has claimed it, and both have been still for a minute, that is a location
+  pin nobody had to tap - at most one per thing per half hour, never within
+  a metre of that thing's last, and the newest 30 per thing kept. They join
+  the pins you place yourself, as fingerprint references and in the
+  accuracy score, marked as coming from the sensor.
+- **Counts people without a device.** A target no thing claims - a guest, or
+  someone whose phone is in another room - shows on Live as a dashed
+  marker with a question mark, and in `sensor.sextant_untracked_people`
+  (the count, with the rooms as an attribute). A robot vacuum claims its
+  target like any thing, so it is not counted, but it is not moved by it.
+
+`mmwave_fusion` and `mmwave_auto_pins` on the Tuning page turn the first two
+off without removing the sensor.
+
 ## Lining the floors up
 
 Each floor is its own drawing, at its own resolution, cropped its own way,

@@ -40,7 +40,9 @@ distance (about 30 s, Bermuda's timeout): the clean "who is home" signal.
 period (`position_timeout`, five minutes by default) so a brief gap does
 not blink someone out of a room; after it the thing leaves the map and
 all three read `unknown`. `sensor.sextant_position_accuracy` is the global
-self-test result.
+self-test result. `sensor.sextant_untracked_people` counts the people the
+placed mmWave sensors see that no tracked thing accounts for, with the rooms
+they are in as `rooms` ([mmWave sensors](edit.md#mmwave-sensors)).
 
 ## People
 
