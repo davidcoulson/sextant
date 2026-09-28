@@ -62,17 +62,19 @@ from .storage import (
     load_layout,
     load_runtime,
     load_truth,
+    save_truth,
     save_fp_gains,
     save_runtime,
     migrate_from_bps,
     migrate_legacy,
     save_layout,
 )
-from .const import ACCURACY_ENTITY_ID
+from .const import ACCURACY_ENTITY_ID, UNTRACKED_ENTITY_ID
 from . import history as history_mod
 from . import bermuda_source
 from . import election_log
 from . import robots as robots_mod
+from . import radars as radars_mod
 from . import fingerprint
 from . import floor_field
 from . import registration
@@ -566,6 +568,13 @@ TUNING_SPEC = {
     # milliseconds, so this is a trade between a smooth trail and a quiet
     # loop. A docked robot is never asked: it is at its dock.
     "robot_poll_secs": (30.0, float, 10.0, 600.0),
+    # mmWave radars placed on the plan (radars.py). Fusion: a thing whose
+    # Bluetooth fix is within mmwave_pair_m of a radar target is placed on
+    # the target. Auto pins: one target and one thing, both still for a
+    # minute, is a location pin (at most one per thing per half hour).
+    "mmwave_fusion": (True, bool),
+    "mmwave_auto_pins": (True, bool),
+    "mmwave_pair_m": (1.5, float, 0.3, 5.0),
     # Hours of position history kept per thing: the history scrubber, the
     # timeline and Activity reach back this far. Applied on the next
     # cycle; an explicit top-level history_max_age (seconds) still wins.
@@ -2565,6 +2574,14 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
     if anchor is not None and tricords is not None:
         tricords = (anchor["x"], anchor["y"])
         elected["conf"] = max(elected["conf"], ANCHOR_CONF)
+    # The Bluetooth answer, kept as "raw" even when a radar target replaces
+    # it: the radar pairing is made against it, so it must not become the
+    # target it was paired with, or a thing would stick to a target for good.
+    ble_fix = tricords
+    radar_claim = _radar_claim(entity, lowest_floor_name, layout)
+    if radar_claim is not None and tricords is not None:
+        tricords = tuple(radar_claim["cords"])
+        elected["conf"] = max(elected["conf"], ANCHOR_CONF)
 
     if tricords is not None:
         # Constant-velocity Kalman smoothing of the published position. The RAW
@@ -2652,7 +2669,9 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
                 # bias can be told apart from filter lag; plus this fix's
                 # weighted RMS residual (m) and the elected floor's confidence.
                 # Both frontends read named fields, so these keys are inert.
-                "raw": [round(float(tricords[0]), 2), round(float(tricords[1]), 2)],
+                "raw": [round(float(ble_fix[0]), 2), round(float(ble_fix[1]), 2)],
+                # The mmWave radar this thing was placed by this cycle, or None.
+                "radar": None if radar_claim is None else radar_claim.get("radar_name"),
                 "rms_m": None if elected["rms_m"] is None else round(elected["rms_m"], 3),
                 "conf": round(elected["conf"], 3),
                 # Fingerprint fusion telemetry: which estimator ran, the
@@ -3021,6 +3040,10 @@ async def process_entities(hass, new_global_data):
     chunk. The cycle takes a little longer end to end and has fifteen seconds
     to do it in.
     """
+    try:
+        await _radar_cycle(hass, get_layout(hass))
+    except Exception as e:  # noqa: BLE001 - a radar must never stop the things'
+        _LOGGER.debug("Radars not read: %s", e)
     for eids in new_global_data:
         ent = eids.get("entity")
         try:
@@ -3073,6 +3096,181 @@ _robot_state = {}
 def _new_robot_state():
     return {"inflight": False, "last_poll": 0.0, "map": None, "at": None, "fails": 0,
             "reads_ok": 0, "reads_failed": 0, "last_error": None}
+
+
+# --- mmWave radars (radars.py) ---------------------------------------------------
+#
+# A floor's "radars" are placed on the Edit page: {"radar_id", "device_id",
+# "cords", "heading", "flip"}. Each cycle reads every placed radar's targets,
+# puts them on the plan and pairs them with the things whose Bluetooth fix
+# (last cycle's "raw") is nearest. A paired thing is placed on its target;
+# an unpaired target is someone Sextant has no device for.
+
+RADAR_SPECS_TTL_S = 60.0
+RADAR_FRESH_S = 30.0          # a thing's last fix older than this cannot claim a target
+AUTO_PIN_STILL_S = 60.0       # both still this long before a pin is taken
+AUTO_PIN_EVERY_S = 1800.0     # at most one automatic pin per thing per half hour
+AUTO_PIN_MIN_GAP_M = 1.0      # nor one within a metre of that thing's last
+AUTO_PIN_KEEP = 30            # automatic pins kept per thing, newest first
+AUTO_PIN_SOURCE = "mmwave"
+_radar_specs_cache = {"at": 0.0, "specs": {}}
+# The last cycle's targets and claims: {"t", "targets": [...], "claims": {thing: target}}
+_radar_frame = {"t": 0.0, "targets": [], "claims": {}}
+# thing -> {"radar", "cords", "since"} while one target and that thing stay still
+_radar_still = {}
+_radar_last_pin = {}
+
+
+def _radar_specs(hass, now=None):
+    """Every device that reports mmWave target coordinates: {device_id: spec}.
+
+    Found from the registries (no configuration): any device with
+    target_N_x / target_N_y entities, cached for a minute.
+    """
+    now = time.time() if now is None else now
+    if now - _radar_specs_cache["at"] < RADAR_SPECS_TTL_S and _radar_specs_cache["specs"]:
+        return _radar_specs_cache["specs"]
+    ent_reg = er.async_get(hass)
+    dev_reg = dr.async_get(hass)
+    by_device = {}
+    for entry in ent_reg.entities.values():
+        if entry.device_id and not entry.disabled_by:
+            by_device.setdefault(entry.device_id, []).append(entry.entity_id)
+    specs = {}
+    for device_id, ids in by_device.items():
+        spec = radars_mod.device_spec(ids)
+        if spec is None:
+            continue
+        dev = dev_reg.async_get(device_id)
+        spec["name"] = (dev.name_by_user or dev.name) if dev else device_id
+        spec["model"] = dev.model if dev else None
+        spec["area_id"] = dev.area_id if dev else None
+        specs[device_id] = spec
+    _radar_specs_cache.update(at=now, specs=specs)
+    return specs
+
+
+def _radar_claim(entity, floor_name, layout):
+    """The target this thing claimed this cycle, if fusion is on and it is fresh."""
+    if not _tuning(layout, "mmwave_fusion"):
+        return None
+    t = (_radar_frame.get("claims") or {}).get(entity)
+    if not t or t.get("floor") != floor_name or time.time() - _radar_frame.get("t", 0) > RADAR_FRESH_S:
+        return None
+    return t
+
+
+async def _radar_cycle(hass, layout, now=None):
+    """Read every placed radar, pair its targets with things, publish the
+    untracked count, and take automatic pins."""
+    global _radar_frame
+    now = time.time() if now is None else now
+    if not isinstance(layout, dict):
+        return
+    placed = [(f, r) for f in layout.get("floor", []) for r in (f.get("radars") or [])
+              if isinstance(r, dict) and r.get("device_id") and isinstance(r.get("cords"), dict)]
+    if not placed:
+        if _radar_frame["targets"]:
+            _radar_frame = {"t": now, "targets": [], "claims": {}}
+            update_sextant_sensor_state(hass, UNTRACKED_ENTITY_ID, 0, {"rooms": [], "targets": []})
+        return
+    specs = _radar_specs(hass, now)
+    targets = []
+    for floor, radar in placed:
+        scale = floor.get("scale")
+        spec = specs.get(radar["device_id"])
+        if spec is None or not isinstance(scale, (int, float)) or scale <= 0:
+            continue
+        for index, x, y, speed in radars_mod.read_targets(spec, hass.states.get):
+            px, py = radars_mod.to_plan(radar, x, y, scale)
+            targets.append({"floor": floor["name"], "radar": radar.get("radar_id"), "radar_name": spec.get("name"),
+                            "index": index, "cords": [round(px, 1), round(py, 1)], "speed": speed, "thing": None})
+    # Pair per floor, against each thing's Bluetooth fix from the last cycle.
+    rows = [r for r in apitricords if isinstance(r, dict) and now - (r.get("updated") or 0) <= RADAR_FRESH_S]
+    radius_m = _tuning(layout, "mmwave_pair_m")
+    for floor in {t["floor"] for t in targets}:
+        scale = next((f.get("scale") for f in layout["floor"] if f.get("name") == floor), None)
+        mine = [(i, tuple(t["cords"])) for i, t in enumerate(targets) if t["floor"] == floor]
+        things = [(r["ent"], tuple(r.get("raw") or r.get("cords"))) for r in rows
+                  if r.get("floor") == floor and (r.get("raw") or r.get("cords"))]
+        pairs, _free = radars_mod.pair(mine, things, radius_m * scale)
+        for i, ent in pairs.items():
+            targets[i]["thing"] = ent
+    robots = {r["ent"] for r in rows if r.get("robot")}
+    claims = {t["thing"]: t for t in targets if t["thing"] and t["thing"] not in robots}
+    _radar_frame = {"t": now, "targets": targets, "claims": claims}
+    untracked = [t for t in targets if not t["thing"]]
+    rooms = []
+    for t in untracked:
+        room = find_zone_for_point(hass, [{"entity": "_radar", "data": layout}], "_radar", t["floor"], Point(*t["cords"]))
+        t["room"] = room
+        rooms.append(room)
+    update_sextant_sensor_state(hass, UNTRACKED_ENTITY_ID, len(untracked), {
+        "rooms": sorted(set(r for r in rooms if r and r != "unknown")),
+        "targets": [{"room": t.get("room"), "floor": t["floor"], "radar": t["radar_name"]} for t in untracked],
+    })
+    if _tuning(layout, "mmwave_auto_pins"):
+        await _radar_auto_pins(hass, layout, targets, rows, now)
+
+
+async def _radar_auto_pins(hass, layout, targets, rows, now):
+    """A location pin wherever one radar sees exactly one target, one thing
+    has claimed it, and both have been still for AUTO_PIN_STILL_S."""
+    by_radar = {}
+    for t in targets:
+        by_radar.setdefault(t["radar"], []).append(t)
+    still_speed = _tuning(layout, "stationary_speed")
+    row_of = {r["ent"]: r for r in rows}
+    seen = set()
+    for radar, ts in by_radar.items():
+        if len(ts) != 1 or not ts[0]["thing"] or row_of.get(ts[0]["thing"], {}).get("robot"):
+            continue
+        t = ts[0]
+        ent = t["thing"]
+        row = row_of.get(ent) or {}
+        scale = next((f.get("scale") for f in layout["floor"] if f.get("name") == t["floor"]), None) or 1.0
+        still = (row.get("speed") is not None and row["speed"] < still_speed) and (t["speed"] is None or t["speed"] < 0.15)
+        prev = _radar_still.get(ent)
+        if not still:
+            _radar_still.pop(ent, None)
+            continue
+        seen.add(ent)
+        if not prev or prev["radar"] != radar or math.hypot(prev["cords"][0] - t["cords"][0], prev["cords"][1] - t["cords"][1]) > 0.5 * scale:
+            _radar_still[ent] = {"radar": radar, "cords": t["cords"], "since": now}
+            continue
+        if now - prev["since"] < AUTO_PIN_STILL_S or now - _radar_last_pin.get(ent, 0.0) < AUTO_PIN_EVERY_S:
+            continue
+        if await _add_auto_pin(hass, ent, t, scale, now):
+            _radar_last_pin[ent] = now
+    for ent in [e for e in _radar_still if e not in seen]:
+        _radar_still.pop(ent, None)
+
+
+async def _add_auto_pin(hass, ent, target, scale, now):
+    """Record an automatic location pin at a radar target. False when there
+    are too few recent cycles to pin, or a recent pin is already that close."""
+    samples = _truth_buffer.samples(ent, since=now - truth_mod.DEFAULT_WINDOW_SECS, floor=target["floor"])
+    if len(samples) < truth_mod.MIN_SAMPLES:
+        return False
+    x, y = target["cords"]
+    store = await load_truth(hass)
+    marks = store.setdefault("marks", [])
+    mine = [m for m in marks if m.get("entity") == ent and str(m.get("source") or "").startswith(AUTO_PIN_SOURCE)]
+    if any(m.get("floor") == target["floor"] and math.hypot(m["x"] - x, m["y"] - y) < AUTO_PIN_MIN_GAP_M * scale for m in mine[-5:]):
+        return False
+    mark = {"id": int(store.get("next_id") or 1), "entity": ent, "floor": target["floor"], "x": round(float(x), 2),
+            "y": round(float(y), 2), "t": now, "samples": samples,
+            "source": f"{AUTO_PIN_SOURCE}:{target.get('radar_name') or target.get('radar')}"}
+    store["next_id"] = mark["id"] + 1
+    marks.append(mark)
+    extra = len(mine) + 1 - AUTO_PIN_KEEP
+    if extra > 0:
+        drop = {id(m) for m in mine[:extra]}
+        store["marks"] = [m for m in marks if id(m) not in drop]
+    await save_truth(hass, store)
+    _set_truth_marks(store["marks"])
+    _LOGGER.info("mmWave pin for %s on %s at (%.0f, %.0f) from %s", ent, target["floor"], x, y, target.get("radar_name"))
+    return True
 
 
 def robot_thing(vacuum_entity_id):
@@ -4847,6 +5045,9 @@ def _push_payload(hass):
         "stamp": time.time(),
         "positions": list(dom.get("apitricords") or []),
         "offline_receivers": list(dom.get("rl_offline") or []),
+        # mmWave radar targets on the plan: {floor, cords, radar_name, thing,
+        # room}; a target with no thing is someone Sextant has no device for.
+        "radar_targets": [t for t in (_radar_frame.get("targets") or [])] if time.time() - _radar_frame.get("t", 0) <= RADAR_FRESH_S else [],
     }
 
 

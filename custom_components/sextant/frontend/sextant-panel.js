@@ -674,6 +674,8 @@ class SextantLive extends LitElement {
     }
     this._map.setThings(things);
     this._map.setOffline(this.positions?.offline_receivers || []);
+    // mmWave targets on this floor: the map draws the ones no thing claimed.
+    this._map.setRadarTargets((this.positions?.radar_targets || []).filter((t) => t.floor === this.floor));
   }
 
   _label(ent) { return thingName(this.data, ent); }
@@ -1091,7 +1093,7 @@ class SextantLive extends LitElement {
               <dt>Room</dt><dd>${sel.zone} ${sel.zone_locked ? html`<ha-icon icon="mdi:lock" title="stationary lock: still for a while, so the room holds"></ha-icon>` : nothing}</dd>
               <dt>Spot</dt><dd>${sel.sub_zone && sel.sub_zone !== "unknown" ? sel.sub_zone : "—"}</dd>
               <dt>Floor</dt><dd>${sel.floor}</dd>
-              ${sel.robot ? html`<dt>Placed from</dt><dd>its own map <span class="muted small">(${this.hass?.states?.[sel.robot]?.state || sel.robot_state || "unknown"}; the map fits this floor to ${fmtLen(sel.rms_m, this.hass)})</span></dd>` : html`<dt>Proxies</dt><dd>${sel.radii?.length ?? 0} in the solve${sel.anchor ? html`<br><span class="pill ok" title=${`one proxy reads ${this._label(sel.ent)} within arm's reach and no other comes close: placed on that proxy`}>anchored to ${proxyName(this.data, sel.anchor)}</span>` : nothing}</dd>`}
+              ${sel.robot ? html`<dt>Placed from</dt><dd>its own map <span class="muted small">(${this.hass?.states?.[sel.robot]?.state || sel.robot_state || "unknown"}; the map fits this floor to ${fmtLen(sel.rms_m, this.hass)})</span></dd>` : html`<dt>Proxies</dt><dd>${sel.radii?.length ?? 0} in the solve${sel.anchor ? html`<br><span class="pill ok" title=${`one proxy reads ${this._label(sel.ent)} within arm's reach and no other comes close: placed on that proxy`}>anchored to ${proxyName(this.data, sel.anchor)}</span>` : nothing}${sel.radar ? html`<br><span class="pill ok" title=${`an mmWave sensor sees someone where Bluetooth puts ${this._label(sel.ent)}: placed on the radar's target, to a few tens of centimetres`}>placed by ${sel.radar}</span>` : nothing}</dd>`}
               ${this._renderHere(sel)}
               ${this._battery(sel.ent) === null ? nothing : html`<dt>Battery</dt><dd class=${this._battery(sel.ent) <= BATTERY_CRITICAL ? "crit" : this._battery(sel.ent) <= BATTERY_LOW ? "warn" : ""}>${Math.round(this._battery(sel.ent))}%</dd>`}
               <dt>Updated</dt><dd>${typeof sel.updated === "number" && sel.updated > 0 ? html`${fmtAge(Date.now() / 1000 - sel.updated)} ago` : html`<span class="muted">not heard since the last restart</span>`}${staleness(sel, this._staleAfter()).ghost ? html` <span class="pill warn" title=${`Nothing has heard ${this._label(sel.ent)} since; this is where ${this._pn(sel.ent).subj} ${this._pn(sel.ent).was} last placed`}>not heard</span>` : nothing}</dd>

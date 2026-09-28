@@ -18,6 +18,7 @@ const RECEIVER_SIZE_EDIT = 13;   // proxies are the things people drag: give the
 const VERTEX_SIZE = 6;
 const PIN_SIZE = 11;
 const REMARK_SIZE = 9;           // the note's dot; its text hangs off to the right
+const RADAR_SIZE = 11;           // an mmWave sensor's marker
 const HIT_SLOP = 8;
 // Closest zoom: 20 screen px per map px, enough for a bedside table to fill a phone.
 const MAX_ZOOM = 20;
@@ -499,6 +500,9 @@ export class SextantMap {
     this.tool = "select";
     this.selection = null; // {kind:'receiver'|'zone'|'subzone'|'pin'|'thing', index, vertex?}
     this.pinGhosts = [];
+    this.radarInfo = {};     // device_id -> {name, range_m, fov_deg}: how far each radar sees
+    this.radarTargets = [];  // mmWave targets on this floor: [{cords, thing, room, radar_name}]
+    this.radarLive = null;   // the Edit page's selected radar, live: {radar_id, targets: [{index, cords}]}
     this.hover = null;
     this.draft = null; // points of a polygon being drawn
     this.view = { k: 1, tx: 0, ty: 0 };
@@ -616,7 +620,7 @@ export class SextantMap {
     // No image yet: size to the content so an image-less floor still renders.
     let maxX = 0, maxY = 0;
     const f = this.floor || {};
-    for (const r of [...(f.receivers || []), ...(f.pins || []), ...(f.remarks || [])]) { maxX = Math.max(maxX, r.cords?.x || 0); maxY = Math.max(maxY, r.cords?.y || 0); }
+    for (const r of [...(f.receivers || []), ...(f.pins || []), ...(f.remarks || []), ...(f.radars || [])]) { maxX = Math.max(maxX, r.cords?.x || 0); maxY = Math.max(maxY, r.cords?.y || 0); }
     for (const list of [f.zones || [], f.subzones || []]) for (const z of list) for (const p of z.cords || []) { maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y); }
     return { w: maxX ? maxX * 1.05 : 1000, h: maxY ? maxY * 1.05 : 700 };
   }
@@ -708,6 +712,7 @@ export class SextantMap {
       if (hit.kind === "receiver") f.receivers[hit.index].cords = { ...d.origin[0] };
       else if (hit.kind === "pin") f.pins[hit.index].cords = { ...d.origin[0] };
       else if (hit.kind === "remark") f.remarks[hit.index].cords = { ...d.origin[0] };
+      else if (hit.kind === "radar") f.radars[hit.index].cords = { ...d.origin[0] };
       else (hit.kind === "zone" ? f.zones : f.subzones)[hit.index].cords = d.origin.map((q) => ({ ...q }));
     }
     // The first finger of a pinch is not a corner.
@@ -728,6 +733,7 @@ export class SextantMap {
     if (hit.kind === "receiver") { const r = f.receivers[hit.index]; return [{ x: r.cords.x, y: r.cords.y }]; }
     if (hit.kind === "pin") { const q = f.pins[hit.index]; return [{ x: q.cords.x, y: q.cords.y }]; }
     if (hit.kind === "remark") { const q = f.remarks[hit.index]; return [{ x: q.cords.x, y: q.cords.y }]; }
+    if (hit.kind === "radar") { const q = f.radars[hit.index]; return [{ x: q.cords.x, y: q.cords.y }]; }
     const list = hit.kind === "zone" ? f.zones : f.subzones;
     return (list[hit.index].cords || []).map((q) => ({ x: q.x, y: q.y }));
   }
@@ -802,6 +808,9 @@ export class SextantMap {
       // spot at the same index. That is how two bedside tables lost every
       // corner but one and vanished from the plan (2026-09-22).
       f.remarks[hit.index].cords = { x: d.origin[0].x + dx, y: d.origin[0].y + dy };
+    } else if (hit.kind === "radar") {
+      // Caught for the same reason as a note: the branch below is rooms-or-spots.
+      f.radars[hit.index].cords = { x: d.origin[0].x + dx, y: d.origin[0].y + dy };
     } else {
       const list = hit.kind === "zone" ? f.zones : f.subzones;
       const item = list[hit.index];
@@ -842,6 +851,7 @@ export class SextantMap {
       if (hit.kind === "receiver") f.receivers[hit.index].cords = round(f.receivers[hit.index].cords);
       else if (hit.kind === "pin") f.pins[hit.index].cords = round(f.pins[hit.index].cords);
       else if (hit.kind === "remark") f.remarks[hit.index].cords = round(f.remarks[hit.index].cords);
+      else if (hit.kind === "radar") f.radars[hit.index].cords = round(f.radars[hit.index].cords);
       else { const list = hit.kind === "zone" ? f.zones : f.subzones; list[hit.index].cords = list[hit.index].cords.map(round); }
       if (this.host.onChange) this.host.onChange(hit.kind, hit.index);
     }
@@ -899,6 +909,10 @@ export class SextantMap {
       for (let i = (f.remarks || []).length - 1; i >= 0; i--) {
         const q = f.remarks[i].cords;
         if (q && Math.hypot(q.x - m.x, q.y - m.y) <= REMARK_SIZE / this.view.k) return { kind: "remark", index: i, id: f.remarks[i].remark_id };
+      }
+      for (let i = (f.radars || []).length - 1; i >= 0; i--) {
+        const q = f.radars[i].cords;
+        if (q && Math.hypot(q.x - m.x, q.y - m.y) <= (RADAR_SIZE * 1.3) / this.view.k) return { kind: "radar", index: i, id: f.radars[i].radar_id };
       }
     }
     if (edit && !this.locks.pin) {
@@ -997,6 +1011,8 @@ export class SextantMap {
     // Notes draw in both modes: one is written while planning and read while
     // standing in the room with the Live page open, which is the whole point.
     this._drawRemarks(ctx, f.remarks || []);
+    if (this.mode === "edit") this._drawRadars(ctx, f.radars || []);
+    this._drawRadarTargets(ctx);
     if (this.suggestions.length) {
       // Everything labelled so far belongs to the plan, so it goes down before
       // the scrim and fades with it. Labels queued after this line are the
@@ -1269,6 +1285,73 @@ export class SextantMap {
    * pin disagrees with the others (`miss`, metres, set by the editor). */
   /** Where the other floors say this floor's pins are, in this floor's px. */
   setPinGhosts(ghosts) { this.pinGhosts = ghosts || []; this.invalidate(); }
+  setRadarInfo(info) { this.radarInfo = info || {}; this.invalidate(); }
+  setRadarTargets(list) { this.radarTargets = list || []; this.invalidate(); }
+  setRadarLive(live) { this.radarLive = live || null; this.invalidate(); }
+
+  /** Placed mmWave sensors (Edit): a marker, the way it faces, and the wedge
+   * it sees - its range as set on the device, ±60 degrees. */
+  _drawRadars(ctx, radars) {
+    const k = this.view.k, scale = this.floor?.scale || PX_PER_M_FALLBACK;
+    radars.forEach((r, index) => {
+      if (!r.cords) return;
+      const info = this.radarInfo[r.device_id] || {};
+      const range = (info.range_m || 6) * scale;
+      const half = ((info.fov_deg || 120) / 2) * Math.PI / 180;
+      const a0 = ((r.heading || 0) * Math.PI) / 180 - Math.PI / 2;   // 0 = up the plan, clockwise
+      const selected = this.selection?.kind === "radar" && this.selection.index === index;
+      const hovered = this.hover?.kind === "radar" && this.hover.index === index;
+      const colour = r.device_id ? "#1f9e89" : "#e0a54a";
+      ctx.save();
+      ctx.globalAlpha = selected ? 0.22 : 0.1;
+      ctx.fillStyle = colour;
+      ctx.beginPath(); ctx.moveTo(r.cords.x, r.cords.y); ctx.arc(r.cords.x, r.cords.y, range, a0 - half, a0 + half); ctx.closePath(); ctx.fill();
+      ctx.globalAlpha = selected ? 0.9 : 0.45;
+      ctx.strokeStyle = colour; ctx.lineWidth = 1.5 / k; ctx.setLineDash([6 / k, 4 / k]); ctx.stroke(); ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+      const s = ((selected || hovered) ? RADAR_SIZE * 1.3 : RADAR_SIZE) / k;
+      ctx.fillStyle = colour; ctx.strokeStyle = selected ? "#ffd166" : "#ffffff"; ctx.lineWidth = (selected ? 3 : 1.5) / k;
+      ctx.beginPath(); ctx.arc(r.cords.x, r.cords.y, s, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      // Which way it faces: a stroke from the centre out past the rim.
+      ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 2.5 / k;
+      ctx.beginPath(); ctx.moveTo(r.cords.x, r.cords.y); ctx.lineTo(r.cords.x + Math.cos(a0) * s * 1.9, r.cords.y + Math.sin(a0) * s * 1.9); ctx.stroke();
+      ctx.restore();
+      this._label(ctx, info.name || (r.device_id ? "mmWave" : "mmWave: pick the device"), r.cords.x, r.cords.y + (RADAR_SIZE + 10) / k, 10, 0.85, null,
+                  selected || hovered ? LABEL_PRIO.focus : LABEL_PRIO.proxy);
+    });
+  }
+
+  /** mmWave targets. Edit, with a radar selected: its targets right now,
+   * numbered, to check the direction against. Live: a target no tracked
+   * thing accounts for, as a hollow marker - someone Sextant has no device for. */
+  _drawRadarTargets(ctx) {
+    const k = this.view.k;
+    if (this.mode === "edit") {
+      for (const t of this.radarLive?.targets || []) {
+        const [x, y] = t.cords;
+        ctx.save();
+        ctx.fillStyle = "#d63384"; ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 2 / k;
+        ctx.beginPath(); ctx.arc(x, y, 7 / k, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = "#ffffff"; ctx.font = `700 ${9 / k}px system-ui, sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText(String(t.index), x, y);
+        ctx.restore();
+      }
+      return;
+    }
+    for (const t of this.radarTargets) {
+      if (t.thing) continue;          // a tracked thing is drawn as itself
+      const [x, y] = t.cords;
+      const r = THING_RADIUS / k;
+      ctx.save();
+      ctx.fillStyle = this.dark ? "rgba(40,46,56,0.85)" : "rgba(255,255,255,0.85)";
+      ctx.strokeStyle = this.dark ? "#9fb3c8" : "#5b6b7c"; ctx.lineWidth = 2 / k; ctx.setLineDash([4 / k, 3 / k]);
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = ctx.strokeStyle; ctx.font = `700 ${13 / k}px system-ui, sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText("?", x, y + 0.5 / k);
+      ctx.restore();
+      this._label(ctx, "untracked", x, y + r + 9 / k, 10, 0.8, null, LABEL_PRIO.thing);
+    }
+  }
 
   /** Notes: a small dot where the click was, the text on a plate beside it.
    *
