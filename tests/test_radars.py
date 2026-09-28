@@ -249,3 +249,19 @@ def test_a_sensor_on_the_wall_belongs_to_the_room_beside_it(tmp_path):
     assert sextant._radar_room(hass, layout, fl, radar)[0] == "Hall"
     far = {**radar, "cords": {"x": 500.0, "y": 1100.0}}              # 1 m out: no room
     assert sextant._radar_room(hass, layout, fl, far) == (None, None)
+
+
+def test_an_object_on_the_desk_does_not_claim_the_person_at_it(tmp_path):
+    hass, _ = _hass(tmp_path)                     # target 1 m ahead of the radar: (500, 800)
+    layout = st.get_layout(hass)
+    layout["thing_classes"] = {"airpods_case": "headphones", "tile": "tag", "phone": "phone"}
+    run(st.save_layout(hass, layout))
+    sextant.apitricords = [_thing("airpods_case", (505, 805)), _thing("tile", (495, 810)), _thing("phone", (560, 880))]
+    run(sextant._radar_cycle(hass, st.get_layout(hass)))
+    assert sextant._radar_frame["targets"][0]["thing"] == "phone", "the phone, not the nearer case or tag"
+    sextant.apitricords = [_thing("airpods_case", (505, 805))]
+    run(sextant._radar_cycle(hass, st.get_layout(hass)))
+    assert sextant._radar_frame["targets"][0]["thing"] is None, "a case alone leaves the person untracked"
+    sextant.apitricords = [_thing("unclassed", (505, 805))]
+    run(sextant._radar_cycle(hass, st.get_layout(hass)))
+    assert sextant._radar_frame["targets"][0]["thing"] == "unclassed", "no class: usually a phone nobody classed"
