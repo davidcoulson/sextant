@@ -13,6 +13,7 @@ import numpy as np
 import sextant
 
 DT = 10.0           # the prediction step, as capped by KF_MAX_DT_S
+CYCLE = 15.0        # the wall clock between cycles, which the hold counts down
 SCALE = 100.0       # px per metre
 R_VAR = (sextant.KF_MEAS_NOISE_M * SCALE) ** 2
 A_MOVE = (sextant.KF_ACCEL_NOISE_MS2 * SCALE) ** 2
@@ -28,7 +29,7 @@ def _run(fixes, seed=1):
     x, P = _fresh(*fixes[0])
     moving, out = 0, []
     for z in fixes[1:]:
-        x, P, moving, nis = sextant._kf_step(x, P, z, DT, R_VAR, A_MOVE, A_STILL, moving, sextant.KF_MOVE_NIS, sextant.KF_MOVE_HOLD_CYCLES)
+        x, P, moving, nis = sextant._kf_step(x, P, z, DT, R_VAR, A_MOVE, A_STILL, moving, sextant.KF_MOVE_NIS, sextant.KF_MOVE_HOLD_S, elapsed=CYCLE)
         out.append((x.copy(), moving, nis))
     return out
 
@@ -96,13 +97,13 @@ def test_the_hold_keeps_following_through_a_pause_then_lets_go():
     x, P = _fresh(1000.0, 800.0)
     moving = 0
     for z in _still_fixes(30)[1:]:
-        x, P, moving, _ = sextant._kf_step(x, P, z, DT, R_VAR, A_MOVE, A_STILL, moving, sextant.KF_MOVE_NIS, sextant.KF_MOVE_HOLD_CYCLES)
+        x, P, moving, _ = sextant._kf_step(x, P, z, DT, R_VAR, A_MOVE, A_STILL, moving, sextant.KF_MOVE_NIS, sextant.KF_MOVE_HOLD_S, elapsed=CYCLE)
     assert moving == 0
     seen = []
     for _ in range(10):
-        x, P, moving, _ = sextant._kf_step(x, P, (1700.0, 800.0), DT, R_VAR, A_MOVE, A_STILL, moving, sextant.KF_MOVE_NIS, sextant.KF_MOVE_HOLD_CYCLES)
+        x, P, moving, _ = sextant._kf_step(x, P, (1700.0, 800.0), DT, R_VAR, A_MOVE, A_STILL, moving, sextant.KF_MOVE_NIS, sextant.KF_MOVE_HOLD_S, elapsed=CYCLE)
         seen.append(moving)
-    assert seen[0] == sextant.KF_MOVE_HOLD_CYCLES, f"the jump must arm the hold at once, saw {seen}"
+    assert seen[0] == sextant.KF_MOVE_HOLD_S, f"the jump must arm the hold at once, saw {seen}"
     assert 0 in seen[:8], f"the hold must let go once the fixes stand still, saw {seen}"
     assert seen[-1] == 0 and seen[-2] == 0
     assert math.hypot(x[0] - 1700.0, x[1] - 800.0) / SCALE < 0.3

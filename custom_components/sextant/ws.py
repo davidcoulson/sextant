@@ -1888,6 +1888,24 @@ async def ws_election_log_clear(hass, connection, msg):
     connection.send_result(msg["id"], {"files": files, "bytes": size})
 
 
+@websocket_api.websocket_command({
+    vol.Required("type"): "sextant/interval/set",
+    # Seconds between cycles for the next quarter hour; null goes back to the
+    # configured interval at once.
+    vol.Required("secs"): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=1, max=600))),
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_interval_set(hass, connection, msg):
+    """Refresh faster (or slower) for a while, from the countdown's menu."""
+    core = _core()
+    secs = msg["secs"]
+    if secs is not None and int(secs) not in core.INTERVAL_CHOICES and float(secs) != float(core.secToUpdate):
+        return _error(connection, msg, f"Pick one of {sorted(core.INTERVAL_CHOICES)} seconds")
+    info = core.set_interval_override(secs)
+    connection.send_result(msg["id"], info)
+
+
 @websocket_api.websocket_command({vol.Required("type"): "sextant/robot/remove", vol.Required("vacuum"): str})
 @websocket_api.require_admin
 @websocket_api.async_response
@@ -1907,7 +1925,7 @@ async def ws_robot_remove(hass, connection, msg):
 COMMANDS = (
     ws_advice,
     ws_snapshots_list, ws_snapshots_restore, ws_thing_forget, ws_person_trackers_set,
-    ws_robot_list, ws_robot_align, ws_robot_dock, ws_robot_remove, ws_election_log_clear,
+    ws_robot_list, ws_robot_align, ws_robot_dock, ws_robot_remove, ws_election_log_clear, ws_interval_set,
     ws_radar_devices, ws_radar_targets,
     ws_layout_get, ws_layout_save, ws_tuning_set, ws_thing_tune,
     ws_history_index, ws_history_get, ws_history_timeline, ws_history_clear, ws_thing_readings, ws_floor_bias_map,

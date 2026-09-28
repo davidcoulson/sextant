@@ -1090,7 +1090,7 @@ def _cycle(hass, layout, x_m, y_m):
 
 
 def _reset_thing_state():
-    for d in (sextant._floor_probability, sextant._floor_challenge, sextant._floor_dark_cycles, sextant._floor_since,
+    for d in (sextant._floor_probability, sextant._floor_probability_at, sextant._floor_challenge, sextant._floor_dark_cycles, sextant._floor_since,
               sextant._kf_position_state, sextant._zone_state, sextant._subzone_state):
         d.clear()
     sextant.apitricords = []
@@ -1213,14 +1213,14 @@ def test_full_cycle_floor_switches_on_proximity_when_fits_tie(monkeypatch):
 
     # Start upstairs, settle there.
     for _ in range(3):
-        clock["t"] += 10
+        clock["t"] += 15   # the real cycle: smoothing is per 15 s of wall clock
         entry = cycle(2.0, 5.0, "U")
     assert entry["floor"] == "U"
     # Move to the floor below: the incumbent keeps solving (all its receivers
     # still hear the thing through the slab), so only proximity separates them.
     seen = []
     for _ in range(12):
-        clock["t"] += 10
+        clock["t"] += 15
         seen.append(cycle(2.0, 5.0, "F")["floor"])
     assert seen[-1] == "F", seen
 
@@ -1244,7 +1244,7 @@ def _void_election(monkeypatch, shape):
     monkeypatch.setattr(sextant.time, "time", lambda: clock["t"])
     out = []
     for n in range(16):
-        clock["t"] += 10
+        clock["t"] += 15   # the real cycle: smoothing is per 15 s of wall clock
         data = copy.deepcopy(layout)
         for fl in data["floor"]:
             for rx in fl["receivers"]:

@@ -36,7 +36,7 @@ distances in metres.
 | `solver_max_range` | 12 | drop readings beyond this once three remain (0 = never) |
 | `solver_near_always` | 3 | proxies within this always count |
 | `zone_hysteresis` | true | off publishes the instantaneous room |
-| `zone_prob_smoothing` | 0.6 | weight on the previous room shares |
+| `zone_prob_smoothing` | 0.6 | weight kept on the previous room shares per 15 s (a faster refresh compounds it, so the smoothing is the same in seconds) |
 | `zone_switch_margin` | 0.15 | lead a challenger room needs |
 | `zone_switch_secs` | 20 | held that long before switching |
 | `stationary_speed` | 0.3 | m/s; slower is "still" |

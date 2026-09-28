@@ -105,6 +105,76 @@ tracked_listeners = {}
 tracked_entities = []
 new_global_data = {}
 secToUpdate = DEFAULT_UPDATE_INTERVAL
+
+# A refresh interval set for a while from the panel's countdown menu, to watch
+# something move; it lapses by itself back to the configured interval. The
+# smoothing and hold timers are wall clock (see SMOOTHING_REF_S), so a faster
+# refresh gives more fixes, not jumpier ones.
+INTERVAL_CHOICES = (5, 10, 30, 60)
+INTERVAL_OVERRIDE_S = 15 * 60
+_interval_override = {"secs": None, "until": 0.0}
+_cycle_wake = None          # asyncio.Event: set to cut the current wait short
+_cycle_last = {"at": None, "ms": None}   # when the last cycle finished, and how long it took
+
+
+def cycle_interval(now=None):
+    """Seconds between cycles right now: the panel's override while it lasts,
+    else the configured interval."""
+    now = time.time() if now is None else now
+    o = _interval_override
+    if o["secs"] and now < o["until"]:
+        return float(o["secs"])
+    o["secs"], o["until"] = None, 0.0
+    return float(secToUpdate)
+
+
+def set_interval_override(secs, now=None):
+    """Refresh every ``secs`` for INTERVAL_OVERRIDE_S, or back to the configured
+    interval (None, or the configured value). Takes effect at once: the wait
+    for the next cycle is re-timed."""
+    now = time.time() if now is None else now
+    if secs is None or float(secs) == float(secToUpdate):
+        _interval_override.update(secs=None, until=0.0)
+    else:
+        _interval_override.update(secs=float(secs), until=now + INTERVAL_OVERRIDE_S)
+    if _cycle_wake is not None:
+        _cycle_wake.set()
+    return interval_info(now)
+
+
+def interval_info(now=None):
+    """The interval as the panel shows it."""
+    secs = cycle_interval(now)
+    return {
+        "secs": secs,
+        "configured": float(secToUpdate),
+        "until": _interval_override["until"] if _interval_override["secs"] else None,
+        "choices": sorted({*INTERVAL_CHOICES, int(secToUpdate)}),
+        "last_cycle_at": _cycle_last["at"],
+        "last_cycle_ms": _cycle_last["ms"],
+    }
+
+
+async def _wait_for_next_cycle():
+    """Sleep the interval, re-timing when the panel changes it (a switch from
+    60 s to 5 s should not sit out the rest of the minute) and when an
+    override lapses mid-wait."""
+    global _cycle_wake
+    if _cycle_wake is None:
+        _cycle_wake = asyncio.Event()
+    started = time.time()
+    while True:
+        _cycle_wake.clear()
+        now = time.time()
+        left = cycle_interval(now) - (now - started)
+        if left <= 0:
+            return
+        if _interval_override["secs"]:
+            left = min(left, max(_interval_override["until"] - now, 0.05))
+        try:
+            await asyncio.wait_for(_cycle_wake.wait(), timeout=left)
+        except asyncio.TimeoutError:
+            pass
 # A scanner Bermuda hasn't heard for this long is treated as offline; the
 # liveness is polled from dump_devices every RECEIVER_DUMP_INTERVAL seconds.
 RECEIVER_OFFLINE_SECS = 30
@@ -175,11 +245,13 @@ KF_ACCEL_NOISE_MS2 = 0.5     # expected acceleration (m/s^2) while moving; large
 # lands further from the prediction than KF_MOVE_NIS allows (a normalised
 # innovation, chi-squared with two degrees of freedom: 6 is about the 95th
 # percentile), the thing is moving: the responsive noise takes over at once
-# and stays for KF_MOVE_HOLD_CYCLES after the innovations calm down, so a
-# pause mid-walk does not freeze the track.
+# and stays for KF_MOVE_HOLD_S after the innovations calm down, so a
+# pause mid-walk does not freeze the track. The hold is wall clock (it was
+# three cycles, 45 s at the 15 s interval) so a faster refresh does not
+# shorten it.
 KF_ACCEL_NOISE_STILL_MS2 = 0.0005
 KF_MOVE_NIS = 4.0
-KF_MOVE_HOLD_CYCLES = 3
+KF_MOVE_HOLD_S = 45.0
 KF_INIT_VEL_UNC_MS = 1.0     # initial velocity uncertainty (m/s) at (re)init
 KF_MAX_DT_S = 10.0           # cap the prediction step so a gap can't blow up P
 # Gap beyond which the state is reset (the thing was away). This was 30 s on
@@ -320,7 +392,26 @@ FLOOR_SWITCH_MARGIN = 0.05   # probability lead that starts/keeps a challenge
 # The default lives in TUNING_SPEC ("floor_switch_secs") so it can be changed
 # live; this is the fallback when _elect_floor is called without one.
 FLOOR_SWITCH_SECS = 60.0
-FLOOR_DARK_GRACE_CYCLES = 3  # cycles a dark incumbent holds everything frozen
+FLOOR_DARK_GRACE_S = 45.0    # how long a dark incumbent holds everything frozen (was 3 cycles at 15 s)
+
+# The smoothing weights (FLOOR_PROB_SMOOTHING, zone_prob_smoothing) are the
+# weight kept per SMOOTHING_REF_S of wall clock - the interval they were tuned
+# at - not per cycle. A cycle dt seconds after the last keeps
+# weight ** (dt / SMOOTHING_REF_S), so a faster refresh gives more, smaller
+# steps and the same smoothing in seconds: the data is not made jumpier.
+SMOOTHING_REF_S = 15.0
+# A longer gap counts as this long: a thing unheard for ten minutes should not
+# have its whole smoothed history replaced by the one fix it comes back with.
+SMOOTHING_MAX_STEP_S = 60.0
+
+
+def _step_weight(weight, last, now):
+    """The smoothing weight to keep for a step from ``last`` to ``now`` (see
+    SMOOTHING_REF_S). With no previous step, the weight as tuned."""
+    if last is None or now is None:
+        return weight
+    dt = min(max(float(now) - float(last), 0.0), SMOOTHING_MAX_STEP_S)
+    return weight ** (dt / SMOOTHING_REF_S)
 FLOOR_RESIDUAL_SCALE_M = 2.0 # weighted RMS residual (m) at which fit quality = 0.5
 COVERAGE_TARGET_N = 5.0      # heard receivers at which the coverage term saturates
 
@@ -352,9 +443,10 @@ NO_GO_SNAP_STICK_M = 1.5
 # Per-thing election state, all reset when the thing is pruned:
 # smoothed floor probabilities (entity -> {floor name: P}), the pending
 # challenge (a floor out-scoring the incumbent, counted per cycle: entity ->
-# {"floor": name, "count": n}), and how many consecutive cycles the incumbent
-# floor has been dark (unsolvable) while a competitor solved.
+# {"floor": name, "count": n}), and since when the incumbent floor has been
+# dark (unsolvable) while a competitor solved (entity -> wall clock).
 _floor_probability = {}
+_floor_probability_at = {}   # entity -> when its probabilities last moved
 _floor_challenge = {}
 _floor_dark_cycles = {}
 # When the incumbent floor was elected (wall clock), for the tenure bonus.
@@ -384,13 +476,14 @@ def _new_zone_state(floor_name, now):
         "floor": floor_name, "zone": None, "since": now, "probs": {},
         "challenge": None, "still_since": None, "moving_since": None,
         "away_since": None, "outvoted_since": None, "locked": False, "born": now,
+        "probs_at": None,
     }
 
 
 def _new_subzone_state(floor_name, zone, now):
     """A thing's spot election, before it has any evidence (see _new_zone_state)."""
     return {"floor": floor_name, "zone": zone, "value": ("unknown", zone), "probs": {},
-            "pending": None, "since": now}
+            "pending": None, "since": now, "probs_at": None}
 
 
 # Near-field anchor per thing: {"slug", "floor", "since", "pending": (slug, since) | None}
@@ -1237,20 +1330,22 @@ def _kalman_position_update(entity, floor_name, meas, scale, bounds):
         }
         return _clip(zx, zy)
 
-    dt = min(max(now - st["ts"], 1e-3), KF_MAX_DT_S)
+    elapsed = max(now - st["ts"], 1e-3)
+    dt = min(elapsed, KF_MAX_DT_S)
     a_still = (KF_ACCEL_NOISE_STILL_MS2 * s) ** 2
     x, P, moving, nis = _kf_step(st["x"], st["P"], (zx, zy), dt, r_var, a_var, a_still,
-                                 st.get("moving", 0), KF_MOVE_NIS, KF_MOVE_HOLD_CYCLES)
+                                 st.get("moving", 0), KF_MOVE_NIS, KF_MOVE_HOLD_S, elapsed=elapsed)
     st["x"], st["P"], st["ts"], st["floor"], st["moving"], st["nis"] = x, P, now, floor_name, moving, nis
     return _clip(float(x[0]), float(x[1]))
 
 
-def _kf_step(x, P, meas, dt, r_var, a_var_move, a_var_still, moving, move_nis, hold_cycles):
+def _kf_step(x, P, meas, dt, r_var, a_var_move, a_var_still, moving, move_nis, hold_s, elapsed=None):
     """One constant-velocity Kalman step with two process-noise levels.
 
     Pure, so it can be replayed over a logged track and unit-tested: state in,
-    state out. ``moving`` is how many more cycles the responsive noise is held
-    for (0 = quiet). The measurement is judged against the QUIET prediction:
+    state out. ``moving`` is how many more seconds the responsive noise is
+    held for (0 = quiet); each quiet step spends the wall clock since the last
+    (``elapsed``; ``dt`` itself is capped at KF_MAX_DT_S). The measurement is judged against the QUIET prediction:
     if its normalised innovation exceeds ``move_nis`` the thing has moved, the
     step is redone with the responsive noise so the estimate follows at once,
     and the hold is (re)armed. Returns ``(x, P, moving, nis)``.
@@ -1280,9 +1375,9 @@ def _kf_step(x, P, meas, dt, r_var, a_var_move, a_var_still, moving, move_nis, h
     nu = z - H @ xq
     nis = float(nu @ np.linalg.inv(H @ Pq @ H.T + R) @ nu)
     if nis > move_nis:
-        moving = hold_cycles                 # moved: follow now, and keep following for a while
+        moving = hold_s                      # moved: follow now, and keep following for a while
     elif moving > 0:
-        moving -= 1
+        moving = max(0.0, moving - (dt if elapsed is None else elapsed))
     xn, Pn = update(*predict(a_var_move)) if moving > 0 else update(xq, Pq)
     return xn, Pn, moving, nis
 
@@ -1429,7 +1524,9 @@ async def update_tracked_entities(hass):
             _refresh_fingerprint_references(hass, layout, now_ts)
             new_global_data = [{"entity": ent, "data": _thing_layout(layout)} for ent in unique_values]
 
+            started = time.perf_counter()
             await process_entities(hass, new_global_data)
+            _cycle_last.update(at=time.time(), ms=round((time.perf_counter() - started) * 1000.0))
             async_dispatcher_send(hass, SIGNAL_BPS_UPDATE, _push_payload(hass))
 
         except Exception as e:  # noqa: BLE001 - one bad cycle must not end the loop
@@ -1450,7 +1547,7 @@ async def update_tracked_entities(hass):
                 _cycle_error_last, _cycle_error_count = message, 1
                 _LOGGER.exception("Positioning cycle failed: %s", message)
 
-        await asyncio.sleep(secToUpdate)  # Run every X seconds, set timer in global variables
+        await _wait_for_next_cycle()
 
 
 # State strings that mean "not working" when a status/availability entity is read.
@@ -2461,6 +2558,7 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
     # fresh scores elect the renamed floor immediately.
     if incumbent is not None and incumbent not in valid_floors:
         _floor_probability.pop(entity, None)
+        _floor_probability_at.pop(entity, None)
         _floor_challenge.pop(entity, None)
         _floor_dark_cycles.pop(entity, None)
         _floor_since.pop(entity, None)
@@ -2477,9 +2575,8 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
     # floor is adopted on its merits.
     if incumbent is not None and incumbent not in solved \
             and incumbent in _floor_probability.get(entity, {}):
-        dark = _floor_dark_cycles.get(entity, 0) + 1
-        if dark <= FLOOR_DARK_GRACE_CYCLES:
-            _floor_dark_cycles[entity] = dark
+        dark_since = _floor_dark_cycles.setdefault(entity, time.time())
+        if time.time() - dark_since < FLOOR_DARK_GRACE_S:
             return
         incumbent = None  # dark beyond grace: incumbency lapses
     _floor_dark_cycles.pop(entity, None)
@@ -2856,7 +2953,7 @@ def _forget_thing_state(ent):
     the Live page can say "away since". For a thing being forgotten on purpose
     (see ws_thing_forget) that memory is the point."""
     for table in (_kf_position_state, _zone_state, _subzone_state, _anchor_state, _floor_probability,
-                  _floor_challenge, _floor_dark_cycles, _floor_since, _arrivals, _last_seen, _presence_published):
+                  _floor_probability_at, _floor_challenge, _floor_dark_cycles, _floor_since, _arrivals, _last_seen, _presence_published):
         table.pop(ent, None)
     getattr(update_trilateration_and_zone, "last_floor", {}).pop(ent, None)
     getattr(update_trilateration_and_zone, "last_r_values", {}).pop(ent, None)
@@ -2916,6 +3013,7 @@ async def prune_stale_positions(hass):
         _subzone_state.pop(ent, None)
         _anchor_state.pop(ent, None)
         _floor_probability.pop(ent, None)
+        _floor_probability_at.pop(ent, None)
         _floor_challenge.pop(ent, None)
         _floor_dark_cycles.pop(ent, None)
         _floor_since.pop(ent, None)
@@ -3995,7 +4093,7 @@ def _proximity_weighted_scores(scores, nearest_by_floor, weight, blend="gated"):
     return out
 
 
-def _update_floor_probabilities(entity, scores, valid_floors=None):
+def _update_floor_probabilities(entity, scores, valid_floors=None, now=None):
     """Fold this cycle's per-floor confidences into smoothed probabilities.
 
     Each floor's probability moves 1-FLOOR_PROB_SMOOTHING of the way toward
@@ -4007,14 +4105,17 @@ def _update_floor_probabilities(entity, scores, valid_floors=None):
     normalized copy.
     """
     probs = _floor_probability.setdefault(entity, {})
+    now = time.time() if now is None else now
+    # No history (new, or just reset): the step is a whole one, as tuned.
+    keep = _step_weight(FLOOR_PROB_SMOOTHING, _floor_probability_at.get(entity) if probs else None, now)
+    _floor_probability_at[entity] = now
     if valid_floors is not None:
         for floor in [f for f in probs if f not in valid_floors]:
             del probs[floor]
     total = sum(scores.values())
     for floor in set(probs) | set(scores):
         target = (scores.get(floor, 0.0) / total) if total > 0 else 0.0
-        probs[floor] = FLOOR_PROB_SMOOTHING * probs.get(floor, 0.0) \
-            + (1.0 - FLOOR_PROB_SMOOTHING) * target
+        probs[floor] = keep * probs.get(floor, 0.0) + (1.0 - keep) * target
     for floor in [f for f, p in probs.items() if p < 0.01]:
         del probs[floor]
     norm = sum(probs.values())
@@ -4186,7 +4287,8 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
     shares = _zone_membership(zone_polys, samples)
     if not shares and instant_zone in valid:
         shares = {instant_zone: 1.0}
-    alpha = _tuning(layout, "zone_prob_smoothing")
+    alpha = _step_weight(_tuning(layout, "zone_prob_smoothing"), st.get("probs_at") if st["probs"] else None, now)
+    st["probs_at"] = now
     probs = st["probs"]
     for z in set(probs) | set(shares):
         probs[z] = alpha * probs.get(z, 0.0) + (1.0 - alpha) * shares.get(z, 0.0)
@@ -4583,7 +4685,8 @@ def _elect_subzone(entity, floor_name, zone, zone_locked, point, kf_state, sub_p
             keep = (1.0 - p) / (1.0 - old) if old < 1.0 else 0.0
             shares = {s: v * keep for s, v in shares.items()}
             shares[sid] = p
-    alpha = _tuning(layout, "zone_prob_smoothing")
+    alpha = _step_weight(_tuning(layout, "zone_prob_smoothing"), st.get("probs_at") if st["probs"] else None, now)
+    st["probs_at"] = now
     probs = st["probs"]
     for s in set(probs) | set(shares):
         probs[s] = alpha * probs.get(s, 0.0) + (1.0 - alpha) * shares.get(s, 0.0)
@@ -5048,6 +5151,9 @@ def _push_payload(hass):
         # mmWave radar targets on the plan: {floor, cords, radar_name, thing,
         # room}; a target with no thing is someone Sextant has no device for.
         "radar_targets": [t for t in (_radar_frame.get("targets") or [])] if time.time() - _radar_frame.get("t", 0) <= RADAR_FRESH_S else [],
+        # The refresh interval and when the last cycle ran, for the countdown
+        # (and its menu, which sets a temporary interval).
+        "interval": interval_info(),
     }
 
 
