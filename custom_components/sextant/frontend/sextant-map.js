@@ -1291,21 +1291,70 @@ export class SextantMap {
 
   /** Placed mmWave sensors (Edit): a marker, the way it faces, and the wedge
    * it sees - its range as set on the device, ±60 degrees. */
+  /** The room an mmWave sensor's targets are kept to, as the backend picks it
+   * (_radar_room): its `room` by name, "*" for none, else the room it is in or
+   * within half a metre of - it is usually on the wall. */
+  _radarRoomZone(r) {
+    if (r.room === "*") return null;
+    const zones = (this.floor?.zones || []).filter((z) => !z.no_go && (z.cords || []).length >= 3);
+    if (r.room) { const named = zones.find((z) => z.entity_id === r.room); if (named) return named; }
+    const scale = this.floor?.scale || PX_PER_M_FALLBACK;
+    const p = r.cords;
+    const inside = (pts) => {
+      let hit = false;
+      for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+        const a = pts[i], b = pts[j];
+        if ((a.y > p.y) !== (b.y > p.y) && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) hit = !hit;
+      }
+      return hit;
+    };
+    const edgeDist = (pts) => Math.min(...pts.map((a, i) => {
+      const b = pts[(i + 1) % pts.length];
+      const dx = b.x - a.x, dy = b.y - a.y, len2 = dx * dx + dy * dy || 1;
+      const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2));
+      return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+    }));
+    let best = null, bestD = Infinity;
+    for (const z of zones) {
+      const d = inside(z.cords) ? 0 : edgeDist(z.cords);
+      if (d < bestD) { best = z; bestD = d; }
+    }
+    return bestD <= 0.5 * scale ? best : null;
+  }
+
   _drawRadars(ctx, radars) {
     const k = this.view.k, scale = this.floor?.scale || PX_PER_M_FALLBACK;
     radars.forEach((r, index) => {
       if (!r.cords) return;
       const info = this.radarInfo[r.device_id] || {};
-      const range = (info.range_m || 6) * scale;
+      // The range is a slant from the mounting height to a chest (1 m up):
+      // across the floor it reaches that much less (radars.floor_factor).
+      const slant = info.range_m || 6, dh = (Number(r.height_m) || 0) - 1.0;
+      const range = (dh > 0 ? Math.sqrt(Math.max(slant * slant - dh * dh, 0)) : slant) * scale;
+      const room = this._radarRoomZone(r);
       const half = ((info.fov_deg || 120) / 2) * Math.PI / 180;
       const a0 = ((r.heading || 0) * Math.PI) / 180 - Math.PI / 2;   // 0 = up the plan, clockwise
       const selected = this.selection?.kind === "radar" && this.selection.index === index;
       const hovered = this.hover?.kind === "radar" && this.hover.index === index;
       const colour = r.device_id ? "#1f9e89" : "#e0a54a";
       ctx.save();
-      ctx.globalAlpha = selected ? 0.22 : 0.1;
+      ctx.beginPath(); ctx.moveTo(r.cords.x, r.cords.y); ctx.arc(r.cords.x, r.cords.y, range, a0 - half, a0 + half); ctx.closePath();
+      const wedge = new Path2D(); wedge.moveTo(r.cords.x, r.cords.y); wedge.arc(r.cords.x, r.cords.y, range, a0 - half, a0 + half); wedge.closePath();
       ctx.fillStyle = colour;
-      ctx.beginPath(); ctx.moveTo(r.cords.x, r.cords.y); ctx.arc(r.cords.x, r.cords.y, range, a0 - half, a0 + half); ctx.closePath(); ctx.fill();
+      if (room) {
+        // Kept to a room: the part it counts is filled, the rest of what it
+        // sees (through the walls) is only outlined.
+        ctx.save();
+        const clip = new Path2D();
+        room.cords.forEach((c, i) => (i ? clip.lineTo(c.x, c.y) : clip.moveTo(c.x, c.y))); clip.closePath();
+        ctx.clip(clip);
+        ctx.globalAlpha = selected ? 0.22 : 0.1;
+        ctx.fill(wedge);
+        ctx.restore();
+      } else {
+        ctx.globalAlpha = selected ? 0.22 : 0.1;
+        ctx.fill(wedge);
+      }
       ctx.globalAlpha = selected ? 0.9 : 0.45;
       ctx.strokeStyle = colour; ctx.lineWidth = 1.5 / k; ctx.setLineDash([6 / k, 4 / k]); ctx.stroke(); ctx.setLineDash([]);
       ctx.globalAlpha = 1;
@@ -1330,9 +1379,11 @@ export class SextantMap {
       for (const t of this.radarLive?.targets || []) {
         const [x, y] = t.cords;
         ctx.save();
-        ctx.fillStyle = "#d63384"; ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 2 / k;
-        ctx.beginPath(); ctx.arc(x, y, 7 / k, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-        ctx.fillStyle = "#ffffff"; ctx.font = `700 ${9 / k}px system-ui, sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        // A target outside the sensor's room is hollow: seen, not counted.
+        ctx.fillStyle = t.outside ? "rgba(214,51,132,0.15)" : "#d63384"; ctx.strokeStyle = t.outside ? "#d63384" : "#ffffff"; ctx.lineWidth = 2 / k;
+        if (t.outside) ctx.setLineDash([3 / k, 2 / k]);
+        ctx.beginPath(); ctx.arc(x, y, 7 / k, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); ctx.setLineDash([]);
+        ctx.fillStyle = t.outside ? "#d63384" : "#ffffff"; ctx.font = `700 ${9 / k}px system-ui, sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
         ctx.fillText(String(t.index), x, y);
         ctx.restore();
       }

@@ -1858,6 +1858,8 @@ async def ws_radar_devices(hass, connection, msg):
     vol.Required("y"): vol.Coerce(float),
     vol.Optional("heading", default=0.0): vol.Coerce(float),
     vol.Optional("flip", default=False): bool,
+    vol.Optional("height_m"): vol.Any(None, vol.Coerce(float)),
+    vol.Optional("room"): vol.Any(None, str),
 })
 @websocket_api.async_response
 async def ws_radar_targets(hass, connection, msg):
@@ -1869,12 +1871,11 @@ async def ws_radar_targets(hass, connection, msg):
     floor = next((f for f in (get_layout(hass) or {}).get("floor", []) if f.get("name") == msg["floor"]), None)
     if spec is None or floor is None or not isinstance(floor.get("scale"), (int, float)):
         return connection.send_result(msg["id"], {"targets": []})
-    radar = {"cords": {"x": msg["x"], "y": msg["y"]}, "heading": msg["heading"], "flip": msg["flip"]}
-    out = []
-    for index, x, y, speed in core.radars_mod.read_targets(spec, hass.states.get):
-        px, py = core.radars_mod.to_plan(radar, x, y, floor["scale"])
-        out.append({"index": index, "cords": [round(px, 1), round(py, 1)], "x_m": round(x, 2), "y_m": round(y, 2), "speed": speed})
-    connection.send_result(msg["id"], {"targets": out})
+    radar = {"cords": {"x": msg["x"], "y": msg["y"]}, "heading": msg["heading"], "flip": msg["flip"],
+             "height_m": msg.get("height_m"), "room": msg.get("room")}
+    out = core._radar_targets(hass, get_layout(hass), floor, radar, spec)
+    room, _poly = core._radar_room(hass, get_layout(hass), floor, radar)
+    connection.send_result(msg["id"], {"targets": out, "room": room})
 
 
 @websocket_api.websocket_command({vol.Required("type"): "sextant/election_log/clear"})

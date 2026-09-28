@@ -21,6 +21,9 @@ FOV_DEG = 120.0
 DEFAULT_RANGE_M = 6.0
 # A target this close to the sensor on both axes is the radar's "no target".
 NO_TARGET_M = 0.05
+# What the radar ranges to on a person: the chest, about a metre up standing
+# (a little less sitting). A sensor mounted higher measures the slant to it.
+TARGET_HEIGHT_M = 1.0
 
 _TO_M = {"m": 1.0, "cm": 0.01, "mm": 0.001, "in": 0.0254, "ft": 0.3048, "yd": 0.9144}
 
@@ -119,14 +122,42 @@ def read_targets(spec, get_state, range_m=None):
     return out
 
 
+def floor_factor(x_m, y_m, height_m):
+    """What turns a target's reported x/y into distances across the floor.
+
+    The radar ranges in a straight line from where it is mounted to the
+    person's chest (TARGET_HEIGHT_M), and keeps the angle; the floor distance
+    is the slant range less that height difference, at the same angle. From
+    2 m up, someone 3 m out reads 3.16 m (5 % long), someone 1 m out reads
+    1.41 m (40 % long). Unset or no higher than a chest: no correction.
+    """
+    try:
+        dh = float(height_m) - TARGET_HEIGHT_M
+    except (TypeError, ValueError):
+        return 1.0
+    r = math.hypot(x_m, y_m)
+    if dh <= 0 or r <= 0:
+        return 1.0
+    return math.sqrt(max(r * r - dh * dh, 0.0)) / r
+
+
+def floor_range_m(range_m, height_m):
+    """How far across the floor a slant range reaches (see floor_factor)."""
+    return range_m * floor_factor(0.0, range_m, height_m)
+
+
 def to_plan(radar, x_m, y_m, px_per_m):
     """A target in the radar's frame, on the plan (pixels).
 
     ``radar`` is the layout's radar: {"cords": {x, y}, "heading": degrees
     clockwise from straight up the plan, "flip": bool}. The target is y
     metres along the heading and x across it, to the right of the heading
-    unless ``flip`` (sensors disagree on which side is positive x).
+    unless ``flip`` (sensors disagree on which side is positive x). With the
+    radar's mounting ``height_m`` the slant it reports becomes floor distance
+    (floor_factor).
     """
+    k = floor_factor(x_m, y_m, radar.get("height_m"))
+    x_m, y_m = x_m * k, y_m * k
     h = math.radians(float(radar.get("heading") or 0.0))
     fwd = (math.sin(h), -math.cos(h))
     right = (math.cos(h), math.sin(h))

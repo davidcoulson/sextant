@@ -337,9 +337,11 @@ class SextantEdit extends LitElement {
     const item = sel?.kind === "radar" ? f?.radars?.[sel.index] : null;
     if (!item?.device_id || !item.cords) { this._radarLive = null; this._map?.setRadarLive(null); return; }
     const r = await this.hass.callWS({ type: "sextant/radar/targets", device_id: item.device_id, floor: this.floor,
-      x: item.cords.x, y: item.cords.y, heading: item.heading || 0, flip: !!item.flip }).catch(() => null);
+      x: item.cords.x, y: item.cords.y, heading: item.heading || 0, flip: !!item.flip,
+      height_m: item.height_m ?? null, room: item.room ?? null }).catch(() => null);
     if (this._selection !== sel) return;
     this._radarLive = r?.targets || [];
+    this._radarRoom = r?.room ?? null;
     this._map?.setRadarLive({ radar_id: item.radar_id, targets: this._radarLive });
   }
 
@@ -349,6 +351,9 @@ class SextantEdit extends LitElement {
     const placed = new Set((this._draft?.floor || []).flatMap((fl) => (fl.radars || []).filter((r) => r !== item).map((r) => r.device_id)));
     const turn = (deg) => this._edit("heading", ((((item.heading || 0) + deg) % 360) + 360) % 360);
     const live = this._radarLive || [];
+    const counted = live.filter((t) => !t.outside);
+    const rooms = (this._floorObj()?.zones || []).filter((z) => !z.no_go && z.entity_id).map((z) => z.entity_id);
+    const auto = item.room == null || item.room === "";
     return html`<div class="card">
       <h4>mmWave sensor</h4>
       <div class="row">${uiSelect({ label: "Device", value: item.device_id || "", options: [{ value: "", label: devices.length ? "pick one" : "no mmWave sensors found" }, ...devices.map((d) => ({ value: d.device_id, label: `${d.name}${d.model ? ` · ${d.model}` : ""}${placed.has(d.device_id) ? " (placed elsewhere)" : ""}` }))], onChange: (v) => { this._edit("device_id", v || null); this._pollRadar(); }, style: "flex: 1" })}</div>
@@ -358,8 +363,16 @@ class SextantEdit extends LitElement {
         ${uiButton({ label: "−15°", kind: "text", onClick: () => { turn(-15); this._pollRadar(); } })}${uiButton({ label: "+15°", kind: "text", onClick: () => { turn(15); this._pollRadar(); } })}
       </div>
       ${uiSwitch({ label: "Flip left/right", checked: !!item.flip, onChange: (v) => { this._edit("flip", !!v); this._pollRadar(); } })}
+      <div class="row">
+        ${uiField({ label: `Mount height (${lenUnit(this.hass)})`, type: "number", step: 0.05, min: 0, max: isImperial(this.hass) ? 16 : 5,
+          value: toDisplayLen(item.height_m, this.hass), onChange: (v) => { this._edit("height_m", v === "" ? undefined : fromDisplayLen(v, this.hass)); this._pollRadar(); }, style: "width: 170px" })}
+        ${uiSelect({ label: "Counts people in", value: auto ? "" : item.room, style: "flex: 1",
+          options: [{ value: "", label: `The room it's in${auto && this._radarRoom ? ` (${this._radarRoom})` : ""}` }, ...rooms.map((n) => ({ value: n, label: n })), { value: "*", label: "Everywhere it sees" }],
+          onChange: (v) => { this._edit("room", v || undefined); this._pollRadar(); } })}
+      </div>
+      <div class="muted small">The height turns what it measures - a straight line down to your chest - into distance across the floor; from 2 m up, someone a metre out otherwise reads 40 % too far. It sees through drywall, so targets outside the room are ignored (hollow dots here, and the wedge is filled only inside the room).</div>
       <div class="muted small">${dev ? html`Sees ${fmtLen(dev.range_m, this.hass)} out, ±${Math.round((dev.fov_deg || 120) / 2)}° either side (the range set on the device).${dev.installation_angle ? html` Its installation angle is set to ${dev.installation_angle}° on the device, which already turns the coordinates it reports: face this marker the way that turned frame points.` : nothing}` : "Pick the device, then turn the marker the way the sensor faces."}</div>
-      ${item.device_id ? html`<div class="small"><b>${live.length}</b> target${live.length === 1 ? "" : "s"} right now${live.length ? html` - the pink dots. Walk straight away from it: the dot should move along the wedge's centre line; if it goes off at an angle, turn the marker; if it moves the wrong way sideways, flip.` : html` - walk in front of it to see yourself as a pink dot.`}</div>` : nothing}
+      ${item.device_id ? html`<div class="small"><b>${counted.length}</b> target${counted.length === 1 ? "" : "s"} right now${live.length > counted.length ? html` (and ${live.length - counted.length} outside the room)` : nothing}${live.length ? html` - the pink dots. Walk straight away from it: the dot should move along the wedge's centre line; if it goes off at an angle, turn the marker; if it moves the wrong way sideways, flip.` : html` - walk in front of it to see yourself as a pink dot.`}</div>` : nothing}
       <div class="muted small">Save the plan to put it to work: a thing whose Bluetooth fix is near a target is placed on the target, one still target and one still thing make a location pin, and a target nobody's device accounts for counts in sensor.sextant_untracked_people.</div>
       <div class="row"><span class="grow"></span>${uiButton({ label: "Delete", kind: "danger", onClick: () => this._deleteSelection() })}</div>
     </div>`;

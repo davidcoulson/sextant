@@ -58,3 +58,21 @@ test("a click on the marker finds the radar", () => {
   assert.equal(hit?.kind, "radar");
   assert.equal(hit.index, 0);
 });
+
+// The wedge is filled only inside the room the backend keeps targets to
+// (_radar_room): the named room, none for "*", else the room the sensor is in
+// or within half a metre of.
+test("the wedge's room is the one the backend limits targets to", () => {
+  const { map } = editMap();
+  map.floor.zones = [
+    { entity_id: "Office", cords: rect(0, 0, 1000, 500) },
+    { entity_id: "Hall", cords: rect(0, 500, 1000, 1000) },
+    { entity_id: "Void", no_go: true, cords: rect(0, 1000, 1000, 1200) },
+  ];
+  const at = (x, y, room) => map._radarRoomZone({ cords: { x, y }, room })?.entity_id ?? null;
+  assert.equal(at(500, 900), "Hall");
+  assert.equal(at(500, 1030), "Hall", "on the wall, 0.3 m outside");
+  assert.equal(at(500, 1100), null, "a metre out, and a no-go area is never a room");
+  assert.equal(at(500, 900, "Office"), "Office");
+  assert.equal(at(500, 900, "*"), null);
+});
