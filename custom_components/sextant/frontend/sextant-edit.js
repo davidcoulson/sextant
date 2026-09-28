@@ -9,7 +9,7 @@
  */
 import { LitElement, html, css, nothing } from "./lit.js";
 import { SextantMap, polygonCentroid, snapToVertex, squareUp } from "./sextant-map.js";
-import { sharedStyles, widgetStyles, toast, callWS, confirmDialog, fmtNum, fmtLen, uiField, uiSelect, uiSwitch, uiButton, uiMenu, proxyName, lenUnit, toDisplayLen, fromDisplayLen, fmtScale, isImperial, THING_CLASSES, CLASS_FAMILIES } from "./sextant-ui.js";
+import { sharedStyles, widgetStyles, toast, callWS, confirmDialog, fmtNum, fmtLen, uiField, uiSelect, uiSwitch, uiButton, uiIconButton, uiMenu, proxyName, lenUnit, toDisplayLen, fromDisplayLen, fmtScale, isImperial, THING_CLASSES, CLASS_FAMILIES } from "./sextant-ui.js";
 import { mapUrlFor } from "./sextant-panel.js";
 import { lostShapes } from "./sextant-shapes.js";
 
@@ -359,8 +359,13 @@ class SextantEdit extends LitElement {
       <div class="row">${uiSelect({ label: "Device", value: item.device_id || "", options: [{ value: "", label: devices.length ? "pick one" : "no mmWave sensors found" }, ...devices.map((d) => ({ value: d.device_id, label: `${d.name}${d.model ? ` · ${d.model}` : ""}${placed.has(d.device_id) ? " (placed elsewhere)" : ""}` }))], onChange: (v) => { this._edit("device_id", v || null); this._pollRadar(); }, style: "flex: 1" })}</div>
       <div class="row">
         ${uiField({ label: "Facing (degrees clockwise from up)", type: "number", step: 1, min: 0, max: 359, value: item.heading ?? 0, onChange: (v) => { this._edit("heading", (((Number(v) || 0) % 360) + 360) % 360); this._pollRadar(); }, style: "width: 230px" })}
-        ${[["↑", 0], ["→", 90], ["↓", 180], ["←", 270]].map(([label, a]) => uiButton({ label, kind: "text", title: `Face ${a}°`, onClick: () => { this._edit("heading", a); this._pollRadar(); } }))}
-        ${uiButton({ label: "−15°", kind: "text", onClick: () => { turn(-15); this._pollRadar(); } })}${uiButton({ label: "+15°", kind: "text", onClick: () => { turn(15); this._pollRadar(); } })}
+      </div>
+      <div class="iconrow">
+        ${[["mdi:arrow-up", 0, "up"], ["mdi:arrow-right", 90, "right"], ["mdi:arrow-down", 180, "down"], ["mdi:arrow-left", 270, "left"]].map(([icon, a, way]) =>
+          uiIconButton({ icon, box: true, active: (item.heading ?? 0) === a, title: `Face ${way} the plan (${a}°)`, onClick: () => { this._edit("heading", a); this._pollRadar(); } }))}
+        <span class="gap"></span>
+        ${uiIconButton({ icon: "mdi:rotate-left", box: true, title: "Turn 15° anticlockwise", onClick: () => { turn(-15); this._pollRadar(); } })}
+        ${uiIconButton({ icon: "mdi:rotate-right", box: true, title: "Turn 15° clockwise", onClick: () => { turn(15); this._pollRadar(); } })}
       </div>
       ${uiSwitch({ label: "Flip left/right", checked: !!item.flip, onChange: (v) => { this._edit("flip", !!v); this._pollRadar(); } })}
       <div class="row">

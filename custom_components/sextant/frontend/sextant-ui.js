@@ -58,6 +58,16 @@ export const sharedStyles = css`
   button.iconbtn.on { background: var(--primary-text-color); color: var(--card-background-color); }
   button.iconbtn[disabled] { opacity: 0.4; cursor: default; }
   button.iconbtn ha-icon { --mdc-icon-size: 22px; }
+  /* The boxed kind, for a row of controls in a card (turn this way, nudge that
+     way): the Edit toolbar's rounded squares, with an outline so they read as
+     buttons away from the toolbar's own panel. */
+  button.iconbtn.box { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 0; border-radius: 8px;
+    border: 1px solid var(--divider-color, rgba(127,127,127,0.35)); color: var(--primary-text-color); }
+  button.iconbtn.box ha-icon { --mdc-icon-size: 20px; }
+  button.iconbtn.box.on { border-color: var(--primary-text-color); }
+  button.iconbtn:focus-visible { outline: 2px solid var(--primary-color, #03a9f4); outline-offset: 1px; }
+  .iconrow { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+  .iconrow .gap { width: 10px; }
   .iconbar { display: flex; align-items: center; gap: 2px; }
   .segctl-wrap { display: inline-flex; align-items: center; gap: 8px; }
   .segctl { display: inline-flex; border: 1px solid var(--divider-color); border-radius: 999px; overflow: hidden; }
@@ -230,8 +240,8 @@ export function uiMenu({ items, label = "More actions", icon = "mdi:dots-vertica
  * three pill buttons took a third of a phone screen. `title` is both the
  * tooltip and the accessible name, so it must say what the action does.
  * `active` marks a mode that is switched on (a marking in progress). */
-export function uiIconButton({ icon, title, onClick, disabled = false, active = false }) {
-  return html`<button class="iconbtn ${active ? "on" : ""}" ?disabled=${disabled} title=${title} aria-label=${title} aria-pressed=${active ? "true" : nothing} @click=${onClick}><ha-icon icon=${icon}></ha-icon></button>`;
+export function uiIconButton({ icon, title, onClick, disabled = false, active = false, box = false }) {
+  return html`<button class="iconbtn ${box ? "box" : ""} ${active ? "on" : ""}" ?disabled=${disabled} title=${title} aria-label=${title} aria-pressed=${active ? "true" : nothing} @click=${onClick}><ha-icon icon=${icon}></ha-icon></button>`;
 }
 
 /** A row of short choices, one of them on - Off · 6h · 24h · 7d - in the
@@ -244,7 +254,19 @@ export function uiSegmented({ label, value, options, onChange, disabled = false 
   </span></span>`;
 }
 
+/** Home Assistant's own button in the look `kind` asks for. Since 2025.8 its
+ * ha-button is a different element: it takes `appearance` (accent = filled,
+ * outlined, plain) and `variant` (danger), puts an icon in the "start" slot,
+ * and ignores the old raised/outlined flags - so every Sextant button had
+ * become a filled blue pill, a "Cancel" as loud as the "Save" beside it. */
+const NEW_HA_BUTTON = () => "appearance" in (customElements.get("ha-button")?.prototype || {});
+const APPEARANCE = { primary: "accent", outline: "outlined", text: "plain", danger: "outlined" };
+
 export function uiButton({ label, onClick, kind = "outline", disabled = false, icon, title }) {
+  if (has("ha-button") && NEW_HA_BUTTON()) {
+    return html`<ha-button appearance=${APPEARANCE[kind] || "outlined"} variant=${kind === "danger" ? "danger" : "brand"} size="small"
+                           ?disabled=${disabled} title=${title ?? nothing} @click=${onClick}>${icon ? html`<ha-icon slot="start" icon=${icon}></ha-icon>` : nothing}${label}</ha-button>`;
+  }
   if (has("ha-button") || has("mwc-button")) {
     const tag = has("ha-button") ? "ha-button" : "mwc-button";
     const raised = kind === "primary", outlined = kind === "outline" || kind === "danger";
