@@ -366,9 +366,10 @@ class SextantEdit extends LitElement {
       <div class="row">
         ${uiField({ label: `Mount height (${lenUnit(this.hass)})`, type: "number", step: 0.05, min: 0, max: isImperial(this.hass) ? 16 : 5,
           value: toDisplayLen(item.height_m, this.hass), onChange: (v) => { this._edit("height_m", v === "" ? undefined : fromDisplayLen(v, this.hass)); this._pollRadar(); }, style: "width: 170px" })}
-        ${uiSelect({ label: "Counts people in", value: auto ? "" : item.room, style: "flex: 1",
-          options: [{ value: "", label: `The room it's in${auto && this._radarRoom ? ` (${this._radarRoom})` : ""}` }, ...rooms.map((n) => ({ value: n, label: n })), { value: "*", label: "Everywhere it sees" }],
-          onChange: (v) => { this._edit("room", v || undefined); this._pollRadar(); } })}
+        ${uiSelect({ label: "Counts people in", value: auto ? "auto" : item.room, style: "flex: 1",
+          // "auto", not "": HA's select shows an option with an empty value as blank.
+          options: [{ value: "auto", label: `The room it's in${auto && this._radarRoom ? ` (${this._radarRoom})` : ""}` }, ...rooms.map((n) => ({ value: n, label: n })), { value: "*", label: "Everywhere it sees" }],
+          onChange: (v) => { this._edit("room", v && v !== "auto" ? v : undefined); this._pollRadar(); } })}
       </div>
       <div class="muted small">The height turns what it measures - a straight line down to your chest - into distance across the floor; from 2 m up, someone a metre out otherwise reads 40 % too far. It sees through drywall, so targets outside the room are ignored (hollow dots here, and the wedge is filled only inside the room).</div>
       <div class="muted small">${dev ? html`Sees ${fmtLen(dev.range_m, this.hass)} out, ±${Math.round((dev.fov_deg || 120) / 2)}° either side (the range set on the device).${dev.installation_angle ? html` Its installation angle is set to ${dev.installation_angle}° on the device, which already turns the coordinates it reports: face this marker the way that turned frame points.` : nothing}` : "Pick the device, then turn the marker the way the sensor faces."}</div>

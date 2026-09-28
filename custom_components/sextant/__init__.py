@@ -3276,6 +3276,8 @@ def _radar_room(hass, layout, floor, radar):
     want = radar.get("room")
     if want == "*":
         return None, None
+    if want == "auto":
+        want = None
     scale = floor.get("scale")
     polys = [(name, poly) for name, poly, _b, no_go in _floor_zone_polygons(
         hass, [{"entity": "_radar", "data": layout}], "_radar", floor.get("name")) if not no_go]

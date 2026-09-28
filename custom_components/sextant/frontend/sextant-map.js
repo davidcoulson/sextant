@@ -1297,7 +1297,7 @@ export class SextantMap {
   _radarRoomZone(r) {
     if (r.room === "*") return null;
     const zones = (this.floor?.zones || []).filter((z) => !z.no_go && (z.cords || []).length >= 3);
-    if (r.room) { const named = zones.find((z) => z.entity_id === r.room); if (named) return named; }
+    if (r.room && r.room !== "auto") { const named = zones.find((z) => z.entity_id === r.room); if (named) return named; }
     const scale = this.floor?.scale || PX_PER_M_FALLBACK;
     const p = r.cords;
     const inside = (pts) => {
