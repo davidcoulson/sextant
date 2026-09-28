@@ -3258,6 +3258,55 @@ def _radar_claim(entity, floor_name, layout):
     return t
 
 
+# A sensor this close to a room (it is usually on the wall) is in that room;
+# a target this far outside its room still counts, since the walls are drawn
+# by hand and the radar's fixes jitter.
+RADAR_ROOM_AUTO_M = 0.5
+RADAR_ROOM_MARGIN_M = 0.3
+
+
+def _radar_room(hass, layout, floor, radar):
+    """The room a radar's targets are kept to: (name, polygon), or (None, None)
+    for no limit.
+
+    The radar's ``room`` is "*" for no limit, a room's name, or unset for the
+    room the sensor is in. This radar model sees through drywall: without the
+    limit, someone on the couch behind the office wall is a target too.
+    """
+    want = radar.get("room")
+    if want == "*":
+        return None, None
+    if want == "auto":
+        want = None
+    scale = floor.get("scale")
+    polys = [(name, poly) for name, poly, _b, no_go in _floor_zone_polygons(
+        hass, [{"entity": "_radar", "data": layout}], "_radar", floor.get("name")) if not no_go]
+    if want:
+        for name, poly in polys:
+            if name == want:
+                return name, poly
+    if not polys or not isinstance(scale, (int, float)) or scale <= 0:
+        return None, None
+    at = Point(float(radar["cords"]["x"]), float(radar["cords"]["y"]))
+    dist, name, poly = min(((poly.distance(at), name, poly) for name, poly in polys), key=lambda t: t[0])
+    return (name, poly) if dist <= RADAR_ROOM_AUTO_M * scale else (None, None)
+
+
+def _radar_targets(hass, layout, floor, radar, spec):
+    """One radar's targets on the plan, each marked ``outside`` when it is
+    beyond the radar's room (see _radar_room)."""
+    scale = floor["scale"]
+    room, poly = _radar_room(hass, layout, floor, radar)
+    margin = RADAR_ROOM_MARGIN_M * scale
+    out = []
+    for index, x, y, speed in radars_mod.read_targets(spec, hass.states.get):
+        px, py = radars_mod.to_plan(radar, x, y, scale)
+        outside = poly is not None and poly.distance(Point(px, py)) > margin
+        out.append({"index": index, "cords": [round(px, 1), round(py, 1)], "x_m": round(x, 2), "y_m": round(y, 2),
+                    "speed": speed, "outside": outside, "limit": room})
+    return out
+
+
 async def _radar_cycle(hass, layout, now=None):
     """Read every placed radar, pair its targets with things, publish the
     untracked count, and take automatic pins."""
@@ -3279,10 +3328,11 @@ async def _radar_cycle(hass, layout, now=None):
         spec = specs.get(radar["device_id"])
         if spec is None or not isinstance(scale, (int, float)) or scale <= 0:
             continue
-        for index, x, y, speed in radars_mod.read_targets(spec, hass.states.get):
-            px, py = radars_mod.to_plan(radar, x, y, scale)
+        for t in _radar_targets(hass, layout, floor, radar, spec):
+            if t["outside"]:
+                continue                     # behind a wall: someone else's room
             targets.append({"floor": floor["name"], "radar": radar.get("radar_id"), "radar_name": spec.get("name"),
-                            "index": index, "cords": [round(px, 1), round(py, 1)], "speed": speed, "thing": None})
+                            "index": t["index"], "cords": t["cords"], "speed": t["speed"], "thing": None})
     # Pair per floor, against each thing's Bluetooth fix from the last cycle.
     rows = [r for r in apitricords if isinstance(r, dict) and now - (r.get("updated") or 0) <= RADAR_FRESH_S]
     radius_m = _tuning(layout, "mmwave_pair_m")

@@ -182,3 +182,70 @@ def test_a_moving_target_makes_no_pin(tmp_path, monkeypatch):
     for dt in (0, 70, 140):
         _cycle(hass, st.get_layout(hass), t0 + dt)
     assert run(st.load_truth(hass)).get("marks", []) == []
+
+
+# --- mounting height and the room limit -------------------------------------------
+
+def test_the_mounting_height_turns_the_slant_into_floor_distance():
+    assert radars.floor_factor(0.0, 3.0, None) == 1.0, "unset: as reported"
+    assert radars.floor_factor(0.0, 3.0, 0.9) == 1.0, "no higher than a chest"
+    k = radars.floor_factor(0.0, 3.1623, 2.0)                    # 2 m up, 1 m above a chest
+    assert abs(3.1623 * k - 3.0) < 1e-3
+    assert radars.floor_factor(0.0, 0.8, 2.0) == 0.0, "closer than the height difference: under the sensor"
+    x, y = radars.to_plan({"cords": {"x": 0.0, "y": 0.0}, "heading": 180.0, "height_m": 2.0}, 0.0, 3.1623, 100.0)
+    assert (round(x), round(y)) == (0, 300), "facing down the plan, 3 m out across the floor"
+    assert abs(radars.floor_range_m(3.5, 2.0) - 3.354) < 1e-3
+
+
+def _two_rooms(tmp_path, room=None, target_in=(0.0, 196.85)):
+    """An Office above a Hall; the radar is in the Hall at (500, 900) facing
+    up, and its target is ``target_in`` inches ahead (5 m: in the Office)."""
+    hass, states = _hass(tmp_path, target_xy_in=target_in)
+    layout = st.get_layout(hass)
+    fl = layout["floor"][0]
+    fl["zones"] = [
+        {"entity_id": "Office", "poly": True, "cords": [{"x": 0, "y": 0}, {"x": 1000, "y": 0}, {"x": 1000, "y": 500}, {"x": 0, "y": 500}]},
+        {"entity_id": "Hall", "poly": True, "cords": [{"x": 0, "y": 500}, {"x": 1000, "y": 500}, {"x": 1000, "y": 1000}, {"x": 0, "y": 1000}]},
+    ]
+    if room is not None:
+        fl["radars"][0]["room"] = room
+    run(st.save_layout(hass, layout))
+    return hass
+
+
+def _untracked(hass):
+    written = {}
+    orig = sextant.update_sextant_sensor_state
+    sextant.update_sextant_sensor_state = lambda h, e, s, a=None: written.__setitem__(e, (s, a))
+    try:
+        run(sextant._radar_cycle(hass, st.get_layout(hass)))
+    finally:
+        sextant.update_sextant_sensor_state = orig
+    return written[sextant.UNTRACKED_ENTITY_ID][0]
+
+
+def test_a_target_through_the_wall_is_not_counted(tmp_path):
+    hass = _two_rooms(tmp_path)
+    assert _untracked(hass) == 0, "the radar is in the Hall; the target is in the Office"
+    assert sextant._radar_frame["targets"] == []
+
+
+def test_a_target_in_its_own_room_is_counted(tmp_path):
+    hass = _two_rooms(tmp_path, target_in=(0.0, 78.74))            # 2 m ahead: still the Hall
+    assert _untracked(hass) == 1
+
+
+def test_the_limit_can_be_another_room_or_none(tmp_path):
+    assert _untracked(_two_rooms(tmp_path, room="*")) == 1
+    assert _untracked(_two_rooms(tmp_path, room="Office")) == 1
+    assert _untracked(_two_rooms(tmp_path, room="Hall")) == 0
+
+
+def test_a_sensor_on_the_wall_belongs_to_the_room_beside_it(tmp_path):
+    hass = _two_rooms(tmp_path)
+    layout = st.get_layout(hass)
+    fl = layout["floor"][0]
+    radar = {**fl["radars"][0], "cords": {"x": 500.0, "y": 1030.0}}  # 0.3 m outside the Hall's bottom wall
+    assert sextant._radar_room(hass, layout, fl, radar)[0] == "Hall"
+    far = {**radar, "cords": {"x": 500.0, "y": 1100.0}}              # 1 m out: no room
+    assert sextant._radar_room(hass, layout, fl, far) == (None, None)

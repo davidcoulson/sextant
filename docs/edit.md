@@ -119,6 +119,18 @@ disagree on which side positive x is). An installation angle set on the
 device already turns the coordinates it reports, so face the marker the way
 that turned frame points.
 
+**Mount height** is how high the sensor is. It measures a straight line from
+there to your chest (about a metre up), so from 2 m up someone a metre out
+reads 40 % too far and someone 3 m out 5 % too far; with the height set,
+Sextant turns that into distance across the floor, and the wedge shows how
+far across the floor the range reaches. **Counts people in** keeps its
+targets to one room: by default the room the sensor is in (or on the wall
+of), any room you pick, or "Everywhere it sees". These sensors see through
+drywall, so without it someone on the other side of the wall is a target
+too. Targets outside the room are hollow dots while you check it, and the
+wedge is filled only inside the room. To stop it seeing past a doorway at
+all, lower the max distance on the device itself.
+
 Saved, a placed sensor does three things every cycle:
 
 - **Places things.** A thing whose Bluetooth fix is within
