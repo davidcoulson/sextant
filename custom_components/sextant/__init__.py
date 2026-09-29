@@ -3258,6 +3258,14 @@ def _radar_claim(entity, floor_name, layout):
     return t
 
 
+# What an mmWave target can be: a person or an animal - the radar sees bodies,
+# not objects. So only a thing that goes with one can claim a target: a phone
+# or a watch, a person, a pet (and an unclassified thing, which is usually a
+# phone nobody classed). An AirPods case or a Tile on the office desk sits a
+# metre from whoever is at the desk, and used to be the nearest fix to them:
+# it would claim the person, be moved onto them, and could become a pin.
+RADAR_CLAIM_CLASSES = frozenset({"", "phone", "watch", "person", "man", "woman", "child", "paw", "dog", "cat"})
+
 # A sensor this close to a room (it is usually on the wall) is in that room;
 # a target this far outside its room still counts, since the walls are drawn
 # by hand and the radar's fixes jitter.
@@ -3340,7 +3348,8 @@ async def _radar_cycle(hass, layout, now=None):
         scale = next((f.get("scale") for f in layout["floor"] if f.get("name") == floor), None)
         mine = [(i, tuple(t["cords"])) for i, t in enumerate(targets) if t["floor"] == floor]
         things = [(r["ent"], tuple(r.get("raw") or r.get("cords"))) for r in rows
-                  if r.get("floor") == floor and (r.get("raw") or r.get("cords"))]
+                  if r.get("floor") == floor and (r.get("raw") or r.get("cords"))
+                  and (r.get("robot") or thing_class(layout, r["ent"]) in RADAR_CLAIM_CLASSES)]
         pairs, _free = radars_mod.pair(mine, things, radius_m * scale)
         for i, ent in pairs.items():
             targets[i]["thing"] = ent

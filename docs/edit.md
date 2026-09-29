@@ -2,7 +2,7 @@
 
 # Edit
 
-![The Edit page: rooms, spots and proxies on the plan, with padlocks per layer and undo](../img/screenshots/sextant-edit.png)
+![The Edit page: rooms, spots, proxies, alignment anchors and an mmWave sensor's field of view on the plan, with padlocks per layer and undo](../img/screenshots/sextant-edit.png)
 
 A room can be linked to a **Home Assistant area** (and a floor to a Home
 Assistant floor): pick it on the selected room, or press **Link rooms to
@@ -135,7 +135,11 @@ Saved, a placed sensor does three things every cycle:
 
 - **Places things.** A thing whose Bluetooth fix is within
   `mmwave_pair_m` (1.5 m) of a target is put on the target, to a few tens of
-  centimetres. Its Live card says "placed by" the sensor.
+  centimetres. Its Live card says "placed by" the sensor. Only things that
+  go with a body can claim a target - a phone, a watch, a person, a pet, or
+  a thing with no class - because the radar sees people and animals, not
+  objects: headphones on the desk or a Tile on the shelf never take the
+  person sitting beside them.
 - **Takes location pins.** When a sensor sees exactly one target, one thing
   has claimed it, and both have been still for a minute, that is a location
   pin nobody had to tap - at most one per thing per half hour, never within

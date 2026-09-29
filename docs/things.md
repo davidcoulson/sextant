@@ -2,7 +2,7 @@
 
 # Things
 
-![The Things page: what is tracked, with its class icon, and everything Bermuda hears but does not track, with where the loudest proxy is](../img/screenshots/sextant-things.png)
+![The Things page: every tracked thing with its class icon, where it is, its height and its reference trim](../img/screenshots/sextant-things.png)
 
 Bermuda's device management without its options flow. **Add a thing…** asks
 what you are adding, because how a thing is followed depends on whether its
@@ -71,7 +71,7 @@ to say never takes a thing out of the running. The location sensor's
 `considered` list marks a thing left out this way with `on_charger`.
 
 
-## People
+## The People card
 
 Below the things, a **People** card lists each owner: where they read as
 being and how (by their things, the last place held while unheard, or a
