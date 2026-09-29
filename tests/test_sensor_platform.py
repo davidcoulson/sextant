@@ -215,3 +215,12 @@ def test_a_never_seen_thing_still_has_usable_location_attributes():
     other._attrs["room"] = "Kitchen"
     assert loc.extra_state_attributes["room"] == "unknown"
     assert sn.INITIAL_ATTRS["sextant_location"]["room"] == "unknown"
+
+
+def test_sextant_sensors_are_pushed_not_polled():
+    """Polled, Home Assistant wrote each sensor's state every 30 s whatever
+    the cycle had decided to write."""
+    from sextant import sensor as sensor_mod
+
+    for cls in (sensor_mod.CustomDistanceSensor, sensor_mod.SextantUntrackedSensor, sensor_mod.SextantAccuracySensor):
+        assert cls._attr_should_poll is False

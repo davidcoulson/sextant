@@ -279,6 +279,9 @@ def get_filtered_entities(hass):
     return list(filtered)
 
 class CustomDistanceSensor(SensorEntity):
+    # Pushed by the positioning cycle; there is nothing for Home Assistant to poll.
+    _attr_should_poll = False
+
     # last_heard moves every cycle a thing is heard. Left out of the recorder's
     # attribute rows so a day of it does not fill the database with copies of
     # attributes that differ only by a timestamp; presence is kept, it is the
@@ -327,6 +330,9 @@ class CustomDistanceSensor(SensorEntity):
         return self._attrs
 
 class SextantUntrackedSensor(SensorEntity):
+    # Pushed by the positioning cycle; there is nothing for Home Assistant to poll.
+    _attr_should_poll = False
+
     """How many people the mmWave radars see that no tracked thing accounts for.
 
     A guest, or someone whose phone is on the charger in another room. The
@@ -359,6 +365,9 @@ class SextantUntrackedSensor(SensorEntity):
 
 
 class SextantAccuracySensor(SensorEntity):
+    # Pushed by the positioning cycle; there is nothing for Home Assistant to poll.
+    _attr_should_poll = False
+
     """Receiver self-localization accuracy (CEP95 in metres), a global diagnostic.
 
     Its value is pushed by the backend loop (update_sextant_sensor_state sets

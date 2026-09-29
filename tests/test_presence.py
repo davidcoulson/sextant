@@ -139,7 +139,21 @@ def test_a_cycle_that_only_moves_last_heard_writes_once_a_minute():
     for k in range(5):                                   # 0, 15, 30, 45, 60 s
         _write(hass, "Kitchen", f"heard+{15 * k}", t0 + 15 * k)
     assert [w[1]["last_heard"] for w in s.writes] == ["heard+0", "heard+60"]
-    assert s._attrs["last_heard"] == "heard+60", "the sensor object always holds the latest"
+    assert s._attrs["last_heard"] == "heard+60"
+
+
+def test_between_writes_the_entity_holds_what_was_written():
+    """Home Assistant polls a sensor every 30 s and writes whatever it holds:
+    an entity holding a newer last_heard than the state machine would put the
+    write straight back."""
+    hass = make_hass()
+    s = _CountingSensor()
+    hass.data["sextant_sensors"] = {"sensor.e_sextant_room": s}
+    t0 = 1_000_000.0
+    _write(hass, "Kitchen", "a", t0)
+    _write(hass, "Kitchen", "b", t0 + 15)
+    _write(hass, "Kitchen", "c", t0 + 30)
+    assert len(s.writes) == 1 and s._attrs["last_heard"] == "a"
 
 
 def test_anything_else_changing_is_written_at_once_with_the_exact_last_heard():

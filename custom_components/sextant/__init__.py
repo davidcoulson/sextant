@@ -3100,20 +3100,27 @@ def update_sextant_sensor_state(hass, entity_id, state, attributes=None, now=Non
     sensor = sensors_cache.get(entity_id)
     if sensor is None:
         return
-    sensor._state = state
-    if attributes is not None:
-        sensor._attrs = attributes
     if getattr(sensor, "hass", None) is None:
         # Not added to HA (disabled in the registry, or not yet added). The
         # value is kept on the object so it is current if the entity is
         # enabled later; there is just no state machine to write to yet.
+        sensor._state = state
+        if attributes is not None:
+            sensor._attrs = attributes
         return
     now = time.time() if now is None else now
-    steady = _without_last_heard(getattr(sensor, "_attrs", None))
+    steady = _without_last_heard(attributes if attributes is not None else getattr(sensor, "_attrs", None))
     written = getattr(sensor, "_written", _NOT_WRITTEN)
     if (written is not _NOT_WRITTEN and written[0] == state and written[1] == steady
             and 0 <= now - written[2] < LAST_HEARD_WRITE_S):
-        return          # only last_heard moved, and it was written within the minute
+        # Only last_heard moved, and it was written within the minute. The
+        # entity keeps what was written: Home Assistant polls a sensor every
+        # 30 s and writes whatever it holds, so holding the newer timestamp
+        # here put the write straight back (measured: one every ~30 s).
+        return
+    sensor._state = state
+    if attributes is not None:
+        sensor._attrs = attributes
     sensor._written = (state, steady, now)
     sensor.async_write_ha_state()
 
