@@ -110,3 +110,56 @@ def test_last_heard_is_not_recorded_but_presence_is():
     from sextant import sensor as sensor_mod
     assert "last_heard" in sensor_mod.CustomDistanceSensor._unrecorded_attributes
     assert "presence" not in sensor_mod.CustomDistanceSensor._unrecorded_attributes
+
+
+# --- last_heard does not cost a state write every cycle ---------------------------
+
+class _CountingSensor:
+    def __init__(self):
+        self.hass = object()
+        self._state = None
+        self._attrs = {}
+        self.writes = []
+
+    def async_write_ha_state(self):
+        self.writes.append((self._state, dict(self._attrs)))
+
+
+def _write(hass, state, heard, now, presence="here", **extra):
+    sextant.update_sextant_sensor_state(
+        hass, "sensor.e_sextant_room", state,
+        {"presence": presence, "last_heard": heard, **extra}, now=now)
+
+
+def test_a_cycle_that_only_moves_last_heard_writes_once_a_minute():
+    hass = make_hass()
+    s = _CountingSensor()
+    hass.data["sextant_sensors"] = {"sensor.e_sextant_room": s}
+    t0 = 1_000_000.0
+    for k in range(5):                                   # 0, 15, 30, 45, 60 s
+        _write(hass, "Kitchen", f"heard+{15 * k}", t0 + 15 * k)
+    assert [w[1]["last_heard"] for w in s.writes] == ["heard+0", "heard+60"]
+    assert s._attrs["last_heard"] == "heard+60", "the sensor object always holds the latest"
+
+
+def test_anything_else_changing_is_written_at_once_with_the_exact_last_heard():
+    hass = make_hass()
+    s = _CountingSensor()
+    hass.data["sextant_sensors"] = {"sensor.e_sextant_room": s}
+    t0 = 1_000_000.0
+    _write(hass, "Kitchen", "a", t0)
+    _write(hass, "Dining", "b", t0 + 15)                       # the room changed
+    _write(hass, "Dining", "c", t0 + 30, presence="quiet")     # the presence changed
+    _write(hass, "Dining", "d", t0 + 45, presence="quiet", area_id="dining")   # another attribute
+    _write(hass, "Dining", "e", t0 + 50, presence="quiet", area_id="dining")   # only last_heard: waits
+    assert [(w[0], w[1]["last_heard"]) for w in s.writes] == [
+        ("Kitchen", "a"), ("Dining", "b"), ("Dining", "c"), ("Dining", "d")]
+
+
+def test_a_sensor_not_yet_in_home_assistant_keeps_the_value_without_writing():
+    hass = make_hass()
+    s = _CountingSensor()
+    s.hass = None
+    hass.data["sextant_sensors"] = {"sensor.e_sextant_room": s}
+    _write(hass, "Kitchen", "a", 1_000_000.0)
+    assert s.writes == [] and s._state == "Kitchen" and s._attrs["last_heard"] == "a"
