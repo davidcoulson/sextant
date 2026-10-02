@@ -548,6 +548,7 @@ class SextantLive extends LitElement {
   }
 
   async _loadTimeline(ent) {
+    if (!this._isAdmin()) return;   // where people have been: administrators only
     try {
       const r = await this.hass.callWS({ type: "sextant/history/timeline", entity: ent, hours: 24 });
       if (this._selected !== ent) return;   // selection moved on while this was in flight
@@ -560,6 +561,7 @@ class SextantLive extends LitElement {
   }
 
   async _loadMarks(ent) {
+    if (!this._isAdmin()) return;
     const r = await this.hass.callWS({ type: "sextant/truth/list", entity: ent }).catch(() => null);
     if (r && ent === this._selected) { this._marks = r.marks || []; this._pushMarks(); }
   }
@@ -579,7 +581,7 @@ class SextantLive extends LitElement {
         ? btn("mdi:home-import-outline", "Dock", `Tap where ${name}'s dock is`, this._marking, () => { this._marking = !this._marking; })
         : btn("mdi:map-marker-check", "Here", `Tap where ${name} really is`, this._marking, () => { this._marking = !this._marking; })}
       ${btn("mdi:fire", "Activity", `Where ${name} ${pn.has} spent ${pn.poss} time`, heatOn, () => this._loadHeat(ent, heatOn ? 0 : (this._lastHeatHours || 6)))}
-      ${btn("mdi:history", "History", `Scrub ${name}'s history`, h?.ent === ent, () => this._loadHistory(h?.ent === ent ? null : ent))}
+      ${this._isAdmin() ? btn("mdi:history", "History", `Scrub ${name}'s history`, h?.ent === ent, () => this._loadHistory(h?.ent === ent ? null : ent)) : nothing}
       ${this._isAdmin() ? btn("mdi:pencil-outline", "Edit", "Edit this thing", false, () => this._goto({ mode: "things", thing: ent })) : nothing}
     </div>
     ${this._marking ? this._renderMarkingPrompt(ent) : nothing}`;
@@ -599,7 +601,7 @@ class SextantLive extends LitElement {
   async _loadHeat(ent, hours) {
     this._heatHours = hours;
     if (hours) this._lastHeatHours = hours;
-    if (!ent || !hours) { this._heat = null; return; }
+    if (!ent || !hours || !this._isAdmin()) { this._heat = null; return; }
     try {
       const now = Date.now() / 1000;
       const r = await this.hass.callWS({ type: "sextant/history/get", entity: ent, from: now - hours * 3600, max_points: 20000 });
@@ -623,6 +625,7 @@ class SextantLive extends LitElement {
   }
 
   _renderHeat(sel) {
+    if (!this._isAdmin()) return nothing;
     const h = this._heat?.ent === sel.ent ? this._heat : null;
     const here = h?.byFloor[this.floor];
     const elsewhere = h ? Object.entries(h.byFloor).filter(([f]) => f !== this.floor).map(([f, v]) => `${f} ${shortSpan(v.total)}`) : [];
@@ -1042,7 +1045,7 @@ class SextantLive extends LitElement {
   }
 
   async _loadHistory(ent) {
-    if (!ent) { this._history = null; this._scrub = null; this._map?.clearTrails(); return; }
+    if (!ent || !this._isAdmin()) { this._history = null; this._scrub = null; this._map?.clearTrails(); return; }
     try {
       const r = await this.hass.callWS({ type: "sextant/history/get", entity: ent, max_points: 3000 });
       // f and z index into r.floors / r.zones (the record is a table of small ints).

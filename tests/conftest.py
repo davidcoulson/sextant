@@ -251,6 +251,13 @@ def _install_homeassistant_stubs():
         result_message=lambda msg_id, result=None: {"id": msg_id, "type": "result", "success": True, "result": result},
     )
     _module("homeassistant.helpers.template", Template=object)
+
+    def _register_admin_service(hass, domain, service, func, schema=None, supports_response=None, **_kw):
+        # Recorded so tests can assert which services carry the admin gate.
+        hass.data.setdefault("_admin_services", set()).add(service)
+        hass.services.async_register(domain, service, func, schema=schema)
+
+    _module("homeassistant.helpers.service", async_register_admin_service=_register_admin_service)
     _module(
         "homeassistant.core", HomeAssistant=object, ServiceCall=object, callback=lambda f: f,
         ServiceResponse=dict, SupportsResponse=types.SimpleNamespace(NONE="none", ONLY="only", OPTIONAL="optional"),

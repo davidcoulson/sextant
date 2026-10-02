@@ -622,6 +622,7 @@ async def ws_truth_mark(hass, connection, msg):
 
 
 @websocket_api.websocket_command({vol.Required("type"): "sextant/truth/list", vol.Optional("entity"): str})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_truth_list(hass, connection, msg):
     store = await load_truth(hass)
@@ -722,6 +723,7 @@ def _history(hass):
 
 
 @websocket_api.websocket_command({vol.Required("type"): "sextant/history/index"})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_history_index(hass, connection, msg):
     if _history_denied(hass, connection, msg):
@@ -744,6 +746,7 @@ async def ws_history_index(hass, connection, msg):
     vol.Optional("to"): vol.Coerce(float),
     vol.Optional("max_points"): vol.Coerce(int),
 })
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_history_get(hass, connection, msg):
     if _history_denied(hass, connection, msg):
@@ -766,6 +769,7 @@ async def ws_history_get(hass, connection, msg):
     vol.Required("entity"): str,
     vol.Optional("hours"): vol.All(vol.Coerce(float), vol.Range(min=0.1, max=24 * 31)),
 })
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_history_timeline(hass, connection, msg):
     """Where one thing has been, as stays: floor, room, spot, from - to.

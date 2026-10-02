@@ -6,6 +6,7 @@ from aiohttp import web
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.components.frontend import async_remove_panel
 from homeassistant.components import panel_custom
+from homeassistant.helpers.service import async_register_admin_service
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.dispatcher import async_dispatcher_connect, async_dispatcher_send
 from homeassistant.components import websocket_api
@@ -5409,7 +5410,10 @@ def _register_calibration_services(hass) -> None:
         else:
             _LOGGER.info("sextant.set_receiver_heights: %d receiver(s) updated", changed)
 
-    hass.services.async_register(
+    # Admin services: Home Assistant lets any signed-in user call an ordinary
+    # service. A call made by a person must come from an administrator;
+    # automations and scripts carry no user and keep working.
+    async_register_admin_service(hass, 
         DOMAIN, "start_calibration", _start,
         schema=vol.Schema({
             vol.Required("floor"): cv.string,
@@ -5418,12 +5422,12 @@ def _register_calibration_services(hass) -> None:
             ),
         }),
     )
-    hass.services.async_register(DOMAIN, "cancel_calibration", _cancel, schema=vol.Schema({}))
-    hass.services.async_register(
+    async_register_admin_service(hass, DOMAIN, "cancel_calibration", _cancel, schema=vol.Schema({}))
+    async_register_admin_service(hass, 
         DOMAIN, "apply_corrections", _apply,
         schema=vol.Schema({vol.Optional("floor"): cv.string}),
     )
-    hass.services.async_register(
+    async_register_admin_service(hass, 
         DOMAIN, "reset_corrections", _reset,
         schema=vol.Schema({vol.Optional("floor"): cv.string}),
     )
@@ -5516,7 +5520,7 @@ def _register_calibration_services(hass) -> None:
                      action, floor_name, summary, touched)
         return {"floor": floor_name, "action": action, "cells_painted": touched, "field": summary}
 
-    hass.services.async_register(
+    async_register_admin_service(hass, 
         DOMAIN, "set_floor_bias_field", _bias_field,
         schema=vol.Schema({
             vol.Required("floor"): cv.string,
@@ -5531,18 +5535,18 @@ def _register_calibration_services(hass) -> None:
         }),
         supports_response=SupportsResponse.OPTIONAL,
     )
-    hass.services.async_register(
+    async_register_admin_service(hass, 
         DOMAIN, "set_auto_calibration", _auto,
         schema=vol.Schema({vol.Required("enabled"): cv.boolean}),
     )
     heights_schema = vol.Schema({
         vol.Required("heights"): vol.Schema({cv.string: vol.All(vol.Coerce(float), vol.Range(min=0, max=5))}),
     })
-    hass.services.async_register(DOMAIN, "set_thing_heights", _thing_heights, schema=heights_schema)
+    async_register_admin_service(hass, DOMAIN, "set_thing_heights", _thing_heights, schema=heights_schema)
     # What a thing is called was "tracker" until 3.12.0. The old service name
     # stays registered so an automation written against it keeps working.
-    hass.services.async_register(DOMAIN, "set_tracker_heights", _thing_heights, schema=heights_schema)
-    hass.services.async_register(
+    async_register_admin_service(hass, DOMAIN, "set_tracker_heights", _thing_heights, schema=heights_schema)
+    async_register_admin_service(hass, 
         DOMAIN, "set_receiver_heights", _heights,
         schema=vol.Schema({
             vol.Optional("heights", default=dict): vol.Schema({cv.string: vol.Coerce(float)}),
@@ -5554,7 +5558,7 @@ def _register_calibration_services(hass) -> None:
         """Change positioning tuning live (TUNING_SPEC), through the store."""
         await async_apply_tuning(hass, call.data.get("settings") or {}, bool(call.data.get("reset")))
 
-    hass.services.async_register(
+    async_register_admin_service(hass, 
         DOMAIN, "set_tuning", _set_tuning,
         schema=vol.Schema({
             vol.Optional("settings", default=dict): dict,
