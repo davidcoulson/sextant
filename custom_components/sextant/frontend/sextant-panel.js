@@ -1174,7 +1174,7 @@ class SextantLive extends LitElement {
                     ? uiIconButton({ icon: "mdi:timer-sand", disabled: true, title: `Not heard for ${fmtAge(this._state(sel).age)}: nothing recent to correct. "${this._label(sel.ent)} is actually here…" comes back once ${this._pn(sel.ent).subj} ${this._pn(sel.ent).is} heard again`, onClick: () => {} })
                     : uiIconButton({ icon: "mdi:map-marker-check", active: this._marking, title: this._marking ? `Marking where ${this._label(sel.ent)} really is - tap the plan` : `${this._label(sel.ent)} is actually here… Tell Sextant where ${this._pn(sel.ent).subj} really ${this._pn(sel.ent).is}; the last few minutes are re-solved under every setting to show which fits best`, onClick: () => { this._marking = !this._marking; } })}
                 ${this._isAdmin() ? uiIconButton({ icon: "mdi:pencil-outline", title: `Edit ${this._label(sel.ent)}: name, class, icon, owner`, onClick: () => this._goto({ mode: "things", thing: sel.ent }) }) : nothing}
-                ${uiIconButton({ icon: "mdi:history", title: `Scrub history: replay where ${this._label(sel.ent)} has been on the plan`, disabled: h?.ent === sel.ent, onClick: () => this._loadHistory(sel.ent) })}
+                ${this._isAdmin() ? uiIconButton({ icon: "mdi:history", title: `Scrub history: replay where ${this._label(sel.ent)} has been on the plan`, disabled: h?.ent === sel.ent, onClick: () => this._loadHistory(sel.ent) }) : nothing}
                 <button class="iconbtn" title="Close" aria-label="Close" @click=${() => this._select(null)}><ha-icon icon="mdi:close"></ha-icon></button>
               </span></h4>
             <dl>
