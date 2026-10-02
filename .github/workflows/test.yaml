@@ -5,6 +5,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+# The jobs only read the code; keep the token read-only.
+permissions:
+  contents: read
+
 jobs:
   python:
     name: Python compile + unit tests
