@@ -421,15 +421,17 @@ def test_advice_reports_rooms_and_unplaced_scanners(tmp_path, monkeypatch):
 
 def test_every_write_and_bermuda_command_requires_admin():
     """Any signed-in user can open a websocket; only administrators may change
-    the layout, tuning, things, history or Bermuda, or list every address
-    Bermuda hears. Readers stay open so the Live page works for everyone."""
+    the layout, tuning, things, history or Bermuda, list every address Bermuda
+    hears, or read where people have been. The live feed and the layout stay
+    open so the Live page and the dashboard map card work for everyone."""
     admin = {f.__name__ for f in ws.COMMANDS if getattr(f, "_ws_admin", False)}
     open_ = {f.__name__ for f in ws.COMMANDS if not getattr(f, "_ws_admin", False)}
     assert {"ws_layout_save", "ws_tuning_set", "ws_thing_tune", "ws_truth_mark", "ws_truth_delete",
             "ws_truth_apply", "ws_history_clear", "ws_calibration_action", "ws_adjust_zones",
             "ws_kpi_baseline_save", "ws_kpi_baseline_delete"} <= admin
     assert not any(name.startswith("ws_bermuda_") for name in open_)
-    assert {"ws_layout_get", "ws_history_get", "ws_history_timeline", "ws_calibration_status", "ws_selftest",
+    assert {"ws_history_get", "ws_history_timeline", "ws_history_index", "ws_truth_list"} <= admin
+    assert {"ws_layout_get", "ws_calibration_status", "ws_selftest",
             "ws_advice", "ws_receivers", "ws_kpi"} <= open_
 
 

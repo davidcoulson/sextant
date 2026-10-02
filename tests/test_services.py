@@ -138,3 +138,10 @@ def test_bias_field_refusals_name_what_is_wrong(tmp_path):
         run(h["set_floor_bias_field"](_Call(floor="F", action="paint", value=2)))
     # A refused paint must not leave a half-laid field behind in the store.
     assert "bias_field" not in st.get_layout(hass)["floor"][0]
+
+
+def test_every_service_is_an_admin_service(tmp_path):
+    """Any signed-in user may call an ordinary service; these change the
+    layout and calibration, so each must be registered as an admin service."""
+    hass, handlers = _hass(tmp_path)
+    assert handlers and set(handlers) == hass.data["_admin_services"]

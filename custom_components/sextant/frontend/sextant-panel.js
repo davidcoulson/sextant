@@ -548,9 +548,10 @@ class SextantLive extends LitElement {
   }
 
   async _loadTimeline(ent) {
+    if (!this._isAdmin()) return;   // where people have been: administrators only
     try {
       const r = await this.hass.callWS({ type: "sextant/history/timeline", entity: ent, hours: 24 });
-      if (this._selected !== ent) return;   // selection moved on while this was in flight
+      if (this._selected !== ent || !this._isAdmin()) return;   // selection or access changed while in flight
       this._timeline = { ent, at: Date.now(), ...r };
     } catch (_e) {
       // Older backend: the card just leaves the timeline out. Marked failed
@@ -560,8 +561,9 @@ class SextantLive extends LitElement {
   }
 
   async _loadMarks(ent) {
+    if (!this._isAdmin()) return;
     const r = await this.hass.callWS({ type: "sextant/truth/list", entity: ent }).catch(() => null);
-    if (r && ent === this._selected) { this._marks = r.marks || []; this._pushMarks(); }
+    if (r && ent === this._selected && this._isAdmin()) { this._marks = r.marks || []; this._pushMarks(); }
   }
 
   /**
@@ -579,7 +581,7 @@ class SextantLive extends LitElement {
         ? btn("mdi:home-import-outline", "Dock", `Tap where ${name}'s dock is`, this._marking, () => { this._marking = !this._marking; })
         : btn("mdi:map-marker-check", "Here", `Tap where ${name} really is`, this._marking, () => { this._marking = !this._marking; })}
       ${btn("mdi:fire", "Activity", `Where ${name} ${pn.has} spent ${pn.poss} time`, heatOn, () => this._loadHeat(ent, heatOn ? 0 : (this._lastHeatHours || 6)))}
-      ${btn("mdi:history", "History", `Scrub ${name}'s history`, h?.ent === ent, () => this._loadHistory(h?.ent === ent ? null : ent))}
+      ${this._isAdmin() ? btn("mdi:history", "History", `Scrub ${name}'s history`, h?.ent === ent, () => this._loadHistory(h?.ent === ent ? null : ent)) : nothing}
       ${this._isAdmin() ? btn("mdi:pencil-outline", "Edit", "Edit this thing", false, () => this._goto({ mode: "things", thing: ent })) : nothing}
     </div>
     ${this._marking ? this._renderMarkingPrompt(ent) : nothing}`;
@@ -599,11 +601,11 @@ class SextantLive extends LitElement {
   async _loadHeat(ent, hours) {
     this._heatHours = hours;
     if (hours) this._lastHeatHours = hours;
-    if (!ent || !hours) { this._heat = null; return; }
+    if (!ent || !hours || !this._isAdmin()) { this._heat = null; return; }
     try {
       const now = Date.now() / 1000;
       const r = await this.hass.callWS({ type: "sextant/history/get", entity: ent, from: now - hours * 3600, max_points: 20000 });
-      if (this._selected !== ent || this._heatHours !== hours) return;
+      if (this._selected !== ent || this._heatHours !== hours || !this._isAdmin()) return;
       const points = (r.t || []).map((t, i) => ({
         t, x: r.x_m[i], y: r.y_m[i], gap: r.gap?.[i] || 0,
         f: typeof r.f?.[i] === "number" ? r.floors?.[r.f[i]] : r.f?.[i],
@@ -623,6 +625,7 @@ class SextantLive extends LitElement {
   }
 
   _renderHeat(sel) {
+    if (!this._isAdmin()) return nothing;
     const h = this._heat?.ent === sel.ent ? this._heat : null;
     const here = h?.byFloor[this.floor];
     const elsewhere = h ? Object.entries(h.byFloor).filter(([f]) => f !== this.floor).map(([f, v]) => `${f} ${shortSpan(v.total)}`) : [];
@@ -691,6 +694,18 @@ class SextantLive extends LitElement {
   async _loadLinks() {
     const r = await this.hass.callWS({ type: "sextant/beacon_links" }).catch(() => null);
     if (r) this._links = r.beacons || [];
+  }
+
+  willUpdate(changed) {
+    // Where people have been is for administrators. If this user is not one
+    // (or stops being one while the page is open), drop anything already
+    // loaded; the loaders below also discard answers that arrive afterwards.
+    if (changed.has("hass") && !this._isAdmin() &&
+        (this._timeline || this._marks.length || this._truth || this._history || this._heat || this._scrub != null)) {
+      this._timeline = null; this._marks = []; this._truth = null;
+      this._history = null; this._scrub = null; this._heat = null; this._heatHours = 0;
+      this._map?.clearTrails();
+    }
   }
 
   updated(changed) {
@@ -1042,9 +1057,10 @@ class SextantLive extends LitElement {
   }
 
   async _loadHistory(ent) {
-    if (!ent) { this._history = null; this._scrub = null; this._map?.clearTrails(); return; }
+    if (!ent || !this._isAdmin()) { this._history = null; this._scrub = null; this._map?.clearTrails(); return; }
     try {
       const r = await this.hass.callWS({ type: "sextant/history/get", entity: ent, max_points: 3000 });
+      if (!this._isAdmin()) return;   // access changed while this was in flight
       // f and z index into r.floors / r.zones (the record is a table of small ints).
       const points = (r.t || []).map((t, i) => ({
         t, x: r.x_m[i], y: r.y_m[i],
