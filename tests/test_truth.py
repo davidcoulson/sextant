@@ -155,3 +155,22 @@ def test_rebase_takes_the_vertical_leg_off_again():
     (out,) = truth.rebase([s], mult, rx_at, 0.5)
     assert abs(out["floors"]["F"]["weighted"][0][2] - 100.0 * (2.0 ** 2 - 1.2 ** 2) ** 0.5) < 1e-9
     assert out["floors"]["F"]["weighted"][0][4] == 200.0  # the slant stays the slant
+
+
+def test_the_buffer_holds_its_points_as_tuples_the_collector_ignores():
+    """A tuple that holds only numbers is dropped from the cyclic collector's
+    books at its first collection; a list never is. The buffer is 48 samples
+    per thing of these, replaced continuously."""
+    import gc
+
+    from sextant import truth as truth_mod
+
+    buf = truth_mod.Buffer()
+    buf.remember("e", [{"floor": "F", "weighted": [[1, 2, 3, 0.5], [4.0, 5.0, 6.0, 1.0]], "bounds": [0, 0, 10, 10],
+                        "min_wr": 0.001, "scale": 100.0}], {"rx": 1.5}, 1.0, "fused", now=100.0)
+    fj = buf.samples("e")[0]["floors"]["F"]
+    assert fj["weighted"] == ((1.0, 2.0, 3.0, 0.5), (4.0, 5.0, 6.0, 1.0))
+    assert fj["bounds"] == (0.0, 0.0, 10.0, 10.0)
+    gc.collect()
+    assert not gc.is_tracked(fj["weighted"]) and not gc.is_tracked(fj["weighted"][0])
+    assert not gc.is_tracked(fj["bounds"])

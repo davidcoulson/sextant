@@ -61,13 +61,18 @@ class Buffer:
     def remember(self, entity, jobs, thing_vec, gain, estimator, now=None, raw_vec=None):
         floors = {}
         for job in jobs:
-            weighted = [[float(v) for v in pt] for pt in job.get("weighted") or []]
+            # Tuples of floats, not lists: CPython's cyclic collector stops
+            # tracking a tuple that holds only numbers, so these cost it nothing.
+            # As lists, the buffer's 48 samples per thing were ~26,000 objects
+            # for every full collection to walk (a quarter of a second each, on
+            # a house with 400,000 of them in play).
+            weighted = tuple(tuple(float(v) for v in pt) for pt in job.get("weighted") or ())
             if not weighted:
                 continue
             bounds = job.get("bounds")
             floors[job["floor"]] = {
                 "weighted": weighted,
-                "bounds": None if bounds is None else [float(v) for v in bounds],
+                "bounds": None if bounds is None else tuple(float(v) for v in bounds),
                 "min_wr": float(job.get("min_wr") or 1e-3),
                 "scale": float(job.get("scale") or 0.0),
             }

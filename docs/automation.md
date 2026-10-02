@@ -27,7 +27,7 @@ lookup:
 | `floor` | the elected floor |
 | `area_id`, `floor_id` | the linked Home Assistant area and floor, or `None` where unlinked |
 | `presence` | `here` (heard within `stale_after_secs`, 2 min), `quiet` (until `away_after_secs`, 15 min), `away` — on every one of the five sensors |
-| `last_heard` | when the thing was last heard, ISO 8601 UTC; not recorded, since it moves every cycle |
+| `last_heard` | when the thing was last heard, ISO 8601 UTC, to within a minute: while it is the only thing changing it is written once a minute rather than every cycle, and exactly whenever the state or another attribute changes; not recorded |
 
 When the state is a spot, `room` is the room that spot belongs to rather
 than the separately elected room. The two disagree for a cycle or so while

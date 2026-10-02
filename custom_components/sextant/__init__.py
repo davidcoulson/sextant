@@ -3075,7 +3075,24 @@ def _sensor_is_live(hass, entity_id):
     return sensor is not None and getattr(sensor, "hass", None) is not None
 
 
-def update_sextant_sensor_state(hass, entity_id, state, attributes=None):
+# last_heard moves every cycle a thing is heard, and it is on all five of a
+# thing's sensors. Written every time, that was 97 % of Sextant's state changes
+# and a fifth of the whole house's (7.3 a second of 36): a new State, Context
+# and Event each, for a timestamp. When last_heard is ALL that changed, the
+# write waits until the last one is this old. Anything else - the state, the
+# presence, any other attribute - is written at once, with the exact
+# last_heard of that moment.
+LAST_HEARD_WRITE_S = 60.0
+_NOT_WRITTEN = object()
+
+
+def _without_last_heard(attributes):
+    if not isinstance(attributes, dict) or "last_heard" not in attributes:
+        return attributes
+    return {k: v for k, v in attributes.items() if k != "last_heard"}
+
+
+def update_sextant_sensor_state(hass, entity_id, state, attributes=None, now=None):
     """Update state (and optional extra attributes) on a registered Sextant SensorEntity."""
     sensors_cache = hass.data.get("sextant_sensors")
     if not sensors_cache:
@@ -3083,14 +3100,28 @@ def update_sextant_sensor_state(hass, entity_id, state, attributes=None):
     sensor = sensors_cache.get(entity_id)
     if sensor is None:
         return
-    sensor._state = state
-    if attributes is not None:
-        sensor._attrs = attributes
     if getattr(sensor, "hass", None) is None:
         # Not added to HA (disabled in the registry, or not yet added). The
         # value is kept on the object so it is current if the entity is
         # enabled later; there is just no state machine to write to yet.
+        sensor._state = state
+        if attributes is not None:
+            sensor._attrs = attributes
         return
+    now = time.time() if now is None else now
+    steady = _without_last_heard(attributes if attributes is not None else getattr(sensor, "_attrs", None))
+    written = getattr(sensor, "_written", _NOT_WRITTEN)
+    if (written is not _NOT_WRITTEN and written[0] == state and written[1] == steady
+            and 0 <= now - written[2] < LAST_HEARD_WRITE_S):
+        # Only last_heard moved, and it was written within the minute. The
+        # entity keeps what was written: Home Assistant polls a sensor every
+        # 30 s and writes whatever it holds, so holding the newer timestamp
+        # here put the write straight back (measured: one every ~30 s).
+        return
+    sensor._state = state
+    if attributes is not None:
+        sensor._attrs = attributes
+    sensor._written = (state, steady, now)
     sensor.async_write_ha_state()
 
 async def process_single_entity(hass, new_global_data, eids):

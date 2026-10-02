@@ -229,8 +229,9 @@ actions:
 
 ### Seconds since a thing was heard
 
-`last_heard` is a timestamp so it costs nothing while a thing is still. A
-number for a dashboard or a condition:
+`last_heard` is a timestamp, good to within a minute (it is written once a
+minute while nothing else about the thing changes). A number for a dashboard
+or a condition:
 
 ```yaml
 template:
@@ -399,6 +400,6 @@ hours_to_show: 12
 - **A restart re-stamps every restored entity as fresh**, so a tracker that
   is frozen looks alive for `gps_stale_secs` after each restart. Put the
   source you trust most first.
-- **`last_heard` is not recorded** (it changes every fifteen seconds while a
-  thing is heard); `presence` is, so history and the logbook show a thing
+- **`last_heard` is not recorded** (it moves every minute while a thing is
+  heard); `presence` is, so history and the logbook show a thing
   going quiet and coming back.
