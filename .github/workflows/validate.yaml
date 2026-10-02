@@ -6,6 +6,10 @@ on:
   schedule:
     - cron:  '0 0 * * *'
 
+# The jobs only read the code; keep the token read-only.
+permissions:
+  contents: read
+
 jobs:
   validate:
     name: Hassfest
