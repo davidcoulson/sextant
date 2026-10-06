@@ -14,8 +14,8 @@ import { sharedStyles, widgetStyles, fmtAge, fmtNum, toast, callWS, confirmDialo
 // A far move is a room change to a room on the same floor whose outline is
 // more than 2.5 m from the previous room's. Walked, it passes through
 // somewhere in between; one the plan never saw in between is a position
-// that jumped. Pets in the house this was built on make 3 to 15 a day,
-// half of them lasting under two minutes.
+// that jumped. Each pet in the house this was built on makes about ten a
+// day; a rise after a change is what matters, not the level.
 const FAR_MOVES_HELP = "Moves per day to a room on the same floor that is not a neighbour (outlines more than 2.5 m apart). Walked moves pass through a room in between; these did not, so they are the ones to watch.";
 const QUIET_SECS = 120;   // online, but nothing heard for this long: "quiet"
 
