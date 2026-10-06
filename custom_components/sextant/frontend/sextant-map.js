@@ -536,7 +536,14 @@ export class SextantMap {
       this._fitted = false;
       if (imageUrl) {
         const img = new Image();
-        img.onload = () => { if (this.imageUrl === imageUrl) { this.image = img; this._fitted = false; this.invalidate(); } };
+        img.onload = () => {
+          if (this.imageUrl !== imageUrl) return;
+          this.image = img; this._fitted = false; this.invalidate();
+          // The plan arrived after the floor was shown and the next draw
+          // re-fits to it: a host that had zoomed in (the quick-pin ring on
+          // a room) gets to zoom again.
+          if (this.host.onFloorReady) this.host.onFloorReady();
+        };
         img.onerror = () => this.invalidate();
         // Floor plans come from an authenticated API path, which an <img>
         // cannot send a token to: fetch them with the host's authenticated
@@ -1033,6 +1040,9 @@ export class SextantMap {
     this._drawProxyPeeks(ctx);
     this._flushLabels(ctx);
     ctx.restore();
+    // Every frame is a chance the view moved: the host's own overlays (the
+    // quick-pin ring's "Couch · Great Room") follow the plan under them.
+    if (this.host.onView) this.host.onView(this.view);
   }
 
   /** The floor plan with the dark-theme filter already applied, made once per
