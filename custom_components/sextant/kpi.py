@@ -12,6 +12,9 @@ from __future__ import annotations
 import statistics
 from collections import Counter
 from datetime import datetime
+from itertools import combinations
+
+from shapely.geometry import Polygon
 
 SUFFIXES = ("_sextant_room", "_sextant_floor")
 # Older recorder history and saved baselines use the names before the
@@ -33,6 +36,44 @@ def canonical_group(name):
     return canonical("_" + name).lstrip("_")
 DEAD_STATES = {"unknown", "unavailable", "", None}
 
+# Two rooms on one floor are neighbours when their outlines come within this
+# many metres: touching rooms, and rooms either side of a hallway or a
+# doorway strip too narrow to register as a room of its own. A move between
+# rooms that are further apart than that, on the same floor, is a "far move".
+# Walked, a far move takes long enough that the thing should have been seen
+# somewhere between; a far move that was not is a position that jumped.
+NEIGHBOUR_REACH_M = 2.5
+
+
+def room_neighbours(layout, reach_m=NEIGHBOUR_REACH_M):
+    """Which rooms count as neighbours, from the layout's room outlines.
+
+    Returns ``{"floor": {room_name: floor_name}, "pairs": {frozenset(a, b)}}``
+    for the rooms drawn on each floor. Room names are what the room sensors
+    report as their state, so the result keys straight into recorder history.
+    """
+    floors, polys = {}, {}
+    for floor in (layout or {}).get("floor") or []:
+        scale = floor.get("scale")
+        if not isinstance(scale, (int, float)) or scale <= 0:
+            continue
+        for zone in floor.get("zones") or []:
+            pts = [(p["x"] / scale, p["y"] / scale) for p in zone.get("cords") or [] if "x" in p and "y" in p]
+            name = zone.get("entity_id")
+            if len(pts) < 3 or not name:
+                continue
+            poly = Polygon(pts).buffer(0)
+            if poly.is_empty:
+                continue
+            polys[name] = poly
+            floors[name] = floor.get("name")
+    pairs = {
+        frozenset((a, b))
+        for a, b in combinations(polys, 2)
+        if floors[a] == floors[b] and polys[a].distance(polys[b]) <= reach_m
+    }
+    return {"floor": floors, "pairs": pairs}
+
 
 def _parse_ts(value):
     """ISO-8601 (HA's format, with offset) or an aware datetime -> aware datetime."""
@@ -42,12 +83,17 @@ def _parse_ts(value):
     return datetime.fromisoformat(text)
 
 
-def compute_metrics(rows, window_hours=None):
+def compute_metrics(rows, window_hours=None, neighbours=None):
     """Stability metrics for one entity's history.
 
     ``rows`` is a chronological list of ``{"state", "last_changed"}`` (the
     first row being the state at the window start). Consecutive duplicate
     states collapse first, so a re-report of the same value is not a change.
+
+    With ``neighbours`` (from ``room_neighbours``) the far moves are counted
+    too: changes between two rooms on the same floor that are not
+    neighbours. Without it, or for a sensor whose states are not rooms, the
+    far-move fields are None.
     """
     seq = []
     for row in rows:
@@ -92,6 +138,13 @@ def compute_metrics(rows, window_hours=None):
     for (a, b), n in transitions.items():
         pairs[tuple(sorted((a, b)))] += n
 
+    far = None
+    if neighbours:
+        floor_of, near = neighbours.get("floor") or {}, neighbours.get("pairs") or set()
+        placed = [(a, b) for (a, b), n in transitions.items() for _ in range(n) if a in floor_of and b in floor_of]
+        if placed:
+            far = sum(1 for a, b in placed if floor_of[a] == floor_of[b] and frozenset((a, b)) not in near)
+
     return {
         "changes": changes,
         "hours": round(hours, 3),
@@ -103,6 +156,9 @@ def compute_metrics(rows, window_hours=None):
         "dead": dead,
         "states": len({s for _ts, s in seq if s not in DEAD_STATES}),
         "top_pairs": [{"pair": list(pair), "count": n} for pair, n in pairs.most_common(3)],
+        "far_moves": far,
+        "far_moves_per_day": round(far * 24.0 / hours, 2) if far is not None and hours else None,
+        "far_move_ratio": round(far / changes, 3) if far is not None and changes else None,
     }
 
 
@@ -117,12 +173,17 @@ def summarise(per_entity):
         flips = sum(m["flips"] for m in members.values())
         hours = sum(m["hours"] for m in members.values())
         dwells = [m["median_dwell_s"] for m in members.values() if m["median_dwell_s"] is not None]
+        far_known = [m for m in members.values() if m.get("far_moves") is not None]
+        far = sum(m["far_moves"] for m in far_known)
+        far_hours = sum(m["hours"] for m in far_known)
         out[suffix.lstrip("_")] = {
             "entities": len(members),
             "changes": changes,
             "changes_per_thing_hour": round(changes / hours, 2) if hours else None,
             "flip_ratio": round(flips / changes, 3) if changes else None,
             "median_of_median_dwell_s": round(statistics.median(dwells), 1) if dwells else None,
+            "far_moves": far if far_known else None,
+            "far_moves_per_thing_day": round(far * 24.0 / far_hours, 2) if far_known and far_hours else None,
         }
     return out
 
@@ -143,8 +204,8 @@ def rows_from_recorder(states):
     return rows
 
 
-DELTA_METRICS = ("changes_per_hour", "flip_ratio", "median_dwell_s", "short_dwell_ratio", "dead")
-SUMMARY_DELTA_METRICS = ("changes_per_thing_hour", "flip_ratio", "median_of_median_dwell_s")
+DELTA_METRICS = ("changes_per_hour", "flip_ratio", "median_dwell_s", "short_dwell_ratio", "dead", "far_moves_per_day")
+SUMMARY_DELTA_METRICS = ("changes_per_thing_hour", "flip_ratio", "median_of_median_dwell_s", "far_moves_per_thing_day")
 
 
 def _num(value):

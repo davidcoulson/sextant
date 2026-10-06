@@ -5,9 +5,14 @@
 ![The Tuning page: the stability KPI with saved baselines above every tuning knob grouped by what it affects](../img/screenshots/sextant-tuning.png)
 
 The **stability KPI** reads the recorder for any window and reports, per
-thing, room changes per hour, the share that were A → B → A flips, and
-the median dwell. Save a window as a named baseline and compare later
-windows against it; the deltas turn green where the window is better. Every
+thing, room changes per hour, the share that were A → B → A flips, the
+median dwell, and *far moves* per day: changes to a room on the same floor
+whose outline is more than 2.5 m from the previous room's. A walked move
+between such rooms passes through a room in between, so a far move the plan
+never saw in between is a position that jumped; about one a day per pet is
+normal in a house with rooms opening onto a hall. Save a window as a named
+baseline and compare later windows against it; the deltas turn green where
+the window is better. Every
 [tuning key](tuning.md#tuning-reference) is below it with a plain label, its meaning
 on hover and the key underneath, grouped by estimator, solver, rooms,
 spots, near-field anchor and floors, and applies on the next cycle without

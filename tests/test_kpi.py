@@ -71,3 +71,55 @@ def test_summary_rolls_up_the_live_changes_only():
     s = kpi.summarise(per)["sextant_room"]
     assert s["changes"] == 1
     assert s["changes_per_thing_hour"] == 0.5
+
+
+def _layout():
+    """One floor, 100 px/m: Kitchen and Foyer touch, the Office is 4 m from both; a Basement room downstairs."""
+    def rect(x0, y0, x1, y1):
+        return [{"x": x0 * 100, "y": y0 * 100}, {"x": x1 * 100, "y": y0 * 100}, {"x": x1 * 100, "y": y1 * 100}, {"x": x0 * 100, "y": y1 * 100}]
+    return {"floor": [
+        {"name": "Ground", "scale": 100.0, "zones": [
+            {"entity_id": "Kitchen", "cords": rect(0, 0, 5, 5)},
+            {"entity_id": "Foyer", "cords": rect(5, 0, 7, 5)},   # shares a wall with the Kitchen
+            {"entity_id": "Office", "cords": rect(11, 0, 15, 5)},  # 4 m beyond the Foyer
+            {"entity_id": "Dot", "cords": [{"x": 0, "y": 0}]},     # not a polygon: ignored
+        ]},
+        {"name": "Basement", "scale": 100.0, "zones": [{"entity_id": "Basement", "cords": rect(0, 0, 5, 5)}]},
+    ]}
+
+
+def test_room_neighbours_are_rooms_within_reach_on_the_same_floor():
+    n = kpi.room_neighbours(_layout())
+    assert n["floor"] == {"Kitchen": "Ground", "Foyer": "Ground", "Office": "Ground", "Basement": "Basement"}
+    assert n["pairs"] == {frozenset(("Kitchen", "Foyer"))}
+    # A wider reach makes the Office a neighbour of the Foyer (4 m) but not of the Kitchen (6 m).
+    assert kpi.room_neighbours(_layout(), reach_m=4.5)["pairs"] == {frozenset(("Kitchen", "Foyer")), frozenset(("Foyer", "Office"))}
+
+
+def test_far_moves_are_same_floor_moves_between_non_neighbours():
+    n = kpi.room_neighbours(_layout())
+    rows = _rows((0, "Kitchen"), (100, "Foyer"), (200, "Office"), (300, "Kitchen"), (400, "Basement"), (500, "Kitchen"), (600, "Attic"))
+    m = kpi.compute_metrics(rows, window_hours=12, neighbours=n)
+    # Kitchen->Foyer: neighbours. Foyer->Office: far. Office->Kitchen: far.
+    # Kitchen->Basement and back: floor changes, not far moves. ->Attic: not on the plan.
+    assert m["changes"] == 6
+    assert m["far_moves"] == 2
+    assert m["far_moves_per_day"] == 4.0
+    assert m["far_move_ratio"] == round(2 / 6, 3)
+    # Without the plan the fields stay None, so the command-line tool's output matches.
+    assert kpi.compute_metrics(rows, window_hours=12)["far_moves"] is None
+
+
+def test_summary_rolls_far_moves_up_per_thing_day():
+    n = kpi.room_neighbours(_layout())
+    a = kpi.compute_metrics(_rows((0, "Kitchen"), (100, "Office")), window_hours=24, neighbours=n)
+    b = kpi.compute_metrics(_rows((0, "Kitchen"), (100, "Foyer")), window_hours=24, neighbours=n)
+    f = kpi.compute_metrics(_rows((0, "Ground"), (100, "Basement")), window_hours=24)
+    s = kpi.summarise({"sensor.a_sextant_room": a, "sensor.b_sextant_room": b, "sensor.a_sextant_floor": f})
+    assert s["sextant_room"]["far_moves"] == 1
+    assert s["sextant_room"]["far_moves_per_thing_day"] == 0.5  # 1 far move over two thing-days
+    assert s["sextant_floor"]["far_moves"] is None
+    d = kpi.deltas({"entities": {"sensor.a_sextant_room": a}, "summary": s},
+                   {"entities": {"sensor.a_sextant_room": {**a, "far_moves_per_day": 3.0}}, "summary": {"sextant_room": {**s["sextant_room"], "far_moves_per_thing_day": 2.5}}})
+    assert d["entities"]["sensor.a_sextant_room"]["far_moves_per_day"] == -2.0
+    assert d["summary"]["sextant_room"]["far_moves_per_thing_day"] == -2.0
