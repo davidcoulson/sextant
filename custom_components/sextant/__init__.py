@@ -4001,7 +4001,8 @@ def _update_room_sensors(hass):
     # A pet is a person to Home Assistant (person.meg) but not to a room's
     # "people": it is told apart by the things it owns being pet tags.
     classes = layout.get("thing_classes") or {}
-    person_rooms, presences, pet_persons = {}, {}, set()
+    owners = layout.get("thing_owners") or {}
+    person_rooms, presences, pet_persons, speaking = {}, {}, set(), set()
     for person, things in persons_mod.owners(layout).items():
         slug = person.split(".", 1)[1]
         st = hass.states.get(f"sensor.{slug}_sextant_person_location")
@@ -4009,6 +4010,8 @@ def _update_room_sensors(hass):
             continue
         name = (getattr(hass.states.get(person), "attributes", {}) or {}).get("friendly_name") or slug
         presences[name] = st.attributes.get("presence") or "away"
+        if st.attributes.get("via"):
+            speaking.add(st.attributes["via"])
         if things and all(classes.get(t) in rooms_mod.PET_CLASSES for t in things):
             pet_persons.add(name)
             continue
@@ -4016,8 +4019,8 @@ def _update_room_sensors(hass):
         if presences[name] in rooms_mod.COUNTED and room and room != "unknown" and floor and floor != "unknown":
             person_rooms[name] = (floor, room)
     names = _thing_names(hass, {r.get("ent") for r in rows if r.get("ent")}, layout)
-    answers = rooms_mod.occupancy(keys, rows, presence_of, classes, names, person_rooms,
-                                  stands_for_someone=lambda ent: persons_mod.locates_owner(layout, ent, classes.get(ent)))
+    counts = rooms_mod.stands_for_someone(owners, speaking, lambda ent: persons_mod.locates_owner(layout, ent, classes.get(ent)))
+    answers = rooms_mod.occupancy(keys, rows, presence_of, classes, names, person_rooms, stands_for_someone=counts)
     for key, (is_on, attrs) in answers.items():
         sensor = cache.get(key)
         if sensor is not None:

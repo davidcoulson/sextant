@@ -146,6 +146,22 @@ def occupancy(keys, rows, presence_of, classes=None, names=None, person_rooms=No
     return out
 
 
+def stands_for_someone(owners, speaking, by_class):
+    """The counting rule for ``occupancy``: an owned thing counts only while it
+    is the one speaking for its owner (``speaking``: the ``via`` of every
+    person sensor) - a watch left on the bedside table while its owner's
+    phone is in the kitchen is a watch, not a person. A thing nobody owns is
+    judged by ``by_class(ent)`` alone (persons.locates_owner)."""
+    owners = owners or {}
+    speaking = set(speaking or ())
+
+    def counts(ent):
+        if owners.get(ent):
+            return ent in speaking
+        return bool(by_class(ent))
+    return counts
+
+
 def people_home(presences: dict[str, str], pets=()) -> tuple[int, dict]:
     """How many people Sextant hears in the house, from {person name: presence}.
 
