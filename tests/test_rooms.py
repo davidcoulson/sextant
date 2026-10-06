@@ -169,11 +169,35 @@ def test_two_names_that_slug_the_same_stay_two_sensors():
     ]}]}
     ids = rooms.ids_for(rooms.room_keys(layout))
     a, b = ids[("Ground Floor", "Guest Room")], ids[("Ground Floor", "Guest-Room")]
-    assert a["entity_id"] == "binary_sensor.guest_room_sextant_occupancy"
-    assert b["entity_id"].startswith("binary_sensor.guest_room_") and b["entity_id"] != a["entity_id"]
-    assert a["unique_id"] != b["unique_id"]
-    # Stable: the same layout gives the same ids again.
-    assert rooms.ids_for(rooms.room_keys(layout)) == ids
+    assert a["entity_id"].startswith("binary_sensor.guest_room_") and b["entity_id"].startswith("binary_sensor.guest_room_")
+    assert a["entity_id"] != b["entity_id"] and a["unique_id"] != b["unique_id"]
+    # Neither is the plain slug, so neither depends on which was drawn first...
+    assert a["entity_id"] != "binary_sensor.guest_room_sextant_occupancy"
+    layout["floor"][0]["zones"].reverse()
+    assert rooms.ids_for(rooms.room_keys(layout))[("Ground Floor", "Guest Room")] == a
+    # ...and alone, a room has its plain slug.
+    del layout["floor"][0]["zones"][0]
+    assert rooms.ids_for(rooms.room_keys(layout))[("Ground Floor", "Guest Room")]["entity_id"] == "binary_sensor.guest_room_sextant_occupancy"
+
+
+def test_a_twin_left_alone_takes_the_plain_ids_registry_entry_included(hass):
+    _added(hass)
+    twins = {"floor": [{"name": "Ground Floor", "zones": [
+        {"entity_id": "Guest Room", "cords": [{"x": 0, "y": 0}] * 3}, {"entity_id": "Guest-Room", "cords": [{"x": 0, "y": 0}] * 3}]}]}
+    platform.ensure_room_sensors(hass, twins)
+    sensor = hass.data["sextant_room_sensors"][("Ground Floor", "Guest Room")]
+    old_entity_id, old_unique_id = sensor.entity_id, sensor._attr_unique_id
+    from homeassistant.helpers import entity_registry as er
+    ent_reg = er.async_get(hass)
+    ent_reg.add(old_entity_id, unique_id=old_unique_id)
+    alone = {"floor": [{"name": "Ground Floor", "zones": [{"entity_id": "Guest Room", "cords": [{"x": 0, "y": 0}] * 3}]}]}
+    platform.prune_room_sensors(hass, alone)
+    platform.ensure_room_sensors(hass, alone)
+    assert sensor.entity_id == "binary_sensor.guest_room_sextant_occupancy"
+    assert sensor._attr_unique_id == "sextant_room_occupancy_ground_floor_guest_room"
+    entry = ent_reg.async_get("binary_sensor.guest_room_sextant_occupancy")
+    assert entry is not None and entry.unique_id == sensor._attr_unique_id
+    assert ent_reg.async_get(old_entity_id) is None
 
 
 def test_a_room_that_gains_a_namesake_moves_to_the_floor_qualified_id(hass):

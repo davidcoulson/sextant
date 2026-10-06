@@ -69,10 +69,16 @@ def ensure_room_sensors(hass, layout):
             # floor in the entity id (and the other way round). The registry
             # entry follows, unless the new id is taken; Home Assistant
             # re-adds the entity under the new id by itself.
-            if sensor.entity_id != ids["entity_id"]:
-                if ent_reg.async_get(sensor.entity_id) is not None and ent_reg.async_get(ids["entity_id"]) is None:
-                    ent_reg.async_update_entity(sensor.entity_id, new_entity_id=ids["entity_id"])
+            if sensor.entity_id != ids["entity_id"] or sensor._attr_unique_id != ids["unique_id"]:
+                changes = {}
+                if sensor.entity_id != ids["entity_id"] and ent_reg.async_get(ids["entity_id"]) is None:
+                    changes["new_entity_id"] = ids["entity_id"]
+                if sensor._attr_unique_id != ids["unique_id"]:
+                    changes["new_unique_id"] = ids["unique_id"]
+                if changes and ent_reg.async_get(sensor.entity_id) is not None:
+                    ent_reg.async_update_entity(sensor.entity_id, **changes)
                 sensor.entity_id = ids["entity_id"]
+                sensor._attr_unique_id = ids["unique_id"]
                 sensor._attr_name = ids["name"]
             continue
         cache[key] = SextantRoomOccupancy(key, ids)

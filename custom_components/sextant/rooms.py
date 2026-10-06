@@ -61,14 +61,18 @@ def ids_for(keys) -> dict[tuple[str, str], dict]:
     floor does not take over another's history.
     """
     # Two different names that slug the same ("Guest Room", "Guest-Room") on
-    # one floor would be one sensor: the second and later carry a few
-    # characters of their exact name, so each stays its own.
+    # one floor would be one sensor: each then carries a few characters of
+    # its exact name - both of them, so neither depends on which was drawn
+    # first. (Deleting one of such a pair still lets the other drop its
+    # suffix; the platform migrates the registry entry when that happens.)
+    names_by_slug: dict[tuple[str, str], set[str]] = {}
+    for k in keys:
+        names_by_slug.setdefault((k["floor"], slug(k["room"])), set()).add(k["room"])
     room_slugs: dict[tuple[str, str], str] = {}
-    taken: dict[tuple[str, str], str] = {}
     for k in keys:
         base = slug(k["room"])
-        owner = taken.setdefault((k["floor"], base), k["room"])
-        room_slugs[(k["floor"], k["room"])] = base if owner == k["room"] else f"{base}_{hashlib.sha1(k['room'].encode()).hexdigest()[:6]}"
+        twins = len(names_by_slug[(k["floor"], base)]) > 1
+        room_slugs[(k["floor"], k["room"])] = f"{base}_{hashlib.sha1(k['room'].encode()).hexdigest()[:6]}" if twins else base
     by_room: dict[str, int] = {}
     for rs in room_slugs.values():
         by_room[rs] = by_room.get(rs, 0) + 1
