@@ -77,6 +77,42 @@ currency: `home` while presence is `here` or `quiet` (source type
 state is the zone), `not_home` with nothing usable. Add it to the person
 entity, the map card, or a zone automation.
 
+## Rooms
+
+Each room on the plan gets `binary_sensor.<room>_sextant_occupancy`
+(device class occupancy): `on` while Sextant places a person or a pet in
+it - a phone, a watch or a pet's tag, the things that stand for someone
+([People](#people)); a wallet on the counter or luggage in a bedroom is
+listed but does not make the room occupied, and a robot vacuum is not
+counted at all. It answers the question a room automation asks - is
+anyone in the Kitchen, and who - without a template over every thing's
+sensor:
+
+| Attribute | Value |
+|---|---|
+| `people` | the people placed in the room, by the thing that speaks for each |
+| `pets` | the cats and dogs in it |
+| `things` | every thing in it, by name, the ones heard lately first |
+| `count` | how many people-bearing things and pets |
+| `spots` | the spots they are in (the Couch, a bedside table) |
+| `presence` | `here` while any of them was heard within `stale_after_secs`, `quiet` while all have gone quiet (the sensor stays `on` until they are `away`), `None` when empty |
+| `room`, `floor`, `area_id`, `floor_id` | the room, its floor, and the linked Home Assistant area and floor |
+
+The sensor sits on a `<Room> (Sextant)` device that is put in the room's
+linked area when it is first created, and left wherever you move it
+afterwards. Two floors with a room of the same name get the floor in the
+entity id (`binary_sensor.second_floor_office_sextant_occupancy`).
+
+It is also the shape an occupancy aggregator wants as an input: [Area
+Occupancy Detection](https://github.com/Hankanman/Area-Occupancy-Detection)
+takes it as a custom binary sensor for the area and gets identity with it,
+alongside the room's motion and media sensors.
+
+`sensor.sextant_people_home` counts the people Sextant hears in the house
+(presence `here` or `quiet`), with `home` and `away` listing them by name
+and `pets_home` the pets, kept apart (a cat may be a person to Home
+Assistant, but not to this count).
+
 [Recipes](recipes.md) has automations and cards built on all of this.
 
 ## Map card

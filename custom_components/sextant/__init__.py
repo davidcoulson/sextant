@@ -70,7 +70,7 @@ from .storage import (
     migrate_legacy,
     save_layout,
 )
-from .const import ACCURACY_ENTITY_ID, UNTRACKED_ENTITY_ID
+from .const import ACCURACY_ENTITY_ID, PEOPLE_HOME_ENTITY_ID, UNTRACKED_ENTITY_ID
 from . import history as history_mod
 from . import bermuda_source
 from . import election_log
@@ -82,6 +82,7 @@ from . import registration
 from . import truth as truth_mod
 from . import persons as persons_mod
 from . import kpi
+from . import rooms as rooms_mod
 from . import runtime as runtime_mod
 from .zone_adjust import adjust_zones, adjust_subzones
 
@@ -1519,10 +1520,12 @@ async def update_tracked_entities(hass):
 
             if not unique_values:
                 _LOGGER.info("There are no devices present to track, sleep 10 seconds")
+                _maintain_rooms(hass)
                 await asyncio.sleep(10)
                 continue  # Skip and start over
             if num_points < 3:
                 _LOGGER.info("There are not enough things with available data to track, sleep 10 seconds")
+                _maintain_rooms(hass)
                 await asyncio.sleep(10)
                 continue  # Skip and start over
             # A thing added to Bermuda since setup has no sensors yet.
@@ -3199,6 +3202,7 @@ async def process_entities(hass, new_global_data):
         _update_person_sensors(hass)
     except Exception as e:  # noqa: BLE001 - a person's sensor must never stop the things'
         _LOGGER.warning("Person locations not updated: %s", e)
+    _maintain_rooms(hass)
     try:
         layout = get_layout(hass)
         _publish_presence(hass, layout if isinstance(layout, dict) else {})
@@ -3958,6 +3962,70 @@ def _update_person_sensors(hass):
         tracker = trackers.get(slug)
         if tracker is not None:
             tracker.set_fix(persons_mod.tracker_fix(presence, gps))
+
+def _maintain_rooms(hass):
+    """The room sensors after a cycle - or after a cycle that had nothing to
+    solve, when the rooms still empty as their last things go quiet and a plan
+    edit still adds or drops a room. Never lets a room stop the things."""
+    try:
+        _update_room_sensors(hass)
+    except Exception as e:  # noqa: BLE001
+        _LOGGER.warning("Room occupancy not updated: %s", e)
+
+
+def _update_room_sensors(hass):
+    """Who is in each room (rooms.py), and how many people are home, after the
+    things and the people have been placed this cycle."""
+    layout = get_layout(hass)
+    layout = layout if isinstance(layout, dict) else {}
+    from . import binary_sensor as rooms_platform  # noqa: PLC0415 - the platform imports this module
+    from .ws import _thing_names  # noqa: PLC0415
+
+    # Rooms come and go with the plan: only re-walked when the plan changed.
+    keys = rooms_mod.room_keys(layout)
+    if hass.data.get("sextant_room_keys") != keys:
+        rooms_platform.prune_room_sensors(hass, layout)
+        rooms_platform.ensure_room_sensors(hass, layout)
+        hass.data["sextant_room_keys"] = keys
+    rooms_platform.link_room_areas(hass, layout)
+    cache = hass.data.get("sextant_room_sensors") or {}
+    rows = [r for r in (hass.data.get(DOMAIN, {}).get("apitricords") or []) if isinstance(r, dict)]
+    now = time.time()
+
+    def presence_of(ent):
+        seen = _last_seen.get(ent)
+        return _presence_of(seen.get("updated") if isinstance(seen, dict) else None, now, layout)
+
+    # Each person is in the room the thing speaking for them is in, as the
+    # person sensors just published it; and how many of them are in the house.
+    # A pet is a person to Home Assistant (person.meg) but not to a room's
+    # "people": it is told apart by the things it owns being pet tags.
+    classes = layout.get("thing_classes") or {}
+    person_rooms, presences, pet_persons = {}, {}, set()
+    for person, things in persons_mod.owners(layout).items():
+        slug = person.split(".", 1)[1]
+        st = hass.states.get(f"sensor.{slug}_sextant_person_location")
+        if st is None:
+            continue
+        name = (getattr(hass.states.get(person), "attributes", {}) or {}).get("friendly_name") or slug
+        presences[name] = st.attributes.get("presence") or "away"
+        if things and all(classes.get(t) in rooms_mod.PET_CLASSES for t in things):
+            pet_persons.add(name)
+            continue
+        room, floor = st.attributes.get("room"), st.attributes.get("floor")
+        if presences[name] in rooms_mod.COUNTED and room and room != "unknown" and floor and floor != "unknown":
+            person_rooms[name] = (floor, room)
+    names = _thing_names(hass, {r.get("ent") for r in rows if r.get("ent")}, layout)
+    answers = rooms_mod.occupancy(keys, rows, presence_of, classes, names, person_rooms,
+                                  stands_for_someone=lambda ent: persons_mod.locates_owner(layout, ent, classes.get(ent)))
+    for key, (is_on, attrs) in answers.items():
+        sensor = cache.get(key)
+        if sensor is not None:
+            sensor.set_occupancy(is_on, attrs)
+    # Nobody owning anything publishes 0 and empty lists, not the last count.
+    count, attrs = rooms_mod.people_home(presences, pet_persons)
+    update_sextant_sensor_state(hass, PEOPLE_HOME_ENTITY_ID, count, attrs)
+
 
 def extract_candidate_floors(new_global_data, tmpentity):
     """Every floor hearing the thing, ranked by its nearest receiver.
@@ -5793,7 +5861,7 @@ async def async_unload_entry(hass: HomeAssistant, entry):
     # settings (area, name, disabled) and rewrote the whole registry twice.
 
     try: # Attempt to unload platforms
-        unload_ok = await hass.config_entries.async_unload_platforms(entry, ["sensor", "device_tracker"])
+        unload_ok = await hass.config_entries.async_unload_platforms(entry, ["sensor", "binary_sensor", "device_tracker"])
     except Exception as e:
         _LOGGER.error(f"Error during offloading of platforms for entry {entry.entry_id}: {e}")
         return False
@@ -5827,6 +5895,8 @@ async def async_unload_entry(hass: HomeAssistant, entry):
     hass.data.pop("sextant_initialized", None)
     hass.data.pop("sextant_sensors", None)
     hass.data.pop("sextant_add_entities", None)
+    for key in ("sextant_room_sensors", "sextant_room_add", "sextant_room_keys", "sextant_room_unlinked"):
+        hass.data.pop(key, None)
 
     return True
 
@@ -5843,7 +5913,7 @@ async def async_setup_entry(hass, entry):
         _LOGGER.warning("Truth marks or learned gains not loaded: %s", e)
     await _restore_runtime(hass)
     cleanup_legacy_sextant_registry_and_states(hass)
-    await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "device_tracker"])
+    await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "binary_sensor", "device_tracker"])
     entry.async_on_unload(entry.add_update_listener(async_update_options))
 
     """Set up Sextant from a config entry."""

@@ -121,6 +121,9 @@ token, in Home Assistant's own theme and unit system. Eight pages:
   the rooms both maps name.
 - Bermuda management from the panel: track, untrack, Find My accessories,
   Tiles followed across address rotation (with the fork).
+- Rooms as sensors: an occupancy binary per room that names the people,
+  pets and things in it, ready for an aggregator such as Area Occupancy
+  Detection, and a count of the people home.
 - Five sensors per thing, a map card, services and a websocket push per
   cycle. Pure numpy, no SciPy.
 

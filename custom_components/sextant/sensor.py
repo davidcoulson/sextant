@@ -7,7 +7,7 @@ import logging
 
 from homeassistant.helpers.event import async_call_later
 
-from .const import ACCURACY_ENTITY_ID, GLOBAL_ENTITY_IDS, UNTRACKED_ENTITY_ID  # single source of truth (shared with __init__)
+from .const import ACCURACY_ENTITY_ID, GLOBAL_ENTITY_IDS, PEOPLE_HOME_ENTITY_ID, UNTRACKED_ENTITY_ID  # single source of truth (shared with __init__)
 from . import bermuda_source
 
 _LOGGER = logging.getLogger(__name__)
@@ -364,6 +364,38 @@ class SextantUntrackedSensor(SensorEntity):
         return self._attrs
 
 
+class SextantPeopleHomeSensor(SensorEntity):
+    # Pushed by the positioning cycle; there is nothing for Home Assistant to poll.
+    _attr_should_poll = False
+
+    """How many people Sextant hears in the house: those whose things are
+    here or quiet (rooms.people_home). ``home`` and ``away`` list them."""
+
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:home-account"
+
+    def __init__(self):
+        self._attr_name = "People Home"
+        self._attr_unique_id = "sextant_people_home"
+        self.entity_id = PEOPLE_HOME_ENTITY_ID
+        self._state = None
+        self._attrs = {"home": [], "away": []}
+        self._attr_device_info = DeviceInfo(
+            identifiers={("sextant", "sextant_system")},
+            name="Sextant",
+            manufacturer="Sextant",
+            model="Sextant (BLE Positioning)",
+        )
+
+    @property
+    def native_value(self):
+        return self._state
+
+    @property
+    def extra_state_attributes(self):
+        return self._attrs
+
+
 class SextantAccuracySensor(SensorEntity):
     # Pushed by the positioning cycle; there is nothing for Home Assistant to poll.
     _attr_should_poll = False
@@ -594,7 +626,8 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     # prune_person_sensors; swept here, every setup deleted them and the
     # user's name, area and disabled flag with them.
     from .persons import PERSON_SENSOR_KINDS  # noqa: PLC0415
-    person_prefixes = tuple(f"{suffix}_" for suffix, _label in PERSON_SENSOR_KINDS)
+    # Not a thing's: the people's sensors and trackers, and the rooms' occupancy.
+    kept_prefixes = tuple(f"{suffix}_" for suffix, _label in PERSON_SENSOR_KINDS) + ("sextant_person_tracker_", "sextant_room_occupancy_")
     entity_registry = er.async_get(hass)
     if expected_entity_ids:
         stale_sextant_ids = [
@@ -602,7 +635,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             for entry in entity_registry.entities.values()
             if entry.platform == "sextant" and entry.entity_id not in expected_entity_ids
             and entry.entity_id not in GLOBAL_ENTITY_IDS  # keep the global sensors
-            and not (isinstance(entry.unique_id, str) and entry.unique_id.startswith(person_prefixes))
+            and not (isinstance(entry.unique_id, str) and entry.unique_id.startswith(kept_prefixes))
         ]
         for entity_id in stale_sextant_ids:
             _LOGGER.info("Removing stale Sextant registry entity: %s", entity_id)
@@ -625,6 +658,10 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         untracked = SextantUntrackedSensor()
         hass.data["sextant_sensors"][UNTRACKED_ENTITY_ID] = untracked
         new_sensors.append(untracked)
+    if PEOPLE_HOME_ENTITY_ID not in hass.data["sextant_sensors"]:
+        people_home = SextantPeopleHomeSensor()
+        hass.data["sextant_sensors"][PEOPLE_HOME_ENTITY_ID] = people_home
+        new_sensors.append(people_home)
     for entity in entities:
         ensure_sensors_for_entity(hass, entity, hass.data["sextant_sensors"], new_sensors)
 
