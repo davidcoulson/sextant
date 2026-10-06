@@ -13,7 +13,11 @@ never saw in between is a position that jumped. In the house this was
 built on, each pet makes about ten a day (3 to 15), and they last about as
 long as ordinary room changes: over three days, 43 % of far moves and 35 %
 of all other same-floor moves were followed by another change within two
-minutes. So the level is not alarming in itself; a rise after a change is. Save a window as a named
+minutes. So the level is not alarming in itself; a rise after a change is.
+Since 2026.10.06 the room election holds a far move to `far_move_margin`
+and `far_move_secs` (0.3 and 45 s against 0.15 and 20 s for a move next
+door), so a jump has to persist before it is published; this KPI is how to
+see what that bought, and the two knobs are below it. Save a window as a named
 baseline and compare later windows against it; the deltas turn green where
 the window is better. Every
 [tuning key](tuning.md#tuning-reference) is below it with a plain label, its meaning
@@ -47,6 +51,8 @@ distances in metres.
 | `zone_prob_smoothing` | 0.6 | weight kept on the previous room shares per 15 s (a faster refresh compounds it, so the smoothing is the same in seconds) |
 | `zone_switch_margin` | 0.15 | lead a challenger room needs |
 | `zone_switch_secs` | 20 | held that long before switching |
+| `far_move_margin` | 0.3 | the lead a room that is not next door needs (the larger of this and `zone_switch_margin`) |
+| `far_move_secs` | 45 | held that long before a far move; 0 = no longer than any move |
 | `stationary_speed` | 0.3 | m/s; slower is "still" |
 | `stationary_secs` | 20 | still this long locks the room |
 | `zone_unlock_margin` | 1.0 | metres outside the locked room |

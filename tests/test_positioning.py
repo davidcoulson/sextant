@@ -1027,6 +1027,54 @@ def test_a_zone_election_survives_a_trip_through_the_restart_store():
     assert _elect("e", 50, 130.0)[0] == "Kitchen"
 
 
+def _three_rooms():
+    # Kitchen [0,100), Hall [100,400), Office [400,500]: Kitchen and Office are
+    # 3 m apart (scale 100 px/m), beyond kpi.NEIGHBOUR_REACH_M, so a Kitchen
+    # -> Office switch is a far move; Kitchen -> Hall is not.
+    kitchen = Polygon([(0, 0), (100, 0), (100, 100), (0, 100)])
+    hall = Polygon([(100, 0), (400, 0), (400, 100), (100, 100)])
+    office = Polygon([(400, 0), (500, 0), (500, 100), (400, 100)])
+    return [("Kitchen", kitchen, 5.0, False), ("Hall", hall, 5.0, False), ("Office", office, 5.0, False)]
+
+
+def _elect3(entity, x, t, layout=None):
+    layout = {"tuning": {"zone_lock_warmup_secs": 0.0, "zone_prob_smoothing": 0.0, **((layout or {}).get("tuning") or {})}}
+    instant = "Kitchen" if x < 100 else "Hall" if x < 400 else "Office"
+    return sextant._elect_zone(entity, "F", instant, Point(x, 50.0), _kf(x, 50.0, sigma_px=5.0), _three_rooms(), 100.0, layout, now=t)[0]
+
+
+def test_far_move_detection_uses_the_kpi_reach():
+    polys = _three_rooms()
+    assert sextant._far_move(polys, "Kitchen", "Office", 100.0)
+    assert not sextant._far_move(polys, "Kitchen", "Hall", 100.0)
+    assert not sextant._far_move(polys, "Kitchen", "Office", None)      # no scale: no judgement
+    assert not sextant._far_move(polys, "Kitchen", "Kitchen", 100.0)
+
+
+def test_a_far_move_waits_longer_than_a_move_next_door():
+    sextant._zone_state.clear()
+    assert _elect3("e", 50, 0.0) == "Kitchen"
+    # Next door: the ordinary 20 s dwell.
+    for t in (1.0, 10.0, 19.0):
+        assert _elect3("e", 250, t) == "Kitchen"
+    assert _elect3("e", 250, 21.0) == "Hall"
+    # Back to the Kitchen, settled.
+    sextant._zone_state.clear()
+    assert _elect3("e", 50, 100.0) == "Kitchen"
+    # Straight to the Office, three metres off: held through 20 s, switches at 45.
+    for t in (101.0, 121.0, 140.0):
+        assert _elect3("e", 450, t) == "Kitchen"
+    assert _elect3("e", 450, 146.0) == "Office"
+
+
+def test_far_move_penalty_off_at_zero():
+    sextant._zone_state.clear()
+    layout = {"tuning": {"far_move_secs": 0.0, "far_move_margin": 0.0}}
+    assert _elect3("e", 50, 0.0, layout) == "Kitchen"
+    _elect3("e", 450, 1.0, layout)
+    assert _elect3("e", 450, 21.0, layout) == "Office"
+
+
 def test_zone_election_resets_on_floor_change_and_prune():
     sextant._zone_state.clear()
     _elect("e", 50, 0.0)

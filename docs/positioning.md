@@ -94,7 +94,11 @@ proximity weight - over them (see [Tuning](tuning.md)).
 **Rooms.** Membership, not a point test: samples on the filter's error
 ellipse are attributed to rooms and the shares smoothed. The current room
 holds until a challenger leads by `zone_switch_margin` for
-`zone_switch_secs`. A thing slower than `stationary_speed` for
+`zone_switch_secs` - or, when the challenger is not next door (its
+outline more than 2.5 m from the current room's, the same rule the
+far-move KPI counts by), by `far_move_margin` for `far_move_secs`:
+walking there passes through the rooms between, which a real move shows
+and a fix that jumped does not. A thing slower than `stationary_speed` for
 `stationary_secs` is on a table and its room locks - but only a room it
 has earned, held for that long already and still the best-supported, so a
 first guess after a restart is never frozen. It unlocks after
