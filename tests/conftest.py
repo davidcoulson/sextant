@@ -149,6 +149,7 @@ class FakeDevice:
         self.id = device_id
         self.identifiers = set(identifiers)
         self.name = None
+        self.area_id = None
 
 
 class FakeDeviceRegistry:
@@ -173,6 +174,12 @@ class FakeDeviceRegistry:
 
     def async_remove_device(self, device_id):
         self.devices.pop(device_id, None)
+
+    def async_update_device(self, device_id, **changes):
+        device = self.devices.get(device_id)
+        for key, value in changes.items():
+            setattr(device, key, value)
+        return device
 
 
 def _install_homeassistant_stubs():
@@ -286,6 +293,8 @@ def _install_homeassistant_stubs():
     # exercise the cache/creation logic, never HA's entity machinery).
     _module("homeassistant.components.sensor", SensorEntity=object,
             SensorStateClass=types.SimpleNamespace(MEASUREMENT="measurement"))
+    _module("homeassistant.components.binary_sensor", BinarySensorEntity=object,
+            BinarySensorDeviceClass=types.SimpleNamespace(OCCUPANCY="occupancy"))
     _module("homeassistant.helpers.entity", DeviceInfo=dict)
 
     # Config-entry flows: just enough of ConfigFlow/OptionsFlow for the
