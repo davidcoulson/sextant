@@ -9,8 +9,11 @@ thing, room changes per hour, the share that were A → B → A flips, the
 median dwell, and *far moves* per day: changes to a room on the same floor
 whose outline is more than 2.5 m from the previous room's. A walked move
 between such rooms passes through a room in between, so a far move the plan
-never saw in between is a position that jumped; about one a day per pet is
-normal in a house with rooms opening onto a hall. Save a window as a named
+never saw in between is a position that jumped. In the house this was
+built on, each pet makes about ten a day (3 to 15), and they last about as
+long as ordinary room changes: over three days, 43 % of far moves and 35 %
+of all other same-floor moves were followed by another change within two
+minutes. So the level is not alarming in itself; a rise after a change is. Save a window as a named
 baseline and compare later windows against it; the deltas turn green where
 the window is better. Every
 [tuning key](tuning.md#tuning-reference) is below it with a plain label, its meaning
