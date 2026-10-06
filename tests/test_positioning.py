@@ -1067,6 +1067,22 @@ def test_a_far_move_waits_longer_than_a_move_next_door():
     assert _elect3("e", 450, 146.0) == "Office"
 
 
+def test_a_far_challenger_with_an_ordinary_lead_never_wins(monkeypatch):
+    # The shares are pinned: the challenger leads by 0.2 - past the ordinary
+    # 0.15 margin, short of the far-move 0.3. Next door that switches after
+    # the dwell; three metres away it never does, however long it is held.
+    sextant._zone_state.clear()
+    assert _elect3("e", 50, 0.0) == "Kitchen"
+    monkeypatch.setattr(sextant, "_zone_membership", lambda polys, samples: {"Kitchen": 0.4, "Office": 0.6})
+    for t in (1.0, 30.0, 60.0, 300.0):
+        assert _elect3("e", 450, t) == "Kitchen"
+    sextant._zone_state.clear()
+    assert _elect3("e", 50, 0.0) == "Kitchen"
+    monkeypatch.setattr(sextant, "_zone_membership", lambda polys, samples: {"Kitchen": 0.4, "Hall": 0.6})
+    _elect3("e", 250, 1.0)
+    assert _elect3("e", 250, 22.0) == "Hall"
+
+
 def test_far_move_penalty_off_at_zero():
     sextant._zone_state.clear()
     layout = {"tuning": {"far_move_secs": 0.0, "far_move_margin": 0.0}}
