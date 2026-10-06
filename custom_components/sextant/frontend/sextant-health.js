@@ -11,6 +11,11 @@ import { LitElement, html, css, nothing } from "./lit.js";
 import { pointInPolygon } from "./sextant-map.js";
 import { sharedStyles, widgetStyles, fmtAge, fmtNum, toast, callWS, confirmDialog, uiField, uiSelect, uiSwitch, uiButton, sortFloors, thingName, proxyName, fmtLen } from "./sextant-ui.js";
 
+// A far move is a room change to a room on the same floor whose outline is
+// more than 2.5 m from the previous room's. Walked, it passes through
+// somewhere in between; one the plan never saw in between is a position
+// that jumped. About one a day per pet is normal in this house.
+const FAR_MOVES_HELP = "Moves per day to a room on the same floor that is not a neighbour (outlines more than 2.5 m apart). Walked moves pass through a room in between; these did not, so they are the ones to watch.";
 const QUIET_SECS = 120;   // online, but nothing heard for this long: "quiet"
 
 /** Plain labels for the tuning keys, with a one-line meaning; the key itself is shown under the field. */
@@ -580,8 +585,9 @@ class SextantHealth extends LitElement {
         ${uiSelect({ label: "Compare with", value: this._baseline, options: baselineOptions, onChange: (v) => { this._baseline = v; }, style: "min-width: 240px" })}
         ${uiButton({ label: this._busy === "kpi" ? "Computing…" : "Compute", kind: "primary", disabled: this._busy === "kpi", onClick: () => this._runKpi() })}
         ${s.sextant_room ? html`<span class="pill">${s.sextant_room.changes_per_thing_hour} room changes / thing-h</span>
-          <span class="pill">flip ratio ${s.sextant_room.flip_ratio}</span><span class="pill">median dwell ${fmtAge(s.sextant_room.median_of_median_dwell_s)}</span>` : nothing}
-        ${sz ? html`<span class="pill" title="this window minus the baseline">vs ${k.baseline.name}: ${lessIsBetter(sz.changes_per_thing_hour, 2)} chg/thing-h · ${lessIsBetter(sz.flip_ratio, 0, 100)} flip pts · ${moreIsBetter(sz.median_of_median_dwell_s)} dwell</span>` : nothing}
+          <span class="pill">flip ratio ${s.sextant_room.flip_ratio}</span><span class="pill">median dwell ${fmtAge(s.sextant_room.median_of_median_dwell_s)}</span>
+          ${s.sextant_room.far_moves_per_thing_day != null ? html`<span class="pill" title=${FAR_MOVES_HELP}>${fmtNum(s.sextant_room.far_moves_per_thing_day, 1)} far moves / thing-day</span>` : nothing}` : nothing}
+        ${sz ? html`<span class="pill" title="this window minus the baseline">vs ${k.baseline.name}: ${lessIsBetter(sz.changes_per_thing_hour, 2)} chg/thing-h · ${lessIsBetter(sz.flip_ratio, 0, 100)} flip pts · ${moreIsBetter(sz.median_of_median_dwell_s)} dwell${sz.far_moves_per_thing_day != null ? html` · ${lessIsBetter(sz.far_moves_per_thing_day, 1)} far/day` : nothing}</span>` : nothing}
       </div>
       <div class="row">
         ${uiField({ label: "Save this window as a baseline", value: this._baselineName, placeholder: "e.g. fused 2026-09-17", onChange: (v) => { this._baselineName = v; }, style: "width: 260px" })}
@@ -589,8 +595,8 @@ class SextantHealth extends LitElement {
         ${this._baseline ? uiButton({ label: "Delete baseline", kind: "danger", onClick: () => this._deleteBaseline(this._baseline) }) : nothing}
       </div>
       ${ents.length ? html`<div class="wrap"><table>
-        <tr><th>Thing</th><th class="num">chg/h</th><th class="num">flip %</th><th class="num">dwell</th><th class="num">&lt;60 s %</th><th class="num">dead</th>${d ? html`<th class="num">Δ chg/h</th><th class="num">Δ flip pts</th><th class="num">Δ dwell</th>` : nothing}</tr>
-        ${ents.map(([e, m]) => html`<tr><td>${name(e)}</td><td class="num">${fmtNum(m.changes_per_hour, 1)}</td><td class="num">${m.flip_ratio != null ? fmtNum(m.flip_ratio * 100, 0) : "—"}</td><td class="num">${fmtAge(m.median_dwell_s)}</td><td class="num">${m.short_dwell_ratio != null ? fmtNum(m.short_dwell_ratio * 100, 0) : "—"}</td><td class="num">${m.dead}</td>${d ? html`<td class="num">${lessIsBetter(d.entities?.[e]?.changes_per_hour, 1)}</td><td class="num">${lessIsBetter(d.entities?.[e]?.flip_ratio, 0, 100)}</td><td class="num">${moreIsBetter(d.entities?.[e]?.median_dwell_s)}</td>` : nothing}</tr>`)}
+        <tr><th>Thing</th><th class="num">chg/h</th><th class="num">flip %</th><th class="num">dwell</th><th class="num">&lt;60 s %</th><th class="num" title=${FAR_MOVES_HELP}>far/day</th><th class="num">dead</th>${d ? html`<th class="num">Δ chg/h</th><th class="num">Δ flip pts</th><th class="num">Δ dwell</th><th class="num" title=${FAR_MOVES_HELP}>Δ far/day</th>` : nothing}</tr>
+        ${ents.map(([e, m]) => html`<tr><td>${name(e)}</td><td class="num">${fmtNum(m.changes_per_hour, 1)}</td><td class="num">${m.flip_ratio != null ? fmtNum(m.flip_ratio * 100, 0) : "—"}</td><td class="num">${fmtAge(m.median_dwell_s)}</td><td class="num">${m.short_dwell_ratio != null ? fmtNum(m.short_dwell_ratio * 100, 0) : "—"}</td><td class="num">${m.far_moves_per_day != null ? fmtNum(m.far_moves_per_day, 1) : "—"}</td><td class="num">${m.dead}</td>${d ? html`<td class="num">${lessIsBetter(d.entities?.[e]?.changes_per_hour, 1)}</td><td class="num">${lessIsBetter(d.entities?.[e]?.flip_ratio, 0, 100)}</td><td class="num">${moreIsBetter(d.entities?.[e]?.median_dwell_s)}</td><td class="num">${lessIsBetter(d.entities?.[e]?.far_moves_per_day, 1)}</td>` : nothing}</tr>`)}
       </table></div>` : k ? html`<div class="muted small">No room sensors in the recorder window.</div>` : nothing}
     </section>`;
   }

@@ -140,6 +140,11 @@ def compute_metrics(rows, window_hours=None):
         "top_pairs": [
             {"pair": list(pair), "count": n} for pair, n in pairs.most_common(3)
         ],
+        # Far moves need the plan's room outlines, which the panel has and this
+        # tool does not; kept as None so the two outputs stay the same shape.
+        "far_moves": None,
+        "far_moves_per_day": None,
+        "far_move_ratio": None,
     }
 
 
@@ -160,6 +165,8 @@ def summarise(per_entity):
             "changes_per_thing_hour": round(changes / hours, 2) if hours else None,
             "flip_ratio": round(flips / changes, 3) if changes else None,
             "median_of_median_dwell_s": round(statistics.median(dwells), 1) if dwells else None,
+            "far_moves": None,
+            "far_moves_per_thing_day": None,
         }
     return out
 
