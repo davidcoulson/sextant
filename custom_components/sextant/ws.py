@@ -1166,7 +1166,9 @@ async def _compute_kpi(hass, hours):
     except Exception as e:  # noqa: BLE001
         raise _KpiUnavailable(f"recorder query failed: {e}") from e
     # Room sensors also get their far moves counted against the plan's rooms.
-    neighbours = kpi.room_neighbours(get_layout(hass))
+    # Building the outlines and comparing every pair is geometry, so it runs
+    # off the event loop like the recorder query above.
+    neighbours = await hass.async_add_executor_job(kpi.room_neighbours, get_layout(hass))
     per_entity = {}
     for eid in entity_ids:
         rows = kpi.rows_from_recorder(states.get(eid))
