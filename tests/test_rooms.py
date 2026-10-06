@@ -160,3 +160,39 @@ def test_set_occupancy_writes_only_on_change(hass):
     assert len(writes) == 1 and sensor._attr_is_on is True
     sensor.set_occupancy(False, {"room": "Kitchen", "count": 0})
     assert len(writes) == 2 and sensor._attr_is_on is False
+
+
+def test_two_names_that_slug_the_same_stay_two_sensors():
+    layout = {"floor": [{"name": "Ground Floor", "zones": [
+        {"entity_id": "Guest Room", "cords": [{"x": 0, "y": 0}] * 3},
+        {"entity_id": "Guest-Room", "cords": [{"x": 0, "y": 0}] * 3},
+    ]}]}
+    ids = rooms.ids_for(rooms.room_keys(layout))
+    a, b = ids[("Ground Floor", "Guest Room")], ids[("Ground Floor", "Guest-Room")]
+    assert a["entity_id"] == "binary_sensor.guest_room_sextant_occupancy"
+    assert b["entity_id"].startswith("binary_sensor.guest_room_") and b["entity_id"] != a["entity_id"]
+    assert a["unique_id"] != b["unique_id"]
+    # Stable: the same layout gives the same ids again.
+    assert rooms.ids_for(rooms.room_keys(layout)) == ids
+
+
+def test_a_room_that_gains_a_namesake_moves_to_the_floor_qualified_id(hass):
+    _added(hass)
+    one = {"floor": [{"name": "Ground Floor", "zones": [{"entity_id": "Office", "cords": [{"x": 0, "y": 0}] * 3}]}]}
+    platform.ensure_room_sensors(hass, one)
+    sensor = hass.data["sextant_room_sensors"][("Ground Floor", "Office")]
+    assert sensor.entity_id == "binary_sensor.office_sextant_occupancy"
+    from homeassistant.helpers import entity_registry as er
+    ent_reg = er.async_get(hass)
+    ent_reg.add("binary_sensor.office_sextant_occupancy", unique_id=sensor._attr_unique_id)
+    two = {"floor": one["floor"] + [{"name": "Second Floor", "zones": [{"entity_id": "Office", "cords": [{"x": 0, "y": 0}] * 3}]}]}
+    platform.ensure_room_sensors(hass, two)
+    assert sensor.entity_id == "binary_sensor.ground_floor_office_sextant_occupancy"
+    assert sensor._attr_name == "Office (Ground Floor) Sextant Occupancy"
+    assert ent_reg.async_get("binary_sensor.ground_floor_office_sextant_occupancy") is not None
+    assert ent_reg.async_get("binary_sensor.office_sextant_occupancy") is None
+    assert hass.data["sextant_room_sensors"][("Second Floor", "Office")].entity_id == "binary_sensor.second_floor_office_sextant_occupancy"
+
+
+def test_people_home_with_nobody_is_zero():
+    assert rooms.people_home({}) == (0, {"home": [], "away": [], "pets_home": []})

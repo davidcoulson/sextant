@@ -61,8 +61,19 @@ def ensure_room_sensors(hass, layout):
     if cache is None or add_entities is None:
         return
     new = []
+    ent_reg = er.async_get(hass)
     for key, ids in ids_for(room_keys(layout)).items():
-        if key in cache:
+        sensor = cache.get(key)
+        if sensor is not None:
+            # A room that gained a namesake on another floor now shows its
+            # floor in the entity id (and the other way round). The registry
+            # entry follows, unless the new id is taken; Home Assistant
+            # re-adds the entity under the new id by itself.
+            if sensor.entity_id != ids["entity_id"]:
+                if ent_reg.async_get(sensor.entity_id) is not None and ent_reg.async_get(ids["entity_id"]) is None:
+                    ent_reg.async_update_entity(sensor.entity_id, new_entity_id=ids["entity_id"])
+                sensor.entity_id = ids["entity_id"]
+                sensor._attr_name = ids["name"]
             continue
         cache[key] = SextantRoomOccupancy(key, ids)
         new.append(cache[key])

@@ -1512,10 +1512,12 @@ async def update_tracked_entities(hass):
 
             if not unique_values:
                 _LOGGER.info("There are no devices present to track, sleep 10 seconds")
+                _maintain_rooms(hass)
                 await asyncio.sleep(10)
                 continue  # Skip and start over
             if num_points < 3:
                 _LOGGER.info("There are not enough things with available data to track, sleep 10 seconds")
+                _maintain_rooms(hass)
                 await asyncio.sleep(10)
                 continue  # Skip and start over
             # A thing added to Bermuda since setup has no sensors yet.
@@ -3192,10 +3194,7 @@ async def process_entities(hass, new_global_data):
         _update_person_sensors(hass)
     except Exception as e:  # noqa: BLE001 - a person's sensor must never stop the things'
         _LOGGER.warning("Person locations not updated: %s", e)
-    try:
-        _update_room_sensors(hass)
-    except Exception as e:  # noqa: BLE001 - a room's sensor must never stop the things'
-        _LOGGER.warning("Room occupancy not updated: %s", e)
+    _maintain_rooms(hass)
     try:
         layout = get_layout(hass)
         _publish_presence(hass, layout if isinstance(layout, dict) else {})
@@ -3956,6 +3955,16 @@ def _update_person_sensors(hass):
         if tracker is not None:
             tracker.set_fix(persons_mod.tracker_fix(presence, gps))
 
+def _maintain_rooms(hass):
+    """The room sensors after a cycle - or after a cycle that had nothing to
+    solve, when the rooms still empty as their last things go quiet and a plan
+    edit still adds or drops a room. Never lets a room stop the things."""
+    try:
+        _update_room_sensors(hass)
+    except Exception as e:  # noqa: BLE001
+        _LOGGER.warning("Room occupancy not updated: %s", e)
+
+
 def _update_room_sensors(hass):
     """Who is in each room (rooms.py), and how many people are home, after the
     things and the people have been placed this cycle."""
@@ -4005,9 +4014,9 @@ def _update_room_sensors(hass):
         sensor = cache.get(key)
         if sensor is not None:
             sensor.set_occupancy(is_on, attrs)
-    if presences:
-        count, attrs = rooms_mod.people_home(presences, pet_persons)
-        update_sextant_sensor_state(hass, PEOPLE_HOME_ENTITY_ID, count, attrs)
+    # Nobody owning anything publishes 0 and empty lists, not the last count.
+    count, attrs = rooms_mod.people_home(presences, pet_persons)
+    update_sextant_sensor_state(hass, PEOPLE_HOME_ENTITY_ID, count, attrs)
 
 
 def extract_candidate_floors(new_global_data, tmpentity):

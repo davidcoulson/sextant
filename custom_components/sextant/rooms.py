@@ -13,6 +13,7 @@ do the plumbing.
 """
 from __future__ import annotations
 
+import hashlib
 import re
 
 PET_CLASSES = frozenset({"cat", "dog", "paw"})
@@ -59,18 +60,28 @@ def ids_for(keys) -> dict[tuple[str, str], dict]:
     front. The unique id always carries the floor, so a room renamed on one
     floor does not take over another's history.
     """
-    by_room: dict[str, int] = {}
+    # Two different names that slug the same ("Guest Room", "Guest-Room") on
+    # one floor would be one sensor: the second and later carry a few
+    # characters of their exact name, so each stays its own.
+    room_slugs: dict[tuple[str, str], str] = {}
+    taken: dict[tuple[str, str], str] = {}
     for k in keys:
-        by_room[slug(k["room"])] = by_room.get(slug(k["room"]), 0) + 1
+        base = slug(k["room"])
+        owner = taken.setdefault((k["floor"], base), k["room"])
+        room_slugs[(k["floor"], k["room"])] = base if owner == k["room"] else f"{base}_{hashlib.sha1(k['room'].encode()).hexdigest()[:6]}"
+    by_room: dict[str, int] = {}
+    for rs in room_slugs.values():
+        by_room[rs] = by_room.get(rs, 0) + 1
     out = {}
     for k in keys:
-        room_slug = slug(k["room"])
-        shown = f"{slug(k['floor'])}_{room_slug}" if by_room[room_slug] > 1 else room_slug
+        room_slug = room_slugs[(k["floor"], k["room"])]
+        shared = by_room[room_slug] > 1
+        shown = f"{slug(k['floor'])}_{room_slug}" if shared else room_slug
         out[(k["floor"], k["room"])] = {
             "slug": shown,
             "unique_id": f"sextant_room_occupancy_{slug(k['floor'])}_{room_slug}",
             "entity_id": f"binary_sensor.{shown}_sextant_occupancy",
-            "name": f"{k['room']} Sextant Occupancy" if by_room[room_slug] == 1 else f"{k['room']} ({k['floor']}) Sextant Occupancy",
+            "name": f"{k['room']} ({k['floor']}) Sextant Occupancy" if shared else f"{k['room']} Sextant Occupancy",
         }
     return out
 
