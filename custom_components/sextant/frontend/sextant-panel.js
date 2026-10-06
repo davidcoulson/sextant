@@ -653,7 +653,7 @@ class SextantLive extends LitElement {
     this.updateComplete.then(() => requestAnimationFrame(() => requestAnimationFrame(() => this._pinZoom())));
   }
 
-  _endPin() { this._pin = null; this._pinFocus = null; this._pinAt = null; }
+  _endPin() { this._pin = null; this._pinFocus = null; this._pinAt = null; this._pinViewKey = null; }
 
   _pinZoom() {
     if (this._pin?.step !== "where") return;
@@ -678,6 +678,12 @@ class SextantLive extends LitElement {
   /** The map redrew (a pan, a pinch): refresh the ring's caption without a re-render per frame. */
   _pinViewChanged() {
     if (this._pin?.step !== "where") return;
+    // Every position update redraws too; only a moved view or a new floor
+    // can change what is under the ring.
+    const v = this._map?.view, f = this._floorObj();
+    const key = v ? `${f?.name}|${v.k}|${v.tx}|${v.ty}` : null;
+    if (key === this._pinViewKey && f === this._pinViewFloor) return;
+    this._pinViewKey = key; this._pinViewFloor = f;
     const at = this._pinUnderRing();
     if (!at) return;
     this._pinAt = at;
@@ -691,26 +697,32 @@ class SextantLive extends LitElement {
     const at = this._pinUnderRing();
     if (!at) return;
     const ent = pin.ent, vacuum = this._robotOf(ent);
-    this._pin = { ...pin, busy: true };
+    // The busy state is this operation's identity: Back, another thing or
+    // Done while the call is in flight replace it, and the answer then
+    // changes the store but not the wizard.
+    const busy = { ...pin, busy: true };
+    this._pin = busy;
+    const mine = () => this._pin === busy;
     if (vacuum) {
       const r = await callWS(this, this.hass, { type: "sextant/robot/dock", vacuum, floor: this.floor, x: at.m.x, y: at.m.y });
-      if (!r) { this._pin = { ...pin, busy: false }; return; }
-      this._endPin();
+      if (!r) { if (mine()) this._pin = pin; return; }
       toast(this, r.fit ? `Dock marked: ${r.fit.pairs.length} points agree to ${fmtNum(r.fit.rms_m, 2)} m` : "Dock marked");
       this.dispatchEvent(new CustomEvent("layout-changed"));
+      if (mine()) this._endPin();
       return;
     }
     const r = await callWS(this, this.hass, { type: "sextant/truth/mark", entity: ent, floor: this.floor, x: at.m.x, y: at.m.y });
-    if (!r) { this._pin = { ...pin, busy: false }; return; }
-    this._truth = r;
+    if (!r) { if (mine()) this._pin = pin; return; }
     this._loadMarks(ent);
     this.dispatchEvent(new CustomEvent("layout-changed"));
+    if (!mine()) return;
+    this._truth = r;
     this._pin = { step: "done", ent, result: r, room: at.room, spot: at.spot };
   }
 
   /** Undo from the done step: forget the pin just placed and go back to the list. */
   async _pinUndo() {
-    const id = this._pin?.result?.mark?.id;
+    const pin = this._pin, id = pin?.result?.mark?.id;
     // No "are you sure?": the tap on Undo is the confirmation, and a blocking
     // confirm() under a full-screen sheet is easy to lose on a phone.
     if (id != null) {
@@ -721,7 +733,7 @@ class SextantLive extends LitElement {
       this.dispatchEvent(new CustomEvent("layout-changed"));
       toast(this, `Pin ${id} forgotten`);
     }
-    this._pin = { step: "who" };
+    if (this._pin === pin) this._pin = { step: "who" };   // unless the wizard moved on meanwhile
   }
 
   _renderPinWho() {
