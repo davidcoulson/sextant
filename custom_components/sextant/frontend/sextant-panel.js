@@ -12,7 +12,7 @@
  *   tuning       stability KPI, live tuning, history retention
  */
 import { LitElement, html, css, nothing } from "./lit.js";
-import { SextantMap, thingColor, thingHue, staleness, shortAge, heatCells } from "./sextant-map.js";
+import { SextantMap, thingColor, thingHue, staleness, shortAge, heatCells, pointInPolygon } from "./sextant-map.js";
 import { sharedStyles, widgetStyles, fmtAge, fmtNum, toast, confirmDialog, ensureHaComponents, uiSelect, uiButton, callWS, sortFloors, thingName, proxyName, fmtLen, fmtSpeed, classIcon, pronounsFor, uiIconButton, uiSegmented } from "./sextant-ui.js";
 
 // What this page is running: the version of the files it was loaded from
@@ -470,11 +470,16 @@ class SextantLive extends LitElement {
     _mapOpen: { state: true },
     _timeline: { state: true },
     _timelineAll: { state: true },
+    _pin: { state: true },
   };
 
   constructor() {
     super();
     this._selected = null;
+    // The quick-pin wizard (phones): null, or {step, ent, result}. "who" lists
+    // the things to pin, "where" is the full-screen map with the ring, "done"
+    // the pin's evaluation. See _startPin.
+    this._pin = null;
     this._links = null;
     this._marking = false;  // waiting for the click that says where the thing really is
     this._heatHours = 0;    // Activity window picked for the selected thing (0 = off)
@@ -518,6 +523,8 @@ class SextantLive extends LitElement {
       },
       onMapClick: (m) => this._placeMark(m),
       isPlacing: () => this._marking,
+      onView: () => this._pinViewChanged(),
+      onFloorReady: () => { if (this._pin?.step === "where") requestAnimationFrame(() => this._pinZoom()); },
     });
     this._linksTimer = setInterval(() => { if (this._selected) this._loadLinks(); }, 10000);
     this._pushFloor();
@@ -576,10 +583,13 @@ class SextantLive extends LitElement {
     const heatOn = this._heat?.ent === ent && this._heatHours > 0;
     const btn = (icon, label, title, on, onClick) => html`<button class="qa ${on ? "on" : ""}" title=${title} aria-label=${title} aria-pressed=${on} @click=${onClick}>
       <ha-icon icon=${icon}></ha-icon><span>${label}</span></button>`;
+    // On a phone, Here and Dock open the quick-pin wizard at its map step
+    // instead of arming a tap on a half-height map further down the page.
+    const mark = () => { if (this._narrow()) this._startPin(ent); else this._marking = !this._marking; };
     return html`<div class="quick">
       ${this._robotOf(ent)
-        ? btn("mdi:home-import-outline", "Dock", `Tap where ${name}'s dock is`, this._marking, () => { this._marking = !this._marking; })
-        : btn("mdi:map-marker-check", "Here", `Tap where ${name} really is`, this._marking, () => { this._marking = !this._marking; })}
+        ? btn("mdi:home-import-outline", "Dock", `Tap where ${name}'s dock is`, this._marking, mark)
+        : btn("mdi:map-marker-check", "Here", `Tap where ${name} really is`, this._marking, mark)}
       ${btn("mdi:fire", "Activity", `Where ${name} ${pn.has} spent ${pn.poss} time`, heatOn, () => this._loadHeat(ent, heatOn ? 0 : (this._lastHeatHours || 6)))}
       ${this._isAdmin() ? btn("mdi:history", "History", `Scrub ${name}'s history`, h?.ent === ent, () => this._loadHistory(h?.ent === ent ? null : ent)) : nothing}
       ${this._isAdmin() ? btn("mdi:pencil-outline", "Edit", "Edit this thing", false, () => this._goto({ mode: "things", thing: ent })) : nothing}
@@ -595,6 +605,234 @@ class SextantLive extends LitElement {
             .map((s) => uiButton({ label: s.entity_id, kind: "text", onClick: () => this._map?.zoomTo(s.cords) }))}
             ${uiButton({ label: "Whole floor", kind: "text", onClick: () => this._map?.fit() })}</div>
           ${uiButton({ label: "Cancel", kind: "text", onClick: () => { this._marking = false; } })}</div>`;
+  }
+
+  // --- Quick pin (phones) ------------------------------------------------------
+  //
+  // Placing a location pin on a phone used to mean: find the thing in the
+  // list, scroll past the half-height map to its card, tap an unlabelled
+  // icon, scroll back up, pinch, and tap with a finger over the very point.
+  // The wizard does it in two taps and a drag: pick the thing (the ones in
+  // your own room first - you are standing next to the one you mean), then
+  // drag the plan under a fixed ring on a full-screen map and press one
+  // button. The finger never covers the point. Same backend calls as the
+  // desktop flow; this is only a different way to arrive at x, y.
+
+  /** The stacked-layout breakpoint (see the media query in the styles). */
+  _narrow() { return typeof window !== "undefined" && !!window.matchMedia?.("(max-width: 720px)").matches; }
+
+  /** Where this user is right now, from their person's Sextant sensors: {room, floor} or null. */
+  _myPlace() {
+    const uid = this.hass?.user?.id, states = this.hass?.states || {};
+    const person = uid ? Object.values(states).find((s) => s.entity_id.startsWith("person.") && s.attributes?.user_id === uid) : null;
+    if (!person) return null;
+    const slug = person.entity_id.slice(7);
+    const loc = states[`sensor.${slug}_sextant_person_location`];
+    const room = loc?.attributes?.room, floor = loc?.attributes?.floor;
+    if (!room || room === "unknown") return null;
+    return { room, floor: floor && floor !== "unknown" ? floor : null };
+  }
+
+  /** Open the wizard: at the map with `ent` already chosen, else at the list. */
+  _startPin(ent = null) {
+    if (!this._isAdmin()) return;
+    this._marking = false;
+    this._proxy = null;
+    if (!ent) { this._pin = { step: "who" }; return; }
+    this._select(ent);
+    this._pin = { step: "where", ent };
+    const p = this._allRows().find((r) => r.ent === ent), me = this._myPlace();
+    // The thing's floor when it has one, else yours; zoomed to your room when
+    // you are on that floor, else to where Sextant has the thing.
+    const floor = p?.floor || me?.floor || this.floor;
+    if (floor !== this.floor) this.dispatchEvent(new CustomEvent("floor-changed", { detail: floor, bubbles: true, composed: true }));
+    const room = (me?.floor === floor && me.room) || (p?.floor === floor && p?.zone) || null;
+    this._pinFocus = room ? { room } : {};
+    // The stage has just gone full-screen (and maybe changed floor): let it
+    // lay out and the canvas resize before zooming into it.
+    this.updateComplete.then(() => requestAnimationFrame(() => requestAnimationFrame(() => this._pinZoom())));
+  }
+
+  _endPin() { this._pin = null; this._pinFocus = null; this._pinAt = null; this._pinViewKey = null; }
+
+  _pinZoom() {
+    if (this._pin?.step !== "where") return;
+    const f = this._floorObj(), focus = this._pinFocus || {};
+    if (focus.spot) { const s = (f?.subzones || []).find((z) => z.entity_id === focus.spot); if (s?.cords?.length >= 3) return this._map?.zoomTo(s.cords, 0.55); }
+    if (focus.room) { const z = (f?.zones || []).find((z) => z.entity_id === focus.room); if (z?.cords?.length >= 3) return this._map?.zoomTo(z.cords, 0.1); }
+    this._map?.fit();
+  }
+
+  /** The map point under the ring, with the room and spot it falls in. */
+  _pinUnderRing() {
+    const c = this._map?.canvas;
+    if (!c) return null;
+    const rect = c.getBoundingClientRect();
+    if (!rect.width) return null;
+    const m = this._map.toMap({ x: rect.width / 2, y: rect.height / 2 });
+    const f = this._floorObj();
+    const inside = (list) => (list || []).find((z) => !z.no_go && (z.cords || []).length >= 3 && pointInPolygon(m, z.cords));
+    return { m, room: inside(f?.zones)?.entity_id || null, spot: inside(f?.subzones)?.entity_id || null };
+  }
+
+  /** The map redrew (a pan, a pinch): refresh the ring's caption without a re-render per frame. */
+  _pinViewChanged() {
+    if (this._pin?.step !== "where") return;
+    // Every position update redraws too; only a moved view or a new floor
+    // can change what is under the ring.
+    const v = this._map?.view, f = this._floorObj();
+    const key = v ? `${f?.name}|${v.k}|${v.tx}|${v.ty}` : null;
+    if (key === this._pinViewKey && f === this._pinViewFloor) return;
+    this._pinViewKey = key; this._pinViewFloor = f;
+    const at = this._pinUnderRing();
+    if (!at) return;
+    this._pinAt = at;
+    const el = this.renderRoot.querySelector(".pinunder");
+    if (el) el.textContent = at.spot ? `${at.spot} · ${at.room || this.floor}` : (at.room || `Off the rooms · ${this.floor}`);
+  }
+
+  async _pinPlace() {
+    const pin = this._pin;
+    if (pin?.step !== "where" || !pin.ent) return;
+    const at = this._pinUnderRing();
+    if (!at) return;
+    const ent = pin.ent, vacuum = this._robotOf(ent);
+    // The busy state is this operation's identity: Back, another thing or
+    // Done while the call is in flight replace it, and the answer then
+    // changes the store but not the wizard.
+    const busy = { ...pin, busy: true };
+    this._pin = busy;
+    const mine = () => this._pin === busy;
+    if (vacuum) {
+      const r = await callWS(this, this.hass, { type: "sextant/robot/dock", vacuum, floor: this.floor, x: at.m.x, y: at.m.y });
+      if (!r) { if (mine()) this._pin = pin; return; }
+      toast(this, r.fit ? `Dock marked: ${r.fit.pairs.length} points agree to ${fmtNum(r.fit.rms_m, 2)} m` : "Dock marked");
+      this.dispatchEvent(new CustomEvent("layout-changed"));
+      if (mine()) this._endPin();
+      return;
+    }
+    const r = await callWS(this, this.hass, { type: "sextant/truth/mark", entity: ent, floor: this.floor, x: at.m.x, y: at.m.y });
+    if (!r) { if (mine()) this._pin = pin; return; }
+    this._loadMarks(ent);
+    this.dispatchEvent(new CustomEvent("layout-changed"));
+    if (!mine()) return;
+    this._truth = r;
+    this._pin = { step: "done", ent, result: r, room: at.room, spot: at.spot };
+  }
+
+  /** Undo from the done step: forget the pin just placed and go back to the list. */
+  async _pinUndo() {
+    const pin = this._pin, id = pin?.result?.mark?.id;
+    // No "are you sure?": the tap on Undo is the confirmation, and a blocking
+    // confirm() under a full-screen sheet is easy to lose on a phone.
+    if (id != null) {
+      const r = await callWS(this, this.hass, { type: "sextant/truth/delete", mark_id: id });
+      if (!r) return;
+      if (this._truth?.mark?.id === id) this._truth = null;
+      this._loadMarks(this._selected);
+      this.dispatchEvent(new CustomEvent("layout-changed"));
+      toast(this, `Pin ${id} forgotten`);
+    }
+    if (this._pin === pin) this._pin = { step: "who" };   // unless the wizard moved on meanwhile
+  }
+
+  _renderPinWho() {
+    const me = this._myPlace();
+    const rows = this._allRows();
+    const pick = (ent) => () => this._startPin(ent);
+    const near = me ? rows.filter((p) => !this._state(p).ghost && p.zone === me.room && (!me.floor || !p.floor || p.floor === me.floor)) : [];
+    const nearSet = new Set(near.map((p) => p.ent));
+    const rest = rows.filter((p) => !nearSet.has(p.ent));
+    const live = rest.filter((p) => !this._state(p).ghost), quiet = rest.filter((p) => this._state(p).ghost);
+    const row = (p, big) => {
+      const st = this._state(p), pn = this._pn(p.ent);
+      const where = st.away ? "away" : [p.zone, p.sub_zone && p.sub_zone !== "unknown" ? p.sub_zone : null].filter(Boolean).join(" · ") || "somewhere";
+      const when = st.away ? "" : st.age ? ` · ${shortAge(st.age)} ago` : "";
+      return html`<li><button class="pinrow ${big ? "big" : ""} ${st.ghost ? "ghost" : ""}" @click=${pick(p.ent)}
+          title=${st.ghost ? `Not heard for ${fmtAge(st.age)}: the pin would have nothing recent to re-solve` : `Pin where ${this._label(p.ent)} really ${pn.is}`}>
+        ${this._avatar(p.ent)}
+        <span class="pintext"><span class="name">${this._label(p.ent)}</span><span class="muted small">${st.ghost ? "" : "Sextant: "}${where}${when}</span></span>
+        <ha-icon icon="mdi:chevron-right"></ha-icon></button></li>`;
+    };
+    return html`<div class="pinsheet" role="dialog" aria-label="Quick pin: who">
+      <div class="pinhead">
+        <button class="iconbtn round" title="Close" aria-label="Close" @click=${() => this._endPin()}><ha-icon icon="mdi:close"></ha-icon></button>
+        <div><div class="muted small">Quick pin · 1 of 2</div><h3>${me ? "Who's with you?" : "Who?"}</h3></div>
+      </div>
+      <div class="pinbody">
+        ${me ? html`<div class="pinsection accent">In the ${me.room} with you</div>
+          <ul class="plain">${near.length ? near.map((p) => row(p, true)) : html`<li class="muted small pad">Nothing else is placed in the ${me.room} right now.</li>`}</ul>
+          <div class="pinsection">Everyone else</div>` : nothing}
+        <ul class="plain">${live.map((p) => row(p, false))}${quiet.map((p) => row(p, false))}</ul>
+        ${rows.length ? nothing : html`<p class="muted small pad">No things yet.</p>`}
+      </div>
+    </div>`;
+  }
+
+  /** The chips and the ring over the full-screen stage. */
+  _renderPinWhere() {
+    const pin = this._pin, ent = pin.ent, name = this._label(ent), pn = this._pn(ent);
+    const f = this._floorObj(), focus = this._pinFocus || {};
+    const me = this._myPlace(), p = this._allRows().find((r) => r.ent === ent);
+    const robot = !!this._robotOf(ent);
+    // Your room, then the thing's, then the rest of the floor's rooms by name.
+    const first = [me?.floor === this.floor ? me.room : null, p?.floor === this.floor ? p.zone : null].filter(Boolean);
+    const rooms = [...new Set([...first, ...(f?.zones || []).filter((z) => !z.no_go && (z.cords || []).length >= 3).map((z) => z.entity_id).sort((a, b) => a.localeCompare(b))])]
+      .filter((r) => (f?.zones || []).some((z) => z.entity_id === r));
+    // The spots of the room in view first - that is where the finger is going.
+    const roomPoly = (f?.zones || []).find((z) => z.entity_id === focus.room)?.cords;
+    const centre = (pts) => ({ x: pts.reduce((a, q) => a + q.x, 0) / pts.length, y: pts.reduce((a, q) => a + q.y, 0) / pts.length });
+    const inRoom = (sz) => roomPoly?.length >= 3 && pointInPolygon(centre(sz.cords), roomPoly) ? 0 : 1;
+    const spots = (f?.subzones || []).filter((s) => (s.cords || []).length >= 3)
+      .sort((a, b) => inRoom(a) - inRoom(b) || String(a.entity_id).localeCompare(String(b.entity_id))).map((s) => s.entity_id);
+    const chip = (label, on, onClick, cls = "") => html`<button class="pinchip ${cls} ${on ? "on" : ""}" aria-pressed=${on} @click=${onClick}>${label}</button>`;
+    const go = (next) => () => { this._pinFocus = next; this._pinZoom(); this.requestUpdate(); };
+    const at = this._pinAt;
+    const under = at ? (at.spot ? `${at.spot} · ${at.room || this.floor}` : (at.room || `Off the rooms · ${this.floor}`)) : this.floor;
+    return html`
+      <div class="pintop">
+        <div class="pinbar top">
+          <button class="iconbtn round" title="Back" aria-label="Back to the list" @click=${() => { this._pin = { step: "who" }; }}><ha-icon icon="mdi:arrow-left"></ha-icon></button>
+          <div class="grow"><div class="muted small">Quick pin · 2 of 2 · ${this.floor}</div><h3>${robot ? `Where is ${name}'s dock?` : `Where is ${name} really?`}</h3></div>
+        </div>
+        <div class="pinchips">${rooms.map((r) => chip(r, !focus.spot && focus.room === r, go({ room: r })))}${chip("Whole floor", !focus.spot && !focus.room, go({}))}</div>
+        ${spots.length ? html`<div class="pinchips spots">${spots.map((s) => chip(s, focus.spot === s, go({ spot: s, room: focus.room }), "spot"))}</div>` : nothing}
+      </div>
+      <div class="pinring" aria-hidden="true"><span class="n"></span><span class="s"></span><span class="w"></span><span class="e"></span><span class="dot"></span></div>
+      <div class="pinhint">Drag the plan until the ring is on ${robot ? "the dock" : pn.obj}</div>
+      <div class="pinunder">${under}</div>
+      <div class="pinbar bottom">
+        <button class="pinplace" ?disabled=${!!pin.busy} @click=${() => this._pinPlace()}><ha-icon icon=${robot ? "mdi:home-import-outline" : "mdi:map-marker-check"}></ha-icon>${robot ? `Mark ${name}'s dock here` : `Pin ${name} here`}</button>
+      </div>`;
+  }
+
+  _renderPinDone() {
+    const pin = this._pin, ent = pin.ent, name = this._label(ent), pn = this._pn(ent), t = pin.result;
+    const rows = (t?.rows || []).slice(0, 6), best = rows[0];
+    const where = pin.spot ? `${pin.spot} · ${pin.room || this.floor}` : (pin.room || this.floor);
+    return html`<div class="pinsheet" role="dialog" aria-label="Quick pin: done">
+      <div class="pinhead">
+        <span class="pincheck"><ha-icon icon="mdi:check"></ha-icon></span>
+        <div><div class="muted small">Pin ${t.mark.id} · from ${t.mark.samples} cycle${t.mark.samples === 1 ? "" : "s"}</div><h3>${name} · ${where}</h3></div>
+      </div>
+      <div class="pinbody">
+        ${rows.length ? html`
+          <p class="muted small pad">The last few minutes re-solved under each setting. Error is the mean distance from the pin; Room is how often the fix landed in the pin's room.</p>
+          <table class="small pintable"><tr><th>Estimator</th><th class="num">Gain</th><th class="num">Error</th><th class="num">Room</th></tr>
+            ${rows.map((r, i) => html`<tr class=${i === 0 ? "best" : ""}><td>${r.estimator}${r.estimator === "fused" ? ` ${Math.round(r.weight * 100)}%` : ""}</td><td class="num">×${fmtNum(r.gain, 1)}</td><td class="num">${fmtLen(r.mean_m, this.hass)}</td><td class="num">${Math.round(r.room_ok * 100)}%</td></tr>`)}
+          </table>
+          <p class="muted small pad">Top row: the fit that puts ${pn.obj} closest to your pin. One pin can overfit: pin ${pn.obj} in another room too.</p>`
+        : html`<p class="muted small pad">Nothing could be re-solved for this pin: ${name} ${pn.has} not been heard from in the last few minutes. The pin is kept as a fingerprint reference.</p>`}
+      </div>
+      <div class="pinbar bottom stack">
+        ${best ? html`<button class="pinplace" @click=${async () => { await this._applyRow(ent, best); this._endPin(); }}><ha-icon icon="mdi:check-all"></ha-icon>Apply best fit to ${name}</button>` : nothing}
+        <div class="pinpair">
+          <button class="pinsecondary" @click=${() => { this._pin = { step: "who" }; }}>Pin another</button>
+          <button class="pinsecondary" @click=${() => this._pinUndo()}>Undo pin</button>
+          <button class="pinsecondary" @click=${() => this._endPin()}>Done</button>
+        </div>
+      </div>
+    </div>`;
   }
 
   /** Where the selected thing spent the last `hours`, binned per floor (see heatCells). */
@@ -701,11 +939,15 @@ class SextantLive extends LitElement {
     // (or stops being one while the page is open), drop anything already
     // loaded; the loaders below also discard answers that arrive afterwards.
     if (changed.has("hass") && !this._isAdmin() &&
-        (this._timeline || this._marks.length || this._truth || this._history || this._heat || this._scrub != null)) {
+        (this._timeline || this._marks.length || this._truth || this._history || this._heat || this._scrub != null || this._pin)) {
       this._timeline = null; this._marks = []; this._truth = null;
       this._history = null; this._scrub = null; this._heat = null; this._heatHours = 0;
+      this._pin = null;
       this._map?.clearTrails();
     }
+    // The map step takes the whole screen: the stage goes fixed and the
+    // rest of the page hides under it (see :host(.pinning) in the styles).
+    if (changed.has("_pin")) this.classList.toggle("pinning", this._pin?.step === "where");
   }
 
   updated(changed) {
@@ -1078,6 +1320,7 @@ class SextantLive extends LitElement {
     const rows = this._allRows();
     const sel = rows.find((p) => p.ent === this._selected);
     const h = this._history;
+    const pinning = this._pin?.step === "where";
     const switches = [
       ["image", "Map image", "Show or hide the floor-plan drawing behind the rooms", "mdi:floor-plan"],
       ["labels", "Labels", "Room and thing names", "mdi:label-outline"],
@@ -1118,7 +1361,7 @@ class SextantLive extends LitElement {
           ${uiButton({ label: "New thing", kind: "outline", icon: "mdi:plus-circle-outline", onClick: () => this._goto("things") })}
           ${uiButton({ label: "Calibrate", kind: "outline", icon: "mdi:tune-vertical", onClick: () => this._goto("calibration") })}` : nothing}
       </div>
-      <div class="stage ${this._mapOpen ? "" : "collapsed"}"><canvas></canvas>${this._renderProxyCard()}
+      <div class="stage ${this._mapOpen || pinning ? "" : "collapsed"}"><canvas></canvas>${pinning ? this._renderPinWhere() : this._renderProxyCard()}
         <div class="overlay" role="toolbar" aria-label="Map">
           <div class="chips wide-only">${switches.map(optBtn)}</div>
           <span class="sep wide-only"></span>
@@ -1203,6 +1446,10 @@ class SextantLive extends LitElement {
             ${sel.robot ? nothing : this._renderTruth(sel)}
             ${sel.robot ? nothing : this._renderLinks(sel.ent)}
           </div>` : nothing}
+        ${this._isAdmin() && !this._pin ? html`
+          <button class="pinfab narrow-only" title="Quick pin: say where a thing really is" @click=${() => this._startPin()}>
+            <ha-icon icon="mdi:map-marker-check"></ha-icon><span>Pin</span></button>` : nothing}
+        ${this._pin?.step === "who" ? this._renderPinWho() : this._pin?.step === "done" ? this._renderPinDone() : nothing}
     `;
   }
 
@@ -1521,6 +1768,66 @@ class SextantLive extends LitElement {
     .quick-actions button { display: flex; align-items: center; gap: 6px; }
     .side h3 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .maptoggle { margin-left: auto; }
+    /* Quick pin (phones; see _startPin). The list and done steps are sheets
+       over the whole screen; the map step is the stage itself gone
+       full-screen, with the chips, the ring and one button laid over it. */
+    .pinfab { position: fixed; right: 16px; bottom: calc(64px + env(safe-area-inset-bottom, 0px)); z-index: 6; height: 52px; padding: 0 20px 0 16px; border: 0; border-radius: 999px; background: var(--primary-color, #03a9f4); color: var(--text-primary-color, #fff); font: inherit; font-weight: 600; font-size: 15px; align-items: center; gap: 6px; box-shadow: 0 6px 20px rgba(0,0,0,0.35); cursor: pointer; }
+    .pinfab ha-icon { --mdc-icon-size: 22px; }
+    .pinsheet { position: fixed; inset: 0; z-index: 8; display: flex; flex-direction: column; background: var(--primary-background-color, #fafafa); color: var(--primary-text-color); }
+    .pinhead { display: flex; align-items: center; gap: 12px; padding: calc(12px + env(safe-area-inset-top, 0px)) 16px 8px; }
+    .pinhead h3, .pinbar h3 { margin: 0; font-size: 18px; font-weight: 600; line-height: 1.2; text-transform: none; letter-spacing: 0; color: var(--primary-text-color); }
+    .iconbtn.round { width: 40px; height: 40px; background: var(--secondary-background-color, rgba(0,0,0,0.06)); color: var(--primary-text-color); display: inline-flex; align-items: center; justify-content: center; flex: none; }
+    .pincheck { width: 40px; height: 40px; border-radius: 50%; background: var(--success-color, #43a047); color: #fff; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+    .pinbody { flex: 1 1 auto; min-height: 0; overflow: auto; -webkit-overflow-scrolling: touch; }
+    .pinsection { padding: 14px 16px 4px; font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--secondary-text-color); }
+    .pinsection.accent { color: var(--warning-color, #c77800); }
+    .pinbody ul.plain { margin: 0; padding: 0; }
+    .pinrow { width: 100%; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px; min-height: 60px; padding: 8px 16px; border: 0; border-bottom: 1px solid var(--divider-color, #e0e0e0); background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+    .pinrow.big { min-height: 68px; background: var(--card-background-color); }
+    .pinrow.ghost { opacity: 0.55; }
+    .pinrow:active { background: var(--secondary-background-color, rgba(0,0,0,0.06)); }
+    .pinrow .avatar { grid-row: auto; }
+    .pinrow .pintext { display: flex; flex-direction: column; min-width: 0; }
+    .pinrow .pintext .name { font-weight: 500; font-size: 16px; }
+    .pinrow .pintext > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pinrow ha-icon { color: var(--secondary-text-color); }
+    .pinbody .pad { padding: 0 16px; }
+    .pintable { width: calc(100% - 32px); margin: 0 16px; border-collapse: collapse; }
+    .pintable th, .pintable td { padding: 8px 6px; border-bottom: 1px solid var(--divider-color, #e0e0e0); font-variant-numeric: tabular-nums; }
+    .pintable th { text-align: left; font-weight: 500; color: var(--secondary-text-color); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+    .pintable .num { text-align: right; }
+    .pintable tr.best td { background: color-mix(in srgb, var(--success-color, #43a047) 18%, transparent); font-weight: 600; }
+    .pinbar { display: flex; align-items: center; gap: 12px; padding: 10px 16px; background: var(--card-background-color); }
+    .pintop { position: absolute; left: 0; right: 0; top: 0; z-index: 2; display: flex; flex-direction: column; background: var(--card-background-color); box-shadow: 0 1px 0 var(--divider-color, #e0e0e0); padding-bottom: 4px; }
+    .pinbar.top { padding-top: calc(10px + env(safe-area-inset-top, 0px)); padding-bottom: 6px; }
+    .pinbar.bottom { position: absolute; left: 0; right: 0; bottom: 0; z-index: 2; padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px)); box-shadow: 0 -1px 0 var(--divider-color, #e0e0e0); }
+    .pinsheet .pinbar.bottom { position: static; }
+    .pinbar.stack { flex-direction: column; align-items: stretch; gap: 10px; }
+    .pinpair { display: flex; gap: 10px; }
+    .pinplace { flex: 1 1 auto; display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 54px; border: 0; border-radius: 14px; background: var(--primary-color, #03a9f4); color: var(--text-primary-color, #fff); font: inherit; font-size: 17px; font-weight: 600; cursor: pointer; }
+    .pinplace[disabled] { opacity: 0.6; cursor: default; }
+    .pinplace ha-icon { --mdc-icon-size: 22px; }
+    .pinsecondary { flex: 1 1 0; height: 46px; border: 1px solid var(--divider-color, #e0e0e0); border-radius: 14px; background: var(--card-background-color); color: var(--primary-text-color); font: inherit; font-weight: 500; cursor: pointer; }
+    .pinchips { display: flex; gap: 6px; padding: 4px 12px; overflow-x: auto; scrollbar-width: none; }
+    .pinchips::-webkit-scrollbar { display: none; }
+    .pinchip { flex: none; padding: 7px 12px; border-radius: 999px; border: 1px solid var(--divider-color, #e0e0e0); background: var(--secondary-background-color, rgba(0,0,0,0.04)); color: var(--primary-text-color); font: inherit; font-size: 13px; font-weight: 500; white-space: nowrap; cursor: pointer; }
+    .pinchip.spot { font-weight: 400; }
+    .pinchip.on { background: var(--primary-color, #03a9f4); border-color: var(--primary-color, #03a9f4); color: var(--text-primary-color, #fff); }
+    .pinring { position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; margin: -28px 0 0 -28px; border-radius: 50%; border: 2px solid var(--warning-color, #ffb648); box-shadow: 0 0 0 1px rgba(0,0,0,0.5), inset 0 0 0 1px rgba(0,0,0,0.5); pointer-events: none; z-index: 1; }
+    .pinring span { position: absolute; background: var(--warning-color, #ffb648); box-shadow: 0 0 0 1px rgba(0,0,0,0.4); }
+    .pinring .n, .pinring .s { left: 50%; width: 2px; height: 16px; margin-left: -1px; }
+    .pinring .n { top: -26px; } .pinring .s { bottom: -26px; }
+    .pinring .w, .pinring .e { top: 50%; height: 2px; width: 16px; margin-top: -1px; }
+    .pinring .w { left: -26px; } .pinring .e { right: -26px; }
+    .pinring .dot { left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; }
+    .pinhint, .pinunder { position: absolute; z-index: 2; padding: 6px 12px; border-radius: 999px; background: var(--card-background-color); color: var(--secondary-text-color); font-size: 13px; box-shadow: 0 1px 4px rgba(0,0,0,0.25); pointer-events: none; }
+    .pinhint { left: 50%; transform: translateX(-50%); top: calc(50% - 76px); white-space: nowrap; }
+    .pinunder { left: 12px; bottom: calc(92px + env(safe-area-inset-bottom, 0px)); color: var(--primary-text-color); font-weight: 500; }
+    /* The map step: the stage is the screen. Its own toolbar, zoom cluster
+       and scrubber step aside; the rest of the page sits under it. */
+    :host(.pinning) .stage, :host(.pinning) .stage.collapsed { display: block; position: fixed; inset: 0; z-index: 8; flex: none; background: var(--card-background-color); }
+    :host(.pinning) .overlay, :host(.pinning) .zoom, :host(.pinning) .scrub, :host(.pinning) .opts-sheet, :host(.pinning) .opts-backdrop { display: none; }
+
     @media (max-width: 720px) {
       /* Flex, not grid: a collapsed .stage (display:none) then simply takes
          no space, and the list gets the room back - a grid track sized for

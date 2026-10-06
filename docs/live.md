@@ -130,11 +130,20 @@ and **Edit**, which opens the thing on the Things page.
 
 When a thing sits in the wrong place, select it on the Live page, click
 **It's actually here…** and tap the spot on the map where it really is.
-On a phone, pinch to zoom, or tap one of the floor's spots listed under
-the prompt to fill the screen with just that spot (a bedside table
-becomes phone-sized); **Whole floor** zooms back out. The pin goes down
-when your finger lifts without moving, so panning or pinching never
-places one.
+The pin goes down when your finger lifts without moving, so panning or
+pinching never places one.
+
+On a phone the **Pin** button at the bottom of the Live page opens a
+two-step wizard instead. First, who: the things Sextant places in the
+same room as you come first (you are usually standing next to the one
+you mean), then everyone else. Then, where: the plan fills the screen,
+already zoomed to your room, with a ring fixed at its centre - drag the
+plan until the ring is on the thing, or tap a room or spot chip to jump
+there, and press **Pin … here**. Your finger never covers the point. The
+caption under the ring names the room and spot it is over. The result
+shows which setting would have put the thing closest to your pin, with
+**Apply best fit**, **Pin another** and **Undo pin**. A selected thing's
+**Here** quick action opens the same wizard at its map step.
 Sextant keeps the solver inputs of the last few minutes for every
 thing, so it re-solves those cycles under every blend of geometric fit
 and fingerprint match and every reference gain, and shows how far each
