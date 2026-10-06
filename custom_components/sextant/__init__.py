@@ -3981,25 +3981,32 @@ def _update_room_sensors(hass):
 
     # Each person is in the room the thing speaking for them is in, as the
     # person sensors just published it; and how many of them are in the house.
-    person_rooms, presences = {}, {}
-    for person in persons_mod.owners(layout):
+    # A pet is a person to Home Assistant (person.meg) but not to a room's
+    # "people": it is told apart by the things it owns being pet tags.
+    classes = layout.get("thing_classes") or {}
+    person_rooms, presences, pet_persons = {}, {}, set()
+    for person, things in persons_mod.owners(layout).items():
         slug = person.split(".", 1)[1]
         st = hass.states.get(f"sensor.{slug}_sextant_person_location")
         if st is None:
             continue
         name = (getattr(hass.states.get(person), "attributes", {}) or {}).get("friendly_name") or slug
         presences[name] = st.attributes.get("presence") or "away"
+        if things and all(classes.get(t) in rooms_mod.PET_CLASSES for t in things):
+            pet_persons.add(name)
+            continue
         room, floor = st.attributes.get("room"), st.attributes.get("floor")
         if presences[name] in rooms_mod.COUNTED and room and room != "unknown" and floor and floor != "unknown":
             person_rooms[name] = (floor, room)
     names = _thing_names(hass, {r.get("ent") for r in rows if r.get("ent")}, layout)
-    answers = rooms_mod.occupancy(keys, rows, presence_of, layout.get("thing_classes") or {}, names, person_rooms)
+    answers = rooms_mod.occupancy(keys, rows, presence_of, classes, names, person_rooms,
+                                  stands_for_someone=lambda ent: persons_mod.locates_owner(layout, ent, classes.get(ent)))
     for key, (is_on, attrs) in answers.items():
         sensor = cache.get(key)
         if sensor is not None:
             sensor.set_occupancy(is_on, attrs)
     if presences:
-        count, attrs = rooms_mod.people_home(presences)
+        count, attrs = rooms_mod.people_home(presences, pet_persons)
         update_sextant_sensor_state(hass, PEOPLE_HOME_ENTITY_ID, count, attrs)
 
 

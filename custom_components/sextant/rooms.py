@@ -75,7 +75,7 @@ def ids_for(keys) -> dict[tuple[str, str], dict]:
     return out
 
 
-def occupancy(keys, rows, presence_of, classes=None, names=None, person_rooms=None) -> dict[tuple[str, str], tuple[bool, dict]]:
+def occupancy(keys, rows, presence_of, classes=None, names=None, person_rooms=None, stands_for_someone=None) -> dict[tuple[str, str], tuple[bool, dict]]:
     """The state and attributes of every room's sensor.
 
     ``rows`` are the cycle's position rows ({ent, zone, floor, sub_zone, ...});
@@ -84,12 +84,22 @@ def occupancy(keys, rows, presence_of, classes=None, names=None, person_rooms=No
     {person display name: (floor, room)} for each person Sextant currently
     places (from the person sensors), so a person is listed in the room the
     thing speaking for them is in, not in every room one of their things is.
+
+    Occupancy is about people and pets. A room is ``on`` while something
+    that stands for someone is in it - a phone, a watch, a pet's tag
+    (``stands_for_someone(ent)``, persons.locates_owner by default) - or a
+    person is placed there. A wallet left on the counter or luggage in a
+    bedroom is listed under ``things`` but does not make the room occupied,
+    and a robot vacuum is not a thing here at all.
     """
     classes = classes or {}
     names = names or {}
-    by_key: dict[tuple[str, str], list[tuple[str, str, str | None]]] = {}
+    if stands_for_someone is None:
+        def stands_for_someone(ent):
+            return classes.get(ent) in PET_CLASSES or classes.get(ent) in ("phone", "watch", "person", "man", "woman", "child")
+    by_key: dict[tuple[str, str], list[tuple[str, str, str | None, bool]]] = {}
     for row in rows or []:
-        if not isinstance(row, dict):
+        if not isinstance(row, dict) or row.get("robot"):
             continue
         ent, zone, floor = row.get("ent"), row.get("zone"), row.get("floor")
         if not ent or not zone or zone == "unknown" or not floor:
@@ -98,7 +108,7 @@ def occupancy(keys, rows, presence_of, classes=None, names=None, person_rooms=No
         if presence not in COUNTED:
             continue
         spot = row.get("sub_zone")
-        by_key.setdefault((floor, zone), []).append((ent, presence, spot if spot and spot != "unknown" else None))
+        by_key.setdefault((floor, zone), []).append((ent, presence, spot if spot and spot != "unknown" else None, bool(stands_for_someone(ent))))
     people_by_key: dict[tuple[str, str], list[str]] = {}
     for person, where in (person_rooms or {}).items():
         if where:
@@ -107,21 +117,28 @@ def occupancy(keys, rows, presence_of, classes=None, names=None, person_rooms=No
     for k in keys:
         key = (k["floor"], k["room"])
         here = sorted(by_key.get(key, []), key=lambda t: (_RANK[t[1]], names.get(t[0], t[0]).lower()))
-        things = [names.get(ent, ent) for ent, _p, _s in here]
-        pets = [names.get(ent, ent) for ent, _p, _s in here if classes.get(ent) in PET_CLASSES]
+        counted = [t for t in here if t[3]]
+        things = [names.get(ent, ent) for ent, _p, _s, _c in here]
+        pets = [names.get(ent, ent) for ent, _p, _s, _c in here if classes.get(ent) in PET_CLASSES]
         people = sorted(people_by_key.get(key, []))
-        presence = min((p for _e, p, _s in here), key=_RANK.get, default=None)
-        out[key] = (bool(here), {
+        presence = min((p for _e, p, _s, _c in counted), key=_RANK.get, default=None)
+        out[key] = (bool(counted) or bool(people), {
             "room": k["room"], "floor": k["floor"], "area_id": k["area_id"], "floor_id": k["floor_id"],
-            "count": len(here), "people": people, "pets": pets, "things": things,
-            "spots": sorted({s for _e, _p, s in here if s}),
+            "count": len(counted), "people": people, "pets": pets, "things": things,
+            "spots": sorted({s for _e, _p, s, _c in counted if s}),
             "presence": presence,
         })
     return out
 
 
-def people_home(presences: dict[str, str]) -> tuple[int, dict]:
-    """How many people Sextant hears in the house, from {person name: presence}."""
-    home = sorted(n for n, p in presences.items() if p in COUNTED)
-    away = sorted(n for n, p in presences.items() if p not in COUNTED)
-    return len(home), {"home": home, "away": away}
+def people_home(presences: dict[str, str], pets=()) -> tuple[int, dict]:
+    """How many people Sextant hears in the house, from {person name: presence}.
+
+    ``pets`` names the persons that are pets (Home Assistant lets a cat be a
+    person): they are listed apart and not counted.
+    """
+    pets = set(pets)
+    home = sorted(n for n, p in presences.items() if p in COUNTED and n not in pets)
+    away = sorted(n for n, p in presences.items() if p not in COUNTED and n not in pets)
+    pets_home = sorted(n for n, p in presences.items() if p in COUNTED and n in pets)
+    return len(home), {"home": home, "away": away, "pets_home": pets_home}

@@ -40,30 +40,41 @@ def test_a_room_name_shared_by_two_floors_gets_the_floor_in_its_entity_id():
 ROWS = [
     {"ent": "david_phone", "zone": "Kitchen", "floor": "Ground Floor", "sub_zone": "Peninsula"},
     {"ent": "meg", "zone": "Kitchen", "floor": "Ground Floor", "sub_zone": "unknown"},
+    {"ent": "wallet", "zone": "Kitchen", "floor": "Ground Floor", "sub_zone": "Pantry"},
     {"ent": "fry", "zone": "Office", "floor": "Ground Floor"},
     {"ent": "leela", "zone": "Office", "floor": "Second Floor"},
     {"ent": "lost_tag", "zone": "unknown", "floor": "Ground Floor"},
     {"ent": "gone", "zone": "Kitchen", "floor": "Ground Floor"},
+    {"ent": "luggage", "zone": "Master Bedroom", "floor": "Second Floor"},
+    {"ent": "vacuum_r2d2", "zone": "Master Bedroom", "floor": "Second Floor", "robot": "vacuum.r2d2"},
 ]
-PRESENCE = {"david_phone": "here", "meg": "quiet", "fry": "here", "leela": "here", "gone": "away"}
-CLASSES = {"meg": "cat", "fry": "cat", "leela": "cat", "david_phone": "phone"}
-NAMES = {"david_phone": "David Phone", "meg": "Meg", "fry": "Fry", "leela": "Leela"}
+PRESENCE = {"david_phone": "here", "meg": "quiet", "fry": "here", "leela": "here", "gone": "away", "wallet": "here", "luggage": "here", "vacuum_r2d2": "here"}
+CLASSES = {"meg": "cat", "fry": "cat", "leela": "cat", "david_phone": "phone", "wallet": "wallet", "luggage": "bag"}
+NAMES = {"david_phone": "David Phone", "meg": "Meg", "fry": "Fry", "leela": "Leela", "wallet": "Wallet", "luggage": "Luggage"}
 
 
 def test_occupancy_counts_the_things_placed_in_each_room():
     keys = rooms.room_keys(LAYOUT)
     out = rooms.occupancy(keys, ROWS, PRESENCE.get, CLASSES, NAMES, {"David": ("Ground Floor", "Kitchen")})
     on, kitchen = out[("Ground Floor", "Kitchen")]
-    assert on and kitchen["count"] == 2
-    assert kitchen["things"] == ["David Phone", "Meg"]       # here before quiet
+    assert on and kitchen["count"] == 2                      # the phone and the cat; not the wallet
+    assert kitchen["things"] == ["David Phone", "Wallet", "Meg"]   # here before quiet, everything listed
     assert kitchen["pets"] == ["Meg"] and kitchen["people"] == ["David"]
-    assert kitchen["spots"] == ["Peninsula"] and kitchen["presence"] == "here"
+    assert kitchen["spots"] == ["Peninsula"] and kitchen["presence"] == "here"   # the wallet's Pantry is not a spot in use
     assert kitchen["area_id"] == "kitchen" and kitchen["floor_id"] == "ground"
     # Two rooms called Office, told apart by floor.
     assert out[("Ground Floor", "Office")][1]["things"] == ["Fry"]
     assert out[("Second Floor", "Office")][1]["things"] == ["Leela"]
+    # Luggage and a robot vacuum do not make a bedroom occupied; the luggage is still listed.
     on, bedroom = out[("Second Floor", "Master Bedroom")]
     assert not on and bedroom["count"] == 0 and bedroom["presence"] is None
+    assert bedroom["things"] == ["Luggage"]
+
+
+def test_a_person_placed_in_a_room_makes_it_occupied_even_without_a_counted_thing():
+    out = rooms.occupancy(rooms.room_keys(LAYOUT), [], PRESENCE.get, CLASSES, NAMES, {"Guest": ("Second Floor", "Master Bedroom")})
+    on, bedroom = out[("Second Floor", "Master Bedroom")]
+    assert on and bedroom["people"] == ["Guest"] and bedroom["count"] == 0
 
 
 def test_a_thing_gone_away_or_not_placed_counts_nowhere():
@@ -78,9 +89,9 @@ def test_a_room_of_only_quiet_things_is_on_but_says_quiet():
     assert on and kitchen["presence"] == "quiet"
 
 
-def test_people_home_counts_the_people_heard():
-    count, attrs = rooms.people_home({"David": "here", "Eilee": "quiet", "Jack": "away", "Michelle": "here"})
-    assert count == 3 and attrs == {"home": ["David", "Eilee", "Michelle"], "away": ["Jack"]}
+def test_people_home_counts_the_people_heard_and_keeps_the_pets_apart():
+    count, attrs = rooms.people_home({"David": "here", "Eilee": "quiet", "Jack": "away", "Michelle": "here", "Meg": "here", "Willow": "away"}, pets={"Meg", "Willow"})
+    assert count == 3 and attrs == {"home": ["David", "Eilee", "Michelle"], "away": ["Jack"], "pets_home": ["Meg"]}
 
 
 # --- the platform --------------------------------------------------------------
