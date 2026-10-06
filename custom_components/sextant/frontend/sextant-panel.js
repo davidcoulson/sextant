@@ -515,6 +515,9 @@ class SextantLive extends LitElement {
 
   firstUpdated() {
     this._restoreDetailHeight();
+    // The room for the card changes with the screen and with the map: a
+    // height saved on a tall phone is cut to fit a short one.
+    if (typeof ResizeObserver !== "undefined") { this._hostResize = new ResizeObserver(() => this._restoreDetailHeight()); this._hostResize.observe(this); }
     this._map = new SextantMap(this.renderRoot.querySelector("canvas"), {
       fetch: (url) => this.hass.fetchWithAuth(url),
       onSelect: (hit) => {
@@ -532,7 +535,7 @@ class SextantLive extends LitElement {
     this._pushThings();
   }
 
-  disconnectedCallback() { super.disconnectedCallback(); this._map?.destroy(); clearInterval(this._linksTimer); }
+  disconnectedCallback() { super.disconnectedCallback(); this._map?.destroy(); clearInterval(this._linksTimer); this._hostResize?.disconnect(); }
 
   _select(ent) {
     if (ent !== this._selected) { this._truth = null; this._marking = false; this._blend = null; this._heat = null; }
@@ -664,17 +667,46 @@ class SextantLive extends LitElement {
   // double tap on the grip goes back to letting the content decide.
 
   _detailHeightKey = "sextant.live.detailHeight";
+  static DETAIL_MIN = 120;   // the card never shrinks below this
+  static LIST_MIN = 120;     // ...and always leaves the list at least this
 
-  _restoreDetailHeight() {
-    try { const h = Number(localStorage.getItem(this._detailHeightKey)); if (h > 0) this.style.setProperty("--sextant-detail-h", `${h}px`); } catch { /* ignore */ }
+  /** The tallest the card may be here: what is left after the quick actions,
+   * the map (when open) and a usable strip of list. */
+  _detailMax() {
+    const host = this.getBoundingClientRect().height || window.innerHeight;
+    const h = (sel) => this.renderRoot.querySelector(sel)?.getBoundingClientRect().height || 0;
+    const stage = this._mapOpen ? h(".stage") : 0;
+    return Math.max(80, Math.floor(host - h(".quick-actions") - stage - SextantLive.LIST_MIN));
   }
+
+  _clampDetail(px) { return Math.round(Math.min(Math.max(px, SextantLive.DETAIL_MIN), Math.max(this._detailMax(), 80))); }
+
+  /** A height saved on a taller screen is cut to fit this one; re-run whenever the room changes (resize, map open). */
+  _restoreDetailHeight() {
+    let saved = null;
+    try { saved = Number(localStorage.getItem(this._detailHeightKey)) || null; } catch { /* ignore */ }
+    if (saved) this.style.setProperty("--sextant-detail-h", `${this._clampDetail(saved)}px`);
+  }
+
+  _detailHeight() { const v = parseFloat(this.style.getPropertyValue("--sextant-detail-h")); return Number.isFinite(v) ? v : null; }
 
   _setDetailHeight(px) {
     if (px == null) { this.style.removeProperty("--sextant-detail-h"); try { localStorage.removeItem(this._detailHeightKey); } catch { /* ignore */ } return; }
-    const host = this.getBoundingClientRect().height || window.innerHeight;
-    const h = Math.round(Math.min(Math.max(px, 120), host - 140));
+    const h = this._clampDetail(px);
     this.style.setProperty("--sextant-detail-h", `${h}px`);
     try { localStorage.setItem(this._detailHeightKey, String(h)); } catch { /* ignore */ }
+  }
+
+  /** Arrows resize from the keyboard; Backspace, Delete or Escape go back to the content's own height. */
+  _gripKey(e) {
+    const step = e.shiftKey ? 80 : 24;
+    const card = e.currentTarget.closest(".detail");
+    const cur = this._detailHeight() ?? card?.getBoundingClientRect().height ?? SextantLive.DETAIL_MIN;
+    if (e.key === "ArrowUp") this._setDetailHeight(cur + step);
+    else if (e.key === "ArrowDown") this._setDetailHeight(cur - step);
+    else if (e.key === "Backspace" || e.key === "Delete" || e.key === "Escape") this._setDetailHeight(null);
+    else return;
+    e.preventDefault();
   }
 
   _gripDown(e) {
@@ -993,6 +1025,7 @@ class SextantLive extends LitElement {
 
   updated(changed) {
     if (!this._map) return;
+    if (changed.has("_mapOpen")) this._restoreDetailHeight();
     if (changed.has("data") || changed.has("floor")) this._pushFloor();
     if (changed.has("positions") || changed.has("floor") || changed.has("data") || changed.has("_scrub") || changed.has("_history")) this._pushThings();
     if (changed.has("hass")) this._map.setAreas(this.hass?.areas);
@@ -1444,9 +1477,11 @@ class SextantLive extends LitElement {
       </aside>
         ${sel ? html`
           <div class="card detail ${this._history ? "lifted" : ""}">
-            <div class="grip narrow-only" role="separator" aria-label="Drag to resize the details" aria-orientation="horizontal"
+            <div class="grip narrow-only" role="separator" tabindex="0" aria-orientation="horizontal"
+                 aria-label="Resize the details: drag, or arrow keys; Backspace resets"
+                 aria-valuemin=${SextantLive.DETAIL_MIN} aria-valuemax=${this._detailMax()} aria-valuenow=${this._detailHeight() ?? nothing}
                  @pointerdown=${(e) => this._gripDown(e)} @pointermove=${(e) => this._gripMove(e)} @pointerup=${(e) => this._gripUp(e)} @pointercancel=${(e) => this._gripUp(e)}
-                 @dblclick=${() => this._setDetailHeight(null)}><span></span></div>
+                 @keydown=${(e) => this._gripKey(e)} @dblclick=${() => this._setDetailHeight(null)}><span></span></div>
             <h4>${this._label(sel.ent)}<span class="grow"></span>
               <span class="iconbar">
                 ${/* Three states in the first slot. Away: nothing is here to
@@ -1888,7 +1923,8 @@ class SextantLive extends LitElement {
       :host([style*="--sextant-detail-h"]) .detail, :host([style*="--sextant-detail-h"]) .detail.lifted { flex: 0 0 var(--sextant-detail-h); height: var(--sextant-detail-h); overflow: auto; }
       .detail .grip { display: flex; justify-content: center; align-items: center; height: 22px; margin: -12px -14px 0; touch-action: none; cursor: ns-resize; position: sticky; top: -12px; z-index: 1; background: var(--card-background-color); }
       .detail .grip span { width: 44px; height: 5px; border-radius: 3px; background: var(--divider-color, #c0c0c0); }
-      .detail .grip:active span { background: var(--primary-color, #03a9f4); }
+      .detail .grip:active span, .detail .grip:focus-visible span { background: var(--primary-color, #03a9f4); }
+      .detail .grip:focus-visible { outline: none; }
       .scrub { right: 10px; }
       /* Things, and with it Hide map, stays reachable however far the list
          is scrolled - it used to scroll away and leave no way to close a map
