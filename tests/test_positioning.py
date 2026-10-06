@@ -1071,14 +1071,18 @@ def test_a_far_challenger_with_an_ordinary_lead_never_wins(monkeypatch):
     # The shares are pinned: the challenger leads by 0.2 - past the ordinary
     # 0.15 margin, short of the far-move 0.3. Next door that switches after
     # the dwell; three metres away it never does, however long it is held.
+    real = sextant._zone_membership
+    pinned = {}
+    monkeypatch.setattr(sextant, "_zone_membership", lambda polys, samples: dict(pinned) or real(polys, samples))
     sextant._zone_state.clear()
     assert _elect3("e", 50, 0.0) == "Kitchen"
-    monkeypatch.setattr(sextant, "_zone_membership", lambda polys, samples: {"Kitchen": 0.4, "Office": 0.6})
+    pinned.update({"Kitchen": 0.4, "Office": 0.6})
     for t in (1.0, 30.0, 60.0, 300.0):
         assert _elect3("e", 450, t) == "Kitchen"
+    pinned.clear()
     sextant._zone_state.clear()
     assert _elect3("e", 50, 0.0) == "Kitchen"
-    monkeypatch.setattr(sextant, "_zone_membership", lambda polys, samples: {"Kitchen": 0.4, "Hall": 0.6})
+    pinned.update({"Kitchen": 0.4, "Hall": 0.6})
     _elect3("e", 250, 1.0)
     assert _elect3("e", 250, 22.0) == "Hall"
 
