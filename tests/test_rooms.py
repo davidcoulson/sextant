@@ -89,6 +89,18 @@ def test_a_room_of_only_quiet_things_is_on_but_says_quiet():
     assert on and kitchen["presence"] == "quiet"
 
 
+def test_an_owned_thing_counts_only_while_it_speaks_for_its_owner():
+    owners = {"david_phone": "person.david", "david_watch": "person.david", "meg": "person.meg"}
+    by_class = lambda ent: ent in ("david_phone", "david_watch", "meg", "guest_phone", "wallet") and ent != "wallet"
+    counts = rooms.stands_for_someone(owners, {"david_phone", "meg"}, by_class)
+    assert counts("david_phone") and counts("meg")
+    assert not counts("david_watch")          # on the bedside table; David is spoken for by his phone
+    assert counts("guest_phone")               # nobody's: its class decides
+    assert not counts("wallet")
+    # The watch speaks for David once he wears it and leaves the phone behind.
+    assert rooms.stands_for_someone(owners, {"david_watch"}, by_class)("david_watch")
+
+
 def test_people_home_counts_the_people_heard_and_keeps_the_pets_apart():
     count, attrs = rooms.people_home({"David": "here", "Eilee": "quiet", "Jack": "away", "Michelle": "here", "Meg": "here", "Willow": "away"}, pets={"Meg", "Willow"})
     assert count == 3 and attrs == {"home": ["David", "Eilee", "Michelle"], "away": ["Jack"], "pets_home": ["Meg"]}

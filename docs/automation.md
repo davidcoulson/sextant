@@ -81,10 +81,12 @@ entity, the map card, or a zone automation.
 
 Each room on the plan gets `binary_sensor.<room>_sextant_occupancy`
 (device class occupancy): `on` while Sextant places a person or a pet in
-it - a phone, a watch or a pet's tag, the things that stand for someone
-([People](#people)); a wallet on the counter or luggage in a bedroom is
-listed but does not make the room occupied, and a robot vacuum is not
-counted at all. It answers the question a room automation asks - is
+it. What counts is the thing speaking for each person ([People](#people))
+and each pet's tag; a watch left on the bedside table while its owner's
+phone is in the kitchen is a watch, not a person, and a wallet on the
+counter or luggage in a bedroom is listed but does not make the room
+occupied. A thing nobody owns (a guest's phone) counts by its class. A
+robot vacuum is not counted at all. It answers the question a room automation asks - is
 anyone in the Kitchen, and who - without a template over every thing's
 sensor:
 
