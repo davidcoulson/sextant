@@ -514,6 +514,7 @@ class SextantLive extends LitElement {
   _goto(mode) { this.dispatchEvent(new CustomEvent("quick-nav", { detail: mode, bubbles: true, composed: true })); }
 
   firstUpdated() {
+    this._restoreDetailHeight();
     this._map = new SextantMap(this.renderRoot.querySelector("canvas"), {
       fetch: (url) => this.hass.fetchWithAuth(url),
       onSelect: (hit) => {
@@ -654,6 +655,46 @@ class SextantLive extends LitElement {
   }
 
   _endPin() { this._pin = null; this._pinFocus = null; this._pinAt = null; this._pinViewKey = null; }
+
+  // --- The details card's height (phones) ------------------------------------
+  //
+  // Under 720px the selected thing's card sits under the list and takes
+  // what it needs, which on a long timeline is most of the screen. The grip
+  // on its top edge drags its height; the choice is kept per browser, and a
+  // double tap on the grip goes back to letting the content decide.
+
+  _detailHeightKey = "sextant.live.detailHeight";
+
+  _restoreDetailHeight() {
+    try { const h = Number(localStorage.getItem(this._detailHeightKey)); if (h > 0) this.style.setProperty("--sextant-detail-h", `${h}px`); } catch { /* ignore */ }
+  }
+
+  _setDetailHeight(px) {
+    if (px == null) { this.style.removeProperty("--sextant-detail-h"); try { localStorage.removeItem(this._detailHeightKey); } catch { /* ignore */ } return; }
+    const host = this.getBoundingClientRect().height || window.innerHeight;
+    const h = Math.round(Math.min(Math.max(px, 120), host - 140));
+    this.style.setProperty("--sextant-detail-h", `${h}px`);
+    try { localStorage.setItem(this._detailHeightKey, String(h)); } catch { /* ignore */ }
+  }
+
+  _gripDown(e) {
+    const card = e.currentTarget.closest(".detail");
+    if (!card) return;
+    this._grip = { y: e.clientY, h: card.getBoundingClientRect().height };
+    e.currentTarget.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  }
+
+  _gripMove(e) {
+    if (!this._grip) return;
+    this._setDetailHeight(this._grip.h + (this._grip.y - e.clientY));   // dragging up grows the card
+  }
+
+  _gripUp(e) {
+    if (!this._grip) return;
+    this._grip = null;
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* already released */ }
+  }
 
   _pinZoom() {
     if (this._pin?.step !== "where") return;
@@ -1403,6 +1444,9 @@ class SextantLive extends LitElement {
       </aside>
         ${sel ? html`
           <div class="card detail ${this._history ? "lifted" : ""}">
+            <div class="grip narrow-only" role="separator" aria-label="Drag to resize the details" aria-orientation="horizontal"
+                 @pointerdown=${(e) => this._gripDown(e)} @pointermove=${(e) => this._gripMove(e)} @pointerup=${(e) => this._gripUp(e)} @pointercancel=${(e) => this._gripUp(e)}
+                 @dblclick=${() => this._setDetailHeight(null)}><span></span></div>
             <h4>${this._label(sel.ent)}<span class="grow"></span>
               <span class="iconbar">
                 ${/* Three states in the first slot. Away: nothing is here to
@@ -1446,7 +1490,7 @@ class SextantLive extends LitElement {
             ${sel.robot ? nothing : this._renderTruth(sel)}
             ${sel.robot ? nothing : this._renderLinks(sel.ent)}
           </div>` : nothing}
-        ${this._isAdmin() && !this._pin ? html`
+        ${this._isAdmin() && !this._pin && !sel ? html`
           <button class="pinfab narrow-only" title="Quick pin: say where a thing really is" @click=${() => this._startPin()}>
             <ha-icon icon="mdi:map-marker-check"></ha-icon><span>Pin</span></button>` : nothing}
         ${this._pin?.step === "who" ? this._renderPinWho() : this._pin?.step === "done" ? this._renderPinDone() : nothing}
@@ -1838,7 +1882,13 @@ class SextantLive extends LitElement {
       :host { display: flex; flex-direction: column; }
       .quick-actions { order: 0; display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px; background: var(--card-background-color); border-bottom: 1px solid var(--divider-color); }
       .side { position: static; order: 1; flex: 1 1 auto; width: auto; min-height: 0; overflow: auto; border-left: 0; border-top: 1px solid var(--divider-color); max-height: none; border-radius: 0; box-shadow: none; padding: 12px; }
-      .detail, .detail.lifted { position: static; order: 3; width: auto; max-width: none; max-height: none; margin: 0 10px 10px; }
+      /* The card takes what it needs unless the grip has set a height; then
+         it is that tall and scrolls inside, and the list gets the rest. */
+      .detail, .detail.lifted { position: static; order: 3; width: auto; max-width: none; max-height: none; margin: 0 10px 10px; flex: 0 0 auto; }
+      :host([style*="--sextant-detail-h"]) .detail, :host([style*="--sextant-detail-h"]) .detail.lifted { flex: 0 0 var(--sextant-detail-h); height: var(--sextant-detail-h); overflow: auto; }
+      .detail .grip { display: flex; justify-content: center; align-items: center; height: 22px; margin: -12px -14px 0; touch-action: none; cursor: ns-resize; position: sticky; top: -12px; z-index: 1; background: var(--card-background-color); }
+      .detail .grip span { width: 44px; height: 5px; border-radius: 3px; background: var(--divider-color, #c0c0c0); }
+      .detail .grip:active span { background: var(--primary-color, #03a9f4); }
       .scrub { right: 10px; }
       /* Things, and with it Hide map, stays reachable however far the list
          is scrolled - it used to scroll away and leave no way to close a map
