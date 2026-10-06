@@ -81,6 +81,7 @@ from . import floor_field
 from . import registration
 from . import truth as truth_mod
 from . import persons as persons_mod
+from . import kpi
 from . import rooms as rooms_mod
 from . import runtime as runtime_mod
 from .zone_adjust import adjust_zones, adjust_subzones
@@ -523,6 +524,13 @@ TUNING_SPEC = {
     "zone_prob_smoothing": (0.6, float, 0.0, 0.95),     # EMA weight on the previous probability
     "zone_switch_margin": (0.15, float, 0.0, 1.0),      # lead a challenger needs
     "zone_switch_secs": (20.0, float, 0.0, 600.0),      # ...held this long, wall clock
+    # A far move - to a room on the same floor that is not a neighbour of the
+    # current one (outlines more than kpi.NEIGHBOUR_REACH_M apart) - needs
+    # more: this lead, held this long, whichever of the pair is the larger.
+    # Walking there passes through rooms between, which a real move shows;
+    # a fix that jumps straight across does not. 0 = no more than any move.
+    "far_move_margin": (0.3, float, 0.0, 1.0),
+    "far_move_secs": (45.0, float, 0.0, 600.0),
     "stationary_speed": (0.3, float, 0.0, 5.0),         # m/s; below this the thing is still
     "stationary_secs": (20.0, float, 0.0, 600.0),       # still this long -> zone locked
     "zone_unlock_margin": (1.0, float, 0.0, 20.0),      # m outside the locked zone...
@@ -4529,8 +4537,11 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
         challenge_since = st["away_since"] or st["outvoted_since"]
         st.update(locked=False, still_since=None, away_since=None, outvoted_since=None)
 
-    # 2. Margin and dwell.
-    margin = _tuning(layout, "zone_switch_margin")
+    # 2. Margin and dwell. A far move (see far_move_margin) is held to more.
+    margin, dwell = _tuning(layout, "zone_switch_margin"), _tuning(layout, "zone_switch_secs")
+    if best != incumbent and _far_move(zone_polys, incumbent, best, scale):
+        margin = max(margin, _tuning(layout, "far_move_margin"))
+        dwell = max(dwell, _tuning(layout, "far_move_secs"))
     if best == incumbent or probs[best] - probs.get(incumbent, 0.0) < margin:
         st["challenge"] = None
         return incumbent, False, speed
@@ -4539,11 +4550,23 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
         since = ch["since"]
     else:
         since = challenge_since if challenge_since is not None else now
-    if now - since >= _tuning(layout, "zone_switch_secs"):
+    if now - since >= dwell:
         st.update(zone=best, since=now, challenge=None)
         return best, False, speed
     st["challenge"] = {"zone": best, "since": since}
     return incumbent, False, speed
+
+
+def _far_move(zone_polys, a, b, scale):
+    """Whether rooms a and b are NOT neighbours: outlines further apart than
+    kpi.NEIGHBOUR_REACH_M, the same rule the far-move KPI counts by. Without a
+    scale the question cannot be asked, and no move is far."""
+    if not isinstance(scale, (int, float)) or scale <= 0 or a == b:
+        return False
+    polys = {zid: p for zid, p, _b, _n in zone_polys if zid in (a, b)}
+    if len(polys) < 2:
+        return False
+    return polys[a].distance(polys[b]) > kpi.NEIGHBOUR_REACH_M * scale
 
 
 # A proxy is only "clearly nearest" above this ratio to the runner-up.

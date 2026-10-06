@@ -39,6 +39,8 @@ const TUNING_LABELS = {
   zone_prob_smoothing: ["Room share smoothing", "weight on the previous cycle's room shares"],
   zone_switch_margin: ["Room switch margin", "the lead a challenger room needs"],
   zone_switch_secs: ["Room switch dwell (s)", "held that long before the room changes"],
+  far_move_margin: ["Far move margin", "the lead a room that is not next door needs (the larger of this and the switch margin)"],
+  far_move_secs: ["Far move dwell (s)", "held that long before jumping to a room that is not next door; 0 = no longer than any move"],
   stationary_speed: ["Stationary below (m/s)", "slower than this counts as still"],
   stationary_secs: ["Stationary after (s)", "still this long locks the room"],
   zone_unlock_margin: ["Unlock outside room by (m)", "the fix must sit this far outside the locked room"],
@@ -629,7 +631,7 @@ class SextantHealth extends LitElement {
     const groups = [
       ["Estimator", ["position_estimator", "fingerprint_weight", "fingerprint_floor_weight", "fingerprint_k", "fingerprint_missing_m", "fingerprint_ref_gain", "fingerprint_auto_gain", "fingerprint_marks", "fingerprint_marks_scope", "distance_estimator", "median_window_secs", "median_min_samples"]],
       ["Solver", ["solver_max_receivers", "solver_max_range", "solver_near_always"]],
-      ["Rooms", ["zone_hysteresis", "zone_prob_smoothing", "zone_switch_margin", "zone_switch_secs", "stationary_speed", "stationary_secs", "zone_unlock_margin", "zone_unlock_secs", "zone_lock_warmup_secs"]],
+      ["Rooms", ["zone_hysteresis", "zone_prob_smoothing", "zone_switch_margin", "zone_switch_secs", "far_move_margin", "far_move_secs", "stationary_speed", "stationary_secs", "zone_unlock_margin", "zone_unlock_secs", "zone_lock_warmup_secs"]],
       ["Spots", ["subzone_switch_secs", "subzone_enter_prob", "subzone_unlock_margin", "subzone_lock_release_m", "spot_proxy_near_m", "spot_proxy_far_m", "spot_proxy_ratio"]],
       ["Near-field anchor", ["anchor_max_m", "anchor_ratio", "anchor_secs", "anchor_release_m"]],
       ["Floors", ["floor_switch_secs", "floor_switch_margin", "floor_tenure_bonus", "floor_tenure_full_secs", "floor_proximity_weight", "floor_proximity_blend", "floor_proximity_k"]],
