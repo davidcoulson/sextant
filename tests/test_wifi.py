@@ -1,0 +1,93 @@
+"""Wi-Fi association (wifi.py): candidates, footprints, matching, the floor hint."""
+import sextant  # noqa: F401
+from sextant import persons, wifi
+
+
+def _states():
+    return [
+        ("device_tracker.iphone", "home", {"source_type": "router", "mac": "3a:26:7a:09:23:91", "ap_mac": "8c:ed:e1:00:de:ed", "friendly_name": "iPhone"}),
+        ("device_tracker.david_s_phone", "home", {"source_type": "router", "mac": "3A:26:7A:09:23:91", "ap_mac": None, "friendly_name": "David's Phone"}),
+        ("device_tracker.watch", "not_home", {"source_type": "router", "mac": "02:db:11:5b:db:b4", "ap_mac": None, "friendly_name": "Watch"}),
+        ("device_tracker.kitchen_e7", "home", {"source_type": "router", "mac": "8c:ed:e1:00:de:ed", "ap_mac": None, "friendly_name": "Kitchen E7"}),
+        ("device_tracker.davids_iphone", "home", {"source_type": "gps", "latitude": 41.0, "longitude": -81.0}),
+        ("device_tracker.david_coulson_sextant", "home", {"source_type": "bluetooth_le"}),
+        ("sensor.not_a_tracker", "home", {"source_type": "router", "ap_mac": "x"}),
+    ]
+
+
+def test_candidates_are_router_trackers_with_an_access_point_minus_the_access_points_themselves():
+    c = wifi.candidates(_states(), ap_macs=["8C:ED:E1:00:DE:ED"])
+    assert set(c) == {"device_tracker.iphone", "device_tracker.watch"}
+    # The stale duplicate's better name is kept with the live tracker.
+    assert c["device_tracker.iphone"] == {"name": "David's Phone", "home": True, "ap": "8c:ed:e1:00:de:ed", "mac": "3a:26:7a:09:23:91", "ssid": None}
+    assert wifi.better_name("iPhone iPhone", "iPhone") == "iPhone" and wifi.tidy({"name": "Watch Watch"})["name"] == "Watch"
+    assert c["device_tracker.watch"]["home"] is False and c["device_tracker.watch"]["ap"] is None
+
+
+def test_the_footprint_learns_and_is_trusted_only_with_enough_cycles():
+    store = wifi.new_store()
+    ap = "9c:05:d6:a9:e2:5b"
+    assert wifi.floor_odds(store, ap, "Ground Floor") == {"Ground Floor": 1.0}      # the access point's own floor stands in
+    assert wifi.best_place(store, ap, ("Ground Floor", "Sewing Room")) == ("Ground Floor", "Sewing Room")
+    for _ in range(30):
+        wifi.footprint_update(store, ap, "Ground Floor", "Sewing Room")
+    for _ in range(20):
+        wifi.footprint_update(store, ap, "Second Floor", "Eilee Room")
+    odds = wifi.floor_odds(store, ap, "Ground Floor")
+    assert odds == {"Ground Floor": 0.6, "Second Floor": 0.4}
+    assert wifi.best_place(store, ap) == ("Ground Floor", "Sewing Room")
+    # The hint: the floor it most means keeps its score, the other loses in proportion.
+    assert wifi.floor_factor(odds, "Ground Floor", 0.25) == 1.0
+    assert abs(wifi.floor_factor(odds, "Second Floor", 0.25) - (1 - 0.25 * (1 - 0.4 / 0.6))) < 1e-9
+    assert wifi.floor_factor(odds, "Basement", 0.25) == 0.75
+    assert wifi.floor_factor(None, "Basement", 0.25) == 1.0 and wifi.floor_factor(odds, "Basement", 0.0) == 1.0
+
+
+def test_footprint_counts_are_capped_not_unbounded():
+    store = wifi.new_store()
+    for _ in range(int(wifi.FOOTPRINT_CAP) + 10):
+        wifi.footprint_update(store, "ap", "F", "R")
+    assert sum(store["aps"]["ap"]["floors"].values()) < wifi.FOOTPRINT_CAP
+
+
+def test_a_tracker_is_matched_by_name_or_by_who_it_agrees_with():
+    store = wifi.new_store()
+    store["names"] = {"device_tracker.david_s_phone": "David's Phone", "device_tracker.iphone_2": "iPhone"}
+    names = {"person.david_coulson": "David Coulson", "person.eilee_bauer": "Eilee Bauer"}
+    assert wifi.suggest(store, "device_tracker.david_s_phone", names) == ("person.david_coulson", 1.0, "name")
+    assert wifi.suggest(store, "device_tracker.iphone_2", names) == (None, 0.0, "learning")
+    for _ in range(wifi.MATCH_MIN_CYCLES):
+        wifi.match_update(store, "device_tracker.iphone_2", "person.eilee_bauer", 1.0)
+        wifi.match_update(store, "device_tracker.iphone_2", "person.david_coulson", 0.0)
+    person, conf, why = wifi.suggest(store, "device_tracker.iphone_2", names)
+    assert person == "person.eilee_bauer" and why == "co-location" and conf == 1.0
+    # Two people it agrees with about equally stay ambiguous.
+    for _ in range(wifi.MATCH_MIN_CYCLES):
+        wifi.match_update(store, "device_tracker.iphone_2", "person.david_coulson", 1.0)
+        wifi.match_update(store, "device_tracker.iphone_2", "person.eilee_bauer", 0.0)
+    assert wifi.suggest(store, "device_tracker.iphone_2", names)[2] == "ambiguous"
+
+
+def test_agreement_tells_people_apart_by_who_is_home():
+    assert wifi.agreement(True, True, True) == 1.0          # both home, same floor
+    assert wifi.agreement(True, True, False) == 0.5         # both home, the access point's floor is not theirs (a wall unit under a bedroom)
+    assert wifi.agreement(True, True, None) == 1.0          # no floor known for the access point yet
+    assert wifi.agreement(False, False, None) == 1.0        # both away
+    assert wifi.agreement(True, False, None) == 0.0 and wifi.agreement(False, True, True) == 0.0
+
+
+def test_wifi_keeps_a_person_home_between_ble_and_gps():
+    gps_away = {"entity": "device_tracker.t", "zone": "Kent State Dorm", "latitude": 41.4, "longitude": -81.6}
+    w = {"entity": "device_tracker.iphone", "home": True, "ap": "8c:ed:e1:00:de:ed", "ap_name": "Kitchen E7", "floor": "Ground Floor", "room": "Kitchen", "area_id": "kitchen", "floor_id": "ground"}
+    assert persons.home_via("away", gps_away, w) == "wifi"
+    assert persons.home_via("away", gps_away, {**w, "home": False}) is None
+    assert persons.home_via("quiet", None, w) == "ble"                    # BLE first
+    fix = persons.tracker_fix("away", gps_away, None, w)
+    assert fix["location_name"] == "home" and fix["source_type"] == "router" and fix["source"] == "wifi" and fix["tracker"] == "device_tracker.iphone"
+    out = persons.fuse(None, [], "away", None, gps_away, [], None, w)
+    state, attrs = out["sextant_person_location"]
+    assert state == "Kitchen" and attrs["source"] == "wifi" and attrs["kind"] == "room" and attrs["access_point"] == "Kitchen E7"
+    assert attrs["zone"] == "Kent State Dorm"                              # the GPS side still rides along
+    assert out["sextant_person_room"][0] == "Kitchen" and out["sextant_person_floor"][0] == "Ground Floor"
+    # Not home on Wi-Fi: GPS as before.
+    assert persons.fuse(None, [], "away", None, gps_away, [], None, {**w, "home": False})["sextant_person_location"][0] == "Kent State Dorm"

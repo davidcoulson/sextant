@@ -54,9 +54,13 @@ of the same shape — `sensor.<person>_sextant_person_location`, `_room` and
 While Sextant hears any of the person's things they are placed by BLE
 (`source: ble`). Not heard for a couple of minutes, the last place they were
 put stands (`source: held`): they have not left the house. Once Sextant has
-lost them (`presence: away`) the first GPS tracker in their list that is
-neither broken nor stale gives the zone (`source: gps`), or the state is
-`away` with nothing usable (`source: none`). The list is set per person on
+lost them (`presence: away`), a phone or watch of theirs still joined to one
+of the house's Wi-Fi access points keeps them home (`source: wifi`): the
+room and floor are what that access point has been learned to mean, the
+attribute `access_point` names it, and `via` is the Wi-Fi tracker. After
+that the first GPS tracker in their list that is neither broken nor stale
+gives the zone (`source: gps`), or the state is `away` with nothing usable
+(`source: none`). [Wi-Fi](things.md#wi-fi) says where the trackers come from. The list is set per person on
 the Things page (People card) and lives in the layout as `person_trackers`;
 a tracker that is unknown, unavailable, or has not reported within
 `gps_stale_secs` (two hours by default) is passed over, and `gps_ignored`
@@ -73,7 +77,8 @@ names the ones that were and why.
 
 `device_tracker.<person>_sextant` says the same in Home Assistant's own
 currency: `home` while presence is `here` or `quiet` (source type
-`bluetooth_le`), the GPS fix once it is `away` (source type `gps`, so the
+`bluetooth_le`), `home` while a phone or watch is on the house's Wi-Fi
+(source type `router`), the GPS fix after that (source type `gps`, so the
 state is the zone), `not_home` with nothing usable. Add it to the person
 entity, the map card, or a zone automation.
 

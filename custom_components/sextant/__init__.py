@@ -82,6 +82,7 @@ from . import registration
 from . import truth as truth_mod
 from . import persons as persons_mod
 from . import kpi
+from . import wifi as wifi_mod
 from . import rooms as rooms_mod
 from . import runtime as runtime_mod
 from .zone_adjust import adjust_zones, adjust_subzones
@@ -572,6 +573,12 @@ TUNING_SPEC = {
     # is, relative to the nearest receiver on any competing floor (see
     # _proximity_weighted_scores). 0 = pure fit-quality election.
     "floor_proximity_weight": (0.5, float, 0.0, 1.0),
+    # How much the access point a person's phone or watch is joined to sways
+    # the floor election of their phone and watch: a floor that access point
+    # never means (its learned footprint, wifi.py) scores this much less. Low
+    # by default: Wi-Fi association is sticky, a phone keeps the kitchen's
+    # access point for a while after going upstairs. 0 = off.
+    "wifi_floor_weight": (0.25, float, 0.0, 1.0),
     # How that weight combines fit and proximity (see _proximity_weighted_scores).
     # "gated": conf x ((1 - w) + w x prox) - a poor fit caps the floor however
     # near its proxies. "geometric": conf^(1 - w) x prox^w - the weighted
@@ -2609,7 +2616,11 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
     # floor's bias field at where THIS floor's solve put the thing, so the
     # prior can differ beside a void from what it is over a slab.
     biases = {f: _floor_bias(layout, f, solved[f]["fix"]) for f in prox_scores}
-    scores = {f: s * biases[f] for f, s in prox_scores.items()}
+    # The access point the owner's phone or watch is joined to, through its
+    # learned footprint (wifi.py): a floor that access point never means
+    # scores less. Only for the owner's phones and watches; see wifi_floor_weight.
+    wifi_factors = {f: _wifi_floor_factor(entity, layout, f) for f in prox_scores}
+    scores = {f: s * biases[f] * wifi_factors[f] for f, s in prox_scores.items()}
     # Every contender's own fix and how its score was built, not just the
     # winner's. A bias field is tuned against exactly this: where did each
     # floor's solve land, and what did the election make of it. The published
@@ -2627,6 +2638,7 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
             "conf": round(solved[f]["conf"], 4),
             "prox": round(prox_scores[f], 4),
             "bias": round(biases[f], 4),
+            "wifi": round(wifi_factors[f], 4),
             "score": round(scores[f], 4),
             # Which proxies said what, per floor. The scores alone cannot tell
             # a floor that lost from a floor that was not listening: Meg's
@@ -3605,6 +3617,12 @@ _presence_published = {}
 _person_last = {}
 # Each person's visit (persons.visit): {person: {"arrived", "departed"}}; saved with the runtime.
 _person_visits = {}
+# What Wi-Fi association has taught (wifi.py): access-point footprints and
+# tracker-to-person scores; saved with the runtime. _wifi_now is this cycle's
+# view: {"candidates", "aps": {mac: {"name", "floor", "room", "area_id", "floor_id"}},
+# "assigned": {person: {"entity", "how", "confidence"}}, "people": {person: wifi dict}}.
+_wifi_store = wifi_mod.new_store()
+_wifi_now = {}
 
 
 def _presence_of(updated, now, layout):
@@ -3717,6 +3735,8 @@ async def _restore_runtime(hass):
         _subzone_state[entity] = {**_new_subzone_state(state.get("floor"), state.get("zone"), now), **state}
     _arrivals.update(back["arrivals"])
     _person_visits.update(back.get("visits") or {})
+    if back.get("wifi"):
+        _wifi_store.update(back["wifi"])
     # The floor election, and with it the fact that this thing's floor is not
     # NEW. A cycle that finds no incumbent floor for a thing treats the one it
     # elects as a change, and a floor change clears the Kalman filter and the
@@ -3835,7 +3855,7 @@ async def _save_runtime(hass):
         # a dying tag, was gone entirely after the 15:34 restart.
         rows = _rows_with_last_seen(rows, _last_seen)
         data = runtime_mod.snapshot(time.time(), kf=_kf_position_state, zones=_zone_state,
-                                    spots=_subzone_state, arrivals=_arrivals, rows=rows, visits=_person_visits,
+                                    spots=_subzone_state, arrivals=_arrivals, rows=rows, visits=_person_visits, wifi=_wifi_store,
                                     floors=_floor_elections())
         await save_runtime(hass, data)
     except Exception as e:  # noqa: BLE001
@@ -3898,6 +3918,120 @@ def _arrived_at(hass, layout, ent, row, now):
     return _arrivals[ent]["since"]
 
 
+def _wifi_access_points(hass, layout, macs):
+    """{ap mac: {"name", "floor", "room", "area_id", "floor_id"}} for the access
+    points in ``macs`` (the ones some client is on), placed by the HA area
+    their device is in: the Sextant room linked to that area when there is
+    one, else the Sextant floor linked to the area's HA floor."""
+    out = {}
+    wanted = {str(m).lower() for m in macs if m}
+    if not wanted:
+        return out
+    try:
+        from homeassistant.helpers import area_registry as ar, device_registry as dr  # noqa: PLC0415
+        dev_reg, area_reg = dr.async_get(hass), ar.async_get(hass)
+    except Exception:  # noqa: BLE001 - tests without registries: nothing to place by
+        return out
+    rooms_by_area, floors_by_id, floor_of_room = {}, {}, {}
+    for floor in layout.get("floor") or []:
+        if isinstance(floor.get("floor_id"), str):
+            floors_by_id[floor["floor_id"]] = floor["name"]
+        for z in floor.get("zones") or []:
+            if isinstance(z.get("area_id"), str) and z["area_id"] and not z.get("no_go"):
+                rooms_by_area.setdefault(z["area_id"], (floor["name"], z["entity_id"]))
+    for device in dev_reg.devices.values():
+        macs = [c[1].lower() for c in (getattr(device, "connections", None) or ()) if c[0] == "mac" and str(c[1]).lower() in wanted]
+        if not macs:
+            continue
+        area_id = getattr(device, "area_id", None)
+        floor_name, room = rooms_by_area.get(area_id, (None, None))
+        area = area_reg.async_get_area(area_id) if area_id else None
+        floor_id = getattr(area, "floor_id", None)
+        if floor_name is None and floor_id:
+            floor_name = floors_by_id.get(floor_id)
+        info = {"name": getattr(device, "name_by_user", None) or getattr(device, "name", None), "floor": floor_name, "room": room,
+                "area_id": area_id, "floor_id": floor_id}
+        for mac in macs:
+            out[mac] = info
+    return out
+
+
+def _wifi_cycle(hass, layout, by_person):
+    """This cycle's Wi-Fi view (see _wifi_now): the client trackers, the
+    access points, and which tracker is whose - the People card's table
+    first, Sextant's own suggestion where it has none."""
+    states = [(st.entity_id, st.state, st.attributes) for st in hass.states.async_all("device_tracker")]
+    # The access points are whatever some client is on, plus any router
+    # tracker that is a Ubiquiti device itself (UniFi tracks its own access
+    # points and switches as clients of nothing): neither is a phone.
+    first = wifi_mod.candidates(states)
+    infra = {c["ap"] for c in first.values() if c.get("ap")}
+    try:
+        from homeassistant.helpers import device_registry as dr, entity_registry as er  # noqa: PLC0415
+        ent_reg, dev_reg = er.async_get(hass), dr.async_get(hass)
+        for entity_id, c in first.items():
+            entry = ent_reg.async_get(entity_id)
+            device = dev_reg.async_get(entry.device_id) if entry and entry.device_id else None
+            if device is not None and str(getattr(device, "manufacturer", "") or "").startswith("Ubiquiti") and c.get("mac"):
+                infra.add(c["mac"])
+    except Exception:  # noqa: BLE001 - no registries: the referenced access points still rule themselves out
+        pass
+    aps = _wifi_access_points(hass, layout, infra)
+    cands = wifi_mod.candidates(states, infra)
+    _wifi_store["names"] = {e: c["name"] for e, c in cands.items()}
+    names = {p: (getattr(hass.states.get(p), "attributes", {}) or {}).get("friendly_name") or p.split(".", 1)[1] for p in by_person}
+    manual = layout.get("person_wifi") if isinstance(layout.get("person_wifi"), dict) else {}
+    # Several trackers per person (a phone and a watch): the table holds lists.
+    assigned = {}
+    for person, entities in manual.items():
+        for e in (entities if isinstance(entities, list) else [entities]):
+            if isinstance(e, str) and e:
+                assigned.setdefault(person, []).append({"entity": e, "how": "manual", "confidence": 1.0})
+    taken = {a["entity"] for lst in assigned.values() for a in lst}
+    for tracker in cands:
+        if tracker in taken:
+            continue
+        person, conf, why = wifi_mod.suggest(_wifi_store, tracker, names)
+        if person is not None:
+            assigned.setdefault(person, []).append({"entity": tracker, "how": why, "confidence": conf})
+    return {"candidates": cands, "aps": aps, "assigned": assigned, "names": names}
+
+
+def _wifi_for(person, view):
+    """The person's Wi-Fi word this cycle: {"entity", "home", "ap", "ap_name",
+    "floor", "room", "area_id", "floor_id", "odds"} from the first of their
+    trackers that is home (a phone before a watch is just list order), or None."""
+    for a in (view.get("assigned") or {}).get(person) or []:
+        c = (view.get("candidates") or {}).get(a["entity"])
+        if not c or not c["home"]:
+            continue
+        ap = c.get("ap")
+        info = (view.get("aps") or {}).get(ap) or {}
+        floor, room = wifi_mod.best_place(_wifi_store, ap, (info.get("floor"), info.get("room")))
+        return {"entity": a["entity"], "home": True, "ap": ap, "ap_name": info.get("name"), "floor": floor, "room": room,
+                "area_id": info.get("area_id") if room == info.get("room") else None,
+                "floor_id": info.get("floor_id") if floor == info.get("floor") else None,
+                "odds": wifi_mod.floor_odds(_wifi_store, ap, info.get("floor"))}
+    return None
+
+
+def _wifi_floor_factor(entity, layout, floor_name):
+    """The Wi-Fi hint's multiplier on one floor's election score for one thing:
+    the access point the owner's phone or watch is joined to, through its
+    footprint, for the owner's phones and watches only (wifi_floor_weight)."""
+    weight = _tuning(layout, "wifi_floor_weight")
+    if weight <= 0 or not _wifi_now:
+        return 1.0
+    owner = (layout.get("thing_owners") or {}).get(entity)
+    cls = (layout.get("thing_classes") or {}).get(entity)
+    if not owner or cls not in ("phone", "watch"):
+        return 1.0
+    wifi = (_wifi_now.get("people") or {}).get(owner)
+    if not wifi or not wifi.get("odds"):
+        return 1.0
+    return wifi_mod.floor_factor(wifi["odds"], floor_name, weight)
+
+
 def _update_person_sensors(hass):
     """Each owner's location from the thing that speaks for them (persons.py)."""
     layout = get_layout(hass)
@@ -3934,6 +4068,14 @@ def _update_person_sensors(hass):
         tracker_mod.ensure_person_trackers(hass, list(by_person))
     except Exception as e:  # noqa: BLE001 - the sensors do not depend on the trackers
         _LOGGER.debug("Person trackers not ensured: %s", e)
+    global _wifi_now
+    try:
+        view = _wifi_cycle(hass, layout, by_person)
+    except Exception as e:  # noqa: BLE001 - Wi-Fi is a help, never a stop
+        _LOGGER.debug("Wi-Fi view not built: %s", e)
+        view = {}
+    view["people"] = {}
+    _wifi_now = view
     for person, things in by_person.items():
         candidates, presences, heard = [], [], []
         for ent in things:
@@ -3964,12 +4106,38 @@ def _update_person_sensors(hass):
         # them again or gives up (away), when GPS takes over.
         held, held_why = _person_last.get(person, (None, None)) if best is None and presence == "quiet" else (None, None)
         gps, ignored = persons_mod.choose_gps(hass.states.get, layout, person, now, gps_stale)
-        for suffix, (state, attrs) in persons_mod.fuse(best, why if best else held_why, presence, held, gps, ignored, home).items():
+        wifi = _wifi_for(person, view)
+        view["people"][person] = wifi
+        # Learning, from BLE's word: the access point each of their trackers
+        # is on gets this floor and room in its footprint, and every candidate
+        # tracker is scored against this person by whether its access point's
+        # place agrees with where BLE has them.
+        placed = best or held
+        person_home = presence in ("here", "quiet")
+        if placed and presence == "here":
+            ble_floor, ble_room = placed.get("floor"), placed.get("zone")
+            for a in (view.get("assigned") or {}).get(person) or []:
+                c = (view.get("candidates") or {}).get(a["entity"])
+                if c and c["home"] and c.get("ap"):
+                    wifi_mod.footprint_update(_wifi_store, c["ap"], ble_floor, ble_room)
+        else:
+            ble_floor = None
+        # Every candidate against this person, every cycle: whether both are
+        # home or both away tells people apart (someone leaves, their phone's
+        # Wi-Fi goes with them); on the same floor while home is the bonus.
+        for tracker, c in (view.get("candidates") or {}).items():
+            same_floor = None
+            if c["home"] and c.get("ap") and ble_floor:
+                info = (view.get("aps") or {}).get(c["ap"]) or {}
+                ap_floor, _room = wifi_mod.best_place(_wifi_store, c["ap"], (info.get("floor"), info.get("room")))
+                same_floor = (ap_floor == ble_floor) if ap_floor else None
+            wifi_mod.match_update(_wifi_store, tracker, person, wifi_mod.agreement(c["home"], person_home, same_floor))
+        for suffix, (state, attrs) in persons_mod.fuse(best, why if best else held_why, presence, held, gps, ignored, home, wifi).items():
             update_sextant_sensor_state(hass, f"sensor.{slug}_{suffix}", state, attrs)
-        _person_visits[person] = persons_mod.visit(_person_visits.get(person), persons_mod.home_via(presence, gps), max(heard) if heard else None, now)
+        _person_visits[person] = persons_mod.visit(_person_visits.get(person), persons_mod.home_via(presence, gps, wifi), max(heard) if heard else None, now)
         tracker = trackers.get(slug)
         if tracker is not None:
-            tracker.set_fix(persons_mod.tracker_fix(presence, gps, _person_visits[person]))
+            tracker.set_fix(persons_mod.tracker_fix(presence, gps, _person_visits[person], wifi))
 
 def _maintain_rooms(hass):
     """The room sensors after a cycle - or after a cycle that had nothing to
@@ -4018,7 +4186,9 @@ def _update_room_sensors(hass):
             continue
         name = (getattr(hass.states.get(person), "attributes", {}) or {}).get("friendly_name") or slug
         presences[name] = st.attributes.get("presence") or "away"
-        if st.attributes.get("via"):
+        if presences[name] == "away" and st.attributes.get("source") == "wifi":
+            presences[name] = "wifi"       # BLE lost them, Wi-Fi still has them in the house
+        if st.attributes.get("via") and st.attributes.get("source") in ("ble", "held"):
             speaking.add(st.attributes["via"])
         if things and all(classes.get(t) in rooms_mod.PET_CLASSES for t in things):
             pet_persons.add(name)

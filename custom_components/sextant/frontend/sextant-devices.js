@@ -899,12 +899,27 @@ class SextantDevices extends LitElement {
     if (r) { toast(this, "Saved; the person's location follows on the next cycle"); this.dispatchEvent(new CustomEvent("layout-changed")); }
   }
 
+  /** The Wi-Fi client trackers (phones, watches on the house's access points) not yet given to anyone. */
+  _wifiTrackerOptions(takenAll) {
+    const w = this.data?.wifi || {};
+    return Object.entries(w.candidates || {})
+      .filter(([e]) => !takenAll.has(e))
+      // Several clients share a name ("iPhone" three times): the entity id and the network tell them apart.
+      .map(([e, c]) => ({ value: e, label: `${c.name || e} (${e.replace("device_tracker.", "")})${c.ssid ? ` · ${c.ssid}` : ""}${c.ap && w.aps?.[c.ap] ? ` · on ${w.aps[c.ap].name || w.aps[c.ap].room || c.ap}` : c.home ? "" : " · away"}` }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }
+
+  async _setPersonWifi(person, trackers) {
+    const r = await callWS(this, this.hass, { type: "sextant/person/wifi/set", person, trackers });
+    if (r) { toast(this, trackers.length ? "Saved; Wi-Fi says home for this person from the next cycle" : "Cleared; Sextant's own match stands again"); this.dispatchEvent(new CustomEvent("layout-changed")); }
+  }
+
   _renderPeople() {
     const people = this._people();
     if (!people.length) return nothing;
     const table = this.data?.layout?.person_trackers || {};
     return html`<section class="card wide">
-      <h3>People <span class="muted small">their things place them at home; a GPS tracker takes over when Sextant loses them</span></h3>
+      <h3>People <span class="muted small">their things place them at home; a phone or watch still on the house's Wi-Fi keeps them home when Sextant loses them; a GPS tracker takes over after that</span></h3>
       ${people.map((p) => {
         const slug = p.split(".", 1)[1] || p.slice(7);
         const name = this.hass?.states?.[p]?.attributes?.friendly_name || slug;
@@ -912,9 +927,19 @@ class SextantDevices extends LitElement {
         const a = loc?.attributes || {};
         const chosen = Array.isArray(table[p]) ? table[p] : [];
         const ignored = Array.isArray(a.gps_ignored) ? a.gps_ignored : [];
+        const wifiTable = this.data?.layout?.person_wifi || {};
+        const wifiManual = Array.isArray(wifiTable[p]) ? wifiTable[p] : [];
+        const wifiAssigned = (this.data?.wifi?.assigned || {})[p] || [];
+        const wifiTaken = new Set(Object.values(this.data?.wifi?.assigned || {}).flat().map((x) => x.entity));
+        const wcands = this.data?.wifi?.candidates || {};
+        const wifiLabel = (e) => wcands[e]?.name || this.hass?.states?.[e]?.attributes?.friendly_name || e;
+        // A pet is a person to Home Assistant, but carries no phone: no Wi-Fi row.
+        const ownersAll = this.data?.layout?.thing_owners || {}, classesAll = this.data?.layout?.thing_classes || {};
+        const owned = Object.keys(ownersAll).filter((t) => ownersAll[t] === p);
+        const isPet = owned.length > 0 && owned.every((t) => ["cat", "dog", "paw"].includes(classesAll[t]));
         return html`<div class="person" style="padding: 6px 0; border-top: 1px solid var(--divider-color)">
           <div class="row"><b>${name}</b>
-            <span class="muted small">${loc ? html`${loc.state}${a.source ? ` · via ${a.source === "ble" ? "Sextant" : a.source === "held" ? "Sextant (last place, not heard for a bit)" : a.source === "gps" ? (this.hass?.states?.[a.tracker]?.attributes?.friendly_name || a.tracker) : "nothing usable"}` : ""}${a.distance_m != null && a.source === "gps" ? ` · ${a.distance_m >= 1000 ? `${(a.distance_m / 1000).toFixed(1)} km` : `${a.distance_m} m`} from home` : ""}` : "no location yet"}</span>
+            <span class="muted small">${loc ? html`${loc.state}${a.source ? ` · via ${a.source === "ble" ? "Sextant" : a.source === "held" ? "Sextant (last place, not heard for a bit)" : a.source === "wifi" ? `Wi-Fi (${this.hass?.states?.[a.via]?.attributes?.friendly_name || a.via} on ${a.access_point || "an access point"})` : a.source === "gps" ? (this.hass?.states?.[a.tracker]?.attributes?.friendly_name || a.tracker) : "nothing usable"}` : ""}${a.distance_m != null && a.source === "gps" ? ` · ${a.distance_m >= 1000 ? `${(a.distance_m / 1000).toFixed(1)} km` : `${a.distance_m} m`} from home` : ""}` : "no location yet"}</span>
             <span class="grow"></span>
             <span class="muted small">device_tracker.${slug}_sextant</span></div>
           <div class="row"><span class="muted small">GPS sources, first usable wins</span>
@@ -923,6 +948,13 @@ class SextantDevices extends LitElement {
             ${uiSelect({ label: chosen.length ? "Add another" : "Add a source", value: "", options: [{ value: "", label: "…" }, ...this._gpsTrackerOptions(chosen)], onChange: (v) => { if (v) this._setPersonTrackers(p, [...chosen, v]); }, style: "width: 280px" })}
           </div>
           ${ignored.length ? html`<div class="muted small">Disregarded right now: ${ignored.map((g) => `${this.hass?.states?.[g.entity]?.attributes?.friendly_name || g.entity} (${g.reason})`).join(", ")}</div>` : nothing}
+          ${!isPet && (Object.keys(wcands).length || wifiAssigned.length) ? html`<div class="row"><span class="muted small" title="A Wi-Fi client tracker with an access point (UniFi Network's, for a phone or a watch). Sextant matches them to people by itself from where you are when they are on each access point; pick one here to decide.">Wi-Fi, says home when Sextant loses them</span>
+            ${wifiAssigned.map((w) => html`<span class="pill" title=${w.how === "manual" ? "Chosen here" : w.how === "name" ? "Matched by its name" : `Matched by where ${name} is when it is on each access point (${Math.round((w.confidence || 0) * 100)} %)`}>${wifiLabel(w.entity)}${w.how === "manual" ? "" : html` <span class="muted">· ${w.how === "name" ? "by name" : "learned"}</span>`}
+              ${w.how === "manual"
+                ? html`<button class="iconbtn" title="Remove" aria-label="Remove this Wi-Fi tracker" @click=${() => this._setPersonWifi(p, wifiManual.filter((x) => x !== w.entity))}><ha-icon icon="mdi:close" style="--mdc-icon-size: 14px"></ha-icon></button>`
+                : html`<button class="iconbtn" title="Keep: make Sextant's match the choice" aria-label="Keep this match" @click=${() => this._setPersonWifi(p, [...wifiManual, ...wifiAssigned.filter((x) => x.how !== "manual").map((x) => x.entity)])}><ha-icon icon="mdi:check" style="--mdc-icon-size: 14px"></ha-icon></button>`}</span>`)}
+            ${uiSelect({ label: wifiAssigned.length ? "Add another" : "Pick a tracker", value: "", options: [{ value: "", label: "…" }, ...this._wifiTrackerOptions(wifiTaken)], onChange: (v) => { if (v) this._setPersonWifi(p, [...wifiManual, ...wifiAssigned.filter((x) => x.how !== "manual").map((x) => x.entity), v]); }, style: "width: 280px" })}
+          </div>` : nothing}
         </div>`;
       })}
     </section>`;
