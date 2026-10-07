@@ -271,7 +271,7 @@ def test_the_wifi_store_rides_with_the_runtime_whatever_the_gap():
     store = {"aps": {"8c:ed": {"floors": {"Ground Floor": 12.0}, "rooms": {"Kitchen": 12.0}}}, "matches": {"device_tracker.iphone": {"person.david": {"agree": 10.0, "cycles": 12.0}}}, "names": {"device_tracker.iphone": "iPhone"}}
     data = runtime.snapshot(1000.0, wifi=store)
     back = runtime.restore(data, 1000.0 + 30 * 86400)["wifi"]
-    assert back["aps"] == store["aps"] and back["matches"] == store["matches"]
+    assert back["aps"] == store["aps"] and back["matches"] == store["matches"] and back["clients"] == {}
     assert runtime.restore(runtime.snapshot(1000.0, wifi={"aps": {}, "matches": {}}), 1001.0)["wifi"] is None
     assert runtime.restore({"saved_at": 1000.0, "things": {}, "wifi": {"aps": "x", "matches": {}}}, 1001.0)["wifi"] is None
     # Mangled leaves are dropped, never carried into arithmetic.
@@ -280,4 +280,6 @@ def test_the_wifi_store_rides_with_the_runtime_whatever_the_gap():
         "matches": {"device_tracker.a": {"person.p": {"agree": 1.0, "cycles": 2.0, "seen": 1e20}, "person.q": {"agree": 1.0}, "person.r": {"agree": True, "cycles": 1.0}},
                     "device_tracker.b": "x"}}}
     back = runtime.restore(bad, 1001.0)["wifi"]
-    assert back == {"aps": {"ok": {"floors": {"F": 3.0}, "rooms": {}}}, "matches": {"device_tracker.a": {"person.p": {"agree": 1.0, "cycles": 2.0}}}}
+    assert back == {"aps": {"ok": {"floors": {"F": 3.0}, "rooms": {}}}, "matches": {"device_tracker.a": {"person.p": {"agree": 1.0, "cycles": 2.0}}}, "clients": {}}
+    kept = runtime.restore(runtime.snapshot(1000.0, wifi={"aps": {}, "matches": {}, "clients": {"device_tracker.iphone": {"mac": "3A:26"}, "sensor.x": {"mac": "y"}}}), 1001.0)["wifi"]
+    assert kept["clients"] == {"device_tracker.iphone": {"mac": "3a:26"}}

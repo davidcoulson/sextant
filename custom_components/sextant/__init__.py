@@ -3964,7 +3964,7 @@ def _wifi_cycle(hass, layout, by_person):
     # The access points are whatever some client is on, plus any router
     # tracker that is a Ubiquiti device itself (UniFi tracks its own access
     # points and switches as clients of nothing): neither is a phone.
-    first = wifi_mod.candidates(states)
+    first = wifi_mod.candidates(states, known=_wifi_store.setdefault("clients", {}))
     infra = {c["ap"] for c in first.values() if c.get("ap")}
     try:
         from homeassistant.helpers import device_registry as dr, entity_registry as er  # noqa: PLC0415
@@ -3977,7 +3977,7 @@ def _wifi_cycle(hass, layout, by_person):
     except Exception:  # noqa: BLE001 - no registries: the referenced access points still rule themselves out
         pass
     aps = _wifi_access_points(hass, layout, infra)
-    cands = wifi_mod.candidates(states, infra)
+    cands = wifi_mod.candidates(states, infra, _wifi_store.setdefault("clients", {}))
     wifi_mod.prune_matches(_wifi_store, time.time())
     _wifi_store["names"] = {e: c["name"] for e, c in cands.items()}
     # A pet is a person to Home Assistant but carries no phone: never a Wi-Fi owner.
@@ -4118,10 +4118,11 @@ def _update_person_sensors(hass):
         # is on gets this floor and room in its footprint, and every candidate
         # tracker is scored against this person by whether its access point's
         # place agrees with where BLE has them.
-        placed = best or held
         person_home = presence in ("here", "quiet")
-        if placed and presence == "here":
-            ble_floor, ble_room = placed.get("floor"), placed.get("zone")
+        # Learning takes a fix made this cycle, never a held one: a place
+        # carried over says nothing about where the access point reaches.
+        if best and presence == "here":
+            ble_floor, ble_room = best.get("floor"), best.get("zone")
             for a in (view.get("assigned") or {}).get(person) or []:
                 c = (view.get("candidates") or {}).get(a["entity"])
                 if c and c["home"] and c.get("ap"):
