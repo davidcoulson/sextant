@@ -20,6 +20,7 @@ Pure: the caller hands in the live dicts and gets plain JSON back.
 from __future__ import annotations
 
 import math
+from datetime import datetime, timezone
 
 # How long a gap still counts as "the house has not moved on": a restart, an
 # update, a reboot. Past it the elections are stale and only the last sighting
@@ -89,7 +90,7 @@ def _vector(value, size):
     return out if len(out) == size else None
 
 
-def snapshot(now, kf=None, zones=None, spots=None, arrivals=None, rows=None, floors=None):
+def snapshot(now, kf=None, zones=None, spots=None, arrivals=None, rows=None, floors=None, visits=None):
     """The state worth keeping, as JSON.
 
     ``rows`` are the published positions (ent, zone, sub_zone, floor, updated,
@@ -126,7 +127,30 @@ def snapshot(now, kf=None, zones=None, spots=None, arrivals=None, rows=None, flo
             "updated": row.get("updated"),
             "cords": cords if _vector(cords, 2) is not None else None,
         }
-    return {"saved_at": float(now), "things": things}
+    out = {"saved_at": float(now), "things": things}
+    # Each person's visit (persons.visit): when they arrived or left. Kept
+    # whatever the gap, so a restart never turns "home since 07:40" into
+    # "home since the restart".
+    people = {str(p): _json(v) for p, v in (visits or {}).items() if isinstance(v, dict)}
+    if people:
+        out["people"] = people
+    return out
+
+
+def _epoch(t):
+    """A stored epoch second, or None: not a bool, finite, and within datetime's
+    range. All inside the try: math.isfinite itself raises on an int too big
+    for a float."""
+    if isinstance(t, bool) or not isinstance(t, (int, float)):
+        return None
+    try:
+        f = float(t)
+        if not math.isfinite(f) or f <= 0:
+            return None
+        datetime.fromtimestamp(f, timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return None
+    return f
 
 
 def restore(data, now, max_age=DEFAULT_MAX_AGE_SECS):
@@ -136,9 +160,21 @@ def restore(data, now, max_age=DEFAULT_MAX_AGE_SECS):
     so the Live page can still say where a thing was and when. A snapshot
     from the future (the clock moved) is treated as a long gap.
     """
-    out = {"kf": {}, "zone": {}, "spot": {}, "arrivals": {}, "floors": {}, "last": {}, "age": None}
+    out = {"kf": {}, "zone": {}, "spot": {}, "arrivals": {}, "floors": {}, "last": {}, "visits": {}, "age": None}
     if not isinstance(data, dict):
         return out
+    people = data.get("people")
+    if isinstance(people, dict):
+        for person, v in people.items():
+            if not isinstance(v, dict):
+                continue
+            arrived, departed = _epoch(v.get("arrived")), _epoch(v.get("departed"))
+            # Exactly one of the two, as persons.visit writes them; anything else is noise.
+            if (arrived is None) != (departed is None):
+                kept = {"arrived": arrived, "departed": departed}
+                if arrived is not None and v.get("via") in ("ble", "gps"):
+                    kept["via"] = v["via"]
+                out["visits"][person] = kept
     saved_at = data.get("saved_at")
     things = data.get("things")
     if not isinstance(saved_at, (int, float)) or not math.isfinite(saved_at) or not isinstance(things, dict):

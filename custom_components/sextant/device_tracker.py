@@ -55,7 +55,7 @@ class SextantPersonTracker(TrackerEntity):
         self._attr_latitude = fix.get("latitude")
         self._attr_longitude = fix.get("longitude")
         self._attr_location_accuracy = int(acc) if isinstance(acc, (int, float)) else 0
-        self._attr_extra_state_attributes = {k: fix.get(k) for k in ("source", "presence", "tracker")}
+        self._attr_extra_state_attributes = {k: fix.get(k) for k in ("source", "presence", "tracker", "arrived_at", "departed_at")}
         name = fix.get("location_name")
         if not hasattr(TrackerEntity, "_attr_in_zones"):
             self._attr_location_name = name

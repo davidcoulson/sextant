@@ -3603,6 +3603,8 @@ _last_seen = {}
 _presence_published = {}
 # person -> (thing, considered) that last placed them, held through a quiet spell.
 _person_last = {}
+# Each person's visit (persons.visit): {person: {"arrived", "departed"}}; saved with the runtime.
+_person_visits = {}
 
 
 def _presence_of(updated, now, layout):
@@ -3714,6 +3716,7 @@ async def _restore_runtime(hass):
             state = {**state, "pending": (tuple(pending[0]), pending[1])}
         _subzone_state[entity] = {**_new_subzone_state(state.get("floor"), state.get("zone"), now), **state}
     _arrivals.update(back["arrivals"])
+    _person_visits.update(back.get("visits") or {})
     # The floor election, and with it the fact that this thing's floor is not
     # NEW. A cycle that finds no incumbent floor for a thing treats the one it
     # elects as a change, and a floor change clears the Kalman filter and the
@@ -3832,7 +3835,7 @@ async def _save_runtime(hass):
         # a dying tag, was gone entirely after the 15:34 restart.
         rows = _rows_with_last_seen(rows, _last_seen)
         data = runtime_mod.snapshot(time.time(), kf=_kf_position_state, zones=_zone_state,
-                                    spots=_subzone_state, arrivals=_arrivals, rows=rows,
+                                    spots=_subzone_state, arrivals=_arrivals, rows=rows, visits=_person_visits,
                                     floors=_floor_elections())
         await save_runtime(hass, data)
     except Exception as e:  # noqa: BLE001
@@ -3914,6 +3917,8 @@ def _update_person_sensors(hass):
         hass.data["sextant_person_owners"] = owning
     for ent in [e for e in _arrivals if not any(e in things for things in by_person.values())]:
         del _arrivals[ent]
+    for person in [p for p in _person_visits if p not in by_person]:
+        del _person_visits[person]
     if not by_person:
         return
     sensor_mod.ensure_person_sensors(hass, list(by_person))
@@ -3930,12 +3935,14 @@ def _update_person_sensors(hass):
     except Exception as e:  # noqa: BLE001 - the sensors do not depend on the trackers
         _LOGGER.debug("Person trackers not ensured: %s", e)
     for person, things in by_person.items():
-        candidates, presences = [], []
+        candidates, presences, heard = [], [], []
         for ent in things:
             if not persons_mod.locates_owner(layout, ent, classes.get(ent)):
                 continue
             seen = _last_seen.get(ent) or {}
             presences.append(_presence_of(seen.get("updated") if isinstance(seen, dict) else None, now, layout))
+            if isinstance(seen, dict) and isinstance(seen.get("updated"), (int, float)):
+                heard.append(seen["updated"])
             row = rows.get(ent)
             if not row:
                 continue
@@ -3959,9 +3966,10 @@ def _update_person_sensors(hass):
         gps, ignored = persons_mod.choose_gps(hass.states.get, layout, person, now, gps_stale)
         for suffix, (state, attrs) in persons_mod.fuse(best, why if best else held_why, presence, held, gps, ignored, home).items():
             update_sextant_sensor_state(hass, f"sensor.{slug}_{suffix}", state, attrs)
+        _person_visits[person] = persons_mod.visit(_person_visits.get(person), persons_mod.home_via(presence, gps), max(heard) if heard else None, now)
         tracker = trackers.get(slug)
         if tracker is not None:
-            tracker.set_fix(persons_mod.tracker_fix(presence, gps))
+            tracker.set_fix(persons_mod.tracker_fix(presence, gps, _person_visits[person]))
 
 def _maintain_rooms(hass):
     """The room sensors after a cycle - or after a cycle that had nothing to

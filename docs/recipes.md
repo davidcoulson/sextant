@@ -12,7 +12,7 @@ one real house; swap in your own.
 |---|---|---|
 | where a **person** is, in words | `sensor.<person>_sextant_person_location` | the finest answer there is: a spot, a room, a GPS zone, or `away` |
 | the **room** a person is in, to act on it | `sensor.<person>_sextant_person_room` | stable (hysteresis and the stationary lock), and carries `area_id` |
-| whether a person is **home** | `device_tracker.<person>_sextant` | `home` on Sextant's word, the GPS zone once Sextant has lost them |
+| whether a person is **home** | `device_tracker.<person>_sextant` | `home` on Sextant's word, the GPS zone once Sextant has lost them; `arrived_at` / `departed_at` say since when |
 | where a **thing** is | `sensor.<thing>_sextant_location` (or `_room`, `_floor`, `_spot`) | same shape as the person sensors, one per thing |
 | whether a thing is still **heard** | attribute `presence` on any of its sensors | `here` / `quiet` (2–15 min) / `away` |
 | where a **robot vacuum** is | `sensor.vacuum_<name>_sextant_room` | placed from the robot's own map, not Bluetooth; `vacuum_state` rides along on `_location` |
@@ -23,6 +23,34 @@ location changes every time a thing moves on or off a spot, the room does
 not.
 
 ## Automations
+
+### When someone left
+
+The person's tracker carries `departed_at` while they are away and
+`arrived_at` while they are home, exactly one at a time, and each changes
+only when it happens. Trigger on the attribute leaving `None` and the time
+is in the event; the departure is the last time any of their things was
+heard, not when the 15 minute grace ran out.
+
+```yaml
+alias: David left
+triggers:
+  - trigger: state
+    entity_id: device_tracker.david_coulson_sextant
+    attribute: departed_at
+conditions:
+  - condition: template
+    value_template: "{{ trigger.to_state.attributes.departed_at is not none }}"
+actions:
+  - action: notify.notify
+    data:
+      message: >-
+        David left at
+        {{ as_timestamp(trigger.to_state.attributes.departed_at) | timestamp_custom('%H:%M') }}
+```
+
+Swap `departed_at` for `arrived_at` for a welcome-home, and for a dashboard:
+`home for {{ state_attr('device_tracker.david_coulson_sextant', 'arrived_at') | as_datetime | relative_time }}`.
 
 ### Lights follow a person from room to room
 
