@@ -20,6 +20,7 @@ Pure: the caller hands in the live dicts and gets plain JSON back.
 from __future__ import annotations
 
 import math
+from datetime import datetime, timezone
 
 # How long a gap still counts as "the house has not moved on": a restart, an
 # update, a reboot. Past it the elections are stale and only the last sighting
@@ -136,6 +137,17 @@ def snapshot(now, kf=None, zones=None, spots=None, arrivals=None, rows=None, flo
     return out
 
 
+def _epoch(t):
+    """A stored epoch second, or None: not a bool, finite, and within datetime's range."""
+    if isinstance(t, bool) or not isinstance(t, (int, float)) or not math.isfinite(t) or t <= 0:
+        return None
+    try:
+        datetime.fromtimestamp(t, timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return None
+    return float(t)
+
+
 def restore(data, now, max_age=DEFAULT_MAX_AGE_SECS):
     """``{"kf", "zone", "spot", "arrivals", "floors", "last", "age"}`` from a snapshot.
 
@@ -149,8 +161,12 @@ def restore(data, now, max_age=DEFAULT_MAX_AGE_SECS):
     people = data.get("people")
     if isinstance(people, dict):
         for person, v in people.items():
-            if isinstance(v, dict) and all(isinstance(v.get(k), (int, float)) or v.get(k) is None for k in ("arrived", "departed")):
-                out["visits"][person] = {"arrived": v.get("arrived"), "departed": v.get("departed")}
+            if not isinstance(v, dict):
+                continue
+            arrived, departed = _epoch(v.get("arrived")), _epoch(v.get("departed"))
+            # Exactly one of the two, as persons.visit writes them; anything else is noise.
+            if (arrived is None) != (departed is None):
+                out["visits"][person] = {"arrived": arrived, "departed": departed}
     saved_at = data.get("saved_at")
     things = data.get("things")
     if not isinstance(saved_at, (int, float)) or not math.isfinite(saved_at) or not isinstance(things, dict):

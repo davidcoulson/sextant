@@ -277,25 +277,45 @@ def fuse(best, why, presence, held, gps, ignored, home=None):
     }
 
 
-def visit(prev, presence, last_heard, now):
-    """The person's current visit: ``{"arrived": t, "departed": None}`` while home,
-    ``{"arrived": None, "departed": t}`` once away - exactly one of the two holds
-    a time, matching the tracker's state, so an automation can trigger on the
-    attribute leaving None and get one clean event with the time in it.
+def valid_time(t):
+    """``t`` as a float epoch second, or None: a number (not a bool), finite,
+    and one datetime can represent, so nothing downstream ever raises on it."""
+    if isinstance(t, bool) or not isinstance(t, (int, float)) or not math.isfinite(t) or t <= 0:
+        return None
+    try:
+        datetime.fromtimestamp(t, timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return None
+    return float(t)
 
-    Home is BLE's here or quiet. A departure is stamped at the last sighting,
-    not when away_after_secs ran out ("left at 08:12" means 08:12), and the
-    quiet period is the grace: a person heard again within it never left, so
-    the same visit carries on with its arrival. Nothing changes while the
-    state holds, so the recorder gets a row per arrival or departure.
+
+def tracker_home(presence, gps) -> bool:
+    """Whether the person's tracker reads home: BLE's here or quiet, or the GPS
+    fix that stands in once BLE has lost them placing them in the home zone."""
+    return presence in ("here", "quiet") or bool(gps and str(gps.get("zone") or "").lower() == "home")
+
+
+def visit(prev, home, last_heard, now):
+    """The person's current visit: ``{"arrived": t, "departed": None}`` while the
+    tracker reads home (tracker_home), ``{"arrived": None, "departed": t}`` once
+    away - exactly one of the two holds a time, matching the tracker's state,
+    so an automation can trigger on the attribute leaving None and get one
+    clean event with the time in it.
+
+    A departure is stamped at the last time the house heard them, not when
+    away_after_secs ran out ("left at 08:12" means 08:12), and the quiet
+    period is the grace: a person heard again within it never left, so the
+    same visit carries on with its arrival. Nothing changes while the state
+    holds, so the recorder gets a row per arrival or departure.
     """
     prev = prev if isinstance(prev, dict) else {}
-    stamp = float(last_heard) if isinstance(last_heard, (int, float)) and last_heard > 0 else float(now)
-    if presence in ("here", "quiet"):
-        if prev.get("arrived") is not None and prev.get("departed") is None:
+    arrived, departed = valid_time(prev.get("arrived")), valid_time(prev.get("departed"))
+    stamp = valid_time(last_heard) or valid_time(now) or 0.0
+    if home:
+        if arrived is not None and departed is None:
             return prev
         return {"arrived": stamp, "departed": None}
-    if prev.get("departed") is not None and prev.get("arrived") is None:
+    if departed is not None and arrived is None:
         return prev
     return {"arrived": None, "departed": stamp}
 
@@ -303,7 +323,8 @@ def visit(prev, presence, last_heard, now):
 def visit_attrs(v) -> dict:
     """``arrived_at`` / ``departed_at`` as ISO 8601 UTC, for the tracker."""
     def iso(t):
-        return datetime.fromtimestamp(t, timezone.utc).isoformat(timespec="seconds") if isinstance(t, (int, float)) else None
+        t = valid_time(t)
+        return datetime.fromtimestamp(t, timezone.utc).isoformat(timespec="seconds") if t else None
     v = v if isinstance(v, dict) else {}
     return {"arrived_at": iso(v.get("arrived")), "departed_at": iso(v.get("departed"))}
 

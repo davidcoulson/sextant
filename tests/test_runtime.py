@@ -258,3 +258,8 @@ def test_visits_come_back_whatever_the_gap():
     long = runtime.restore(data, 1000.0 + 10 * 86400)
     assert long["visits"] == short["visits"]            # a day later, "home since" still stands
     assert runtime.snapshot(1000.0).get("people") is None
+    # Rubbish never comes back: out of datetime's range, booleans, both or neither set.
+    bad = {"saved_at": 1000.0, "things": {}, "people": {
+        "a": {"arrived": 1e20, "departed": None}, "b": {"arrived": True, "departed": None},
+        "c": {"arrived": 1.0, "departed": 2.0}, "d": {"arrived": None, "departed": None}, "e": {"arrived": 900.0, "departed": None}}}
+    assert runtime.restore(bad, 1010.0)["visits"] == {"e": {"arrived": 900.0, "departed": None}}

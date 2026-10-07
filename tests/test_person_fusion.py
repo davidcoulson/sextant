@@ -141,24 +141,38 @@ def test_the_tracker_is_home_on_ble_and_gps_once_lost():
 
 
 def test_a_visit_starts_at_the_sighting_and_holds_while_home():
-    v = persons.visit(None, "here", 1000.0, 1010.0)
+    v = persons.visit(None, True, 1000.0, 1010.0)
     assert v == {"arrived": 1000.0, "departed": None}
-    assert persons.visit(v, "here", 1200.0, 1210.0) is v          # same visit: nothing changes
-    assert persons.visit(v, "quiet", 1200.0, 1500.0) is v         # quiet is the grace, still the same visit
+    assert persons.visit(v, True, 1200.0, 1210.0) is v            # same visit: nothing changes
+    assert persons.visit(v, True, 1200.0, 1500.0) is v            # quiet is still home, still the same visit
 
 
 def test_a_departure_is_stamped_at_the_last_sighting_not_the_timeout():
     v = {"arrived": 1000.0, "departed": None}
-    gone = persons.visit(v, "away", 2000.0, 2900.0)             # away_after_secs ran out at 2900
+    gone = persons.visit(v, False, 2000.0, 2900.0)              # away_after_secs ran out at 2900
     assert gone == {"arrived": None, "departed": 2000.0}
-    assert persons.visit(gone, "away", 2000.0, 3600.0) is gone   # still away: the time stays
-    back = persons.visit(gone, "here", 5000.0, 5005.0)           # a new visit
+    assert persons.visit(gone, False, 2000.0, 3600.0) is gone    # still away: the time stays
+    back = persons.visit(gone, True, 5000.0, 5005.0)             # a new visit
     assert back == {"arrived": 5000.0, "departed": None}
 
 
 def test_a_visit_with_no_sighting_falls_back_to_now_and_rubbish_is_ignored():
-    assert persons.visit("nonsense", "here", None, 42.0) == {"arrived": 42.0, "departed": None}
-    assert persons.visit({}, "away", None, 42.0) == {"arrived": None, "departed": 42.0}
+    assert persons.visit("nonsense", True, None, 42.0) == {"arrived": 42.0, "departed": None}
+    assert persons.visit({}, False, None, 42.0) == {"arrived": None, "departed": 42.0}
+    # Out-of-range, boolean and non-finite times never reach datetime: they read as unknown.
+    assert persons.visit({"arrived": 1e20, "departed": None}, True, 1e20, 42.0) == {"arrived": 42.0, "departed": None}
+    assert persons.visit_attrs({"arrived": 1e20, "departed": True}) == {"arrived_at": None, "departed_at": None}
+    assert persons.visit_attrs({"arrived": float("nan"), "departed": None})["arrived_at"] is None
+
+
+def test_the_visit_follows_the_tracker_not_ble_alone():
+    """BLE lost them but GPS still has them in the home zone: the tracker says
+    home, so no departure is stamped. Only once GPS leaves the zone too."""
+    at_home_gps = {"entity": "device_tracker.t", "zone": "home", "latitude": 41.3, "longitude": -81.7}
+    assert persons.tracker_home("away", at_home_gps) is True
+    assert persons.tracker_home("away", {"entity": "device_tracker.t", "zone": "Kent State Dorm"}) is False
+    assert persons.tracker_home("away", None) is False
+    assert persons.tracker_home("quiet", None) is True
 
 
 def test_the_tracker_carries_exactly_one_of_arrived_or_departed():

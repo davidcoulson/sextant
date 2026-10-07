@@ -3966,7 +3966,7 @@ def _update_person_sensors(hass):
         gps, ignored = persons_mod.choose_gps(hass.states.get, layout, person, now, gps_stale)
         for suffix, (state, attrs) in persons_mod.fuse(best, why if best else held_why, presence, held, gps, ignored, home).items():
             update_sextant_sensor_state(hass, f"sensor.{slug}_{suffix}", state, attrs)
-        _person_visits[person] = persons_mod.visit(_person_visits.get(person), presence, max(heard) if heard else None, now)
+        _person_visits[person] = persons_mod.visit(_person_visits.get(person), persons_mod.tracker_home(presence, gps), max(heard) if heard else None, now)
         tracker = trackers.get(slug)
         if tracker is not None:
             tracker.set_fix(persons_mod.tracker_fix(presence, gps, _person_visits[person]))
