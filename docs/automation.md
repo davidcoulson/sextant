@@ -77,6 +77,16 @@ currency: `home` while presence is `here` or `quiet` (source type
 state is the zone), `not_home` with nothing usable. Add it to the person
 entity, the map card, or a zone automation.
 
+The tracker also says *when*: `arrived_at` while home, `departed_at` while
+away, ISO 8601 UTC, exactly one of the two set so the state and the time
+agree. A departure is stamped at the last time any of the person's things
+was heard, not when `away_after_secs` ran out - "left at 08:12" means
+08:12 - and the quiet period is the grace, so someone heard again within it
+never left. Both survive a restart, and they change only on an arrival or
+a departure, so the recorder gets one row per event: trigger on the
+attribute leaving `None` and the time is in the event
+([recipe](recipes.md#when-someone-left)).
+
 ## Rooms
 
 Each room on the plan gets `binary_sensor.<room>_sextant_occupancy`

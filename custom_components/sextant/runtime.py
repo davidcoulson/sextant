@@ -89,7 +89,7 @@ def _vector(value, size):
     return out if len(out) == size else None
 
 
-def snapshot(now, kf=None, zones=None, spots=None, arrivals=None, rows=None, floors=None):
+def snapshot(now, kf=None, zones=None, spots=None, arrivals=None, rows=None, floors=None, visits=None):
     """The state worth keeping, as JSON.
 
     ``rows`` are the published positions (ent, zone, sub_zone, floor, updated,
@@ -126,7 +126,14 @@ def snapshot(now, kf=None, zones=None, spots=None, arrivals=None, rows=None, flo
             "updated": row.get("updated"),
             "cords": cords if _vector(cords, 2) is not None else None,
         }
-    return {"saved_at": float(now), "things": things}
+    out = {"saved_at": float(now), "things": things}
+    # Each person's visit (persons.visit): when they arrived or left. Kept
+    # whatever the gap, so a restart never turns "home since 07:40" into
+    # "home since the restart".
+    people = {str(p): _json(v) for p, v in (visits or {}).items() if isinstance(v, dict)}
+    if people:
+        out["people"] = people
+    return out
 
 
 def restore(data, now, max_age=DEFAULT_MAX_AGE_SECS):
@@ -136,9 +143,14 @@ def restore(data, now, max_age=DEFAULT_MAX_AGE_SECS):
     so the Live page can still say where a thing was and when. A snapshot
     from the future (the clock moved) is treated as a long gap.
     """
-    out = {"kf": {}, "zone": {}, "spot": {}, "arrivals": {}, "floors": {}, "last": {}, "age": None}
+    out = {"kf": {}, "zone": {}, "spot": {}, "arrivals": {}, "floors": {}, "last": {}, "visits": {}, "age": None}
     if not isinstance(data, dict):
         return out
+    people = data.get("people")
+    if isinstance(people, dict):
+        for person, v in people.items():
+            if isinstance(v, dict) and all(isinstance(v.get(k), (int, float)) or v.get(k) is None for k in ("arrived", "departed")):
+                out["visits"][person] = {"arrived": v.get("arrived"), "departed": v.get("departed")}
     saved_at = data.get("saved_at")
     things = data.get("things")
     if not isinstance(saved_at, (int, float)) or not math.isfinite(saved_at) or not isinstance(things, dict):

@@ -140,6 +140,35 @@ def test_the_tracker_is_home_on_ble_and_gps_once_lost():
     assert persons.tracker_fix("away", None)["location_name"] == "not_home"
 
 
+def test_a_visit_starts_at_the_sighting_and_holds_while_home():
+    v = persons.visit(None, "here", 1000.0, 1010.0)
+    assert v == {"arrived": 1000.0, "departed": None}
+    assert persons.visit(v, "here", 1200.0, 1210.0) is v          # same visit: nothing changes
+    assert persons.visit(v, "quiet", 1200.0, 1500.0) is v         # quiet is the grace, still the same visit
+
+
+def test_a_departure_is_stamped_at_the_last_sighting_not_the_timeout():
+    v = {"arrived": 1000.0, "departed": None}
+    gone = persons.visit(v, "away", 2000.0, 2900.0)             # away_after_secs ran out at 2900
+    assert gone == {"arrived": None, "departed": 2000.0}
+    assert persons.visit(gone, "away", 2000.0, 3600.0) is gone   # still away: the time stays
+    back = persons.visit(gone, "here", 5000.0, 5005.0)           # a new visit
+    assert back == {"arrived": 5000.0, "departed": None}
+
+
+def test_a_visit_with_no_sighting_falls_back_to_now_and_rubbish_is_ignored():
+    assert persons.visit("nonsense", "here", None, 42.0) == {"arrived": 42.0, "departed": None}
+    assert persons.visit({}, "away", None, 42.0) == {"arrived": None, "departed": 42.0}
+
+
+def test_the_tracker_carries_exactly_one_of_arrived_or_departed():
+    home = persons.tracker_fix("here", None, {"arrived": 1700000000.0, "departed": None})
+    assert home["arrived_at"] == "2023-11-14T22:13:20+00:00" and home["departed_at"] is None
+    away = persons.tracker_fix("away", None, {"arrived": None, "departed": 1700000000.0})
+    assert away["departed_at"] == "2023-11-14T22:13:20+00:00" and away["arrived_at"] is None
+    assert persons.tracker_fix("here", None)["arrived_at"] is None   # no visit known yet
+
+
 # --- setting the sources ----------------------------------------------------
 
 class _Conn:

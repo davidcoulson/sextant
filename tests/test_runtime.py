@@ -247,3 +247,14 @@ def test_the_history_fills_in_a_last_sighting_once_it_has_loaded():
     sextant._last_seen["socks"] = {"zone": "Kitchen", "spot": None, "floor": "Ground Floor", "updated": 2000.0, "cords": None}
     sextant._seed_last_seen_from_history(Hass())
     assert sextant._last_seen["socks"]["zone"] == "Kitchen"
+
+
+def test_visits_come_back_whatever_the_gap():
+    from sextant import runtime
+    data = runtime.snapshot(1000.0, visits={"person.david": {"arrived": 900.0, "departed": None}, "person.bad": "x"})
+    assert data["people"] == {"person.david": {"arrived": 900.0, "departed": None}}
+    short = runtime.restore(data, 1010.0)
+    assert short["visits"] == {"person.david": {"arrived": 900.0, "departed": None}}
+    long = runtime.restore(data, 1000.0 + 10 * 86400)
+    assert long["visits"] == short["visits"]            # a day later, "home since" still stands
+    assert runtime.snapshot(1000.0).get("people") is None

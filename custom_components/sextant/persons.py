@@ -27,6 +27,7 @@ Pure: the caller hands in each thing's latest published row.
 from __future__ import annotations
 
 import math
+from datetime import datetime, timezone
 
 # A thing still for longer than this is probably not being carried.
 RECENT_MOVE_SECS = 600.0
@@ -276,15 +277,48 @@ def fuse(best, why, presence, held, gps, ignored, home=None):
     }
 
 
-def tracker_fix(presence, gps):
+def visit(prev, presence, last_heard, now):
+    """The person's current visit: ``{"arrived": t, "departed": None}`` while home,
+    ``{"arrived": None, "departed": t}`` once away - exactly one of the two holds
+    a time, matching the tracker's state, so an automation can trigger on the
+    attribute leaving None and get one clean event with the time in it.
+
+    Home is BLE's here or quiet. A departure is stamped at the last sighting,
+    not when away_after_secs ran out ("left at 08:12" means 08:12), and the
+    quiet period is the grace: a person heard again within it never left, so
+    the same visit carries on with its arrival. Nothing changes while the
+    state holds, so the recorder gets a row per arrival or departure.
+    """
+    prev = prev if isinstance(prev, dict) else {}
+    stamp = float(last_heard) if isinstance(last_heard, (int, float)) and last_heard > 0 else float(now)
+    if presence in ("here", "quiet"):
+        if prev.get("arrived") is not None and prev.get("departed") is None:
+            return prev
+        return {"arrived": stamp, "departed": None}
+    if prev.get("departed") is not None and prev.get("arrived") is None:
+        return prev
+    return {"arrived": None, "departed": stamp}
+
+
+def visit_attrs(v) -> dict:
+    """``arrived_at`` / ``departed_at`` as ISO 8601 UTC, for the tracker."""
+    def iso(t):
+        return datetime.fromtimestamp(t, timezone.utc).isoformat(timespec="seconds") if isinstance(t, (int, float)) else None
+    v = v if isinstance(v, dict) else {}
+    return {"arrived_at": iso(v.get("arrived")), "departed_at": iso(v.get("departed"))}
+
+
+def tracker_fix(presence, gps, visit=None):
     """What the person's device_tracker reports: home on BLE's word (it is far
     surer of "in the house" than GPS at the property line), the GPS fix once
-    BLE has lost them, not_home with nothing usable."""
+    BLE has lost them, not_home with nothing usable. ``visit`` adds when they
+    arrived or left (see visit)."""
+    when = visit_attrs(visit)
     if presence in ("here", "quiet"):
-        return {"location_name": "home", "source_type": "bluetooth_le", "source": "ble", "presence": presence}
+        return {"location_name": "home", "source_type": "bluetooth_le", "source": "ble", "presence": presence, **when}
     if gps and gps.get("latitude") is not None:
         return {"location_name": None, "latitude": gps["latitude"], "longitude": gps["longitude"],
-                "accuracy": gps.get("accuracy"), "source_type": "gps", "source": "gps", "presence": presence, "tracker": gps.get("entity")}
+                "accuracy": gps.get("accuracy"), "source_type": "gps", "source": "gps", "presence": presence, "tracker": gps.get("entity"), **when}
     if gps:
-        return {"location_name": gps.get("zone"), "source_type": "gps", "source": "gps", "presence": presence, "tracker": gps.get("entity")}
-    return {"location_name": "not_home", "source_type": "gps", "source": "none", "presence": presence}
+        return {"location_name": gps.get("zone"), "source_type": "gps", "source": "gps", "presence": presence, "tracker": gps.get("entity"), **when}
+    return {"location_name": "not_home", "source_type": "gps", "source": "none", "presence": presence, **when}
