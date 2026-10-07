@@ -3964,18 +3964,31 @@ def _wifi_cycle(hass, layout, by_person):
     # The access points are whatever some client is on, plus any router
     # tracker that is a Ubiquiti device itself (UniFi tracks its own access
     # points and switches as clients of nothing): neither is a phone.
-    first = wifi_mod.candidates(states, known=_wifi_store.setdefault("clients", {}))
-    infra = {c["ap"] for c in first.values() if c.get("ap")}
+    known = _wifi_store.setdefault("clients", {})
+    infra = set()
     try:
         from homeassistant.helpers import device_registry as dr, entity_registry as er  # noqa: PLC0415
         ent_reg, dev_reg = er.async_get(hass), dr.async_get(hass)
-        for entity_id, c in first.items():
+        # The registry says which router trackers are clients before any has
+        # shown an access point: a UniFi tracker whose device is not a
+        # Ubiquiti device is a client; one whose device is, is the network.
+        for entity_id, _state, attrs in states:
+            if attrs.get("source_type") != wifi_mod.ROUTER:
+                continue
             entry = ent_reg.async_get(entity_id)
             device = dev_reg.async_get(entry.device_id) if entry and entry.device_id else None
-            if device is not None and str(getattr(device, "manufacturer", "") or "").startswith("Ubiquiti") and c.get("mac"):
-                infra.add(c["mac"])
+            if entry is None or entry.platform != "unifi" or device is None:
+                continue
+            mac = str(attrs.get("mac") or "").lower() or None
+            if str(getattr(device, "manufacturer", "") or "").startswith("Ubiquiti"):
+                if mac:
+                    infra.add(mac)
+            else:
+                known.setdefault(entity_id, {"mac": mac})
     except Exception:  # noqa: BLE001 - no registries: the referenced access points still rule themselves out
         pass
+    first = wifi_mod.candidates(states, known=known)
+    infra |= {c["ap"] for c in first.values() if c.get("ap")}
     aps = _wifi_access_points(hass, layout, infra)
     cands = wifi_mod.candidates(states, infra, _wifi_store.setdefault("clients", {}))
     wifi_mod.prune_matches(_wifi_store, time.time())
