@@ -55,6 +55,10 @@ def test_a_tracker_is_matched_by_name_or_by_who_it_agrees_with():
     store["names"] = {"device_tracker.david_s_phone": "David's Phone", "device_tracker.iphone_2": "iPhone"}
     names = {"person.david_coulson": "David Coulson", "person.eilee_bauer": "Eilee Bauer"}
     assert wifi.suggest(store, "device_tracker.david_s_phone", names) == ("person.david_coulson", 1.0, "name")
+    # Whole words only, and one person only.
+    store["names"].update({"device_tracker.brian": "Brian's iPad", "device_tracker.two": "David Phone"})
+    assert wifi.suggest(store, "device_tracker.brian", {"person.ian": "Ian Smith"})[2] == "learning"
+    assert wifi.suggest(store, "device_tracker.two", {"person.a": "David A", "person.b": "David B"})[2] == "learning"
     assert wifi.suggest(store, "device_tracker.iphone_2", names) == (None, 0.0, "learning")
     for _ in range(wifi.MATCH_MIN_CYCLES):
         wifi.match_update(store, "device_tracker.iphone_2", "person.eilee_bauer", 1.0)
@@ -91,3 +95,16 @@ def test_wifi_keeps_a_person_home_between_ble_and_gps():
     assert out["sextant_person_room"][0] == "Kitchen" and out["sextant_person_floor"][0] == "Ground Floor"
     # Not home on Wi-Fi: GPS as before.
     assert persons.fuse(None, [], "away", None, gps_away, [], None, {**w, "home": False})["sextant_person_location"][0] == "Kent State Dorm"
+
+
+def test_stale_match_pairs_are_forgotten_and_the_table_is_bounded():
+    store = wifi.new_store()
+    wifi.match_update(store, "device_tracker.old", "person.gone", 1.0, now=0.0)
+    wifi.match_update(store, "device_tracker.new", "person.here", 1.0, now=40 * 86400.0)
+    assert wifi.prune_matches(store, 40 * 86400.0) == 1
+    assert set(store["matches"]) == {"device_tracker.new"}
+    for i in range(wifi.MATCH_MAX_PAIRS + 5):
+        wifi.match_update(store, f"device_tracker.t{i}", "person.p", 1.0, now=1000.0 + i)
+    wifi.prune_matches(store, 2000.0)
+    assert sum(len(v) for v in store["matches"].values()) == wifi.MATCH_MAX_PAIRS
+    assert "device_tracker.t0" not in store["matches"] and f"device_tracker.t{wifi.MATCH_MAX_PAIRS + 4}" in store["matches"]

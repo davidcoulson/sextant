@@ -952,8 +952,8 @@ class SextantDevices extends LitElement {
             ${wifiAssigned.map((w) => html`<span class="pill" title=${w.how === "manual" ? "Chosen here" : w.how === "name" ? "Matched by its name" : `Matched by where ${name} is when it is on each access point (${Math.round((w.confidence || 0) * 100)} %)`}>${wifiLabel(w.entity)}${w.how === "manual" ? "" : html` <span class="muted">· ${w.how === "name" ? "by name" : "learned"}</span>`}
               ${w.how === "manual"
                 ? html`<button class="iconbtn" title="Remove" aria-label="Remove this Wi-Fi tracker" @click=${() => this._setPersonWifi(p, wifiManual.filter((x) => x !== w.entity))}><ha-icon icon="mdi:close" style="--mdc-icon-size: 14px"></ha-icon></button>`
-                : html`<button class="iconbtn" title="Keep: make Sextant's match the choice" aria-label="Keep this match" @click=${() => this._setPersonWifi(p, [...wifiManual, ...wifiAssigned.filter((x) => x.how !== "manual").map((x) => x.entity)])}><ha-icon icon="mdi:check" style="--mdc-icon-size: 14px"></ha-icon></button>`}</span>`)}
-            ${uiSelect({ label: wifiAssigned.length ? "Add another" : "Pick a tracker", value: "", options: [{ value: "", label: "…" }, ...this._wifiTrackerOptions(wifiTaken)], onChange: (v) => { if (v) this._setPersonWifi(p, [...wifiManual, ...wifiAssigned.filter((x) => x.how !== "manual").map((x) => x.entity), v]); }, style: "width: 280px" })}
+                : html`<button class="iconbtn" title="Keep: make Sextant's match the choice" aria-label="Keep this match" @click=${() => this._setPersonWifi(p, [...wifiManual, w.entity])}><ha-icon icon="mdi:check" style="--mdc-icon-size: 14px"></ha-icon></button>`}</span>`)}
+            ${uiSelect({ label: wifiAssigned.length ? "Add another" : "Pick a tracker", value: "", options: [{ value: "", label: "…" }, ...this._wifiTrackerOptions(wifiTaken)], onChange: (v) => { if (v) this._setPersonWifi(p, [...wifiManual, v]); }, style: "width: 280px" })}
           </div>` : nothing}
         </div>`;
       })}

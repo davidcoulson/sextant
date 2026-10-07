@@ -68,7 +68,8 @@ names the ones that were and why.
 
 | Attribute (location sensor) | Value |
 |---|---|
-| `source` | `ble`, `held`, `gps` or `none` |
+| `source` | `ble`, `held`, `wifi`, `gps` or `none` |
+| `access_point` | with `source: wifi`, the access point the phone or watch is joined to |
 | `presence` | as for things: the most present of the person's things |
 | `via`, `considered` | the thing that placed them, and every thing that was in the running |
 | `zone`, `latitude`, `longitude`, `gps_accuracy`, `tracker` | the GPS side, carried whichever source is speaking |

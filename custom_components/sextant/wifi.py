@@ -18,6 +18,8 @@ Pure: no Home Assistant imports. __init__ does the registry lookups.
 """
 from __future__ import annotations
 
+import re
+
 ROUTER = "router"
 # Footprint counts are capped: halved when the cap is reached, so the
 # distribution follows the house as proxies and furniture move.
@@ -29,6 +31,11 @@ FOOTPRINT_MIN = 40
 # runner-up, as a share of agreement.
 MATCH_MIN_CYCLES = 60
 MATCH_MIN_LEAD = 0.2
+# A tracker/person pair not scored for this long is forgotten, and the
+# table never holds more than this many pairs (oldest out): phones and
+# people turn over, the snapshot must not grow with their history.
+MATCH_RETENTION_S = 30 * 86400
+MATCH_MAX_PAIRS = 400
 
 
 def new_store() -> dict:
@@ -168,14 +175,48 @@ def agreement(tracker_home: bool, person_home: bool, same_floor) -> float:
     return 1.0 if same_floor is None or same_floor else 0.5
 
 
-def match_update(store: dict, tracker: str, person: str, agree) -> None:
+def match_update(store: dict, tracker: str, person: str, agree, now=None) -> None:
     """Score one cycle of one candidate tracker against one person (agreement)."""
     m = store.setdefault("matches", {}).setdefault(tracker, {}).setdefault(person, {"agree": 0.0, "cycles": 0.0})
-    m["cycles"] += 1.0
-    m["agree"] += float(agree)
+    m["cycles"] = float(m.get("cycles") or 0.0) + 1.0
+    m["agree"] = float(m.get("agree") or 0.0) + float(agree)
+    if now is not None:
+        m["seen"] = float(now)
     if m["cycles"] > FOOTPRINT_CAP:
         m["cycles"] /= 2.0
         m["agree"] /= 2.0
+
+
+def prune_matches(store: dict, now, max_age=MATCH_RETENTION_S, max_pairs=MATCH_MAX_PAIRS) -> int:
+    """Forget tracker/person pairs not scored for ``max_age``, and the oldest
+    beyond ``max_pairs``. A pair without a ``seen`` time is given one now, so
+    an old store ages out from here rather than at once. Returns how many went."""
+    matches = store.get("matches") or {}
+    pairs = []
+    for tracker, people in list(matches.items()):
+        if not isinstance(people, dict):
+            del matches[tracker]
+            continue
+        for person, m in list(people.items()):
+            if not isinstance(m, dict):
+                del people[person]
+                continue
+            seen = m.get("seen")
+            if not isinstance(seen, (int, float)):
+                m["seen"] = seen = float(now)
+            pairs.append((seen, tracker, person))
+    gone = 0
+    doomed = [(t, p) for seen, t, p in pairs if now - seen > max_age]
+    if len(pairs) - len(doomed) > max_pairs:
+        keep = sorted((x for x in pairs if (x[1], x[2]) not in set(doomed)), reverse=True)[max_pairs:]
+        doomed += [(t, p) for _s, t, p in keep]
+    for tracker, person in doomed:
+        if tracker in matches and person in matches[tracker]:
+            del matches[tracker][person]
+            gone += 1
+    for tracker in [t for t, people in matches.items() if not people]:
+        del matches[tracker]
+    return gone
 
 
 def suggest(store: dict, tracker: str, names: dict | None = None) -> tuple:
@@ -188,10 +229,13 @@ def suggest(store: dict, tracker: str, names: dict | None = None) -> tuple:
     """
     names = names or {}
     tname = str((store.get("names") or {}).get(tracker) or "").lower()
-    for person, pname in names.items():
-        first = str(pname or "").split(" ")[0].lower()
-        if first and len(first) > 2 and first in tname:
-            return person, 1.0, "name"
+    # Whole words only - "Ian" must not claim "Brian's iPad" - and one
+    # person only: two Davids leave the name out of it.
+    words = set(re.findall(r"[a-z0-9]+", tname.replace("'s", "").replace("\u2019s", "")))
+    named = [person for person, pname in names.items()
+             if len(first := str(pname or "").split(" ")[0].lower()) > 2 and first in words]
+    if len(named) == 1:
+        return named[0], 1.0, "name"
     scores = (store.get("matches") or {}).get(tracker) or {}
     ranked = sorted(((m["agree"] / m["cycles"], m["cycles"], p) for p, m in scores.items() if m.get("cycles")), reverse=True)
     if not ranked or ranked[0][1] < MATCH_MIN_CYCLES:

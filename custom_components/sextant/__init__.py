@@ -3978,6 +3978,7 @@ def _wifi_cycle(hass, layout, by_person):
         pass
     aps = _wifi_access_points(hass, layout, infra)
     cands = wifi_mod.candidates(states, infra)
+    wifi_mod.prune_matches(_wifi_store, time.time())
     _wifi_store["names"] = {e: c["name"] for e, c in cands.items()}
     names = {p: (getattr(hass.states.get(p), "attributes", {}) or {}).get("friendly_name") or p.split(".", 1)[1] for p in by_person}
     manual = layout.get("person_wifi") if isinstance(layout.get("person_wifi"), dict) else {}
@@ -4131,7 +4132,7 @@ def _update_person_sensors(hass):
                 info = (view.get("aps") or {}).get(c["ap"]) or {}
                 ap_floor, _room = wifi_mod.best_place(_wifi_store, c["ap"], (info.get("floor"), info.get("room")))
                 same_floor = (ap_floor == ble_floor) if ap_floor else None
-            wifi_mod.match_update(_wifi_store, tracker, person, wifi_mod.agreement(c["home"], person_home, same_floor))
+            wifi_mod.match_update(_wifi_store, tracker, person, wifi_mod.agreement(c["home"], person_home, same_floor), now)
         for suffix, (state, attrs) in persons_mod.fuse(best, why if best else held_why, presence, held, gps, ignored, home, wifi).items():
             update_sextant_sensor_state(hass, f"sensor.{slug}_{suffix}", state, attrs)
         _person_visits[person] = persons_mod.visit(_person_visits.get(person), persons_mod.home_via(presence, gps, wifi), max(heard) if heard else None, now)
