@@ -4107,8 +4107,10 @@ def _update_person_sensors(hass):
         if best is not None:
             _person_last[person] = (best, why)
         # Quiet: the last place they were put stands until BLE either hears
-        # them again or gives up (away), when GPS takes over.
-        held, held_why = _person_last.get(person, (None, None)) if best is None and presence == "quiet" else (None, None)
+        # them again or gives up (away), when GPS takes over. Heard but not
+        # placed this cycle (too few proxies for a fix) holds the same way:
+        # a person Sextant can hear has not left the house.
+        held, held_why = _person_last.get(person, (None, None)) if best is None and presence in ("here", "quiet") else (None, None)
         gps, ignored = persons_mod.choose_gps(hass.states.get, layout, person, now, gps_stale)
         wifi = _wifi_for(person, view)
         view["by_person"][person] = wifi

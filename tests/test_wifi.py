@@ -65,6 +65,10 @@ def test_a_tracker_is_matched_by_name_or_by_who_it_agrees_with():
         wifi.match_update(store, "device_tracker.iphone_2", "person.david_coulson", 0.0)
     person, conf, why = wifi.suggest(store, "device_tracker.iphone_2", names)
     assert person == "person.eilee_bauer" and why == "co-location" and conf == 1.0
+    # A score kept for someone who is not a candidate owner (a pet) is not in the ranking.
+    for _ in range(wifi.MATCH_MIN_CYCLES):
+        wifi.match_update(store, "device_tracker.iphone_2", "person.meg", 0.9)
+    assert wifi.suggest(store, "device_tracker.iphone_2", names)[0] == "person.eilee_bauer"
     # Two people it agrees with about equally stay ambiguous.
     for _ in range(wifi.MATCH_MIN_CYCLES):
         wifi.match_update(store, "device_tracker.iphone_2", "person.david_coulson", 1.0)

@@ -236,8 +236,12 @@ def suggest(store: dict, tracker: str, names: dict | None = None) -> tuple:
              if len(first := str(pname or "").split(" ")[0].lower()) > 2 and first in words]
     if len(named) == 1:
         return named[0], 1.0, "name"
+    # Only the people who could own a phone are ranked: scores kept for
+    # anyone else (a pet scored before pets were ruled out) must not make
+    # a clear match look ambiguous.
     scores = (store.get("matches") or {}).get(tracker) or {}
-    ranked = sorted(((m["agree"] / m["cycles"], m["cycles"], p) for p, m in scores.items() if m.get("cycles")), reverse=True)
+    ranked = sorted(((m["agree"] / m["cycles"], m["cycles"], p) for p, m in scores.items()
+                     if m.get("cycles") and (not names or p in names)), reverse=True)
     if not ranked or ranked[0][1] < MATCH_MIN_CYCLES:
         return None, 0.0, "learning"
     lead = ranked[0][0] - (ranked[1][0] if len(ranked) > 1 else 0.0)
