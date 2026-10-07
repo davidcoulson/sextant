@@ -90,7 +90,7 @@ def _vector(value, size):
     return out if len(out) == size else None
 
 
-def snapshot(now, kf=None, zones=None, spots=None, arrivals=None, rows=None, floors=None, visits=None):
+def snapshot(now, kf=None, zones=None, spots=None, arrivals=None, rows=None, floors=None, visits=None, wifi=None):
     """The state worth keeping, as JSON.
 
     ``rows`` are the published positions (ent, zone, sub_zone, floor, updated,
@@ -134,6 +134,11 @@ def snapshot(now, kf=None, zones=None, spots=None, arrivals=None, rows=None, flo
     people = {str(p): _json(v) for p, v in (visits or {}).items() if isinstance(v, dict)}
     if people:
         out["people"] = people
+    # What Wi-Fi association has taught (wifi.py): access-point footprints
+    # and tracker-to-person scores. Kept whatever the gap: a week's learning
+    # is worth more than a fresh start.
+    if isinstance(wifi, dict) and (wifi.get("aps") or wifi.get("matches")):
+        out["wifi"] = _json(wifi)
     return out
 
 
@@ -153,6 +158,44 @@ def _epoch(t):
     return f
 
 
+def _counts(value):
+    """A {name: finite non-negative number} table, or {} for anything else."""
+    if not isinstance(value, dict):
+        return {}
+    return {str(k): float(v) for k, v in value.items()
+            if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and v >= 0}
+
+
+def _wifi_clean(wifi):
+    """The Wi-Fi store (wifi.py) with only well-formed leaves: a footprint is
+    two count tables, a match is finite agree/cycles (and a seen time). A
+    stored record missing or mangling any of them is dropped, not carried
+    into arithmetic that would raise every cycle."""
+    aps, matches = {}, {}
+    for mac, fp in (wifi.get("aps") or {}).items():
+        if isinstance(fp, dict):
+            floors = _counts(fp.get("floors"))
+            if floors:
+                aps[str(mac)] = {"floors": floors, "rooms": _counts(fp.get("rooms"))}
+    for tracker, people in (wifi.get("matches") or {}).items():
+        if not isinstance(people, dict):
+            continue
+        kept = {}
+        for person, m in people.items():
+            if not isinstance(m, dict):
+                continue
+            nums = _counts({"agree": m.get("agree"), "cycles": m.get("cycles")})
+            if {"agree", "cycles"} <= set(nums) and nums["cycles"] > 0:
+                rec = {"agree": nums["agree"], "cycles": nums["cycles"]}
+                seen = _epoch(m.get("seen"))
+                if seen is not None:
+                    rec["seen"] = seen
+                kept[str(person)] = rec
+        if kept:
+            matches[str(tracker)] = kept
+    return {"aps": aps, "matches": matches}
+
+
 def restore(data, now, max_age=DEFAULT_MAX_AGE_SECS):
     """``{"kf", "zone", "spot", "arrivals", "floors", "last", "age"}`` from a snapshot.
 
@@ -160,9 +203,12 @@ def restore(data, now, max_age=DEFAULT_MAX_AGE_SECS):
     so the Live page can still say where a thing was and when. A snapshot
     from the future (the clock moved) is treated as a long gap.
     """
-    out = {"kf": {}, "zone": {}, "spot": {}, "arrivals": {}, "floors": {}, "last": {}, "visits": {}, "age": None}
+    out = {"kf": {}, "zone": {}, "spot": {}, "arrivals": {}, "floors": {}, "last": {}, "visits": {}, "wifi": None, "age": None}
     if not isinstance(data, dict):
         return out
+    wifi = data.get("wifi")
+    if isinstance(wifi, dict) and isinstance(wifi.get("aps"), dict) and isinstance(wifi.get("matches"), dict):
+        out["wifi"] = _wifi_clean(wifi)
     people = data.get("people")
     if isinstance(people, dict):
         for person, v in people.items():

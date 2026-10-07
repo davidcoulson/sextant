@@ -51,7 +51,8 @@ class SextantPersonTracker(TrackerEntity):
         nothing usable is ``[]``. A build without in_zones gets the old name.
         """
         acc = fix.get("accuracy")
-        self._attr_source_type = SourceType.GPS if fix.get("source_type") == "gps" else SourceType.BLUETOOTH_LE
+        kind = fix.get("source_type")
+        self._attr_source_type = SourceType.GPS if kind == "gps" else SourceType.ROUTER if kind == "router" else SourceType.BLUETOOTH_LE
         self._attr_latitude = fix.get("latitude")
         self._attr_longitude = fix.get("longitude")
         self._attr_location_accuracy = int(acc) if isinstance(acc, (int, float)) else 0

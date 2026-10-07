@@ -220,6 +220,16 @@ async def ws_layout_get(hass, connection, msg):
         # answer after a restart (see runtime.py).
         "last_seen": {ent: last for ent, last in (getattr(core, "_last_seen", None) or {}).items()
                       if isinstance(last, dict)},
+        # Wi-Fi association (wifi.py): the client trackers Sextant can use,
+        # the access points it knows, and whose each tracker is - set by hand
+        # or learned - for the People card.
+        "wifi": _safe(lambda: {
+            "candidates": {e: {"name": c["name"], "home": c["home"], "ap": c["ap"], "ssid": c.get("ssid")} for e, c in (core._wifi_now.get("candidates") or {}).items()},
+            "aps": {m: {"name": a.get("name"), "floor": a.get("floor"), "room": a.get("room")} for m, a in (core._wifi_now.get("aps") or {}).items()},
+            "assigned": core._wifi_now.get("assigned") or {},
+            "footprints": {m: {"floors": fp.get("floors") or {}, "cycles": round(sum((fp.get("floors") or {}).values()))}
+                           for m, fp in (core._wifi_store.get("aps") or {}).items()},
+        }, {"candidates": {}, "aps": {}, "assigned": {}, "footprints": {}}),
         "running_version": RUNNING_VERSION,
         "restart_needed": RUNNING_CODE is not None and await hass.async_add_executor_job(code_signature) != RUNNING_CODE,
         "scanners": {
@@ -1651,6 +1661,37 @@ async def ws_person_trackers_set(hass, connection, msg):
     connection.send_result(msg["id"], {"person": person, "trackers": trackers})
 
 
+@websocket_api.websocket_command({
+    vol.Required("type"): "sextant/person/wifi/set",
+    vol.Required("person"): str,
+    vol.Required("trackers"): [str],
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_person_wifi_set(hass, connection, msg):
+    """A person's Wi-Fi client trackers (their phone, their watch), the ones
+    that say they are home when BLE has lost them (layout person_wifi; see
+    wifi.py). An empty list clears the choice and Sextant's own suggestion
+    stands again."""
+    person = str(msg["person"])
+    if not person.startswith("person."):
+        return _error(connection, msg, "person must be a person.* entity")
+    trackers = list(dict.fromkeys(t for t in msg["trackers"] if isinstance(t, str) and t.startswith("device_tracker.")))
+    async with LAYOUT_LOCK:
+        layout = get_layout_for_edit(hass)
+        if not isinstance(layout, dict):
+            return _error(connection, msg, "No layout yet")
+        table = layout.setdefault("person_wifi", {})
+        if trackers:
+            table[person] = trackers
+        else:
+            table.pop(person, None)
+        if not table:
+            layout.pop("person_wifi", None)
+        await save_layout(hass, layout)
+    connection.send_result(msg["id"], {"person": person, "trackers": trackers})
+
+
 @websocket_api.websocket_command({vol.Required("type"): "sextant/snapshots/list"})
 @websocket_api.require_admin
 @websocket_api.async_response
@@ -1934,7 +1975,7 @@ async def ws_robot_remove(hass, connection, msg):
 
 COMMANDS = (
     ws_advice,
-    ws_snapshots_list, ws_snapshots_restore, ws_thing_forget, ws_person_trackers_set,
+    ws_snapshots_list, ws_snapshots_restore, ws_thing_forget, ws_person_trackers_set, ws_person_wifi_set,
     ws_robot_list, ws_robot_align, ws_robot_dock, ws_robot_remove, ws_election_log_clear, ws_interval_set,
     ws_radar_devices, ws_radar_targets,
     ws_layout_get, ws_layout_save, ws_tuning_set, ws_thing_tune,

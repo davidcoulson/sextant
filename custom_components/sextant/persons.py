@@ -240,14 +240,17 @@ def _haversine_m(a, b):
     return 2 * 6371000.0 * math.asin(math.sqrt(d))
 
 
-def fuse(best, why, presence, held, gps, ignored, home=None):
-    """(suffix -> (state, attributes)) for a person's sensors, BLE and GPS fused.
+def fuse(best, why, presence, held, gps, ignored, home=None, wifi=None):
+    """(suffix -> (state, attributes)) for a person's sensors, BLE, Wi-Fi and GPS fused.
 
     here: the thing that speaks for them (states). quiet: the place they were
     last put, held - a person unheard for a few minutes is still in the house.
-    away: the GPS zone, or "away" with nothing usable. The location sensor
-    always carries the GPS side too (zone, coordinates, distance from home),
-    so a dashboard can show both.
+    Then Wi-Fi: BLE has lost them but a phone or watch of theirs is still
+    joined to a home access point, so they are home, in the room that access
+    point most often means (wifi: {"entity", "home", "ap", "floor", "room",
+    "area_id", "floor_id"}; see wifi.py). away: the GPS zone, or "away" with
+    nothing usable. The location sensor always carries the GPS side too
+    (zone, coordinates, distance from home), so a dashboard can show both.
     """
     gps_attrs = {"zone": None, "latitude": None, "longitude": None, "gps_accuracy": None, "tracker": None, "distance_m": None}
     if gps:
@@ -264,6 +267,15 @@ def fuse(best, why, presence, held, gps, ignored, home=None):
             attrs["presence"] = presence
         out["sextant_person_location"][1].update({**gps_attrs, "gps_ignored": common["gps_ignored"]})
         return out
+    if wifi and wifi.get("home"):
+        room, floor = wifi.get("room") or "unknown", wifi.get("floor") or "unknown"
+        via = wifi.get("entity")
+        where = {"kind": "room", "room": room, "spot": None, "floor": floor, "area_id": wifi.get("area_id"), "floor_id": wifi.get("floor_id"), "via": via}
+        return {
+            "sextant_person_location": (room if room != "unknown" else "home", {**where, "source": "wifi", "access_point": wifi.get("ap_name") or wifi.get("ap"), **common, **gps_attrs, "considered": why or []}),
+            "sextant_person_room": (room, {"area_id": wifi.get("area_id"), "via": via, "source": "wifi", "presence": presence}),
+            "sextant_person_floor": (floor, {"via": via, "source": "wifi", "presence": presence}),
+        }
     if gps:
         zone = gps.get("zone")
         state, source = ("away" if zone == "not_home" else zone), "gps"
@@ -294,20 +306,23 @@ def valid_time(t):
     return f
 
 
-def home_via(presence, gps):
+def home_via(presence, gps, wifi=None):
     """What makes the person's tracker read home: ``"ble"`` (here or quiet),
-    ``"gps"`` (BLE has lost them but the GPS fix is in the home zone), or None
-    when it reads away."""
+    ``"wifi"`` (BLE has lost them but a phone or watch of theirs is still
+    joined to a home access point), ``"gps"`` (the GPS fix is in the home
+    zone), or None when it reads away."""
     if presence in ("here", "quiet"):
         return "ble"
+    if wifi and wifi.get("home"):
+        return "wifi"
     if gps and str(gps.get("zone") or "").lower() == "home":
         return "gps"
     return None
 
 
-def tracker_home(presence, gps) -> bool:
+def tracker_home(presence, gps, wifi=None) -> bool:
     """Whether the person's tracker reads home (see home_via)."""
-    return home_via(presence, gps) is not None
+    return home_via(presence, gps, wifi) is not None
 
 
 def visit(prev, via, last_heard, now):
@@ -351,14 +366,17 @@ def visit_attrs(v) -> dict:
     return {"arrived_at": iso(v.get("arrived")), "departed_at": iso(v.get("departed"))}
 
 
-def tracker_fix(presence, gps, visit=None):
+def tracker_fix(presence, gps, visit=None, wifi=None):
     """What the person's device_tracker reports: home on BLE's word (it is far
-    surer of "in the house" than GPS at the property line), the GPS fix once
-    BLE has lost them, not_home with nothing usable. ``visit`` adds when they
-    arrived or left (see visit)."""
+    surer of "in the house" than GPS at the property line), home on Wi-Fi's
+    once BLE has lost them but a phone or watch is still joined to a home
+    access point, the GPS fix after that, not_home with nothing usable.
+    ``visit`` adds when they arrived or left (see visit)."""
     when = visit_attrs(visit)
     if presence in ("here", "quiet"):
         return {"location_name": "home", "source_type": "bluetooth_le", "source": "ble", "presence": presence, **when}
+    if wifi and wifi.get("home"):
+        return {"location_name": "home", "source_type": "router", "source": "wifi", "presence": presence, "tracker": wifi.get("entity"), **when}
     if gps and gps.get("latitude") is not None:
         return {"location_name": None, "latitude": gps["latitude"], "longitude": gps["longitude"],
                 "accuracy": gps.get("accuracy"), "source_type": "gps", "source": "gps", "presence": presence, "tracker": gps.get("entity"), **when}

@@ -264,3 +264,20 @@ def test_visits_come_back_whatever_the_gap():
         "c": {"arrived": 1.0, "departed": 2.0}, "d": {"arrived": None, "departed": None}, "e": {"arrived": 900.0, "departed": None, "via": "nope"},
         "f": {"arrived": 10 ** 309, "departed": None}}}
     assert runtime.restore(bad, 1010.0)["visits"] == {"e": {"arrived": 900.0, "departed": None}}
+
+
+def test_the_wifi_store_rides_with_the_runtime_whatever_the_gap():
+    from sextant import runtime
+    store = {"aps": {"8c:ed": {"floors": {"Ground Floor": 12.0}, "rooms": {"Kitchen": 12.0}}}, "matches": {"device_tracker.iphone": {"person.david": {"agree": 10.0, "cycles": 12.0}}}, "names": {"device_tracker.iphone": "iPhone"}}
+    data = runtime.snapshot(1000.0, wifi=store)
+    back = runtime.restore(data, 1000.0 + 30 * 86400)["wifi"]
+    assert back["aps"] == store["aps"] and back["matches"] == store["matches"]
+    assert runtime.restore(runtime.snapshot(1000.0, wifi={"aps": {}, "matches": {}}), 1001.0)["wifi"] is None
+    assert runtime.restore({"saved_at": 1000.0, "things": {}, "wifi": {"aps": "x", "matches": {}}}, 1001.0)["wifi"] is None
+    # Mangled leaves are dropped, never carried into arithmetic.
+    bad = {"saved_at": 1000.0, "things": {}, "wifi": {
+        "aps": {"ok": {"floors": {"F": 3.0, "G": "x", "H": float("nan")}, "rooms": "nope"}, "nofloors": {"rooms": {"R": 1.0}}, "junk": 5},
+        "matches": {"device_tracker.a": {"person.p": {"agree": 1.0, "cycles": 2.0, "seen": 1e20}, "person.q": {"agree": 1.0}, "person.r": {"agree": True, "cycles": 1.0}},
+                    "device_tracker.b": "x"}}}
+    back = runtime.restore(bad, 1001.0)["wifi"]
+    assert back == {"aps": {"ok": {"floors": {"F": 3.0}, "rooms": {}}}, "matches": {"device_tracker.a": {"person.p": {"agree": 1.0, "cycles": 2.0}}}}

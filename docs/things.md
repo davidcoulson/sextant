@@ -81,6 +81,36 @@ neither broken nor stale is used once Sextant has lost the person. The card
 also says which sources are being passed over right now, and why. See
 [People](automation.md#people) for what the sensors then carry.
 
+### Wi-Fi
+
+A phone or watch that is still joined to one of the house's Wi-Fi access
+points is in the house, however quiet its Bluetooth has gone. Home
+Assistant's **UniFi Network** integration (and any router integration that
+sets an `ap_mac` attribute) gives a `device_tracker` per Wi-Fi client with
+the access point it is on; turn those on for the phones and watches only
+(UniFi: *Configure → Create entities from network clients*). Sextant then
+does the rest by itself:
+
+- **Whose is it.** Every cycle a person is placed by BLE, each candidate
+  tracker is scored by whether its access point's place agrees with where
+  that person is. A tracker that agrees with one person far more than with
+  anyone else is matched to them (the card shows it as *learned*, with a
+  tick to keep it); one whose name carries a person's first name - the
+  controller's "David's Phone" - is matched at once (*by name*). Pick from
+  the list to decide for yourself; the choice wins over any match.
+- **What each access point means.** Sextant learns each access point's
+  footprint - the floors and rooms people are in, by BLE, while on it - so a
+  wall unit under a bedroom learns to mean both floors. Until it has forty
+  cycles, the HA area the access point's device is in stands in (put each
+  AP device in its room).
+- **What it does.** When Sextant has lost someone, a tracker of theirs that
+  is home keeps them home, in the room the access point most means
+  (`source: wifi`), ahead of GPS. And the access point a person's phone or
+  watch is on sways the floor election of that phone and watch a little
+  (`wifi_floor_weight`, 0.25: a floor the access point never means scores a
+  quarter less), with the footprint deciding how much a given access point
+  can say.
+
 ## Robot vacuums
 
 Roborock vacuums do not advertise over Bluetooth, but each knows exactly
