@@ -194,7 +194,8 @@ def _wifi_clean(wifi):
         if kept:
             matches[str(tracker)] = kept
     clients = {}
-    for entity, c in (wifi.get("clients") or {}).items():
+    raw_clients = wifi.get("clients")
+    for entity, c in (raw_clients.items() if isinstance(raw_clients, dict) else ()):
         if isinstance(entity, str) and entity.startswith("device_tracker.") and isinstance(c, dict):
             mac = c.get("mac")
             clients[entity] = {"mac": str(mac).lower() if isinstance(mac, str) and mac else None}

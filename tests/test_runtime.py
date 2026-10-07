@@ -283,3 +283,5 @@ def test_the_wifi_store_rides_with_the_runtime_whatever_the_gap():
     assert back == {"aps": {"ok": {"floors": {"F": 3.0}, "rooms": {}}}, "matches": {"device_tracker.a": {"person.p": {"agree": 1.0, "cycles": 2.0}}}, "clients": {}}
     kept = runtime.restore(runtime.snapshot(1000.0, wifi={"aps": {}, "matches": {}, "clients": {"device_tracker.iphone": {"mac": "3A:26"}, "sensor.x": {"mac": "y"}}}), 1001.0)["wifi"]
     assert kept["clients"] == {"device_tracker.iphone": {"mac": "3a:26"}}
+    listed = {"saved_at": 1000.0, "things": {}, "wifi": {"aps": {}, "matches": {}, "clients": ["device_tracker.x"]}}
+    assert runtime.restore(listed, 1001.0)["wifi"]["clients"] == {}
