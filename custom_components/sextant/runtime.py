@@ -138,14 +138,19 @@ def snapshot(now, kf=None, zones=None, spots=None, arrivals=None, rows=None, flo
 
 
 def _epoch(t):
-    """A stored epoch second, or None: not a bool, finite, and within datetime's range."""
-    if isinstance(t, bool) or not isinstance(t, (int, float)) or not math.isfinite(t) or t <= 0:
+    """A stored epoch second, or None: not a bool, finite, and within datetime's
+    range. All inside the try: math.isfinite itself raises on an int too big
+    for a float."""
+    if isinstance(t, bool) or not isinstance(t, (int, float)):
         return None
     try:
-        datetime.fromtimestamp(t, timezone.utc)
+        f = float(t)
+        if not math.isfinite(f) or f <= 0:
+            return None
+        datetime.fromtimestamp(f, timezone.utc)
     except (OverflowError, OSError, ValueError):
         return None
-    return float(t)
+    return f
 
 
 def restore(data, now, max_age=DEFAULT_MAX_AGE_SECS):
@@ -166,7 +171,10 @@ def restore(data, now, max_age=DEFAULT_MAX_AGE_SECS):
             arrived, departed = _epoch(v.get("arrived")), _epoch(v.get("departed"))
             # Exactly one of the two, as persons.visit writes them; anything else is noise.
             if (arrived is None) != (departed is None):
-                out["visits"][person] = {"arrived": arrived, "departed": departed}
+                kept = {"arrived": arrived, "departed": departed}
+                if arrived is not None and v.get("via") in ("ble", "gps"):
+                    kept["via"] = v["via"]
+                out["visits"][person] = kept
     saved_at = data.get("saved_at")
     things = data.get("things")
     if not isinstance(saved_at, (int, float)) or not math.isfinite(saved_at) or not isinstance(things, dict):

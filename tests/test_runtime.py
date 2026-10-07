@@ -251,15 +251,16 @@ def test_the_history_fills_in_a_last_sighting_once_it_has_loaded():
 
 def test_visits_come_back_whatever_the_gap():
     from sextant import runtime
-    data = runtime.snapshot(1000.0, visits={"person.david": {"arrived": 900.0, "departed": None}, "person.bad": "x"})
-    assert data["people"] == {"person.david": {"arrived": 900.0, "departed": None}}
+    data = runtime.snapshot(1000.0, visits={"person.david": {"arrived": 900.0, "departed": None, "via": "ble"}, "person.bad": "x"})
+    assert data["people"] == {"person.david": {"arrived": 900.0, "departed": None, "via": "ble"}}
     short = runtime.restore(data, 1010.0)
-    assert short["visits"] == {"person.david": {"arrived": 900.0, "departed": None}}
+    assert short["visits"] == {"person.david": {"arrived": 900.0, "departed": None, "via": "ble"}}
     long = runtime.restore(data, 1000.0 + 10 * 86400)
     assert long["visits"] == short["visits"]            # a day later, "home since" still stands
     assert runtime.snapshot(1000.0).get("people") is None
     # Rubbish never comes back: out of datetime's range, booleans, both or neither set.
     bad = {"saved_at": 1000.0, "things": {}, "people": {
         "a": {"arrived": 1e20, "departed": None}, "b": {"arrived": True, "departed": None},
-        "c": {"arrived": 1.0, "departed": 2.0}, "d": {"arrived": None, "departed": None}, "e": {"arrived": 900.0, "departed": None}}}
+        "c": {"arrived": 1.0, "departed": 2.0}, "d": {"arrived": None, "departed": None}, "e": {"arrived": 900.0, "departed": None, "via": "nope"},
+        "f": {"arrived": 10 ** 309, "departed": None}}}
     assert runtime.restore(bad, 1010.0)["visits"] == {"e": {"arrived": 900.0, "departed": None}}

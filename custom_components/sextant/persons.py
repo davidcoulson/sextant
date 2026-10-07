@@ -279,45 +279,67 @@ def fuse(best, why, presence, held, gps, ignored, home=None):
 
 def valid_time(t):
     """``t`` as a float epoch second, or None: a number (not a bool), finite,
-    and one datetime can represent, so nothing downstream ever raises on it."""
-    if isinstance(t, bool) or not isinstance(t, (int, float)) or not math.isfinite(t) or t <= 0:
+    and one datetime can represent, so nothing downstream ever raises on it.
+    Everything happens inside the try: even math.isfinite raises on an int
+    too big for a float."""
+    if isinstance(t, bool) or not isinstance(t, (int, float)):
         return None
     try:
-        datetime.fromtimestamp(t, timezone.utc)
+        f = float(t)
+        if not math.isfinite(f) or f <= 0:
+            return None
+        datetime.fromtimestamp(f, timezone.utc)
     except (OverflowError, OSError, ValueError):
         return None
-    return float(t)
+    return f
+
+
+def home_via(presence, gps):
+    """What makes the person's tracker read home: ``"ble"`` (here or quiet),
+    ``"gps"`` (BLE has lost them but the GPS fix is in the home zone), or None
+    when it reads away."""
+    if presence in ("here", "quiet"):
+        return "ble"
+    if gps and str(gps.get("zone") or "").lower() == "home":
+        return "gps"
+    return None
 
 
 def tracker_home(presence, gps) -> bool:
-    """Whether the person's tracker reads home: BLE's here or quiet, or the GPS
-    fix that stands in once BLE has lost them placing them in the home zone."""
-    return presence in ("here", "quiet") or bool(gps and str(gps.get("zone") or "").lower() == "home")
+    """Whether the person's tracker reads home (see home_via)."""
+    return home_via(presence, gps) is not None
 
 
-def visit(prev, home, last_heard, now):
-    """The person's current visit: ``{"arrived": t, "departed": None}`` while the
-    tracker reads home (tracker_home), ``{"arrived": None, "departed": t}`` once
+def visit(prev, via, last_heard, now):
+    """The person's current visit: ``{"arrived": t, "departed": None, "via"}``
+    while the tracker reads home, ``{"arrived": None, "departed": t}`` once
     away - exactly one of the two holds a time, matching the tracker's state,
     so an automation can trigger on the attribute leaving None and get one
-    clean event with the time in it.
+    clean event with the time in it. ``via`` is home_via's answer.
 
-    A departure is stamped at the last time the house heard them, not when
-    away_after_secs ran out ("left at 08:12" means 08:12), and the quiet
-    period is the grace: a person heard again within it never left, so the
-    same visit carries on with its arrival. Nothing changes while the state
-    holds, so the recorder gets a row per arrival or departure.
+    The time is the evidence's own. Home on BLE: the arrival is the sighting
+    that brought them back, and a departure the last sighting before the
+    house fell silent - not when away_after_secs ran out ("left at 08:12"
+    means 08:12), the quiet period being the grace. Home on GPS alone (BLE
+    silent since the morning, the phone's GPS back in the zone at six): the
+    arrival is when GPS said so, and a departure that GPS decides is stamped
+    when GPS left the zone, not at a BLE sighting hours earlier. Nothing
+    changes while the state holds, so the recorder gets a row per event.
     """
     prev = prev if isinstance(prev, dict) else {}
     arrived, departed = valid_time(prev.get("arrived")), valid_time(prev.get("departed"))
-    stamp = valid_time(last_heard) or valid_time(now) or 0.0
-    if home:
+    heard, now_t = valid_time(last_heard), valid_time(now) or 0.0
+    ble_time = heard if heard is not None else now_t
+    if via:
         if arrived is not None and departed is None:
-            return prev
-        return {"arrived": stamp, "departed": None}
+            if prev.get("via") == via:
+                return prev
+            return {**prev, "via": via}          # the same visit, now carried by the other source
+        return {"arrived": ble_time if via == "ble" else now_t, "departed": None, "via": via}
     if departed is not None and arrived is None:
         return prev
-    return {"arrived": None, "departed": stamp}
+    # Leaving: BLE silence is dated by the last sighting; GPS leaving the zone, by now.
+    return {"arrived": None, "departed": ble_time if prev.get("via", "ble") == "ble" else now_t}
 
 
 def visit_attrs(v) -> dict:
