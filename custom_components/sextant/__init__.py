@@ -3980,7 +3980,10 @@ def _wifi_cycle(hass, layout, by_person):
     cands = wifi_mod.candidates(states, infra)
     wifi_mod.prune_matches(_wifi_store, time.time())
     _wifi_store["names"] = {e: c["name"] for e, c in cands.items()}
-    names = {p: (getattr(hass.states.get(p), "attributes", {}) or {}).get("friendly_name") or p.split(".", 1)[1] for p in by_person}
+    # A pet is a person to Home Assistant but carries no phone: never a Wi-Fi owner.
+    classes = layout.get("thing_classes") or {}
+    people = [p for p, things in by_person.items() if not (things and all(classes.get(t) in rooms_mod.PET_CLASSES for t in things))]
+    names = {p: (getattr(hass.states.get(p), "attributes", {}) or {}).get("friendly_name") or p.split(".", 1)[1] for p in people}
     manual = layout.get("person_wifi") if isinstance(layout.get("person_wifi"), dict) else {}
     # Several trackers per person (a phone and a watch): the table holds lists.
     assigned = {}
@@ -3995,7 +3998,7 @@ def _wifi_cycle(hass, layout, by_person):
         person, conf, why = wifi_mod.suggest(_wifi_store, tracker, names)
         if person is not None:
             assigned.setdefault(person, []).append({"entity": tracker, "how": why, "confidence": conf})
-    return {"candidates": cands, "aps": aps, "assigned": assigned, "names": names}
+    return {"candidates": cands, "aps": aps, "assigned": assigned, "names": names, "people": set(people)}
 
 
 def _wifi_for(person, view):
@@ -4027,7 +4030,7 @@ def _wifi_floor_factor(entity, layout, floor_name):
     cls = (layout.get("thing_classes") or {}).get(entity)
     if not owner or cls not in ("phone", "watch"):
         return 1.0
-    wifi = (_wifi_now.get("people") or {}).get(owner)
+    wifi = (_wifi_now.get("by_person") or {}).get(owner)
     if not wifi or not wifi.get("odds"):
         return 1.0
     return wifi_mod.floor_factor(wifi["odds"], floor_name, weight)
@@ -4075,7 +4078,7 @@ def _update_person_sensors(hass):
     except Exception as e:  # noqa: BLE001 - Wi-Fi is a help, never a stop
         _LOGGER.debug("Wi-Fi view not built: %s", e)
         view = {}
-    view["people"] = {}
+    view["by_person"] = {}
     _wifi_now = view
     for person, things in by_person.items():
         candidates, presences, heard = [], [], []
@@ -4108,7 +4111,7 @@ def _update_person_sensors(hass):
         held, held_why = _person_last.get(person, (None, None)) if best is None and presence == "quiet" else (None, None)
         gps, ignored = persons_mod.choose_gps(hass.states.get, layout, person, now, gps_stale)
         wifi = _wifi_for(person, view)
-        view["people"][person] = wifi
+        view["by_person"][person] = wifi
         # Learning, from BLE's word: the access point each of their trackers
         # is on gets this floor and room in its footprint, and every candidate
         # tracker is scored against this person by whether its access point's
@@ -4126,7 +4129,8 @@ def _update_person_sensors(hass):
         # Every candidate against this person, every cycle: whether both are
         # home or both away tells people apart (someone leaves, their phone's
         # Wi-Fi goes with them); on the same floor while home is the bonus.
-        for tracker, c in (view.get("candidates") or {}).items():
+        # Not for a pet: a cat owns no phone.
+        for tracker, c in (view.get("candidates") or {}).items() if person in (view.get("people") or ()) else []:
             same_floor = None
             if c["home"] and c.get("ap") and ble_floor:
                 info = (view.get("aps") or {}).get(c["ap"]) or {}
