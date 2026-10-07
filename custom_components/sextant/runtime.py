@@ -137,7 +137,7 @@ def snapshot(now, kf=None, zones=None, spots=None, arrivals=None, rows=None, flo
     # What Wi-Fi association has taught (wifi.py): access-point footprints
     # and tracker-to-person scores. Kept whatever the gap: a week's learning
     # is worth more than a fresh start.
-    if isinstance(wifi, dict) and (wifi.get("aps") or wifi.get("matches")):
+    if isinstance(wifi, dict) and (wifi.get("aps") or wifi.get("matches") or wifi.get("clients")):
         out["wifi"] = _json(wifi)
     return out
 
@@ -193,7 +193,13 @@ def _wifi_clean(wifi):
                 kept[str(person)] = rec
         if kept:
             matches[str(tracker)] = kept
-    return {"aps": aps, "matches": matches}
+    clients = {}
+    raw_clients = wifi.get("clients")
+    for entity, c in (raw_clients.items() if isinstance(raw_clients, dict) else ()):
+        if isinstance(entity, str) and entity.startswith("device_tracker.") and isinstance(c, dict):
+            mac = c.get("mac")
+            clients[entity] = {"mac": str(mac).lower() if isinstance(mac, str) and mac else None}
+    return {"aps": aps, "matches": matches, "clients": clients}
 
 
 def restore(data, now, max_age=DEFAULT_MAX_AGE_SECS):

@@ -39,27 +39,33 @@ MATCH_MAX_PAIRS = 400
 
 
 def new_store() -> dict:
-    return {"aps": {}, "matches": {}}
+    return {"aps": {}, "matches": {}, "clients": {}}
 
 
-def candidates(states, ap_macs=()) -> dict:
-    """{tracker entity: {"name", "home", "ap", "mac"}} for every router
-    tracker that carries an access-point attribute - a Wi-Fi client. The
-    access points and switches themselves are router trackers too (UniFi
-    tracks its own devices); they are told apart by their MAC being one of
-    ``ap_macs``, or by never having been associated to anything.
+def candidates(states, ap_macs=(), known=None) -> dict:
+    """{tracker entity: {"name", "home", "ap", "mac", "ssid"}} for every router
+    tracker that is a Wi-Fi client: one carrying an access-point attribute
+    now, or one that has carried one before (``known``: the store's
+    "clients", kept up to date here) - UniFi drops ``ap_mac`` from a client
+    that is away, and an away client is exactly the cycle that tells people
+    apart. The access points and switches themselves are router trackers too
+    (UniFi tracks its own devices); they are told apart by their MAC being one
+    of ``ap_macs``, or by never having been associated to anything.
     """
     out = {}
     aps = {str(m).lower() for m in ap_macs if m}
+    known = known if isinstance(known, dict) else {}
     for entity_id, state, attrs in states:
         if not str(entity_id).startswith("device_tracker.") or not isinstance(attrs, dict):
             continue
-        if attrs.get("source_type") != ROUTER or "ap_mac" not in attrs:
+        if attrs.get("source_type") != ROUTER or ("ap_mac" not in attrs and entity_id not in known):
             continue
         mac = str(attrs.get("mac") or "").lower()
         if mac and mac in aps:
             continue
         ap = attrs.get("ap_mac")
+        if ap:
+            known[entity_id] = {"mac": mac or None}
         out[entity_id] = {
             "name": attrs.get("friendly_name") or entity_id,
             "home": state == "home",
@@ -236,8 +242,14 @@ def suggest(store: dict, tracker: str, names: dict | None = None) -> tuple:
              if len(first := str(pname or "").split(" ")[0].lower()) > 2 and first in words]
     if len(named) == 1:
         return named[0], 1.0, "name"
+    # Only the people who could own a phone are ranked: scores kept for
+    # anyone else (a pet scored before pets were ruled out) must not make
+    # a clear match look ambiguous.
+    if not names:
+        return None, 0.0, "nobody"          # no one eligible to own a phone: no owner
     scores = (store.get("matches") or {}).get(tracker) or {}
-    ranked = sorted(((m["agree"] / m["cycles"], m["cycles"], p) for p, m in scores.items() if m.get("cycles")), reverse=True)
+    ranked = sorted(((m["agree"] / m["cycles"], m["cycles"], p) for p, m in scores.items()
+                     if m.get("cycles") and p in names), reverse=True)
     if not ranked or ranked[0][1] < MATCH_MIN_CYCLES:
         return None, 0.0, "learning"
     lead = ranked[0][0] - (ranked[1][0] if len(ranked) > 1 else 0.0)

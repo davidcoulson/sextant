@@ -24,6 +24,25 @@ def test_candidates_are_router_trackers_with_an_access_point_minus_the_access_po
     assert c["device_tracker.watch"]["home"] is False and c["device_tracker.watch"]["ap"] is None
 
 
+def test_a_client_once_seen_on_an_access_point_stays_a_candidate_when_away():
+    """UniFi drops ap_mac from a client that is away; the store remembers the client."""
+    known = {}
+    home = [("device_tracker.iphone", "home", {"source_type": "router", "mac": "3a:26:7a:09:23:91", "ap_mac": "8c:ed", "friendly_name": "iPhone"})]
+    assert set(wifi.candidates(home, known=known)) == {"device_tracker.iphone"} and known == {"device_tracker.iphone": {"mac": "3a:26:7a:09:23:91"}}
+    away = [("device_tracker.iphone", "not_home", {"source_type": "router", "mac": "3a:26:7a:09:23:91", "friendly_name": "iPhone"}),
+            ("device_tracker.never", "not_home", {"source_type": "router", "mac": "aa:bb", "friendly_name": "Something"})]
+    c = wifi.candidates(away, known=known)
+    assert set(c) == {"device_tracker.iphone"} and c["device_tracker.iphone"]["home"] is False and c["device_tracker.iphone"]["ap"] is None
+    assert wifi.candidates(away) == {}                       # without the memory, nothing
+
+
+def test_nobody_eligible_means_no_owner():
+    store = wifi.new_store()
+    for _ in range(wifi.MATCH_MIN_CYCLES):
+        wifi.match_update(store, "device_tracker.x", "person.meg", 1.0)
+    assert wifi.suggest(store, "device_tracker.x", {}) == (None, 0.0, "nobody")
+
+
 def test_the_footprint_learns_and_is_trusted_only_with_enough_cycles():
     store = wifi.new_store()
     ap = "9c:05:d6:a9:e2:5b"
@@ -65,6 +84,10 @@ def test_a_tracker_is_matched_by_name_or_by_who_it_agrees_with():
         wifi.match_update(store, "device_tracker.iphone_2", "person.david_coulson", 0.0)
     person, conf, why = wifi.suggest(store, "device_tracker.iphone_2", names)
     assert person == "person.eilee_bauer" and why == "co-location" and conf == 1.0
+    # A score kept for someone who is not a candidate owner (a pet) is not in the ranking.
+    for _ in range(wifi.MATCH_MIN_CYCLES):
+        wifi.match_update(store, "device_tracker.iphone_2", "person.meg", 0.9)
+    assert wifi.suggest(store, "device_tracker.iphone_2", names)[0] == "person.eilee_bauer"
     # Two people it agrees with about equally stay ambiguous.
     for _ in range(wifi.MATCH_MIN_CYCLES):
         wifi.match_update(store, "device_tracker.iphone_2", "person.david_coulson", 1.0)

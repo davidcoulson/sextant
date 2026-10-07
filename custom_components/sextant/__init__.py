@@ -3964,20 +3964,33 @@ def _wifi_cycle(hass, layout, by_person):
     # The access points are whatever some client is on, plus any router
     # tracker that is a Ubiquiti device itself (UniFi tracks its own access
     # points and switches as clients of nothing): neither is a phone.
-    first = wifi_mod.candidates(states)
-    infra = {c["ap"] for c in first.values() if c.get("ap")}
+    known = _wifi_store.setdefault("clients", {})
+    infra = set()
     try:
         from homeassistant.helpers import device_registry as dr, entity_registry as er  # noqa: PLC0415
         ent_reg, dev_reg = er.async_get(hass), dr.async_get(hass)
-        for entity_id, c in first.items():
+        # The registry says which router trackers are clients before any has
+        # shown an access point: a UniFi tracker whose device is not a
+        # Ubiquiti device is a client; one whose device is, is the network.
+        for entity_id, _state, attrs in states:
+            if attrs.get("source_type") != wifi_mod.ROUTER:
+                continue
             entry = ent_reg.async_get(entity_id)
             device = dev_reg.async_get(entry.device_id) if entry and entry.device_id else None
-            if device is not None and str(getattr(device, "manufacturer", "") or "").startswith("Ubiquiti") and c.get("mac"):
-                infra.add(c["mac"])
+            if entry is None or entry.platform != "unifi" or device is None:
+                continue
+            mac = str(attrs.get("mac") or "").lower() or None
+            if str(getattr(device, "manufacturer", "") or "").startswith("Ubiquiti"):
+                if mac:
+                    infra.add(mac)
+            else:
+                known.setdefault(entity_id, {"mac": mac})
     except Exception:  # noqa: BLE001 - no registries: the referenced access points still rule themselves out
         pass
+    first = wifi_mod.candidates(states, known=known)
+    infra |= {c["ap"] for c in first.values() if c.get("ap")}
     aps = _wifi_access_points(hass, layout, infra)
-    cands = wifi_mod.candidates(states, infra)
+    cands = wifi_mod.candidates(states, infra, _wifi_store.setdefault("clients", {}))
     wifi_mod.prune_matches(_wifi_store, time.time())
     _wifi_store["names"] = {e: c["name"] for e, c in cands.items()}
     # A pet is a person to Home Assistant but carries no phone: never a Wi-Fi owner.
@@ -4107,8 +4120,10 @@ def _update_person_sensors(hass):
         if best is not None:
             _person_last[person] = (best, why)
         # Quiet: the last place they were put stands until BLE either hears
-        # them again or gives up (away), when GPS takes over.
-        held, held_why = _person_last.get(person, (None, None)) if best is None and presence == "quiet" else (None, None)
+        # them again or gives up (away), when GPS takes over. Heard but not
+        # placed this cycle (too few proxies for a fix) holds the same way:
+        # a person Sextant can hear has not left the house.
+        held, held_why = _person_last.get(person, (None, None)) if best is None and presence in ("here", "quiet") else (None, None)
         gps, ignored = persons_mod.choose_gps(hass.states.get, layout, person, now, gps_stale)
         wifi = _wifi_for(person, view)
         view["by_person"][person] = wifi
@@ -4116,10 +4131,11 @@ def _update_person_sensors(hass):
         # is on gets this floor and room in its footprint, and every candidate
         # tracker is scored against this person by whether its access point's
         # place agrees with where BLE has them.
-        placed = best or held
         person_home = presence in ("here", "quiet")
-        if placed and presence == "here":
-            ble_floor, ble_room = placed.get("floor"), placed.get("zone")
+        # Learning takes a fix made this cycle, never a held one: a place
+        # carried over says nothing about where the access point reaches.
+        if best and presence == "here":
+            ble_floor, ble_room = best.get("floor"), best.get("zone")
             for a in (view.get("assigned") or {}).get(person) or []:
                 c = (view.get("candidates") or {}).get(a["entity"])
                 if c and c["home"] and c.get("ap"):
