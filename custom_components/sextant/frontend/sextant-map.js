@@ -573,7 +573,7 @@ export function buildWifiRaster(h, dark = false) {
     }
     cx2.putImageData(img, 0, 0);
   }
-  return { canvas, x0, y0, t, W, H, dbm, ap, conf, aps };
+  return { canvas, x0, y0, t, W, H, dbm, ap, conf, aps, estimated: !!estimated };
 }
 
 export class SextantMap {
@@ -1432,7 +1432,11 @@ export class SextantMap {
   setWifiHeat(h) {
     this.wifiHeat = h && Array.isArray(h.cells) ? h : null;
     this._wifiRaster = null;
-    if (!this.wifiHeat) this._wifiAt = null;
+    // The readout's pixel index belongs to the raster just dropped: find the
+    // same plan point in the new one (another floor, another view, a reload).
+    const at = this._wifiAt;
+    this._wifiAt = null;
+    if (at && this.wifiHeat) this._pointWifiCell(at);
     this.invalidate();
   }
 
@@ -1482,11 +1486,13 @@ export class SextantMap {
     ctx.drawImage(r.canvas, r.x0 - r.t / 2, r.y0 - r.t / 2, r.W * r.t, r.H * r.t);
     ctx.restore();
     const at = this._wifiAt;
-    if (at && Number.isFinite(r.dbm[at.idx])) {
+    if (at && at.idx < r.dbm.length && Number.isFinite(r.dbm[at.idx])) {
       const h = this.wifiHeat, name = (m) => h.names?.[m] || m;
       const ap = r.aps[r.ap[at.idx]];
       const dbm = Math.round(r.dbm[at.idx]);
-      const text = h.mode === "estimated"
+      // What was DRAWN decides the words: asked for the estimate with no
+      // access point placed, the raster is the measured squares.
+      const text = r.estimated
         ? `≈ ${dbm} dBm · ${ap ? `${name(ap)} strongest` : "no access point"} · ${r.conf[at.idx] >= 0.6 ? "measured nearby" : r.conf[at.idx] >= 0.2 ? "estimate" : "model only"}`
         : h.mode === "ap" ? `${ap ? name(ap) : "?"} · ${dbm} dBm measured` : `${dbm} dBm measured${ap ? ` · mostly ${name(ap)}` : ""}`;
       ctx.save();
