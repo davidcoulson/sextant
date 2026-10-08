@@ -410,7 +410,7 @@ class SextantEdit extends LitElement {
     if (!aps.length) return html`<div class="hint">No access points found. They come from Home Assistant's UniFi Network integration: add it, then reload this page.</div>`;
     const left = aps.filter((a) => !placed.has(a.mac)).length;
     return html`<div class="hint">
-      <select @change=${(e) => { this._placingAp = e.target.value || null; }}>
+      <select aria-label="Access point to place" @change=${(e) => { this._placingAp = e.target.value || null; }}>
         <option value="" ?selected=${!this._placingAp}>Pick an access point, then click the map…</option>
         ${aps.map((a) => html`<option value=${a.mac} ?selected=${this._placingAp === a.mac} ?disabled=${placed.has(a.mac)}>${a.name}${placed.has(a.mac) ? ` (placed${placed.get(a.mac) !== this.floor ? ` on ${placed.get(a.mac)}` : ""})` : ""}${a.area_id && this.hass?.areas?.[a.area_id] ? ` · ${this.hass.areas[a.area_id].name}` : ""}</option>`)}
       </select>

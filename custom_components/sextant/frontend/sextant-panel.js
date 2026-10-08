@@ -522,6 +522,7 @@ class SextantLive extends LitElement {
       fetch: (url) => this.hass.fetchWithAuth(url),
       onSelect: (hit) => {
         if (hit?.kind === "receiver") return this._openProxy(hit.index);
+        if (hit?.kind === "ap") return;   // named on the map; the focused thing and the proxy card stay
         this._proxy = null;
         this._select(hit?.kind === "thing" ? hit.ent : null);
       },
