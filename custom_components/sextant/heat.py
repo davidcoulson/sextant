@@ -53,12 +53,13 @@ RADIO_BAND = {"ng": "2.4", "na": "5", "6e": "6"}
 
 def band_of(radio, channel=None) -> str | None:
     """A client's band from the controller's ``radio`` ("ng", "na", "6e"),
-    else from its channel where that is unambiguous (1-14 is only 2.4 GHz;
-    5 and 6 GHz channel numbers overlap), else None."""
+    else from its channel where that alone is unambiguous, else None. 2.4 GHz
+    is channels 1-14, but 6 GHz numbers its channels 1, 5, 9, 13, ... too, so
+    only the 2.4 channels 6 GHz never uses (2-4, 6-8, 10-12, 14) count."""
     band = RADIO_BAND.get(str(radio or "").lower())
     if band:
         return band
-    if isinstance(channel, int) and not isinstance(channel, bool) and 1 <= channel <= 14:
+    if isinstance(channel, int) and not isinstance(channel, bool) and 1 <= channel <= 14 and (channel - 1) % 4:
         return "2.4"
     return None
 
@@ -118,11 +119,14 @@ def add(store: dict, floor, x_px, y_px, scale, ap, dbm, client, now, reference=F
     row = cell["aps"].setdefault(_row_key(ap, band), [0.0, 0.0, 0.0, 0.0])
     value = float(dbm)
     if not reference:
+        # One offset per device AND band ("mac|5"): a phone is a different
+        # transmitter on 2.4 GHz than on 5.
+        who = _row_key(client, band)
         if row[2] >= BIAS_MIN_REF:
-            off = bias.get(client, 0.0)
+            off = bias.get(who, 0.0)
             off += BIAS_RATE * ((value - row[3] / row[2]) - off)
-            bias[client] = max(-BIAS_MAX_DB, min(BIAS_MAX_DB, off))
-        value -= bias.get(client, 0.0)
+            bias[who] = max(-BIAS_MAX_DB, min(BIAS_MAX_DB, off))
+        value -= bias.get(who, 0.0)
     row[0] += 1.0
     row[1] += value
     if reference:

@@ -335,19 +335,22 @@ MIXED = "mixed"
 
 
 def fit_bands(layout, squares) -> dict:
-    """{band: fit(...)} for each band with MIN_BAND_SQUARES squares, or
-    {"mixed": fit over every square} when none has. ``squares`` as for fit,
-    with the band (or None) as a seventh field."""
+    """{band: fit(...)} for each band whose fit USED at least
+    MIN_BAND_SQUARES squares, or {"mixed": fit over every square} when none
+    has, or {} when nothing was usable. ``squares`` as for fit, with the band
+    (or None) as a seventh field. Counted after fit's own checks: squares on
+    an access point that is not placed, or that cannot reach the floor, are
+    thrown away there, and a band of only those is a model of priors."""
     out = {}
     for band in BANDS:
         mine = [s[:6] for s in squares if len(s) > 6 and s[6] == band]
         if len(mine) >= MIN_BAND_SQUARES:
             model = fit(layout, mine)
-            if model:
+            if model and model["used"] >= MIN_BAND_SQUARES:
                 out[band] = model
     if not out:
         model = fit(layout, [s[:6] for s in squares])
-        if model:
+        if model and model["used"]:
             out[MIXED] = model
     return out
 

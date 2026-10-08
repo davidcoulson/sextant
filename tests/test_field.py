@@ -168,3 +168,15 @@ def test_too_few_squares_on_any_band_are_fitted_together():
     assert list(models) == [field.MIXED] and models[field.MIXED]["used"] == 4
     assert field.grid_bands(layout, models, "Ground", squares)["aps"] == [f"{A}|mixed"]
     assert field.fit_bands({"floor": []}, squares) == {}
+
+
+
+def test_a_band_of_squares_the_fit_cannot_use_does_not_count():
+    """A dozen squares on an access point that is not placed pass a count of
+    squares but not of squares the fit used: no prior-only model for them."""
+    layout = _layout([{"floor": "Ground", "mac": A, "cords": {"x": 250, "y": 250}}])
+    unplaced = [("Ground", x * S, 250, B, -60.0, 10, "5") for x in np.arange(0.5, 10, 0.5)]
+    placed = [("Ground", x * S, 250, A, _truth(-35, 2.5, abs(x - 2.5)), 10, None) for x in (0.5, 1.5, 3.5)]
+    models = field.fit_bands(layout, unplaced + placed)
+    assert list(models) == [field.MIXED] and models[field.MIXED]["used"] == 3
+    assert field.fit_bands(layout, unplaced) == {}

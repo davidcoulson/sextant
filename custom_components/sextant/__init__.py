@@ -4140,7 +4140,12 @@ def wifi_heat_report(hass, layout, floor=None, band=None):
         st = hass.states.get(person) if person and getattr(hass, "states", None) is not None else None
         who = str((getattr(st, "attributes", None) or {}).get("friendly_name") or "").split(" ")[0]
         names[c["mac"]] = f"{who}'s {c.get('name')}" if who else c.get("name")
-    out["bias"] = {names[m]: round(v, 1) for m, v in (_wifi_heat.get("bias") or {}).items() if m in names}
+    bias = {}
+    for key, v in (_wifi_heat.get("bias") or {}).items():
+        mac, band = heat_mod.split_row(key)
+        if mac in names:
+            bias[f"{names[mac]}{f' {band} GHz' if band else ''}"] = round(v, 1)
+    out["bias"] = bias
     out["samples"] = int(sum(row[0] for cell in (_wifi_heat.get("cells") or {}).values() for row in cell["aps"].values()))
     return out
 

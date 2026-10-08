@@ -245,6 +245,8 @@ def test_the_field_is_fitted_once_and_reused_until_the_plan_changes(monkeypatch)
 def test_each_reading_keeps_its_band_and_the_views_filter_by_it():
     assert heat.band_of("ng") == "2.4" and heat.band_of("NA") == "5" and heat.band_of("6e") == "6"
     assert heat.band_of(None, 11) == "2.4" and heat.band_of(None, 36) is None and heat.band_of("?", None) is None
+    # 6 GHz numbers channels 1, 5, 9, 13 too: those alone say nothing.
+    assert [heat.band_of(None, c) for c in (1, 5, 9, 13)] == [None] * 4 and heat.band_of(None, 6) == "2.4"
     s = heat.new_store()
     for _ in range(3):
         heat.add(s, "Ground", 10, 10, SCALE, KITCHEN, -45, "proxy", 0, reference=True, band="2.4")
@@ -275,3 +277,16 @@ def test_the_collector_records_the_band_the_controller_reports(monkeypatch):
         {"entity_id": "kitchen_proxy", "address": "d0:cf:13:e1:73:7a", "cords": {"x": 120, "y": 130}}]}]}
     core._wifi_heat_cycle(_hass(clients), layout, {}, {}, {}, {}, now)
     assert list(core._wifi_heat["cells"]["Ground|1|1"]["aps"]) == [f"{KITCHEN}|2.4"]
+
+
+
+def test_a_devices_offset_is_learned_per_band():
+    s = heat.new_store()
+    for _ in range(5):
+        heat.add(s, "Ground", 10, 10, SCALE, KITCHEN, -50, "proxy24", 0, reference=True, band="2.4")
+        heat.add(s, "Ground", 10, 10, SCALE, KITCHEN, -45, "proxy5", 0, reference=True, band="5")
+    for _ in range(200):
+        heat.add(s, "Ground", 10, 10, SCALE, KITCHEN, -60, "phone", 0, band="2.4")   # 10 under on 2.4
+        heat.add(s, "Ground", 10, 10, SCALE, KITCHEN, -47, "phone", 0, band="5")     # 2 under on 5
+    assert -10.5 < s["bias"]["phone|2.4"] < -8.5 and -2.5 < s["bias"]["phone|5"] < -1.0
+    assert "phone" not in s["bias"]
