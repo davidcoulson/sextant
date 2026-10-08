@@ -232,8 +232,9 @@ async def ws_layout_get(hass, connection, msg):
         }, {"candidates": {}, "aps": {}, "assigned": {}, "footprints": {}}),
         # Every access point the UniFi controller knows, for the Edit page's
         # Wi-Fi tool to place and the Live map to name: [{mac, name, model,
-        # clients, online, area_id}]. Empty without UniFi Network.
-        "access_points": _safe(lambda: core._unifi_access_points(hass), []),
+        # clients, online, area_id}]. None while no UniFi hub is set up: not
+        # known, so nothing placed is marked as gone.
+        "access_points": _safe(lambda: core._unifi_access_points(hass), None),
         "running_version": RUNNING_VERSION,
         "restart_needed": RUNNING_CODE is not None and await hass.async_add_executor_job(code_signature) != RUNNING_CODE,
         "scanners": {

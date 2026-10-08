@@ -213,3 +213,10 @@ def test_unifi_access_points_reads_every_hub_and_survives_one_not_set_up():
         config_entries = types.SimpleNamespace(async_entries=lambda domain: entries if domain == "unifi" else [])
     aps = core._unifi_access_points(Hass())
     assert [(a["mac"], a["name"], a["clients"]) for a in aps] == [("8c:ed:e1:00:de:ed", "Kitchen E7", 4)]
+
+    # No hub set up (no integration, or still starting): not known, rather
+    # than a controller with no access points.
+    entries[:] = [types.SimpleNamespace(runtime_data=None)]
+    assert core._unifi_access_points(Hass()) is None
+    entries[:] = [types.SimpleNamespace(runtime_data=types.SimpleNamespace(api=types.SimpleNamespace(devices={})))]
+    assert core._unifi_access_points(Hass()) == []

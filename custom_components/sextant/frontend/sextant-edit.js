@@ -162,7 +162,7 @@ class SextantEdit extends LitElement {
     if (changed.has("data")) this._syncDraft(!this._dirty);
     if (changed.has("floor")) this._pushFloor();
     if (changed.has("hass")) this._map.setAreas(this.hass?.areas);
-    if (changed.has("data")) this._map.setAccessPoints(this.data?.access_points?.length ? this.data.access_points : null);
+    if (changed.has("data")) this._map.setAccessPoints(Array.isArray(this.data?.access_points) ? this.data.access_points : null);
     if (changed.has("floor") || changed.has("data")) this._loadBiasView();
     if (changed.has("spots") || changed.has("floor")) this._map.setSuggestions((this.spots || []).filter((s) => s.floor === this.floor).map((s) => ({ x: s.x, y: s.y, label: `add a proxy here · ${s.room}` })));
     if (changed.has("_tool")) { this._map.setTool(["measure", "receiver", "pin", "remark", "radar", "ap"].includes(this._tool) ? "select" : this._tool); }
@@ -407,7 +407,9 @@ class SextantEdit extends LitElement {
   _renderApPicker() {
     const aps = this.data?.access_points || [];
     const placed = this._apPlaced();
-    if (!aps.length) return html`<div class="hint">No access points found. They come from Home Assistant's UniFi Network integration: add it, then reload this page.</div>`;
+    if (!aps.length) return html`<div class="hint">${Array.isArray(this.data?.access_points)
+      ? "The UniFi controller lists no access points."
+      : "No access points to place yet. They come from Home Assistant's UniFi Network integration: add it (or wait for it to finish starting), then reload this page."}</div>`;
     const left = aps.filter((a) => !placed.has(a.mac)).length;
     return html`<div class="hint">
       <select aria-label="Access point to place" @change=${(e) => { this._placingAp = e.target.value || null; }}>

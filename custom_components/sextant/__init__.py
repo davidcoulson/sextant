@@ -3921,7 +3921,9 @@ def _arrived_at(hass, layout, ent, row, now):
 def _unifi_access_points(hass):
     """Every access point the UniFi Network integration's controller knows
     (wifi.access_points), for the Edit page to place: all of them, not only
-    the ones some client is on now. Empty without the integration."""
+    the ones some client is on now. None while no UniFi hub is set up (no
+    integration, or Home Assistant still starting): the list is not known,
+    which is not the same as a controller that lists none."""
     registry = {}
     try:
         from homeassistant.helpers import device_registry as dr  # noqa: PLC0415
@@ -3935,14 +3937,15 @@ def _unifi_access_points(hass):
                                      "area_id": getattr(device, "area_id", None)}
     except Exception:  # noqa: BLE001 - no registry: the controller's names stand
         registry = {}
-    raws = []
+    raws, loaded = [], False
     for entry in hass.config_entries.async_entries("unifi"):
         devices = getattr(getattr(getattr(entry, "runtime_data", None), "api", None), "devices", None)
         try:
             raws.extend(getattr(d, "raw", None) for d in devices.values())
         except Exception:  # noqa: BLE001 - an entry not set up (yet): nothing from it
             continue
-    return wifi_mod.access_points(raws, registry)
+        loaded = True
+    return wifi_mod.access_points(raws, registry) if loaded else None
 
 
 def _wifi_access_points(hass, layout, macs):

@@ -1034,7 +1034,7 @@ class SextantLive extends LitElement {
     if (changed.has("floor") || changed.has("_heat") || changed.has("data")) this._pushHeat();
     if (changed.has("_options")) this._map.setOptions(this._options);
     if (changed.has("data")) this._map.setOptions({ staleAfter: this._staleAfter() });
-    if (changed.has("data")) this._map.setAccessPoints(this.data?.access_points?.length ? this.data.access_points : null);
+    if (changed.has("data")) this._map.setAccessPoints(Array.isArray(this.data?.access_points) ? this.data.access_points : null);
     // A stay grows every cycle; re-read the timeline once a minute while a thing is focused.
     if (changed.has("positions") && this._selected && (!this._timeline || Date.now() - this._timeline.at > 60000)) this._loadTimeline(this._selected);
   }
