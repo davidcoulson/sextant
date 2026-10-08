@@ -3957,7 +3957,7 @@ def _wifi_access_points(hass, layout, macs):
     device is in: the Sextant room linked to that area when there is one,
     else the Sextant floor linked to the area's HA floor."""
     out = {}
-    wanted = {str(m).lower() for m in macs if m}
+    wanted = {wifi_mod._mac_key(m) for m in macs if m} - {None}
     if not wanted:
         return out
     placed = {m: p for m, p in wifi_mod.placed_access_points(layout).items() if m in wanted}
@@ -3989,7 +3989,7 @@ def _wifi_access_points(hass, layout, macs):
                 if isinstance(z.get("area_id"), str) and z["area_id"] and not z.get("no_go"):
                     rooms_by_area.setdefault(z["area_id"], (floor["name"], z["entity_id"]))
         for device in dev_reg.devices.values():
-            found = [c[1].lower() for c in (getattr(device, "connections", None) or ()) if c[0] == "mac" and str(c[1]).lower() in wanted]
+            found = [k for k in (wifi_mod._mac_key(c[1]) for c in (getattr(device, "connections", None) or ()) if c[0] == "mac") if k in wanted]
             if not found:
                 continue
             area_id = getattr(device, "area_id", None)
@@ -4031,7 +4031,7 @@ def _wifi_cycle(hass, layout, by_person):
             device = dev_reg.async_get(entry.device_id) if entry and entry.device_id else None
             if entry is None or entry.platform != "unifi" or device is None:
                 continue
-            mac = str(attrs.get("mac") or "").lower() or None
+            mac = wifi_mod._mac_key(attrs.get("mac"))
             if str(getattr(device, "manufacturer", "") or "").startswith("Ubiquiti"):
                 if mac:
                     infra.add(mac)

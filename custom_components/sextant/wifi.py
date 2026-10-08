@@ -53,14 +53,16 @@ def candidates(states, ap_macs=(), known=None) -> dict:
     of ``ap_macs``, or by never having been associated to anything.
     """
     out = {}
-    aps = {str(m).lower() for m in ap_macs if m}
+    aps = {_mac_key(m) for m in ap_macs if m}
     known = known if isinstance(known, dict) else {}
     for entity_id, state, attrs in states:
         if not str(entity_id).startswith("device_tracker.") or not isinstance(attrs, dict):
             continue
         if attrs.get("source_type") != ROUTER or ("ap_mac" not in attrs and entity_id not in known):
             continue
-        mac = str(attrs.get("mac") or "").lower()
+        # One spelling of a MAC everywhere (norm_mac, below): the access point
+        # a client is on is matched against footprints and the plan by it.
+        mac = _mac_key(attrs.get("mac")) or ""
         if mac and mac in aps:
             continue
         ap = attrs.get("ap_mac")
@@ -69,7 +71,7 @@ def candidates(states, ap_macs=(), known=None) -> dict:
         out[entity_id] = {
             "name": attrs.get("friendly_name") or entity_id,
             "home": state == "home",
-            "ap": str(ap).lower() if ap else None,
+            "ap": _mac_key(ap),
             "mac": mac or None,
             "ssid": attrs.get("essid") or None,
         }
@@ -297,6 +299,14 @@ def norm_mac(mac) -> str | None:
     """A MAC address as lower-case colon pairs, or None if it is not one."""
     text = str(mac or "").strip().lower().replace("-", ":")
     return text if _MAC.match(text) else None
+
+
+def _mac_key(value) -> str | None:
+    """The key a MAC-ish value is matched by: norm_mac when it is a MAC,
+    else the lower-cased text (a test's or a router's shorthand), else None."""
+    if not value:
+        return None
+    return norm_mac(value) or str(value).strip().lower() or None
 
 
 def access_points(devices, registry=None) -> list:

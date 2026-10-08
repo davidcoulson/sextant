@@ -220,3 +220,16 @@ def test_unifi_access_points_reads_every_hub_and_survives_one_not_set_up():
     assert core._unifi_access_points(Hass()) is None
     entries[:] = [types.SimpleNamespace(runtime_data=types.SimpleNamespace(api=types.SimpleNamespace(devices={})))]
     assert core._unifi_access_points(Hass()) == []
+
+
+def test_a_hyphenated_ap_mac_matches_the_access_point_placed_on_the_plan():
+    import sextant as core
+
+    states = [("device_tracker.iphone", "home", {"source_type": "router", "mac": "3A-26-7A-09-23-91", "ap_mac": "8C-ED-E1-00-DE-ED", "friendly_name": "iPhone"})]
+    c = wifi.candidates(states, ap_macs=["8c:ed:e1:00:de:ed"])
+    assert c["device_tracker.iphone"]["ap"] == "8c:ed:e1:00:de:ed" and c["device_tracker.iphone"]["mac"] == "3a:26:7a:09:23:91"
+
+    class Hass:
+        pass
+    aps = core._wifi_access_points(Hass(), _ap_layout(), [c["device_tracker.iphone"]["ap"], "28-70-4E-27-04-ED"])
+    assert aps["8c:ed:e1:00:de:ed"]["room"] == "Kitchen" and aps["28:70:4e:27:04:ed"]["placed"] is True
