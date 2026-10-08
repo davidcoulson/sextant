@@ -3918,41 +3918,90 @@ def _arrived_at(hass, layout, ent, row, now):
     return _arrivals[ent]["since"]
 
 
+def _unifi_access_points(hass):
+    """Every access point the UniFi Network integration's controller knows
+    (wifi.access_points), for the Edit page to place: all of them, not only
+    the ones some client is on now. Empty without the integration."""
+    registry = {}
+    try:
+        from homeassistant.helpers import device_registry as dr  # noqa: PLC0415
+        for device in dr.async_get(hass).devices.values():
+            if not str(getattr(device, "manufacturer", "") or "").startswith("Ubiquiti"):
+                continue
+            for kind, value in getattr(device, "connections", None) or ():
+                mac = wifi_mod.norm_mac(value) if kind == "mac" else None
+                if mac:
+                    registry[mac] = {"name": getattr(device, "name_by_user", None) or getattr(device, "name", None),
+                                     "area_id": getattr(device, "area_id", None)}
+    except Exception:  # noqa: BLE001 - no registry: the controller's names stand
+        registry = {}
+    raws = []
+    for entry in hass.config_entries.async_entries("unifi"):
+        devices = getattr(getattr(getattr(entry, "runtime_data", None), "api", None), "devices", None)
+        try:
+            raws.extend(getattr(d, "raw", None) for d in devices.values())
+        except Exception:  # noqa: BLE001 - an entry not set up (yet): nothing from it
+            continue
+    return wifi_mod.access_points(raws, registry)
+
+
 def _wifi_access_points(hass, layout, macs):
-    """{ap mac: {"name", "floor", "room", "area_id", "floor_id"}} for the access
-    points in ``macs`` (the ones some client is on), placed by the HA area
-    their device is in: the Sextant room linked to that area when there is
-    one, else the Sextant floor linked to the area's HA floor."""
+    """{ap mac: {"name", "floor", "room", "area_id", "floor_id", "placed"}} for
+    the access points in ``macs`` (the ones some client is on).
+
+    One placed on the plan (the Edit page's Wi-Fi tool) is on that floor, in
+    the room it was placed in. Otherwise it is placed by the HA area its
+    device is in: the Sextant room linked to that area when there is one,
+    else the Sextant floor linked to the area's HA floor."""
     out = {}
     wanted = {str(m).lower() for m in macs if m}
     if not wanted:
         return out
+    placed = {m: p for m, p in wifi_mod.placed_access_points(layout).items() if m in wanted}
+    rooms = _selftest_rooms(layout) if placed else {}
+    names = {}
+    for floor in layout.get("floor") or []:
+        for ap in floor.get("access_points") or [] if isinstance(floor, dict) else []:
+            mac = wifi_mod.norm_mac(ap.get("mac")) if isinstance(ap, dict) else None
+            if mac and mac in placed and ap.get("name"):
+                names.setdefault(mac, str(ap["name"]))
+
+    def where(mac, info):
+        p = placed.get(mac)
+        if p is None:
+            return {**info, "placed": False}
+        return {**info, "floor": p["floor"], "room": _room_at(rooms.get(p["floor"]), p["x"], p["y"]), "placed": True}
+
     try:
         from homeassistant.helpers import area_registry as ar, device_registry as dr  # noqa: PLC0415
         dev_reg, area_reg = dr.async_get(hass), ar.async_get(hass)
-    except Exception:  # noqa: BLE001 - tests without registries: nothing to place by
-        return out
-    rooms_by_area, floors_by_id, floor_of_room = {}, {}, {}
-    for floor in layout.get("floor") or []:
-        if isinstance(floor.get("floor_id"), str):
-            floors_by_id[floor["floor_id"]] = floor["name"]
-        for z in floor.get("zones") or []:
-            if isinstance(z.get("area_id"), str) and z["area_id"] and not z.get("no_go"):
-                rooms_by_area.setdefault(z["area_id"], (floor["name"], z["entity_id"]))
-    for device in dev_reg.devices.values():
-        macs = [c[1].lower() for c in (getattr(device, "connections", None) or ()) if c[0] == "mac" and str(c[1]).lower() in wanted]
-        if not macs:
-            continue
-        area_id = getattr(device, "area_id", None)
-        floor_name, room = rooms_by_area.get(area_id, (None, None))
-        area = area_reg.async_get_area(area_id) if area_id else None
-        floor_id = getattr(area, "floor_id", None)
-        if floor_name is None and floor_id:
-            floor_name = floors_by_id.get(floor_id)
-        info = {"name": getattr(device, "name_by_user", None) or getattr(device, "name", None), "floor": floor_name, "room": room,
-                "area_id": area_id, "floor_id": floor_id}
-        for mac in macs:
-            out[mac] = info
+    except Exception:  # noqa: BLE001 - tests without registries: only the plan places them
+        dev_reg = area_reg = None
+    if dev_reg is not None:
+        rooms_by_area, floors_by_id = {}, {}
+        for floor in layout.get("floor") or []:
+            if isinstance(floor.get("floor_id"), str):
+                floors_by_id[floor["floor_id"]] = floor["name"]
+            for z in floor.get("zones") or []:
+                if isinstance(z.get("area_id"), str) and z["area_id"] and not z.get("no_go"):
+                    rooms_by_area.setdefault(z["area_id"], (floor["name"], z["entity_id"]))
+        for device in dev_reg.devices.values():
+            found = [c[1].lower() for c in (getattr(device, "connections", None) or ()) if c[0] == "mac" and str(c[1]).lower() in wanted]
+            if not found:
+                continue
+            area_id = getattr(device, "area_id", None)
+            floor_name, room = rooms_by_area.get(area_id, (None, None))
+            area = area_reg.async_get_area(area_id) if area_id else None
+            floor_id = getattr(area, "floor_id", None)
+            if floor_name is None and floor_id:
+                floor_name = floors_by_id.get(floor_id)
+            info = {"name": getattr(device, "name_by_user", None) or getattr(device, "name", None), "floor": floor_name, "room": room,
+                    "area_id": area_id, "floor_id": floor_id}
+            for mac in found:
+                out[mac] = where(mac, info)
+    for mac in placed:
+        if mac not in out:
+            out[mac] = where(mac, {"name": names.get(mac), "floor": None, "room": None, "area_id": None, "floor_id": None})
     return out
 
 

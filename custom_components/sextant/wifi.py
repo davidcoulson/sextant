@@ -277,3 +277,78 @@ def assignments(store: dict, trackers, people_names: dict, manual: dict | None =
         if cur is None or conf > cur["confidence"]:
             out[person] = {"entity": tracker, "how": why, "confidence": conf}
     return out
+
+
+# --- access points on the plan ------------------------------------------------
+#
+# The Edit page places access points on the floor plan. Nothing positions
+# by them: they are there to be seen, to say exactly which floor and room an
+# access point is on (better than the HA area it was put in), and later to
+# hang a signal heatmap on.
+
+# aiounifi's DeviceType.ACCESS_POINT: the hub's raw "type" for an access point.
+AP_TYPE = "uap"
+# aiounifi's DeviceState.CONNECTED.
+AP_CONNECTED = 1
+_MAC = re.compile(r"^[0-9a-f]{2}(:[0-9a-f]{2}){5}$")
+
+
+def norm_mac(mac) -> str | None:
+    """A MAC address as lower-case colon pairs, or None if it is not one."""
+    text = str(mac or "").strip().lower().replace("-", ":")
+    return text if _MAC.match(text) else None
+
+
+def access_points(devices, registry=None) -> list:
+    """[{"mac", "name", "model", "clients", "online", "area_id"}] for every
+    access point in the UniFi hub's raw device dicts, by name.
+
+    ``registry`` is {mac: {"name", "area_id"}} from the HA device registry:
+    the name the user gave the device there wins over the controller's, as it
+    does everywhere else in Sextant. Switches, gateways and cameras are not
+    access points and are left out; so is anything without a usable MAC.
+    """
+    registry = registry if isinstance(registry, dict) else {}
+    out = {}
+    for raw in devices or ():
+        if not isinstance(raw, dict) or raw.get("type") != AP_TYPE:
+            continue
+        mac = norm_mac(raw.get("mac"))
+        if mac is None or mac in out:
+            continue
+        reg = registry.get(mac) if isinstance(registry.get(mac), dict) else {}
+        clients = raw.get("num_sta")
+        out[mac] = {
+            "mac": mac,
+            "name": str(reg.get("name") or raw.get("name") or mac),
+            "model": raw.get("model") if isinstance(raw.get("model"), str) else None,
+            "clients": clients if isinstance(clients, int) and not isinstance(clients, bool) and clients >= 0 else None,
+            "online": raw.get("state") == AP_CONNECTED,
+            "area_id": reg.get("area_id") if isinstance(reg.get("area_id"), str) else None,
+        }
+    return sorted(out.values(), key=lambda a: (a["name"].lower(), a["mac"]))
+
+
+def placed_access_points(layout) -> dict:
+    """{mac: {"floor", "x", "y"}} for the access points placed on the plan.
+
+    An access point placed twice (two floors, or twice on one) counts where it
+    was placed first: one device is in one place.
+    """
+    out = {}
+    if not isinstance(layout, dict):
+        return out
+    for floor in layout.get("floor") or []:
+        if not isinstance(floor, dict) or not floor.get("name"):
+            continue
+        for ap in floor.get("access_points") or []:
+            if not isinstance(ap, dict):
+                continue
+            mac, cords = norm_mac(ap.get("mac")), ap.get("cords")
+            if mac is None or mac in out or not isinstance(cords, dict):
+                continue
+            x, y = cords.get("x"), cords.get("y")
+            if not all(isinstance(v, (int, float)) and not isinstance(v, bool) and v == v and abs(v) != float("inf") for v in (x, y)):
+                continue
+            out[mac] = {"floor": str(floor["name"]), "x": float(x), "y": float(y)}
+    return out
