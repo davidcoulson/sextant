@@ -219,16 +219,18 @@ def test_the_field_is_fitted_once_and_reused_until_the_plan_changes(monkeypatch)
     s = heat.new_store()
     for x in (50, 150, 350, 450):
         for _ in range(3):
-            heat.add(s, "Ground", x, 250, SCALE, KITCHEN, -45 - abs(x - 250) / 20, f"p{x}", 0, reference=True)
+            heat.add(s, "Ground", x, 250, SCALE, KITCHEN, -45 - abs(x - 250) / 20, f"p{x}", 0, reference=True, band="2.4")
     monkeypatch.setattr(core, "_wifi_heat", s)
     monkeypatch.setattr(core, "_wifi_field_cache", {"at": 0.0, "key": None, "model": None})
     calls = []
     real_fit = field_mod.fit
     monkeypatch.setattr(field_mod, "fit", lambda *a: calls.append(1) or real_fit(*a))
     squares = core.wifi_field_squares(layout)
-    assert len(squares) == 4 and squares[0][0] == "Ground" and squares[0][3] == KITCHEN
+    assert len(squares) == 4 and squares[0][0] == "Ground" and squares[0][3] == KITCHEN and squares[0][6] == "2.4"
     out = core.wifi_field(layout, "Ground", squares, now=1000.0)
-    assert out["model"]["used"] == 4 and out["grid"]["aps"] == [KITCHEN]
+    # Four squares are too few for a band of their own: fitted together.
+    assert list(out["models"]) == ["mixed"] and out["models"]["mixed"]["used"] == 4
+    assert out["grid"]["aps"] == [f"{KITCHEN}|mixed"]
     core.wifi_field(layout, "Ground", squares, now=1100.0)
     assert len(calls) == 1                                   # reused within five minutes
     core.wifi_field(layout, "Ground", squares, now=1000.0 + core.WIFI_FIELD_EVERY_S + 1)
@@ -237,3 +239,54 @@ def test_the_field_is_fitted_once_and_reused_until_the_plan_changes(monkeypatch)
     core.wifi_field(layout, "Ground", squares, now=1000.0 + core.WIFI_FIELD_EVERY_S + 2)
     assert len(calls) == 3                                   # and when an access point moves
     assert core.wifi_field(layout, None, squares, now=2000.0)["grid"] is None
+
+
+
+def test_each_reading_keeps_its_band_and_the_views_filter_by_it():
+    assert heat.band_of("ng") == "2.4" and heat.band_of("NA") == "5" and heat.band_of("6e") == "6"
+    assert heat.band_of(None, 11) == "2.4" and heat.band_of(None, 36) is None and heat.band_of("?", None) is None
+    # 6 GHz numbers channels 1, 5, 9, 13 too: those alone say nothing.
+    assert [heat.band_of(None, c) for c in (1, 5, 9, 13)] == [None] * 4 and heat.band_of(None, 6) == "2.4"
+    s = heat.new_store()
+    for _ in range(3):
+        heat.add(s, "Ground", 10, 10, SCALE, KITCHEN, -45, "proxy", 0, reference=True, band="2.4")
+        heat.add(s, "Ground", 10, 10, SCALE, KITCHEN, -60, "phone", 0, band="5")
+        heat.add(s, "Ground", 10, 10, SCALE, KITCHEN, -50, "old", 0)        # stored before bands were kept
+    assert sorted(s["cells"]["Ground|0|0"]["aps"]) == [KITCHEN, f"{KITCHEN}|2.4", f"{KITCHEN}|5"]
+    assert heat.split_row(f"{KITCHEN}|5") == (KITCHEN, "5") and heat.split_row(KITCHEN) == (KITCHEN, None)
+    everything = heat.view(s, "Ground", SCALE)[0]
+    assert everything["n"] == 9 and everything["aps"] == {KITCHEN: [-51.7, 9]} and everything["bands"] == ["2.4", "5"]
+    five = heat.view(s, "Ground", SCALE, band="5")[0]
+    assert five["n"] == 3 and five["dbm"] == -60.0 and list(five["rows"]) == [f"{KITCHEN}|5"]
+    assert heat.view(s, "Ground", SCALE, band="6") == []
+    assert heat.bands_present(s) == ["2.4", "5"]
+    # A phone's offset is learned against the proxies on the SAME band only:
+    # here there is no 5 GHz proxy reference, so none is learned.
+    assert "phone" not in s["bias"]
+    assert heat.clean(s)["cells"]["Ground|0|0"]["aps"].keys() == s["cells"]["Ground|0|0"]["aps"].keys()
+
+
+def test_the_collector_records_the_band_the_controller_reports(monkeypatch):
+    import sextant as core
+
+    now = 10_000.0
+    monkeypatch.setattr(core, "_wifi_heat", heat.new_store())
+    monkeypatch.setattr(core, "_wifi_heat_tick", 0.0)
+    clients = [{"mac": "d0:cf:13:e1:73:78", "ap_mac": KITCHEN, "signal": -48, "last_seen": now - 5, "radio": "ng", "channel": 6}]
+    layout = {"floor": [{"name": "Ground", "scale": SCALE, "receivers": [
+        {"entity_id": "kitchen_proxy", "address": "d0:cf:13:e1:73:7a", "cords": {"x": 120, "y": 130}}]}]}
+    core._wifi_heat_cycle(_hass(clients), layout, {}, {}, {}, {}, now)
+    assert list(core._wifi_heat["cells"]["Ground|1|1"]["aps"]) == [f"{KITCHEN}|2.4"]
+
+
+
+def test_a_devices_offset_is_learned_per_band():
+    s = heat.new_store()
+    for _ in range(5):
+        heat.add(s, "Ground", 10, 10, SCALE, KITCHEN, -50, "proxy24", 0, reference=True, band="2.4")
+        heat.add(s, "Ground", 10, 10, SCALE, KITCHEN, -45, "proxy5", 0, reference=True, band="5")
+    for _ in range(200):
+        heat.add(s, "Ground", 10, 10, SCALE, KITCHEN, -60, "phone", 0, band="2.4")   # 10 under on 2.4
+        heat.add(s, "Ground", 10, 10, SCALE, KITCHEN, -47, "phone", 0, band="5")     # 2 under on 5
+    assert -10.5 < s["bias"]["phone|2.4"] < -8.5 and -2.5 < s["bias"]["phone|5"] < -1.0
+    assert "phone" not in s["bias"]

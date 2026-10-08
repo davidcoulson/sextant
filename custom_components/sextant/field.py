@@ -318,3 +318,63 @@ def grid(layout, model, floor_name, squares):
             "aps": sorted(keep),
             "values": {m: [int(round(v)) for v in values[m].ravel()] for m in sorted(keep)},
             "conf": [int(round(100 * c)) for c in conf.ravel()]}
+
+
+# --- per band ----------------------------------------------------------------
+#
+# 2.4 GHz and 5/6 GHz do not travel alike, and the house's samples are split
+# along that line (every ESP32 proxy is 2.4 only; phones sit mostly on 5 or
+# 6). Fitted together, one fall-off and one wall loss had to serve both. Each
+# band gets its own fit once it has enough squares; until any does, the
+# squares are fitted together as before ("mixed"), so the map never goes
+# blank while bands are being learned.
+
+BANDS = ("2.4", "5", "6")
+MIN_BAND_SQUARES = 12
+MIXED = "mixed"
+
+
+def fit_bands(layout, squares) -> dict:
+    """{band: fit(...)} for each band whose fit USED at least
+    MIN_BAND_SQUARES squares, or {"mixed": fit over every square} when none
+    has, or {} when nothing was usable. ``squares`` as for fit, with the band
+    (or None) as a seventh field. Counted after fit's own checks: squares on
+    an access point that is not placed, or that cannot reach the floor, are
+    thrown away there, and a band of only those is a model of priors."""
+    out = {}
+    for band in BANDS:
+        mine = [s[:6] for s in squares if len(s) > 6 and s[6] == band]
+        if len(mine) >= MIN_BAND_SQUARES:
+            model = fit(layout, mine)
+            if model and model["used"] >= MIN_BAND_SQUARES:
+                out[band] = model
+    if not out:
+        model = fit(layout, [s[:6] for s in squares])
+        if model and model["used"]:
+            out[MIXED] = model
+    return out
+
+
+def grid_bands(layout, models, floor_name, squares, band=None):
+    """One floor's field across the fitted bands (or just ``band``): grid's
+    shape, with each access point keyed "mac|band" ("mac|mixed" for the
+    combined fit), the strongest at a point being the page's to pick, and
+    the confidence the best any band has there."""
+    keys = [band] if band else list(models)
+    merged = None
+    for b in keys:
+        model = models.get(b)
+        if model is None:
+            continue
+        mine = [s[:6] for s in squares if b == MIXED or (len(s) > 6 and s[6] == b)]
+        g = grid(layout, model, floor_name, mine)
+        if g is None:
+            continue
+        values = {f"{m}|{b}": v for m, v in g["values"].items()}
+        if merged is None:
+            merged = {**g, "aps": sorted(values), "values": values}
+        else:
+            merged["values"].update(values)
+            merged["aps"] = sorted(merged["values"])
+            merged["conf"] = [max(a, c) for a, c in zip(merged["conf"], g["conf"])]
+    return merged
