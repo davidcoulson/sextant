@@ -1387,7 +1387,7 @@ class SextantLive extends LitElement {
   async _loadWifiHeat() {
     const floor = this.floor;
     if (!this._isAdmin()) return;
-    const r = await this.hass?.callWS({ type: "sextant/wifi/heat", floor }).catch(() => null);
+    const r = await this.hass?.callWS({ type: "sextant/wifi/heat", floor, field: true }).catch(() => null);
     // Switched off, another floor, or admin gone, while it was on its way.
     if (!this._options.wifi_heat || floor !== this.floor || !this._isAdmin()) return;
     this._wifiHeat = r;
@@ -1403,22 +1403,37 @@ class SextantLive extends LitElement {
     for (const c of r.cells || []) if (!macs.includes(c.ap)) macs.push(c.ap);
     const colours = Object.fromEntries(macs.map((m, i) => [m, `hsla(${Math.round((i * 360) / Math.max(macs.length, 1) + 15) % 360}, 65%, 52%, 0.55)`]));
     this._wifiColours = colours;
-    this._map?.setWifiHeat({ cells: r.cells || [], mode: this._options.wifi_heat_mode === "ap" ? "ap" : "signal", names: r.aps || {}, colours });
+    this._map?.setWifiHeat({ cells: r.cells || [], field: r.field?.grid || null, mode: this._wifiMode(), names: r.aps || {}, colours });
     this.requestUpdate();
+  }
+
+  /** The signal map's view: the estimated field unless measured or access
+   * point was picked ("signal", the old name for measured, reads as it). */
+  _wifiMode() {
+    const m = this._options.wifi_heat_mode;
+    return m === "ap" ? "ap" : m === "measured" || m === "signal" ? "measured" : "estimated";
   }
 
   _renderWifiLegend() {
     const r = this._wifiHeat;
     if (!this._options.wifi_heat || !r) return nothing;
-    const byAp = this._options.wifi_heat_mode === "ap";
+    const mode = this._wifiMode(), byAp = mode === "ap";
     const cells = r.cells || [];
+    const model = r.field?.model;
     const here = [...new Set(cells.map((c) => c.ap))].sort((a, b) => String(r.aps?.[a] || a).localeCompare(String(r.aps?.[b] || b)));
     return html`<div class="wifilegend ${this._history ? "lifted" : ""}">
-      ${uiSegmented({ label: "Wi-Fi signal map", value: byAp ? "ap" : "signal", options: [{ value: "signal", label: "Signal", title: "How strong the signal is in each square" }, { value: "ap", label: "Access point", title: "Which access point clients are on in each square" }], onChange: (v) => { this._setOption("wifi_heat_mode", v); this._pushWifiHeat(); } })}
+      ${uiSegmented({ label: "Wi-Fi signal map", value: mode, options: [
+        { value: "estimated", label: "Estimated", title: "The signal everywhere: a model of each placed access point fitted to what was measured, faded where it is only the model" },
+        { value: "measured", label: "Measured", title: "Only where phones, watches and proxies have measured it" },
+        { value: "ap", label: "Access point", title: "Which access point clients were on, where they measured it" }],
+        onChange: (v) => { this._setOption("wifi_heat_mode", v); this._pushWifiHeat(); } })}
+      ${mode === "estimated" && !r.field?.grid ? html`<div class="muted">No estimate: place the access points on the plan (Edit, Wi-Fi). Showing what was measured.</div>` : nothing}
       ${!cells.length ? html`<div class="muted">No samples on this floor yet.</div>`
         : byAp ? html`<div class="apkeys">${here.map((m) => html`<span><i style=${`background:${this._wifiColours?.[m]}`}></i>${r.aps?.[m] || m}</span>`)}</div>`
         : html`<div class="ramp"><span>-80</span><i style=${`background: linear-gradient(90deg, ${[-80, -72, -65, -58, -50].map((d) => signalColour(d, 0.85)).join(", ")})`}></i><span>-50 dBm</span></div>`}
-      ${cells.length ? html`<div class="muted">${cells.length} square${cells.length === 1 ? "" : "s"} on this floor · point at one, or tap it</div>` : nothing}
+      ${cells.length ? html`<div class="muted">${mode === "estimated" && r.field?.grid
+        ? html`Strong where measured, faded where only the model says${model?.rms != null ? html` · the model is typically ${Math.round(model.rms)} dB off what was measured` : nothing}`
+        : html`${cells.length} measured square${cells.length === 1 ? "" : "s"} on this floor`} · point at the map, or tap it</div>` : nothing}
     </div>`;
   }
 

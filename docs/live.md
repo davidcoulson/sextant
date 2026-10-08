@@ -217,16 +217,39 @@ where Sextant knows the client is:
   fix is under 15 seconds old, and only when the person has exactly one
   phone (or one watch) with a fix.
 
-Each client gives at most one sample every 30 seconds. **Signal** shades
-each square from red (-80 dBm and below) through amber to green (-50 dBm
-and up). **Access point** colours each square by the access point most of
-its samples were on, which shows where clients hand over and where one
-clings to an access point a floor away. Point at a square, or tap it, for
-its access point, signal and sample count.
+Each client gives at most one sample every 30 seconds, pooled in one-metre
+squares. The map has three views, all drawn as a continuous picture at
+10 cm and kept inside the rooms:
 
-It is measured, never predicted: a square nobody has stood in stays empty.
+- **Estimated** fills the whole floor. Each placed access point (the Edit
+  page's Wi-Fi tool) gets a model fitted to the squares measured on it. Its
+  signal falls with distance, loses a fixed amount at each wall the
+  straight line crosses (the room outlines stand in for walls) and more for
+  each floor. Near measured squares the model is pulled to what was
+  measured. The map shows the strongest access point at each point, solid
+  where it was measured and faded where only the model says. The legend
+  says how far the model typically is from the measurements.
+- **Measured** shows only what was measured: a soft spot around each square.
+- **Access point** colours those spots by the access point clients were
+  on. That shows where clients hand over, and where one clings to an access
+  point a floor away. Estimated says which access point is strongest at a
+  point; this view says which one clients actually used there.
+
+Point at the map, or tap it, for the reading there. In Estimated it gives
+the strongest access point and whether the point was measured nearby or is
+only the model's estimate.
+
+The model is computed on a half-metre grid and refitted at most every five
+minutes. A phone's position is good to a metre or two, so a finer grid
+would only add noise. The 10 cm picture is interpolated from it. Expect the
+estimate to be rough at first. Most squares are fixed proxies, and a
+proxy's own transmit strength differs from the next model's by as much as
+10 dB. A device that never moves can't be told apart from where it is, so
+the walls and floors are held near ordinary values (4 dB a wall, 15 dB a
+floor) until phones and watches walking about pin them down.
+
 The proxies fill their own squares within minutes, and phones and watches
-fill the rooms people use over a few days. It is also the signal to the
+fill the rooms people use over a few days. Everything is the signal to the
 access point a client is on, not to every access point in reach.
 
 Devices differ: a watch transmits less than a phone, and a phone in a

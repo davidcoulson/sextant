@@ -477,6 +477,105 @@ export function biasRgba(ratio) {
   return [...grey.map((g, k) => Math.round(g + (hue[k] - g) * s)), Math.round(255 * (0.3 + 0.35 * s))];
 }
 
+/** hsl (degrees, 0-1, 0-1) to [r, g, b] 0-255. */
+function hslRgb(h, sat, l) {
+  const a = sat * Math.min(l, 1 - l);
+  const f = (n) => { const k = (n + h / 30) % 12; return Math.round(255 * (l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)))); };
+  return [f(0), f(8), f(4)];
+}
+
+/** The hue an access point is drawn in, from the host's colour for it. */
+function apHue(css) { const m = /hsla?\((\d+(?:\.\d+)?)/.exec(css || ""); return m ? Number(m[1]) : 0; }
+
+const WIFI_SUB = 5;          // raster pixels per field grid step: 50 cm -> 10 cm
+const WIFI_SPOT_M = 0.55;    // a measured square's spot: the Gaussian's sigma
+
+/** The Wi-Fi map rendered once per load into a canvas at 10 cm a pixel, with
+ * the numbers behind each pixel for the readout. Exported for the tests. */
+export function buildWifiRaster(h, dark = false) {
+  const f = h.field, cells = h.cells || [];
+  const estimated = h.mode === "estimated" && f && f.aps?.length;
+  let x0, y0, t, W, H;
+  if (estimated) {
+    t = f.step / WIFI_SUB; x0 = f.x0; y0 = f.y0; W = (f.w - 1) * WIFI_SUB + 1; H = (f.h - 1) * WIFI_SUB + 1;
+  } else if (cells.length) {
+    const size = cells[0].size, pad = 2 * size;
+    t = size / 10;
+    const xs = cells.map((c) => c.x), ys = cells.map((c) => c.y);
+    x0 = Math.min(...xs) - pad; y0 = Math.min(...ys) - pad;
+    W = Math.ceil((Math.max(...xs) + size + pad - x0) / t) + 1; H = Math.ceil((Math.max(...ys) + size + pad - y0) / t) + 1;
+  } else return null;
+  const n = W * H, dbm = new Float32Array(n).fill(NaN), ap = new Int16Array(n).fill(-1), conf = new Float32Array(n);
+  let aps;
+  if (estimated) {
+    aps = f.aps;
+    const best = new Float32Array(n).fill(-Infinity);
+    const bil = (arr, gx, gy) => {
+      const ix = Math.min(Math.floor(gx), f.w - 2), iy = Math.min(Math.floor(gy), f.h - 2);
+      const fx = gx - ix, fy = gy - iy, o = iy * f.w + ix;
+      return (arr[o] * (1 - fx) + arr[o + 1] * fx) * (1 - fy) + (arr[o + f.w] * (1 - fx) + arr[o + f.w + 1] * fx) * fy;
+    };
+    const one = f.w < 2 || f.h < 2;
+    aps.forEach((m, a) => {
+      const vals = f.values[m];
+      for (let j = 0, p = 0; j < H; j++) for (let i = 0; i < W; i++, p++) {
+        const v = one ? vals[0] : bil(vals, i / WIFI_SUB, j / WIFI_SUB);
+        if (v > best[p]) { best[p] = v; ap[p] = a; }
+      }
+    });
+    for (let j = 0, p = 0; j < H; j++) for (let i = 0; i < W; i++, p++) {
+      dbm[p] = best[p];
+      conf[p] = (f.w < 2 || f.h < 2 ? f.conf[0] : bil(f.conf, i / WIFI_SUB, j / WIFI_SUB)) / 100;
+    }
+  } else {
+    aps = [...new Set(cells.map((c) => c.ap))].sort();
+    const idx = Object.fromEntries(aps.map((m, i) => [m, i]));
+    const wsum = new Float32Array(n), wdbm = new Float32Array(n);
+    const votes = aps.map(() => new Float32Array(n));
+    const size = cells[0].size, sig = WIFI_SPOT_M * size, rad = 3 * sig;
+    for (const c of cells) {
+      const cx = c.x + size / 2, cy = c.y + size / 2;
+      const i0 = Math.max(0, Math.floor((cx - rad - x0) / t)), i1 = Math.min(W - 1, Math.ceil((cx + rad - x0) / t));
+      const j0 = Math.max(0, Math.floor((cy - rad - y0) / t)), j1 = Math.min(H - 1, Math.ceil((cy + rad - y0) / t));
+      const v = votes[idx[c.ap]];
+      for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+        const dx = x0 + i * t - cx, dy = y0 + j * t - cy;
+        const w = Math.exp(-(dx * dx + dy * dy) / (2 * sig * sig));
+        if (w < 0.01) continue;
+        const p = j * W + i;
+        wsum[p] += w; wdbm[p] += w * c.dbm; v[p] += w;
+      }
+    }
+    for (let p = 0; p < n; p++) {
+      if (wsum[p] < 0.02) continue;
+      dbm[p] = wdbm[p] / wsum[p];
+      conf[p] = Math.min(1, wsum[p]);
+      let top = -1, tv = 0;
+      votes.forEach((v, a) => { if (v[p] > tv) { tv = v[p]; top = a; } });
+      ap[p] = top;
+    }
+  }
+  const canvas = typeof OffscreenCanvas !== "undefined" ? new OffscreenCanvas(W, H) : Object.assign(document.createElement("canvas"), { width: W, height: H });
+  const cx2 = canvas.getContext("2d");
+  if (cx2) {
+    const img = cx2.createImageData(W, H), px = img.data;
+    const hues = aps.map((m) => apHue(h.colours?.[m]));
+    for (let p = 0; p < n; p++) {
+      if (!Number.isFinite(dbm[p])) continue;
+      let rgb, alpha;
+      if (h.mode === "ap") { rgb = hslRgb(hues[ap[p]] ?? 0, 0.65, 0.52); alpha = 0.6 * conf[p]; }
+      else {
+        const q = Math.max(0, Math.min(1, (dbm[p] + 80) / 30));
+        rgb = hslRgb(q * 125, 0.72, 0.46);
+        alpha = estimated ? 0.16 + 0.44 * conf[p] : 0.6 * conf[p];
+      }
+      px[4 * p] = rgb[0]; px[4 * p + 1] = rgb[1]; px[4 * p + 2] = rgb[2]; px[4 * p + 3] = Math.round(255 * alpha);
+    }
+    cx2.putImageData(img, 0, 0);
+  }
+  return { canvas, x0, y0, t, W, H, dbm, ap, conf, aps };
+}
+
 export class SextantMap {
   /**
    * @param {HTMLCanvasElement} canvas
@@ -512,7 +611,7 @@ export class SextantMap {
     this.radarLive = null;   // the Edit page's selected radar, live: {radar_id, targets: [{index, cords}]}
     this.apInfo = null;      // mac -> {name, clients, online}: the UniFi access points, null until known
     this.wifiHeat = null;    // the Wi-Fi signal map: {cells, mode: "signal"|"ap", names: {mac: name}, colours: {mac: css}}
-    this._wifiCell = null;   // the signal map's square under the pointer (or the last tap)
+    this._wifiAt = null;     // the signal map's readout point: {x, y, idx} under the pointer (or the last tap)
     this.hover = null;
     this.draft = null; // points of a polygon being drawn
     this.view = { k: 1, tx: 0, ty: 0 };
@@ -1327,50 +1426,77 @@ export class SextantMap {
   setRadarInfo(info) { this.radarInfo = info || {}; this.invalidate(); }
   setRadarTargets(list) { this.radarTargets = list || []; this.invalidate(); }
   setRadarLive(live) { this.radarLive = live || null; this.invalidate(); }
-  /** The Wi-Fi signal map to draw (heat.py's cells), or null to draw none. */
-  setWifiHeat(h) { this.wifiHeat = h && Array.isArray(h.cells) ? h : null; if (!this.wifiHeat) this._wifiCell = null; this.invalidate(); }
+  /** The Wi-Fi signal map to draw, or null to draw none: {cells (heat.py's
+   * measured squares), field (field.py's grid, or null), mode: "estimated" |
+   * "measured" | "ap", names: {mac: name}, colours: {mac: css}}. */
+  setWifiHeat(h) {
+    this.wifiHeat = h && Array.isArray(h.cells) ? h : null;
+    this._wifiRaster = null;
+    if (!this.wifiHeat) this._wifiAt = null;
+    this.invalidate();
+  }
 
-  /** Whether what is under the pointer hides the square's name: a thing or
+  /** Whether what is under the pointer hides the map's readout: a thing or
    * an access point does. A proxy does not - the proxies sample their own
-   * squares, so one sits in most of them and would hide nearly all - nor do
-   * the room and the spot the square is on. */
+   * squares, so one sits in most of them - nor does the room under it. */
   _wifiCellBlocked(hit) { return !!hit && (hit.kind === "thing" || hit.kind === "ap"); }
 
-  /** The square pointed at is kept as a place, not as the cell object: the
-   * map is reloaded every minute, and the square under a still pointer must
-   * stay named across it. */
+  /** The point the readout is for, kept as a plan point: the map reloads
+   * every minute, and a still pointer must stay read across it. */
   _pointWifiCell(m) {
-    const cells = this.wifiHeat?.cells || [];
-    const cell = m ? cells.find((c) => m.x >= c.x && m.x < c.x + c.size && m.y >= c.y && m.y < c.y + c.size) || null : null;
-    const at = cell ? `${cell.x}|${cell.y}` : null;
-    if (at !== this._wifiCell) { this._wifiCell = at; this.invalidate(); }
+    const r = this._wifiRasterGet();
+    const idx = m && r ? this._wifiIndex(r, m) : -1;
+    const at = idx >= 0 && Number.isFinite(r.dbm[idx]) ? { x: m.x, y: m.y, idx } : null;
+    if ((at?.idx ?? -1) !== (this._wifiAt?.idx ?? -1)) { this._wifiAt = at; this.invalidate(); }
   }
 
-  /** The signal map: a square a metre across per cell with samples. "signal"
-   * colours it by strength (red under -80 dBm, green from -50), "ap" by the
-   * access point most of its samples were on, so the hand-over lines and a
-   * client clinging to a far access point show. Under the rooms' labels and
-   * the things; the square under the pointer is outlined and named. */
+  _wifiIndex(r, m) {
+    const i = Math.round((m.x - r.x0) / r.t), j = Math.round((m.y - r.y0) / r.t);
+    return i < 0 || j < 0 || i >= r.W || j >= r.H ? -1 : j * r.W + i;
+  }
+
+  _wifiRasterGet() {
+    if (!this.wifiHeat) return null;
+    if (!this._wifiRaster) this._wifiRaster = buildWifiRaster(this.wifiHeat, this.dark);
+    return this._wifiRaster;
+  }
+
+  /** The signal map as a continuous picture, 10 cm a pixel, kept inside the
+   * rooms. "estimated" is the fitted field (strongest access point at each
+   * point), faded where it is only the model; "measured" and "ap" are the
+   * measured squares, each a soft spot instead of a box, by signal or by
+   * the access point clients were on. The point under the pointer is read
+   * out in a label. */
   _drawWifiHeat(ctx) {
-    const h = this.wifiHeat, k = this.view.k;
+    const r = this._wifiRasterGet(), k = this.view.k;
+    if (!r) return;
     ctx.save();
-    for (const c of h.cells) {
-      ctx.fillStyle = h.mode === "ap" ? (h.colours?.[c.ap] || "rgba(128,128,128,0.4)") : signalColour(c.dbm, 0.5);
-      ctx.fillRect(c.x, c.y, c.size, c.size);
+    const rooms = (this.floor?.zones || []).filter((z) => !z.no_go && (z.cords || []).length >= 3);
+    if (rooms.length) {
+      const clip = new Path2D();
+      for (const z of rooms) { z.cords.forEach((c, i) => (i ? clip.lineTo(c.x, c.y) : clip.moveTo(c.x, c.y))); clip.closePath(); }
+      ctx.clip(clip);
     }
-    const sel = this._wifiCell ? h.cells.find((c) => `${c.x}|${c.y}` === this._wifiCell) : null;
-    if (sel) {
-      ctx.strokeStyle = this.dark ? "#ffffff" : "#1b1f24"; ctx.lineWidth = 2 / k;
-      ctx.strokeRect(sel.x, sel.y, sel.size, sel.size);
-    }
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(r.canvas, r.x0 - r.t / 2, r.y0 - r.t / 2, r.W * r.t, r.H * r.t);
     ctx.restore();
-    if (sel) {
-      const name = h.names?.[sel.ap] || sel.ap;
-      const others = Object.keys(sel.aps || {}).length - 1;
-      this._label(ctx, `${name} · ${Math.round(sel.dbm)} dBm · ${sel.n} sample${sel.n === 1 ? "" : "s"}${others > 0 ? ` · +${others} other AP${others === 1 ? "" : "s"}` : ""}`,
-        sel.x + sel.size / 2, sel.y - 8 / k, 10, 0.95, null, LABEL_PRIO.focus);
+    const at = this._wifiAt;
+    if (at && Number.isFinite(r.dbm[at.idx])) {
+      const h = this.wifiHeat, name = (m) => h.names?.[m] || m;
+      const ap = r.aps[r.ap[at.idx]];
+      const dbm = Math.round(r.dbm[at.idx]);
+      const text = h.mode === "estimated"
+        ? `≈ ${dbm} dBm · ${ap ? `${name(ap)} strongest` : "no access point"} · ${r.conf[at.idx] >= 0.6 ? "measured nearby" : r.conf[at.idx] >= 0.2 ? "estimate" : "model only"}`
+        : h.mode === "ap" ? `${ap ? name(ap) : "?"} · ${dbm} dBm measured` : `${dbm} dBm measured${ap ? ` · mostly ${name(ap)}` : ""}`;
+      ctx.save();
+      ctx.strokeStyle = this.dark ? "#ffffff" : "#1b1f24"; ctx.lineWidth = 2 / k;
+      ctx.beginPath(); ctx.arc(at.x, at.y, 5 / k, 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
+      this._label(ctx, text, at.x, at.y - 14 / k, 10, 0.95, null, LABEL_PRIO.focus);
     }
   }
+
 
   /** The UniFi access points: [{mac, name, clients, online}], or null when
    * the list is not known (then none is marked as missing). */
