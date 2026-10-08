@@ -488,7 +488,7 @@ class SextantLive extends LitElement {
     this._truth = null;     // the last mark's evaluation {mark, rows, current_weight}
     this._marks = [];       // the selected thing's marks
     this._blend = null;     // slider value while it is being dragged (0..100)
-    this._options = { circles: false, fingerprint: false, trails: true, grid: "off", labels: true, subzones: true, receivers: true, image: true };
+    this._options = { circles: false, fingerprint: false, trails: true, grid: "off", labels: true, subzones: true, receivers: true, access_points: true, image: true };
     try { Object.assign(this._options, JSON.parse(localStorage.getItem("sextant.live.options") || "{}")); } catch { /* ignore */ }
     this._history = null; // {ent, from, to, points:[{t,x,y,f}] }
     this._timeline = null; // {ent, at, stays:[{start,end,floor,room,spot,unheard?,partial?}], last_heard}
@@ -522,6 +522,7 @@ class SextantLive extends LitElement {
       fetch: (url) => this.hass.fetchWithAuth(url),
       onSelect: (hit) => {
         if (hit?.kind === "receiver") return this._openProxy(hit.index);
+        if (hit?.kind === "ap") return;   // named on the map; the focused thing and the proxy card stay
         this._proxy = null;
         this._select(hit?.kind === "thing" ? hit.ent : null);
       },
@@ -1033,6 +1034,7 @@ class SextantLive extends LitElement {
     if (changed.has("floor") || changed.has("_heat") || changed.has("data")) this._pushHeat();
     if (changed.has("_options")) this._map.setOptions(this._options);
     if (changed.has("data")) this._map.setOptions({ staleAfter: this._staleAfter() });
+    if (changed.has("data")) this._map.setAccessPoints(Array.isArray(this.data?.access_points) ? this.data.access_points : null);
     // A stay grows every cycle; re-read the timeline once a minute while a thing is focused.
     if (changed.has("positions") && this._selected && (!this._timeline || Date.now() - this._timeline.at > 60000)) this._loadTimeline(this._selected);
   }
@@ -1401,6 +1403,7 @@ class SextantLive extends LitElement {
       ["trails", "Trails", "Each thing's recent path", "mdi:shoe-print"],
       ["subzones", "Spots", "Draw the spots (a couch, a desk, a bedside table)", "mdi:sofa-outline"],
       ["receivers", "Proxies", "Draw the proxies. Whichever one you point at is named; Labels names the rooms and things", "mdi:access-point"],
+      ["access_points", "Wi-Fi", "Draw the Wi-Fi access points placed on the plan. Point at one (or tap it) for its name and how many clients it has", "mdi:wifi"],
       ["circles", "Range circles", "The distance each proxy measured, as a circle: the fix is where they meet", "mdi:radar"],
       ["fingerprint", "Fingerprint fix", "Where the fingerprint estimator alone would put each thing (dashed), next to the published fix", "mdi:fingerprint"],
     ];

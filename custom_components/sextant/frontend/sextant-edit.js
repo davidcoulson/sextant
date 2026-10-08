@@ -26,6 +26,7 @@ const TOOLS = [
   ["measure", "Scale", "mdi:ruler", "Set the map scale from a known distance"],
   ["pin", "Anchor", "mdi:crosshairs-gps", "Anchor a point that lines up through the house - an outside corner, a stair post. The same name on another floor says how the floors stack. It lands on a room corner when one is near; hold Alt to place it freely"],
   ["radar", "mmWave", "mdi:radar", "Place an mmWave presence sensor (Everything Presence, Apollo R PRO-1) and set the way it faces. Its targets land on the plan: a thing near one is placed on it, one still target and one still thing make a location pin, and a target no thing accounts for is someone Sextant has no device for"],
+  ["ap", "Wi-Fi", "mdi:wifi", "Place a Wi-Fi access point: pick one UniFi knows, then click the map. Nothing positions by it - it shows where the access points are, and tells the Wi-Fi floor hint exactly which floor and room each is on"],
   ["remark", "Note", "mdi:note-text-outline", "Leave a note on the plan - where a proxy is going, what to check, what a room is really called. Notes are for people; nothing about positioning reads them"],
 ];
 // Layers that can be locked against selection and dragging, so a finished
@@ -74,6 +75,7 @@ class SextantEdit extends LitElement {
     _alignment: { state: true },
     _radarDevices: { state: true },   // devices reporting mmWave target coordinates
     _radarLive: { state: true },      // the selected radar's targets right now
+    _placingAp: { state: true },      // the Wi-Fi tool's access point, waiting for a click
   };
 
   constructor() {
@@ -83,6 +85,7 @@ class SextantEdit extends LitElement {
     this._tool = "select";
     this._selection = null;
     this._placing = null; // scanner address chosen for the next receiver click
+    this._placingAp = null; // access point MAC chosen for the next Wi-Fi click
     this._measure = null; // {a, b} map points
     this._proposal = null;
     this._busy = false;
@@ -159,9 +162,10 @@ class SextantEdit extends LitElement {
     if (changed.has("data")) this._syncDraft(!this._dirty);
     if (changed.has("floor")) this._pushFloor();
     if (changed.has("hass")) this._map.setAreas(this.hass?.areas);
+    if (changed.has("data")) this._map.setAccessPoints(Array.isArray(this.data?.access_points) ? this.data.access_points : null);
     if (changed.has("floor") || changed.has("data")) this._loadBiasView();
     if (changed.has("spots") || changed.has("floor")) this._map.setSuggestions((this.spots || []).filter((s) => s.floor === this.floor).map((s) => ({ x: s.x, y: s.y, label: `add a proxy here · ${s.room}` })));
-    if (changed.has("_tool")) { this._map.setTool(["measure", "receiver", "pin", "remark", "radar"].includes(this._tool) ? "select" : this._tool); }
+    if (changed.has("_tool")) { this._map.setTool(["measure", "receiver", "pin", "remark", "radar", "ap"].includes(this._tool) ? "select" : this._tool); }
     if (changed.has("_selection")) this._watchRadar();
   }
 
@@ -384,6 +388,84 @@ class SextantEdit extends LitElement {
     </div>`;
   }
 
+  // --- Wi-Fi access points ------------------------------------------------------
+
+  /** The access point's name: what UniFi (or the HA device) calls it now, else
+   * the name kept when it was placed, else its MAC. */
+  _apName(item) {
+    const info = (this.data?.access_points || []).find((a) => a.mac === item?.mac);
+    return info?.name || item?.name || item?.mac || "access point";
+  }
+
+  /** MAC -> the floor it is placed on, over the whole draft. */
+  _apPlaced() {
+    const out = new Map();
+    for (const fl of this._draft?.floor || []) for (const ap of fl.access_points || []) if (ap.mac && !out.has(ap.mac)) out.set(ap.mac, fl.name);
+    return out;
+  }
+
+  _renderApPicker() {
+    const aps = this.data?.access_points || [];
+    const placed = this._apPlaced();
+    if (!aps.length) return html`<div class="hint">${Array.isArray(this.data?.access_points)
+      ? "The UniFi controller lists no access points."
+      : "No access points to place yet. They come from Home Assistant's UniFi Network integration: add it (or wait for it to finish starting), then reload this page."}</div>`;
+    const left = aps.filter((a) => !placed.has(a.mac)).length;
+    return html`<div class="hint">
+      <select aria-label="Access point to place" @change=${(e) => { this._placingAp = e.target.value || null; }}>
+        <option value="" ?selected=${!this._placingAp}>Pick an access point, then click the map…</option>
+        ${aps.map((a) => html`<option value=${a.mac} ?selected=${this._placingAp === a.mac} ?disabled=${placed.has(a.mac)}>${a.name}${placed.has(a.mac) ? ` (placed${placed.get(a.mac) !== this.floor ? ` on ${placed.get(a.mac)}` : ""})` : ""}${a.area_id && this.hass?.areas?.[a.area_id] ? ` · ${this.hass.areas[a.area_id].name}` : ""}</option>`)}
+      </select>
+      <span class="muted small">${left ? `${left} of ${aps.length} not placed yet` : `All ${aps.length} placed`}</span></div>`;
+  }
+
+  _placeAp(e) {
+    const f = this._floorObj();
+    if (!f || this._map.hover?.kind === "ap") return;   // a click on one selects it
+    const mac = this._placingAp;
+    if (this._apPlaced().has(mac)) { this._placingAp = null; return; }
+    const info = (this.data?.access_points || []).find((a) => a.mac === mac);
+    const p = this._mapPoint(e);
+    this._snapshot();
+    f.access_points = f.access_points || [];
+    f.access_points.push({ ap_id: uid("ap"), mac, name: info?.name || mac, cords: { x: Math.round(p.x * 1000) / 1000, y: Math.round(p.y * 1000) / 1000 } });
+    this._dirty = true;
+    // The picker empties again, as the Proxy tool's does: the next click on
+    // the map must not drop an access point nobody picked.
+    this._placingAp = null;
+    this._selection = { kind: "ap", index: f.access_points.length - 1 };
+    this._map.setSelection(this._selection);
+    this._map.invalidate();
+    this.requestUpdate();
+  }
+
+  _renderAp(item, f) {
+    const aps = this.data?.access_points || [];
+    const info = aps.find((a) => a.mac === item.mac);
+    const placed = this._apPlaced();
+    const others = new Set((this._draft?.floor || []).flatMap((fl) => (fl.access_points || []).filter((a) => a !== item).map((a) => a.mac)));
+    const area = info?.area_id ? this.hass?.areas?.[info.area_id] : null;
+    const fp = this.data?.wifi?.footprints?.[item.mac];
+    const floors = Object.entries(fp?.floors || {}).sort((a, b) => b[1] - a[1]);
+    const total = floors.reduce((n, [, c]) => n + c, 0);
+    const clients = Object.values(this.data?.wifi?.candidates || {}).filter((c) => c.ap === item.mac).map((c) => c.name);
+    return html`<div class="card">
+      <h4>Wi-Fi access point</h4>
+      <div class="row">${uiSelect({ label: "Access point", value: item.mac || "", style: "flex: 1",
+        options: [...(info || !item.mac ? [] : [{ value: item.mac, label: `${item.name || item.mac} (not found in UniFi)` }]),
+          ...aps.map((a) => ({ value: a.mac, label: `${a.name}${others.has(a.mac) ? " (placed elsewhere)" : ""}` }))],
+        onChange: (v) => { const a = aps.find((x) => x.mac === v); if (!a || others.has(v)) return toast(this, "That access point is already on the plan"); this._snapshot(); item.mac = a.mac; item.name = a.name; this._dirty = true; this._map.invalidate(); this.requestUpdate(); } })}</div>
+      <div class="small">${info
+        ? html`${info.online ? "Online" : html`<span class="warn">Offline</span>`}${info.clients != null ? html` · ${info.clients} client${info.clients === 1 ? "" : "s"} on it now` : nothing}${area ? html` · Home Assistant area ${area.name}` : nothing}`
+        : html`<span class="warn">UniFi does not list this access point any more.</span> Replaced or removed? Pick its replacement above, or delete it.`}</div>
+      <div class="muted small">${item.mac}</div>
+      ${clients.length ? html`<div class="small">Phones and watches on it now: ${clients.join(", ")}</div>` : nothing}
+      ${floors.length && total ? html`<div class="small">Where people are when their phone is on it: ${floors.slice(0, 3).map(([n, c]) => `${n} ${Math.round((100 * c) / total)} %`).join(", ")}${floors[0][0] !== f.name && floors[0][1] / total >= 0.6 ? html` <span class="warn">- mostly ${floors[0][0]}, not ${f.name}: is it on the right floor?</span>` : nothing}</div>` : nothing}
+      <div class="muted small">Nothing positions by an access point. Placed, it tells the Wi-Fi floor hint which floor and room it is on until Sextant has learned where it reaches, and it is where a signal map will hang.</div>
+      <div class="row"><span class="grow"></span>${uiButton({ label: "Delete", kind: "danger", onClick: () => this._deleteSelection() })}</div>
+    </div>`;
+  }
+
   /** The draft as it should be stored: without the marks the map draws with.
    * Both save paths go through here - adding a floor posts the draft too, and
    * used to send `unmatched`, `label` and the pin marks along with it. */
@@ -396,7 +478,7 @@ class SextantEdit extends LitElement {
     return draft;
   }
 
-  _listFor(kind, f) { return kind === "receiver" ? f.receivers : kind === "zone" ? f.zones : kind === "pin" ? f.pins : kind === "remark" ? f.remarks : kind === "radar" ? (f.radars = f.radars || []) : f.subzones; }
+  _listFor(kind, f) { return kind === "receiver" ? f.receivers : kind === "zone" ? f.zones : kind === "pin" ? f.pins : kind === "remark" ? f.remarks : kind === "radar" ? (f.radars = f.radars || []) : kind === "ap" ? (f.access_points = f.access_points || []) : f.subzones; }
 
   // --- tools -------------------------------------------------------------------
 
@@ -404,7 +486,8 @@ class SextantEdit extends LitElement {
     this._tool = tool;
     this._measure = null;
     if (tool !== "receiver") this._placing = null;
-    if (["receiver", "measure", "pin", "remark", "radar"].includes(tool)) this._map.setTool("select");
+    if (tool !== "ap") this._placingAp = null;
+    if (["receiver", "measure", "pin", "remark", "radar", "ap"].includes(tool)) this._map.setTool("select");
     if (tool === "pin" && this._locks.pin) this._setLock("pin", false);   // you are placing pins: they must be reachable
   }
 
@@ -415,6 +498,7 @@ class SextantEdit extends LitElement {
     else if (this._tool === "pin") this._placePin(e);
     else if (this._tool === "remark") this._placeRemark(e);
     else if (this._tool === "radar") this._placeRadar(e);
+    else if (this._tool === "ap" && this._placingAp) this._placeAp(e);
   }
 
   _mapPoint(e) {
@@ -663,9 +747,9 @@ class SextantEdit extends LitElement {
     if (!sel || !f) return;
     const list = this._listFor(sel.kind, f);
     const item = list[sel.index];
-    const what = { receiver: "proxy", zone: "room", pin: "anchor", remark: "note", radar: "mmWave sensor" }[sel.kind] || "spot";
+    const what = { receiver: "proxy", zone: "room", pin: "anchor", remark: "note", radar: "mmWave sensor", ap: "access point" }[sel.kind] || "spot";
     // An empty note has nothing to name and nothing to lose: no dialog for it.
-    const named = item.entity_id ?? item.name ?? item.text;
+    const named = sel.kind === "ap" ? this._apName(item) : item.entity_id ?? item.name ?? item.text;
     if (named && !confirmDialog(`Delete ${what} "${named}"?`)) return;
     this._snapshot();
     list.splice(sel.index, 1);
@@ -855,6 +939,7 @@ class SextantEdit extends LitElement {
             <option value="">Pick a proxy, then click the map…</option>
             ${scanners.map(([addr, s]) => html`<option value=${addr} ?disabled=${placedAddr.has(addr)}>${s.name || s.slug}${placedAddr.has(addr) ? " (placed)" : ""}${s.area ? ` · ${s.area}` : ""}</option>`)}
           </select></div>` : nothing}
+        ${this._tool === "ap" ? this._renderApPicker() : nothing}
         ${this._tool === "measure" ? html`<div class="hint">
           ${this._measure?.b ? html`${uiField({ label: `Distance between the two points (${lenUnit(this.hass)})`, type: "number", step: 0.01, min: 0.1, onChange: (v) => { this._metres = v; }, style: "width: 240px" })} ${uiButton({ label: "Set scale", kind: "primary", onClick: () => this._applyMeasure(this._metres) })}`
             : this._measure ? "Click the second point." : `Click two points a known distance apart. Current scale: ${fmtScale(f?.scale, this.hass)}`}
@@ -873,7 +958,7 @@ class SextantEdit extends LitElement {
                 { divider: true },
                 { label: "Delete floor", icon: "mdi:delete-outline", danger: true, disabled: this._busy, onClick: () => this._removeFloor() },
               ] })}</h4>
-            <div class="row small muted">${(f.receivers || []).length} proxies · ${(f.zones || []).filter((z) => !z.no_go).length} rooms · ${(f.zones || []).filter((z) => z.no_go).length} no-go · ${(f.subzones || []).length} spots</div>
+            <div class="row small muted">${(f.receivers || []).length} proxies · ${(f.zones || []).filter((z) => !z.no_go).length} rooms · ${(f.zones || []).filter((z) => z.no_go).length} no-go · ${(f.subzones || []).length} spots${(f.access_points || []).length ? ` · ${f.access_points.length} access point${f.access_points.length === 1 ? "" : "s"}` : ""}</div>
             <div class="row small muted">Level: storey number, 0 = ground, -1 = basement; orders the floor picker top-down. Elevation: this floor's finished floor above the ground floor's, so ceiling height plus the floor structure; blank assumes 3 m a storey. Bias: election prior, 1.2 = a 20 % head start every cycle.</div>
             <div class="row">
               ${/* Measuring two points gives a float with a dozen decimals; a
@@ -968,6 +1053,7 @@ class SextantEdit extends LitElement {
     const item = list?.[sel.index];
     if (!item) return nothing;
     if (sel.kind === "radar") return this._renderRadar(item);
+    if (sel.kind === "ap") return this._renderAp(item, f);
     if (sel.kind === "remark") {
       return html`<div class="card">
         <h4>Note</h4>

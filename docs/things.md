@@ -101,8 +101,9 @@ does the rest by itself:
 - **What each access point means.** Sextant learns each access point's
   footprint - the floors and rooms people are in, by BLE, while on it - so a
   wall unit under a bedroom learns to mean both floors. Until it has forty
-  cycles, the HA area the access point's device is in stands in (put each
-  AP device in its room).
+  cycles, the place it was put on the plan stands in (the Edit page's
+  [Wi-Fi tool](edit.md#wi-fi-access-points)), else the HA area the access
+  point's device is in.
 - **What it does.** When Sextant has lost someone, a tracker of theirs that
   is home keeps them home, in the room the access point most means
   (`source: wifi`), ahead of GPS. And the access point a person's phone or

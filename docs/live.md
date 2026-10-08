@@ -23,8 +23,9 @@ fingerprint sets how this thing's position is estimated (the two ends
 are drawn on the map when the fingerprint switch is on), and **It's
 actually here…** records a [location pin](live.md#location-pins). A thing with no fix shows *seen 40s
 ago* rather than a blank. A row of buttons over the map draws or hides the
-plan image, the labels, the trails, the spots, the proxies, the solver's
-distance circles and the fingerprint fix; each lights up while it is on.
+plan image, the labels, the trails, the spots, the proxies, the Wi-Fi
+access points placed on the plan, the solver's distance circles and the
+fingerprint fix; each lights up while it is on.
 Labels names the rooms and the things (and whichever proxy you point at),
 while Proxies draws the proxies themselves, which a busy plan is often
 better without. In the corner, a countdown says how many seconds until the

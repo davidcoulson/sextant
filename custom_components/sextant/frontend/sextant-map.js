@@ -19,6 +19,7 @@ const VERTEX_SIZE = 6;
 const PIN_SIZE = 11;
 const REMARK_SIZE = 9;           // the note's dot; its text hangs off to the right
 const RADAR_SIZE = 11;           // an mmWave sensor's marker
+const AP_SIZE = 10;              // a Wi-Fi access point's marker
 const HIT_SLOP = 8;
 // Closest zoom: 20 screen px per map px, enough for a bedside table to fill a phone.
 const MAX_ZOOM = 20;
@@ -503,6 +504,7 @@ export class SextantMap {
     this.radarInfo = {};     // device_id -> {name, range_m, fov_deg}: how far each radar sees
     this.radarTargets = [];  // mmWave targets on this floor: [{cords, thing, room, radar_name}]
     this.radarLive = null;   // the Edit page's selected radar, live: {radar_id, targets: [{index, cords}]}
+    this.apInfo = null;      // mac -> {name, clients, online}: the UniFi access points, null until known
     this.hover = null;
     this.draft = null; // points of a polygon being drawn
     this.view = { k: 1, tx: 0, ty: 0 };
@@ -627,7 +629,7 @@ export class SextantMap {
     // No image yet: size to the content so an image-less floor still renders.
     let maxX = 0, maxY = 0;
     const f = this.floor || {};
-    for (const r of [...(f.receivers || []), ...(f.pins || []), ...(f.remarks || []), ...(f.radars || [])]) { maxX = Math.max(maxX, r.cords?.x || 0); maxY = Math.max(maxY, r.cords?.y || 0); }
+    for (const r of [...(f.receivers || []), ...(f.pins || []), ...(f.remarks || []), ...(f.radars || []), ...(f.access_points || [])]) { maxX = Math.max(maxX, r.cords?.x || 0); maxY = Math.max(maxY, r.cords?.y || 0); }
     for (const list of [f.zones || [], f.subzones || []]) for (const z of list) for (const p of z.cords || []) { maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y); }
     return { w: maxX ? maxX * 1.05 : 1000, h: maxY ? maxY * 1.05 : 700 };
   }
@@ -694,10 +696,11 @@ export class SextantMap {
       this.invalidate();
       return;
     }
-    if (hit && e.button === 0 && this.mode !== "edit" && (hit.kind === "thing" || hit.kind === "receiver")) {
+    if (hit && e.button === 0 && this.mode !== "edit" && (hit.kind === "thing" || hit.kind === "receiver" || hit.kind === "ap")) {
       // A proxy is worth a click outside the editor too: the host shows what
-      // it is and what it is doing.
-      this.selection = hit.kind === "thing" ? hit : null;
+      // it is and what it is doing. An access point is selected on the map
+      // only, so a tap names it on a phone, where nothing hovers.
+      this.selection = hit.kind === "thing" || hit.kind === "ap" ? hit : null;
       if (this.host.onSelect) this.host.onSelect(hit);
     } else if (this.mode !== "edit" && this.host.onSelect && (!hit || e.button === 0)) {
       // Outside the editor a room or a spot is not something to select, so a
@@ -720,6 +723,7 @@ export class SextantMap {
       else if (hit.kind === "pin") f.pins[hit.index].cords = { ...d.origin[0] };
       else if (hit.kind === "remark") f.remarks[hit.index].cords = { ...d.origin[0] };
       else if (hit.kind === "radar") f.radars[hit.index].cords = { ...d.origin[0] };
+      else if (hit.kind === "ap") f.access_points[hit.index].cords = { ...d.origin[0] };
       else (hit.kind === "zone" ? f.zones : f.subzones)[hit.index].cords = d.origin.map((q) => ({ ...q }));
     }
     // The first finger of a pinch is not a corner.
@@ -741,6 +745,7 @@ export class SextantMap {
     if (hit.kind === "pin") { const q = f.pins[hit.index]; return [{ x: q.cords.x, y: q.cords.y }]; }
     if (hit.kind === "remark") { const q = f.remarks[hit.index]; return [{ x: q.cords.x, y: q.cords.y }]; }
     if (hit.kind === "radar") { const q = f.radars[hit.index]; return [{ x: q.cords.x, y: q.cords.y }]; }
+    if (hit.kind === "ap") { const q = f.access_points[hit.index]; return [{ x: q.cords.x, y: q.cords.y }]; }
     const list = hit.kind === "zone" ? f.zones : f.subzones;
     return (list[hit.index].cords || []).map((q) => ({ x: q.x, y: q.y }));
   }
@@ -818,6 +823,9 @@ export class SextantMap {
     } else if (hit.kind === "radar") {
       // Caught for the same reason as a note: the branch below is rooms-or-spots.
       f.radars[hit.index].cords = { x: d.origin[0].x + dx, y: d.origin[0].y + dy };
+    } else if (hit.kind === "ap") {
+      // And an access point: one point, never the rooms-or-spots branch below.
+      f.access_points[hit.index].cords = { x: d.origin[0].x + dx, y: d.origin[0].y + dy };
     } else {
       const list = hit.kind === "zone" ? f.zones : f.subzones;
       const item = list[hit.index];
@@ -859,6 +867,7 @@ export class SextantMap {
       else if (hit.kind === "pin") f.pins[hit.index].cords = round(f.pins[hit.index].cords);
       else if (hit.kind === "remark") f.remarks[hit.index].cords = round(f.remarks[hit.index].cords);
       else if (hit.kind === "radar") f.radars[hit.index].cords = round(f.radars[hit.index].cords);
+      else if (hit.kind === "ap") f.access_points[hit.index].cords = round(f.access_points[hit.index].cords);
       else { const list = hit.kind === "zone" ? f.zones : f.subzones; list[hit.index].cords = list[hit.index].cords.map(round); }
       if (this.host.onChange) this.host.onChange(hit.kind, hit.index);
     }
@@ -908,6 +917,12 @@ export class SextantMap {
       }
     }
     const edit = this.mode === "edit";
+    if (edit || this.options.access_points) {
+      for (let i = (f.access_points || []).length - 1; i >= 0; i--) {
+        const q = f.access_points[i].cords;
+        if (q && Math.hypot(q.x - m.x, q.y - m.y) <= (AP_SIZE * 1.3) / this.view.k) return { kind: "ap", index: i, id: f.access_points[i].mac };
+      }
+    }
     if (edit) {
       // Notes before everything: a note is deliberately placed ON the thing it
       // is about - the proxy that is going here, the spot to check - so it has
@@ -1019,6 +1034,7 @@ export class SextantMap {
     // standing in the room with the Live page open, which is the whole point.
     this._drawRemarks(ctx, f.remarks || []);
     if (this.mode === "edit") this._drawRadars(ctx, f.radars || []);
+    if (this.mode === "edit" || this.options.access_points) this._drawAccessPoints(ctx, f.access_points || []);
     this._drawRadarTargets(ctx);
     if (this.suggestions.length) {
       // Everything labelled so far belongs to the plan, so it goes down before
@@ -1298,6 +1314,43 @@ export class SextantMap {
   setRadarInfo(info) { this.radarInfo = info || {}; this.invalidate(); }
   setRadarTargets(list) { this.radarTargets = list || []; this.invalidate(); }
   setRadarLive(live) { this.radarLive = live || null; this.invalidate(); }
+  /** The UniFi access points: [{mac, name, clients, online}], or null when
+   * the list is not known (then none is marked as missing). */
+  setAccessPoints(list) { this.apInfo = Array.isArray(list) ? Object.fromEntries(list.map((a) => [a.mac, a])) : null; this.invalidate(); }
+
+  /** Wi-Fi access points: a round marker with the Wi-Fi fan in it, so it is
+   * never mistaken for a proxy (a diamond) - nothing positions by these. One
+   * the controller says is offline is red; one it does not know (replaced,
+   * or the integration is gone) is orange, like an unmatched proxy. */
+  _drawAccessPoints(ctx, aps) {
+    const k = this.view.k, edit = this.mode === "edit";
+    aps.forEach((ap, index) => {
+      if (!ap.cords) return;
+      const info = this.apInfo?.[ap.mac];
+      const selected = this.selection?.kind === "ap" && this.selection.index === index;
+      const hovered = this.hover?.kind === "ap" && this.hover.index === index;
+      const missing = this.apInfo && !info;
+      const face = missing ? "#e0a54a" : info && info.online === false ? "#d9534f" : "#4f5bd5";
+      const s = ((selected || hovered) ? AP_SIZE * 1.3 : AP_SIZE) / k;
+      const { x, y } = ap.cords;
+      ctx.save();
+      ctx.globalAlpha = edit ? 1 : 0.9;
+      ctx.fillStyle = face; ctx.strokeStyle = selected ? "#ffd166" : "#ffffff"; ctx.lineWidth = (selected ? 3 : 1.5) / k;
+      ctx.beginPath(); ctx.arc(x, y, s, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      // The fan: a dot low in the circle and two arcs opening upwards from it.
+      const cy = y + s * 0.42;
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath(); ctx.arc(x, cy, s * 0.14, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = "#ffffff"; ctx.lineWidth = Math.max(s * 0.16, 1 / k); ctx.lineCap = "round";
+      for (const r of [0.42, 0.74]) { ctx.beginPath(); ctx.arc(x, cy, s * r, -Math.PI * 0.78, -Math.PI * 0.22); ctx.stroke(); }
+      ctx.restore();
+      if (this.options.labels && (edit || hovered || selected)) {
+        const name = info?.name || ap.name || ap.mac || "access point";
+        const text = !ap.mac ? "Wi-Fi: pick the access point" : !edit && info?.clients != null ? `${name} · ${info.clients} client${info.clients === 1 ? "" : "s"}` : name;
+        this._label(ctx, text, x, y + (AP_SIZE + 10) / k, 10, 0.85, null, selected || hovered ? LABEL_PRIO.focus : LABEL_PRIO.proxy);
+      }
+    });
+  }
 
   /** Placed mmWave sensors (Edit): a marker, the way it faces, and the wedge
    * it sees - its range as set on the device, ±60 degrees. */

@@ -155,6 +155,33 @@ Saved, a placed sensor does three things every cycle:
 `mmwave_fusion` and `mmwave_auto_pins` on the Tuning page turn the first two
 off without removing the sensor.
 
+## Wi-Fi access points
+
+With Home Assistant's UniFi Network integration set up, the **Wi-Fi** tool
+places the house's access points on the plan. Pick one from the list (every
+access point the controller knows, with the HA area its device is in), then
+click where it is mounted. The list then empties again, so pick the next
+one before the next click. An access point that is already placed shows as
+placed, with its floor if that is another one; drag a placed one to move it.
+
+Selected, its card says whether the controller has it online, how many
+clients are on it now, which of the people's phones and watches are among
+them, and where people have been while their phone was on it. When that is
+mostly another floor, the card asks whether it is on the right one.
+
+Nothing positions by an access point: a phone's Wi-Fi association says
+which access point it is on, not how far away it is. A placed access point
+does two things:
+
+- **It says where it is.** Until Sextant has learned an access point's
+  footprint (see [Wi-Fi](things.md#wi-fi)), the floor and room it stands
+  for are the ones it is placed in, ahead of its device's HA area.
+- **It is on the map.** The Live page draws placed access points (the
+  **Wi-Fi** switch over the map) as round blue markers with the Wi-Fi fan
+  in them, so they are not mistaken for proxies. Point at one, or tap it on
+  a phone, for its name and client count. An offline access point is red,
+  and one the controller no longer lists (replaced or removed) is orange.
+
 ## Lining the floors up
 
 Each floor is its own drawing, at its own resolution, cropped its own way,

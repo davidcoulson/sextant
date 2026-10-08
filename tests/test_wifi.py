@@ -131,3 +131,105 @@ def test_stale_match_pairs_are_forgotten_and_the_table_is_bounded():
     wifi.prune_matches(store, 2000.0)
     assert sum(len(v) for v in store["matches"].values()) == wifi.MATCH_MAX_PAIRS
     assert "device_tracker.t0" not in store["matches"] and f"device_tracker.t{wifi.MATCH_MAX_PAIRS + 4}" in store["matches"]
+
+
+# --- access points on the plan -------------------------------------------------
+
+def test_norm_mac_accepts_dashes_and_case_and_rejects_the_rest():
+    assert wifi.norm_mac("9C-05-D6-A9-E2-5B") == "9c:05:d6:a9:e2:5b"
+    assert wifi.norm_mac(" a8:9c:6c:2e:d9:c6 ") == "a8:9c:6c:2e:d9:c6"
+    assert wifi.norm_mac("8c:ed") is None and wifi.norm_mac(None) is None and wifi.norm_mac(42) is None
+
+
+def test_access_points_are_the_hubs_uap_devices_named_as_home_assistant_names_them():
+    raws = [
+        {"type": "uap", "mac": "8C:ED:E1:00:DE:ED", "name": "Kitchen E7 ctrl", "model": "UAPA697", "num_sta": 12, "state": 1},
+        {"type": "usw", "mac": "d0:21:f9:b2:67:72", "name": "Desk USW Flex Mini", "num_sta": 3, "state": 1},
+        {"type": "uap", "mac": "28:70:4e:27:04:ed", "name": "Garage U7-Pro", "num_sta": True, "state": 0},
+        {"type": "uap", "mac": "8c:ed:e1:00:de:ed", "name": "duplicate"},
+        {"type": "uap", "mac": "not a mac", "name": "broken"},
+        None, "junk",
+    ]
+    registry = {"8c:ed:e1:00:de:ed": {"name": "Kitchen E7", "area_id": "kitchen"}, "28:70:4e:27:04:ed": "junk"}
+    aps = wifi.access_points(raws, registry)
+    assert [a["mac"] for a in aps] == ["28:70:4e:27:04:ed", "8c:ed:e1:00:de:ed"]   # by name; switches left out
+    garage, kitchen = aps
+    assert kitchen == {"mac": "8c:ed:e1:00:de:ed", "name": "Kitchen E7", "model": "UAPA697", "clients": 12, "online": True, "area_id": "kitchen"}
+    # A bool is not a client count, and a disconnected device is offline.
+    assert garage["clients"] is None and garage["online"] is False and garage["area_id"] is None and garage["name"] == "Garage U7-Pro"
+    assert wifi.access_points(None) == [] and wifi.access_points([{"type": "uap", "mac": "aa:bb:cc:dd:ee:ff"}], None)[0]["name"] == "aa:bb:cc:dd:ee:ff"
+
+
+def test_placed_access_points_first_placement_wins_and_bad_entries_are_skipped():
+    layout = {"floor": [
+        {"name": "Ground", "access_points": [
+            {"mac": "8C:ED:E1:00:DE:ED", "cords": {"x": 100, "y": 200.5}},
+            {"mac": "28:70:4e:27:04:ed", "cords": {"x": float("nan"), "y": 1}},
+            {"mac": "9c:05:d6:a9:e2:5b", "cords": {"x": True, "y": 1}},
+            {"mac": None, "cords": {"x": 1, "y": 1}},
+            "junk",
+        ]},
+        {"name": "Upstairs", "access_points": [{"mac": "8c:ed:e1:00:de:ed", "cords": {"x": 5, "y": 5}}, {"mac": "84:78:48:16:d2:c6", "cords": {"x": 7, "y": 8}}]},
+        {"access_points": [{"mac": "a8:9c:6c:2e:d9:c6", "cords": {"x": 1, "y": 1}}]},   # a floor without a name
+    ]}
+    assert wifi.placed_access_points(layout) == {
+        "8c:ed:e1:00:de:ed": {"floor": "Ground", "x": 100.0, "y": 200.5},
+        "84:78:48:16:d2:c6": {"floor": "Upstairs", "x": 7.0, "y": 8.0},
+    }
+    assert wifi.placed_access_points(None) == {} and wifi.placed_access_points({"floor": None}) == {}
+
+
+def _ap_layout():
+    room = [{"x": 0, "y": 0}, {"x": 100, "y": 0}, {"x": 100, "y": 100}, {"x": 0, "y": 100}]
+    return {"floor": [{"name": "Ground", "zones": [{"entity_id": "Kitchen", "cords": room, "poly": True}],
+                       "access_points": [{"mac": "8c:ed:e1:00:de:ed", "name": "Kitchen E7", "cords": {"x": 50, "y": 50}},
+                                         {"mac": "28:70:4e:27:04:ed", "name": "Garage U7-Pro", "cords": {"x": 500, "y": 50}}]}]}
+
+
+def test_a_placed_access_point_is_on_the_floor_and_in_the_room_it_was_placed_in():
+    import sextant as core
+
+    class Hass:   # no registries: the plan alone places them
+        pass
+    aps = core._wifi_access_points(Hass(), _ap_layout(), ["8C:ED:E1:00:DE:ED", "28:70:4e:27:04:ed", "9c:05:d6:a9:e2:5b"])
+    assert aps["8c:ed:e1:00:de:ed"] == {"name": "Kitchen E7", "floor": "Ground", "room": "Kitchen", "area_id": None, "floor_id": None, "placed": True}
+    # Outside every room: the floor still counts.
+    assert aps["28:70:4e:27:04:ed"]["floor"] == "Ground" and aps["28:70:4e:27:04:ed"]["room"] is None
+    assert "9c:05:d6:a9:e2:5b" not in aps   # not placed, and no registry to place it by
+    assert core._wifi_access_points(Hass(), _ap_layout(), []) == {}
+
+
+def test_unifi_access_points_reads_every_hub_and_survives_one_not_set_up():
+    import types
+
+    import sextant as core
+
+    dev = lambda raw: types.SimpleNamespace(raw=raw)   # noqa: E731
+    hub = types.SimpleNamespace(api=types.SimpleNamespace(devices={"a": dev({"type": "uap", "mac": "8c:ed:e1:00:de:ed", "name": "Kitchen E7", "num_sta": 4, "state": 1}),
+                                                                   "b": dev({"type": "usw", "mac": "d0:21:f9:b2:67:72", "name": "Switch"})}))
+    entries = [types.SimpleNamespace(runtime_data=hub), types.SimpleNamespace(runtime_data=None), types.SimpleNamespace()]
+
+    class Hass:
+        config_entries = types.SimpleNamespace(async_entries=lambda domain: entries if domain == "unifi" else [])
+    aps = core._unifi_access_points(Hass())
+    assert [(a["mac"], a["name"], a["clients"]) for a in aps] == [("8c:ed:e1:00:de:ed", "Kitchen E7", 4)]
+
+    # No hub set up (no integration, or still starting): not known, rather
+    # than a controller with no access points.
+    entries[:] = [types.SimpleNamespace(runtime_data=None)]
+    assert core._unifi_access_points(Hass()) is None
+    entries[:] = [types.SimpleNamespace(runtime_data=types.SimpleNamespace(api=types.SimpleNamespace(devices={})))]
+    assert core._unifi_access_points(Hass()) == []
+
+
+def test_a_hyphenated_ap_mac_matches_the_access_point_placed_on_the_plan():
+    import sextant as core
+
+    states = [("device_tracker.iphone", "home", {"source_type": "router", "mac": "3A-26-7A-09-23-91", "ap_mac": "8C-ED-E1-00-DE-ED", "friendly_name": "iPhone"})]
+    c = wifi.candidates(states, ap_macs=["8c:ed:e1:00:de:ed"])
+    assert c["device_tracker.iphone"]["ap"] == "8c:ed:e1:00:de:ed" and c["device_tracker.iphone"]["mac"] == "3a:26:7a:09:23:91"
+
+    class Hass:
+        pass
+    aps = core._wifi_access_points(Hass(), _ap_layout(), [c["device_tracker.iphone"]["ap"], "28-70-4E-27-04-ED"])
+    assert aps["8c:ed:e1:00:de:ed"]["room"] == "Kitchen" and aps["28:70:4e:27:04:ed"]["placed"] is True

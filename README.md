@@ -87,7 +87,7 @@ token, in Home Assistant's own theme and unit system. Eight pages:
 | Page | For |
 |---|---|
 | [Live](docs/live.md) | every tracked thing on the plan, grouped by person; focus one for its room, spot, floor, proxies, timeline and activity heatmap; location pins; a refresh menu on the countdown |
-| [Edit](docs/edit.md) | place proxies and mmWave sensors, draw rooms, spots and no-go areas, set the scale and floor levels, line the floors up with anchors |
+| [Edit](docs/edit.md) | place proxies, mmWave sensors and Wi-Fi access points, draw rooms, spots and no-go areas, set the scale and floor levels, line the floors up with anchors |
 | [Things](docs/things.md) | what is tracked and everything Bermuda hears; name, class, colour, photo, height, owner and estimator per thing; people and their GPS fallbacks; robot vacuums |
 | [Bermuda](docs/bermuda.md) | Bermuda's global options, Find My accessories, Tiles |
 | [Proxies](docs/proxies.md) | proxy health by floor and room, what each proxy hears, the self-test |
