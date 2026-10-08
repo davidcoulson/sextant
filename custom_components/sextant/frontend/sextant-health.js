@@ -155,6 +155,12 @@ class SextantHealth extends LitElement {
 
   disconnectedCallback() { super.disconnectedCallback(); clearInterval(this._timer); }
 
+  willUpdate(changed) {
+    // The signal map is admin only: a user who loses admin while the page is
+    // open loses the copy already shown too.
+    if (changed.has("hass") && !this._isAdmin()) this._wifiHeat = null;
+  }
+
   updated(changed) {
     if (changed.has("data") && this.data) this._tuning = { ...(this.data.layout?.tuning || {}) };
   }
@@ -172,13 +178,17 @@ class SextantHealth extends LitElement {
   }
 
   async _loadWifiHeat() {
-    this._wifiHeat = await this.hass.callWS({ type: "sextant/wifi/heat" }).catch(() => null);
+    if (!this.hass || !this._isAdmin()) { this._wifiHeat = null; return; }
+    const r = await this.hass.callWS({ type: "sextant/wifi/heat" }).catch(() => null);
+    // Asked again after the answer: admin may have gone while it was on its way.
+    this._wifiHeat = this._isAdmin() ? r : null;
     this.requestUpdate();
   }
 
   async _clearWifiHeat() {
     if (!confirmDialog("Start the Wi-Fi signal map over? Every sample so far is dropped. Do this after moving or replacing access points.")) return;
-    await callWS(this, this.hass, { type: "sextant/wifi/heat/clear" });
+    const r = await callWS(this, this.hass, { type: "sextant/wifi/heat/clear" });
+    if (!r) return;   // callWS has said what went wrong; the samples are still there
     toast(this, "Wi-Fi signal map cleared");
     this._loadWifiHeat();
   }
@@ -543,7 +553,7 @@ class SextantHealth extends LitElement {
   _renderWifiRooms() {
     // (the dBm cells stay on one line: a pill split over two is unreadable)
     const h = this._wifiHeat;
-    if (!h) return nothing;
+    if (!h || !this._isAdmin()) return nothing;
     const rooms = h.rooms || [];
     const offsets = Object.entries(h.bias || {}).filter(([, v]) => Math.abs(v) >= 0.5);
     return html`<section class="card">

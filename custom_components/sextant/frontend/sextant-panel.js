@@ -1015,10 +1015,11 @@ class SextantLive extends LitElement {
     // (or stops being one while the page is open), drop anything already
     // loaded; the loaders below also discard answers that arrive afterwards.
     if (changed.has("hass") && !this._isAdmin() &&
-        (this._timeline || this._marks.length || this._truth || this._history || this._heat || this._scrub != null || this._pin)) {
+        (this._timeline || this._marks.length || this._truth || this._history || this._heat || this._scrub != null || this._pin || this._wifiHeat)) {
       this._timeline = null; this._marks = []; this._truth = null;
       this._history = null; this._scrub = null; this._heat = null; this._heatHours = 0;
       this._pin = null;
+      this._wifiHeat = null; this._wifiHeatKey = null; this._map?.setWifiHeat(null);
       this._map?.clearTrails();
     }
     // The map step takes the whole screen: the stage goes fixed and the
@@ -1036,8 +1037,16 @@ class SextantLive extends LitElement {
     if (changed.has("floor") || changed.has("_heat") || changed.has("data")) this._pushHeat();
     if (changed.has("_options")) this._map.setOptions(this._options);
     if (changed.has("data")) this._map.setOptions({ staleAfter: this._staleAfter() });
-    if (changed.has("_options") || changed.has("floor")) {
-      if (this._options.wifi_heat && this._isAdmin()) this._loadWifiHeat(); else { this._wifiHeat = null; this._map.setWifiHeat(null); }
+    if (changed.has("_options") || changed.has("floor") || changed.has("data") || changed.has("hass")) {
+      // Reloaded only when what it depends on moved: on or off, the floor,
+      // and the floor's scale (the cells are in plan pixels at that scale).
+      // A label or trails switch is not a reason to ask again.
+      const on = !!this._options.wifi_heat && this._isAdmin();
+      const key = on ? `${this.floor}|${this._floorObj()?.scale ?? ""}` : null;
+      if (key !== this._wifiHeatKey) {
+        this._wifiHeatKey = key;
+        if (on) this._loadWifiHeat(); else { this._wifiHeat = null; this._map.setWifiHeat(null); }
+      }
     }
     if (changed.has("data")) this._map.setAccessPoints(Array.isArray(this.data?.access_points) ? this.data.access_points : null);
     // A stay grows every cycle; re-read the timeline once a minute while a thing is focused.
@@ -1377,8 +1386,10 @@ class SextantLive extends LitElement {
   /** The Wi-Fi signal map for this floor (heat.py), drawn as the switch says. */
   async _loadWifiHeat() {
     const floor = this.floor;
+    if (!this._isAdmin()) return;
     const r = await this.hass?.callWS({ type: "sextant/wifi/heat", floor }).catch(() => null);
-    if (!this._options.wifi_heat || floor !== this.floor) return;   // switched off, or another floor, meanwhile
+    // Switched off, another floor, or admin gone, while it was on its way.
+    if (!this._options.wifi_heat || floor !== this.floor || !this._isAdmin()) return;
     this._wifiHeat = r;
     this._pushWifiHeat();
   }
@@ -1490,7 +1501,7 @@ class SextantLive extends LitElement {
           <button class="iconbtn narrow-only" title="Hide the map" aria-label="Hide the map" @click=${() => { this._mapOpen = false; }}><ha-icon icon="mdi:map-minus"></ha-icon></button>
         </div>
         ${zoom}
-        ${this._renderWifiLegend()}
+        ${pinning ? nothing : this._renderWifiLegend()}
         ${this._optionsOpen ? html`
           <div class="opts-backdrop narrow-only" @click=${() => { this._optionsOpen = false; }}></div>
           <div class="opts-sheet narrow-only">
