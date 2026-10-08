@@ -461,7 +461,7 @@ class SextantEdit extends LitElement {
       <div class="muted small">${item.mac}</div>
       ${clients.length ? html`<div class="small">Phones and watches on it now: ${clients.join(", ")}</div>` : nothing}
       ${floors.length && total ? html`<div class="small">Where people are when their phone is on it: ${floors.slice(0, 3).map(([n, c]) => `${n} ${Math.round((100 * c) / total)} %`).join(", ")}${floors[0][0] !== f.name && floors[0][1] / total >= 0.6 ? html` <span class="warn">- mostly ${floors[0][0]}, not ${f.name}: is it on the right floor?</span>` : nothing}</div>` : nothing}
-      <div class="muted small">Nothing positions by an access point. Placed, it tells the Wi-Fi floor hint which floor and room it is on until Sextant has learned where it reaches, and it is where a signal map will hang.</div>
+      <div class="muted small">Nothing positions by an access point. Placed, it tells the Wi-Fi floor hint which floor and room it is on until Sextant has learned where it reaches. The signal it gives is on the Live page's Signal map.</div>
       <div class="row"><span class="grow"></span>${uiButton({ label: "Delete", kind: "danger", onClick: () => this._deleteSelection() })}</div>
     </div>`;
   }

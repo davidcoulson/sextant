@@ -28,6 +28,12 @@ const HUES = [205, 25, 140, 95, 320, 45, 260, 180, 0, 60];
 // Who wins a crowded patch of plan when labels are laid out (see _flushLabels).
 // The thing you picked out first, then the things, then the plan they sit on.
 const LABEL_PRIO = { focus: 4, thing: 3, place: 2, other: 2, proxy: 1 };
+/** A signal level's colour: red at -80 dBm and below, through amber, to green
+ * from -50 dBm up. Shared with the Live page's legend. */
+export function signalColour(dbm, alpha = 1) {
+  const t = Math.max(0, Math.min(1, (Number(dbm) + 80) / 30));
+  return `hsla(${Math.round(t * 125)}, 72%, 46%, ${alpha})`;
+}
 const LABEL_TRIES = 7;           // how far a label may step from its marker before it is dropped
 
 /** Where each label of a frame goes so that no two overlap.
@@ -505,6 +511,8 @@ export class SextantMap {
     this.radarTargets = [];  // mmWave targets on this floor: [{cords, thing, room, radar_name}]
     this.radarLive = null;   // the Edit page's selected radar, live: {radar_id, targets: [{index, cords}]}
     this.apInfo = null;      // mac -> {name, clients, online}: the UniFi access points, null until known
+    this.wifiHeat = null;    // the Wi-Fi signal map: {cells, mode: "signal"|"ap", names: {mac: name}, colours: {mac: css}}
+    this._wifiCell = null;   // the signal map's square under the pointer (or the last tap)
     this.hover = null;
     this.draft = null; // points of a polygon being drawn
     this.view = { k: 1, tx: 0, ty: 0 };
@@ -672,6 +680,9 @@ export class SextantMap {
       return;
     }
     const hit = this.hitTest(p);
+    // With the signal map on, a tap names the square under it (a phone has
+    // no hover), whatever else the tap does.
+    if (this.wifiHeat && this.mode !== "edit") this._pointWifiCell(this._wifiCellBlocked(hit) ? null : this.toMap(p));
     if (this.mode === "edit" && this.tool !== "select" && e.button === 0) {
       // Drawing: each click adds a vertex; clicking the first vertex closes.
       const m = this.toMap(p);
@@ -781,6 +792,7 @@ export class SextantMap {
         if (this.host.onHover) this.host.onHover(hit);
         this.invalidate();
       }
+      if (this.wifiHeat && this.mode !== "edit") this._pointWifiCell(this._wifiCellBlocked(hit) ? null : this.toMap(p));
       return;
     }
     const d = this._drag;
@@ -1024,6 +1036,7 @@ export class SextantMap {
     if (this.options.subzones) this._drawPolygons(ctx, f.subzones || [], "subzone");
     if (this.biasMap) this._drawBiasMap(ctx);
     if (this.heat && this.mode !== "edit") this._drawHeat(ctx);
+    if (this.wifiHeat && this.mode !== "edit") this._drawWifiHeat(ctx);
     this._drawDraft(ctx);
     if (this._snap) this._drawSnap(ctx);
     // "Proxies" off hides them entirely: a plan with dozens of them is busy,
@@ -1314,6 +1327,51 @@ export class SextantMap {
   setRadarInfo(info) { this.radarInfo = info || {}; this.invalidate(); }
   setRadarTargets(list) { this.radarTargets = list || []; this.invalidate(); }
   setRadarLive(live) { this.radarLive = live || null; this.invalidate(); }
+  /** The Wi-Fi signal map to draw (heat.py's cells), or null to draw none. */
+  setWifiHeat(h) { this.wifiHeat = h && Array.isArray(h.cells) ? h : null; if (!this.wifiHeat) this._wifiCell = null; this.invalidate(); }
+
+  /** Whether what is under the pointer hides the square's name: a thing or
+   * an access point does. A proxy does not - the proxies sample their own
+   * squares, so one sits in most of them and would hide nearly all - nor do
+   * the room and the spot the square is on. */
+  _wifiCellBlocked(hit) { return !!hit && (hit.kind === "thing" || hit.kind === "ap"); }
+
+  /** The square pointed at is kept as a place, not as the cell object: the
+   * map is reloaded every minute, and the square under a still pointer must
+   * stay named across it. */
+  _pointWifiCell(m) {
+    const cells = this.wifiHeat?.cells || [];
+    const cell = m ? cells.find((c) => m.x >= c.x && m.x < c.x + c.size && m.y >= c.y && m.y < c.y + c.size) || null : null;
+    const at = cell ? `${cell.x}|${cell.y}` : null;
+    if (at !== this._wifiCell) { this._wifiCell = at; this.invalidate(); }
+  }
+
+  /** The signal map: a square a metre across per cell with samples. "signal"
+   * colours it by strength (red under -80 dBm, green from -50), "ap" by the
+   * access point most of its samples were on, so the hand-over lines and a
+   * client clinging to a far access point show. Under the rooms' labels and
+   * the things; the square under the pointer is outlined and named. */
+  _drawWifiHeat(ctx) {
+    const h = this.wifiHeat, k = this.view.k;
+    ctx.save();
+    for (const c of h.cells) {
+      ctx.fillStyle = h.mode === "ap" ? (h.colours?.[c.ap] || "rgba(128,128,128,0.4)") : signalColour(c.dbm, 0.5);
+      ctx.fillRect(c.x, c.y, c.size, c.size);
+    }
+    const sel = this._wifiCell ? h.cells.find((c) => `${c.x}|${c.y}` === this._wifiCell) : null;
+    if (sel) {
+      ctx.strokeStyle = this.dark ? "#ffffff" : "#1b1f24"; ctx.lineWidth = 2 / k;
+      ctx.strokeRect(sel.x, sel.y, sel.size, sel.size);
+    }
+    ctx.restore();
+    if (sel) {
+      const name = h.names?.[sel.ap] || sel.ap;
+      const others = Object.keys(sel.aps || {}).length - 1;
+      this._label(ctx, `${name} · ${Math.round(sel.dbm)} dBm · ${sel.n} sample${sel.n === 1 ? "" : "s"}${others > 0 ? ` · +${others} other AP${others === 1 ? "" : "s"}` : ""}`,
+        sel.x + sel.size / 2, sel.y - 8 / k, 10, 0.95, null, LABEL_PRIO.focus);
+    }
+  }
+
   /** The UniFi access points: [{mac, name, clients, online}], or null when
    * the list is not known (then none is marked as missing). */
   setAccessPoints(list) { this.apInfo = Array.isArray(list) ? Object.fromEntries(list.map((a) => [a.mac, a])) : null; this.invalidate(); }

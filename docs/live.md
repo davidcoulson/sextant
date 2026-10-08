@@ -200,3 +200,38 @@ does not pile hours onto its last square. History keeps 6 hours by
 default; **History kept (hours)** on the Tuning page raises it, up to a
 week. Asking for more than is kept says how far back it goes.
 
+
+## Wi-Fi signal
+
+With UniFi Network set up, the **Signal** switch over the map (admins only)
+colours the plan in one-metre squares by what the Wi-Fi is actually like
+there. The readings are what the UniFi controller reports for each wireless
+client: the signal its access point hears from it, in dBm. They are placed
+where Sextant knows the client is:
+
+- **The proxies on the Wi-Fi**, where they are placed. An ESP32's Bluetooth
+  address is its Wi-Fi address plus two, which is how each proxy is matched
+  to its Wi-Fi client. A proxy on Ethernet adds nothing.
+- **Each person's phone and watch** (the Wi-Fi trackers on the People card),
+  where their Bluetooth fix is at the time. A reading is used only when the
+  fix is under 15 seconds old, and only when the person has exactly one
+  phone (or one watch) with a fix.
+
+Each client gives at most one sample every 30 seconds. **Signal** shades
+each square from red (-80 dBm and below) through amber to green (-50 dBm
+and up). **Access point** colours each square by the access point most of
+its samples were on, which shows where clients hand over and where one
+clings to an access point a floor away. Point at a square, or tap it, for
+its access point, signal and sample count.
+
+It is measured, never predicted: a square nobody has stood in stays empty.
+The proxies fill their own squares within minutes, and phones and watches
+fill the rooms people use over a few days. It is also the signal to the
+access point a client is on, not to every access point in reach.
+
+Devices differ: a watch transmits less than a phone, and a phone in a
+pocket less than one in a hand. Each phone's and watch's typical offset
+from the proxies in the same square is learned (up to 15 dB) and taken off
+its samples. The **Wi-Fi signal by room** card on the
+[Proxies](proxies.md) page lists every room weakest first, with the learned
+offsets and a **Start over** button for after an access point moves.

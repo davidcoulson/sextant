@@ -30,7 +30,8 @@ room** when the fix sits between two.
 - 📡 **More than Bluetooth.** An mmWave presence sensor on the plan puts
   the phone in front of it on the exact spot, pins locations by itself and
   counts people who carry nothing. Roborock vacuums are placed from their
-  own maps.
+  own maps. With UniFi, a phone still on the home Wi-Fi keeps its owner
+  home, and the Live map shows the Wi-Fi signal measured in every room.
 - 🔧 **Set up in an afternoon.** Install from HACS, upload a floor plan,
   draw your rooms, drop your Bluetooth proxies where they sit in the house,
   choose what to track. That is all.

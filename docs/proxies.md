@@ -24,3 +24,10 @@ figures once it has been sampled: a manual run samples one floor and
 replaces the window, while **Auto calibration** keeps every floor sampled
 in a rolling six-hour window. Turn it on if you want the whole house
 covered.
+
+**Wi-Fi signal by room** ranks the rooms by the median of their
+[Wi-Fi signal](live.md#wi-fi-signal) squares, weakest first. Each row
+shows the weakest square and the access point most squares are on. Below
+the table are the sample count, each device's learned offset, and **Start
+over**, which drops every sample. Use it after moving or replacing an access
+point.

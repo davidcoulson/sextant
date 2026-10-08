@@ -181,6 +181,7 @@ does two things:
   in them, so they are not mistaken for proxies. Point at one, or tap it on
   a phone, for its name and client count. An offline access point is red,
   and one the controller no longer lists (replaced or removed) is orange.
+  The [Wi-Fi signal](live.md#wi-fi-signal) map is drawn on the same plan.
 
 ## Lining the floors up
 
