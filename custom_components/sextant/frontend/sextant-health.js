@@ -155,6 +155,12 @@ class SextantHealth extends LitElement {
 
   disconnectedCallback() { super.disconnectedCallback(); clearInterval(this._timer); }
 
+  willUpdate(changed) {
+    // The signal map is admin only: a user who loses admin while the page is
+    // open loses the copy already shown too.
+    if (changed.has("hass") && !this._isAdmin()) this._wifiHeat = null;
+  }
+
   updated(changed) {
     if (changed.has("data") && this.data) this._tuning = { ...(this.data.layout?.tuning || {}) };
   }
@@ -168,6 +174,23 @@ class SextantHealth extends LitElement {
     this._receivers = rx;
     this._cal = cal;
     this._loadBaselines();
+    this._loadWifiHeat();
+  }
+
+  async _loadWifiHeat() {
+    if (!this.hass || !this._isAdmin()) { this._wifiHeat = null; return; }
+    const r = await this.hass.callWS({ type: "sextant/wifi/heat" }).catch(() => null);
+    // Asked again after the answer: admin may have gone while it was on its way.
+    this._wifiHeat = this._isAdmin() ? r : null;
+    this.requestUpdate();
+  }
+
+  async _clearWifiHeat() {
+    if (!confirmDialog("Start the Wi-Fi signal map over? Every sample so far is dropped. Do this after moving or replacing access points.")) return;
+    const r = await callWS(this, this.hass, { type: "sextant/wifi/heat/clear" });
+    if (!r) return;   // callWS has said what went wrong; the samples are still there
+    toast(this, "Wi-Fi signal map cleared");
+    this._loadWifiHeat();
   }
 
   async _poll() {
@@ -269,7 +292,7 @@ class SextantHealth extends LitElement {
       case "advice":
         return html`<div class="page"><div class="cols">${this._renderAdvice()}</div></div>`;
       default:
-        return html`<div class="page"><div class="cols">${this._renderReceivers()}${this._renderSelftest()}</div></div>`;
+        return html`<div class="page"><div class="cols">${this._renderReceivers()}${this._renderSelftest()}${this._renderWifiRooms()}</div></div>`;
     }
   }
 
@@ -520,6 +543,31 @@ class SextantHealth extends LitElement {
     </section>`;
   }
 
+  // --- Wi-Fi signal by room --------------------------------------------------------
+
+  /** A signal level as a pill: good from -60 dBm up, weak below -70. */
+  _dbmPill(dbm) {
+    return html`<span class="pill ${dbm >= -60 ? "ok" : dbm >= -70 ? "warn" : "bad"}">${fmtNum(dbm, 0)} dBm</span>`;
+  }
+
+  _renderWifiRooms() {
+    // (the dBm cells stay on one line: a pill split over two is unreadable)
+    const h = this._wifiHeat;
+    if (!h || !this._isAdmin()) return nothing;
+    const rooms = h.rooms || [];
+    const offsets = Object.entries(h.bias || {}).filter(([, v]) => Math.abs(v) >= 0.5);
+    return html`<section class="card">
+      <h3>Wi-Fi signal by room</h3>
+      <p class="small muted">What phones, watches and the proxies on the Wi-Fi actually get, where Sextant has placed them: the median of each room's one-metre squares, weakest first. It is the signal to the access point each one is on. The map itself is on the Live page (the Wi-Fi signal switch).</p>
+      ${rooms.length ? html`<div class="wrap"><table>
+        <tr><th>Room</th><th class="num">Median</th><th class="num">Weakest</th><th>Mostly on</th><th class="num">Squares</th></tr>
+        ${rooms.map((r) => html`<tr><td>${r.room} <span class="muted small">${r.floor}</span></td><td class="num nowrap">${this._dbmPill(r.dbm)}</td><td class="num nowrap">${fmtNum(r.worst, 0)} dBm</td><td>${h.aps?.[r.ap] || r.ap}</td><td class="num">${r.cells}</td></tr>`)}
+      </table></div>` : html`<p class="small">No room has enough samples yet. The proxies on the Wi-Fi fill their own squares within minutes; phones and watches fill the rooms people use over a few days.</p>`}
+      <div class="row small muted">${fmtNum(h.samples || 0, 0)} samples so far${offsets.length ? html` · learned offsets: ${offsets.map(([n, v]) => `${n} ${v > 0 ? "+" : ""}${fmtNum(v, 1)} dB`).join(", ")}` : nothing}
+        <span class="grow"></span>${uiButton({ label: "Start over", kind: "text", onClick: () => this._clearWifiHeat(), title: "Drop every sample: after moving or replacing access points" })}</div>
+    </section>`;
+  }
+
   // --- Calibration ---------------------------------------------------------------
 
   _renderCalibration() {
@@ -682,6 +730,7 @@ class SextantHealth extends LitElement {
   }
 
   static styles = [sharedStyles, widgetStyles, css`
+    td.nowrap { white-space: nowrap; }
     .good { color: var(--success-color, #2e7d32); font-weight: 600; }
     .bad { color: var(--error-color, #c62828); font-weight: 600; }
     :host { display: block; overflow: auto; }

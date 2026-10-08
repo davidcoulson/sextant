@@ -12,7 +12,7 @@
  *   tuning       stability KPI, live tuning, history retention
  */
 import { LitElement, html, css, nothing } from "./lit.js";
-import { SextantMap, thingColor, thingHue, staleness, shortAge, heatCells, pointInPolygon } from "./sextant-map.js";
+import { signalColour, SextantMap, thingColor, thingHue, staleness, shortAge, heatCells, pointInPolygon } from "./sextant-map.js";
 import { sharedStyles, widgetStyles, fmtAge, fmtNum, toast, confirmDialog, ensureHaComponents, uiSelect, uiButton, callWS, sortFloors, thingName, proxyName, fmtLen, fmtSpeed, classIcon, pronounsFor, uiIconButton, uiSegmented } from "./sextant-ui.js";
 
 // What this page is running: the version of the files it was loaded from
@@ -532,11 +532,13 @@ class SextantLive extends LitElement {
       onFloorReady: () => { if (this._pin?.step === "where") requestAnimationFrame(() => this._pinZoom()); },
     });
     this._linksTimer = setInterval(() => { if (this._selected) this._loadLinks(); }, 10000);
+    // The signal map changes slowly: a minute between looks is plenty.
+    this._wifiHeatTimer = setInterval(() => { if (this._options.wifi_heat) this._loadWifiHeat(); }, 60000);
     this._pushFloor();
     this._pushThings();
   }
 
-  disconnectedCallback() { super.disconnectedCallback(); this._map?.destroy(); clearInterval(this._linksTimer); this._hostResize?.disconnect(); }
+  disconnectedCallback() { super.disconnectedCallback(); this._map?.destroy(); clearInterval(this._linksTimer); clearInterval(this._wifiHeatTimer); this._hostResize?.disconnect(); }
 
   _select(ent) {
     if (ent !== this._selected) { this._truth = null; this._marking = false; this._blend = null; this._heat = null; }
@@ -1013,10 +1015,11 @@ class SextantLive extends LitElement {
     // (or stops being one while the page is open), drop anything already
     // loaded; the loaders below also discard answers that arrive afterwards.
     if (changed.has("hass") && !this._isAdmin() &&
-        (this._timeline || this._marks.length || this._truth || this._history || this._heat || this._scrub != null || this._pin)) {
+        (this._timeline || this._marks.length || this._truth || this._history || this._heat || this._scrub != null || this._pin || this._wifiHeat)) {
       this._timeline = null; this._marks = []; this._truth = null;
       this._history = null; this._scrub = null; this._heat = null; this._heatHours = 0;
       this._pin = null;
+      this._wifiHeat = null; this._wifiHeatKey = null; this._map?.setWifiHeat(null);
       this._map?.clearTrails();
     }
     // The map step takes the whole screen: the stage goes fixed and the
@@ -1034,6 +1037,17 @@ class SextantLive extends LitElement {
     if (changed.has("floor") || changed.has("_heat") || changed.has("data")) this._pushHeat();
     if (changed.has("_options")) this._map.setOptions(this._options);
     if (changed.has("data")) this._map.setOptions({ staleAfter: this._staleAfter() });
+    if (changed.has("_options") || changed.has("floor") || changed.has("data") || changed.has("hass")) {
+      // Reloaded only when what it depends on moved: on or off, the floor,
+      // and the floor's scale (the cells are in plan pixels at that scale).
+      // A label or trails switch is not a reason to ask again.
+      const on = !!this._options.wifi_heat && this._isAdmin();
+      const key = on ? `${this.floor}|${this._floorObj()?.scale ?? ""}` : null;
+      if (key !== this._wifiHeatKey) {
+        this._wifiHeatKey = key;
+        if (on) this._loadWifiHeat(); else { this._wifiHeat = null; this._map.setWifiHeat(null); }
+      }
+    }
     if (changed.has("data")) this._map.setAccessPoints(Array.isArray(this.data?.access_points) ? this.data.access_points : null);
     // A stay grows every cycle; re-read the timeline once a minute while a thing is focused.
     if (changed.has("positions") && this._selected && (!this._timeline || Date.now() - this._timeline.at > 60000)) this._loadTimeline(this._selected);
@@ -1369,6 +1383,45 @@ class SextantLive extends LitElement {
     return pts[lo].t <= t ? pts[lo] : null;
   }
 
+  /** The Wi-Fi signal map for this floor (heat.py), drawn as the switch says. */
+  async _loadWifiHeat() {
+    const floor = this.floor;
+    if (!this._isAdmin()) return;
+    const r = await this.hass?.callWS({ type: "sextant/wifi/heat", floor }).catch(() => null);
+    // Switched off, another floor, or admin gone, while it was on its way.
+    if (!this._options.wifi_heat || floor !== this.floor || !this._isAdmin()) return;
+    this._wifiHeat = r;
+    this._pushWifiHeat();
+  }
+
+  _pushWifiHeat() {
+    const r = this._wifiHeat;
+    if (!r) { this._map?.setWifiHeat(null); return; }
+    // Each access point its own colour, in a fixed order, so a colour means
+    // the same access point on every floor and every visit.
+    const macs = Object.keys(r.aps || {}).sort();
+    for (const c of r.cells || []) if (!macs.includes(c.ap)) macs.push(c.ap);
+    const colours = Object.fromEntries(macs.map((m, i) => [m, `hsla(${Math.round((i * 360) / Math.max(macs.length, 1) + 15) % 360}, 65%, 52%, 0.55)`]));
+    this._wifiColours = colours;
+    this._map?.setWifiHeat({ cells: r.cells || [], mode: this._options.wifi_heat_mode === "ap" ? "ap" : "signal", names: r.aps || {}, colours });
+    this.requestUpdate();
+  }
+
+  _renderWifiLegend() {
+    const r = this._wifiHeat;
+    if (!this._options.wifi_heat || !r) return nothing;
+    const byAp = this._options.wifi_heat_mode === "ap";
+    const cells = r.cells || [];
+    const here = [...new Set(cells.map((c) => c.ap))].sort((a, b) => String(r.aps?.[a] || a).localeCompare(String(r.aps?.[b] || b)));
+    return html`<div class="wifilegend ${this._history ? "lifted" : ""}">
+      ${uiSegmented({ label: "Wi-Fi signal map", value: byAp ? "ap" : "signal", options: [{ value: "signal", label: "Signal", title: "How strong the signal is in each square" }, { value: "ap", label: "Access point", title: "Which access point clients are on in each square" }], onChange: (v) => { this._setOption("wifi_heat_mode", v); this._pushWifiHeat(); } })}
+      ${!cells.length ? html`<div class="muted">No samples on this floor yet.</div>`
+        : byAp ? html`<div class="apkeys">${here.map((m) => html`<span><i style=${`background:${this._wifiColours?.[m]}`}></i>${r.aps?.[m] || m}</span>`)}</div>`
+        : html`<div class="ramp"><span>-80</span><i style=${`background: linear-gradient(90deg, ${[-80, -72, -65, -58, -50].map((d) => signalColour(d, 0.85)).join(", ")})`}></i><span>-50 dBm</span></div>`}
+      ${cells.length ? html`<div class="muted">${cells.length} square${cells.length === 1 ? "" : "s"} on this floor · point at one, or tap it</div>` : nothing}
+    </div>`;
+  }
+
   _setOption(key, value) {
     this._options = { ...this._options, [key]: value };
     try { localStorage.setItem("sextant.live.options", JSON.stringify(this._options)); } catch { /* ignore */ }
@@ -1404,6 +1457,7 @@ class SextantLive extends LitElement {
       ["subzones", "Spots", "Draw the spots (a couch, a desk, a bedside table)", "mdi:sofa-outline"],
       ["receivers", "Proxies", "Draw the proxies. Whichever one you point at is named; Labels names the rooms and things", "mdi:access-point"],
       ["access_points", "Wi-Fi", "Draw the Wi-Fi access points placed on the plan. Point at one (or tap it) for its name and how many clients it has", "mdi:wifi"],
+      ...(this._isAdmin() ? [["wifi_heat", "Signal", "The Wi-Fi signal map: how strong the signal is in each square metre, or which access point clients are on there, measured from the proxies and the people's phones and watches", "mdi:wifi-strength-3"]] : []),
       ["circles", "Range circles", "The distance each proxy measured, as a circle: the fix is where they meet", "mdi:radar"],
       ["fingerprint", "Fingerprint fix", "Where the fingerprint estimator alone would put each thing (dashed), next to the published fix", "mdi:fingerprint"],
     ];
@@ -1447,6 +1501,7 @@ class SextantLive extends LitElement {
           <button class="iconbtn narrow-only" title="Hide the map" aria-label="Hide the map" @click=${() => { this._mapOpen = false; }}><ha-icon icon="mdi:map-minus"></ha-icon></button>
         </div>
         ${zoom}
+        ${pinning ? nothing : this._renderWifiLegend()}
         ${this._optionsOpen ? html`
           <div class="opts-backdrop narrow-only" @click=${() => { this._optionsOpen = false; }}></div>
           <div class="opts-sheet narrow-only">
@@ -1719,8 +1774,18 @@ class SextantLive extends LitElement {
     .overlay .qa.opt.on { background: var(--primary-color, #03a9f4); color: var(--text-primary-color, #fff); }
     .overlay .qa.opt .unit { position: absolute; right: 2px; bottom: 1px; font-size: 8px; line-height: 1; }
     .overlay .sep { width: 1px; align-self: stretch; margin: 4px 3px; background: var(--divider-color, rgba(0,0,0,0.12)); }
-    .zoom { position: absolute; right: 10px; bottom: 10px; display: flex; gap: 2px; padding: 4px; border-radius: 12px; background: var(--card-background-color); box-shadow: var(--ha-card-box-shadow, 0 2px 6px rgba(0,0,0,0.25)); z-index: 2; }
+    /* Clear of the Things list, which floats over the map's right edge on a
+       wide screen (as the scrubber is): at right: 10px the zoom buttons sat
+       under it, out of reach. The narrow layout puts them back. */
+    .zoom { position: absolute; right: 320px; bottom: 10px; display: flex; gap: 2px; padding: 4px; border-radius: 12px; background: var(--card-background-color); box-shadow: var(--ha-card-box-shadow, 0 2px 6px rgba(0,0,0,0.25)); z-index: 2; }
     .zoom.lifted { bottom: 62px; }
+    .wifilegend { position: absolute; right: 320px; bottom: 62px; z-index: 2; display: flex; flex-direction: column; gap: 6px; max-width: min(340px, calc(100% - 20px)); padding: 8px 10px; border-radius: 10px; background: var(--card-background-color); box-shadow: var(--ha-card-box-shadow, 0 2px 6px rgba(0,0,0,0.25)); font-size: 12px; }
+    .wifilegend.lifted { bottom: 114px; }
+    .wifilegend .ramp { display: flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
+    .wifilegend .ramp i { flex: 1; height: 10px; min-width: 120px; border-radius: 5px; }
+    .wifilegend .apkeys { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+    .wifilegend .apkeys span { display: inline-flex; align-items: center; gap: 4px; }
+    .wifilegend .apkeys i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
     .zoom button { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--primary-text-color); cursor: pointer; }
     .zoom button:hover { background: var(--secondary-background-color, rgba(0,0,0,0.06)); }
     .zoom button:focus-visible, .overlay .qa.opt:focus-visible { outline: 2px solid var(--primary-color, #03a9f4); outline-offset: 1px; }
@@ -1928,7 +1993,7 @@ class SextantLive extends LitElement {
       .detail .grip span { width: 44px; height: 5px; border-radius: 3px; background: var(--divider-color, #c0c0c0); }
       .detail .grip:active span, .detail .grip:focus-visible span { background: var(--primary-color, #03a9f4); }
       .detail .grip:focus-visible { outline: none; }
-      .scrub { right: 10px; }
+      .scrub, .zoom, .wifilegend { right: 10px; }
       /* Things, and with it Hide map, stays reachable however far the list
          is scrolled - it used to scroll away and leave no way to close a map
          taking half the screen. */

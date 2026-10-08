@@ -34,6 +34,7 @@ STORAGE_KEY_CALIB = "sextant_calibration_state"      # -> config/.storage/sextan
 STORAGE_KEY_KPI = "sextant_kpi_baselines"            # -> config/.storage/sextant_kpi_baselines
 STORAGE_KEY_TRUTH = "sextant_truth"                  # -> config/.storage/sextant_truth (marks + their samples)
 STORAGE_KEY_FP_GAINS = "sextant_fingerprint_gains"   # -> the learned reference gains, so a restart starts warm
+STORAGE_KEY_WIFI_HEAT = "sextant_wifi_heat"          # -> the Wi-Fi signal map's samples (heat.py)
 STORAGE_KEY_RUNTIME = "sextant_runtime"              # -> each thing's elections and filter, to survive a restart
 
 # Serializes read-modify-write sequences on the layout across every writer
@@ -356,6 +357,30 @@ async def load_fp_gains(hass) -> dict:
 
 async def save_fp_gains(hass, data: dict) -> None:
     await _fp_gain_store(hass).async_save(data)
+
+
+# --- Wi-Fi signal map (see heat.py) -------------------------------------------
+
+def _wifi_heat_store(hass) -> Store:
+    bucket = _bucket(hass)
+    store = bucket.get("_wifi_heat_store")
+    if store is None:
+        store = bucket["_wifi_heat_store"] = Store(hass, STORAGE_VERSION, STORAGE_KEY_WIFI_HEAT)
+    return store
+
+
+async def load_wifi_heat(hass):
+    """The stored signal map as written, or None when there is none or it
+    cannot be read (heat.clean makes it safe to use)."""
+    try:
+        return await _wifi_heat_store(hass).async_load()
+    except Exception as e:
+        _LOGGER.warning("Could not load the Wi-Fi signal map; starting empty: %s", e)
+        return None
+
+
+async def save_wifi_heat(hass, data) -> None:
+    await _wifi_heat_store(hass).async_save(data)
 
 
 # --- Runtime state (see runtime.py) -----------------------------------------

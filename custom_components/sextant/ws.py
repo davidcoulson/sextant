@@ -1697,6 +1697,31 @@ async def ws_person_wifi_set(hass, connection, msg):
     connection.send_result(msg["id"], {"person": person, "trackers": trackers})
 
 
+@websocket_api.websocket_command({vol.Required("type"): "sextant/wifi/heat", vol.Optional("floor"): str})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_wifi_heat(hass, connection, msg):
+    """The Wi-Fi signal map (heat.py): one floor's cells when ``floor`` is
+    given, and every floor's rooms, weakest first. Admin only, like the
+    history: the cells are where people's phones have been."""
+    core = _core()
+    layout = get_layout(hass)
+    connection.send_result(msg["id"], core.wifi_heat_report(hass, layout if isinstance(layout, dict) else {}, msg.get("floor")))
+
+
+@websocket_api.websocket_command({vol.Required("type"): "sextant/wifi/heat/clear"})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_wifi_heat_clear(hass, connection, msg):
+    """Start the signal map over: after moving or replacing access points,
+    the old cells describe a network that is gone."""
+    core = _core()
+    core._wifi_heat.clear()
+    core._wifi_heat.update(core.heat_mod.new_store())
+    await core.save_wifi_heat(hass, core._wifi_heat)
+    connection.send_result(msg["id"], {"cleared": True})
+
+
 @websocket_api.websocket_command({vol.Required("type"): "sextant/snapshots/list"})
 @websocket_api.require_admin
 @websocket_api.async_response
@@ -1981,6 +2006,7 @@ async def ws_robot_remove(hass, connection, msg):
 COMMANDS = (
     ws_advice,
     ws_snapshots_list, ws_snapshots_restore, ws_thing_forget, ws_person_trackers_set, ws_person_wifi_set,
+    ws_wifi_heat, ws_wifi_heat_clear,
     ws_robot_list, ws_robot_align, ws_robot_dock, ws_robot_remove, ws_election_log_clear, ws_interval_set,
     ws_radar_devices, ws_radar_targets,
     ws_layout_get, ws_layout_save, ws_tuning_set, ws_thing_tune,

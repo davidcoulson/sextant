@@ -60,11 +60,13 @@ from .storage import (
     get_layout_for_edit,
     get_layout_version,
     load_fp_gains,
+    load_wifi_heat,
     load_layout,
     load_runtime,
     load_truth,
     save_truth,
     save_fp_gains,
+    save_wifi_heat,
     save_runtime,
     migrate_from_bps,
     migrate_legacy,
@@ -83,6 +85,7 @@ from . import truth as truth_mod
 from . import persons as persons_mod
 from . import kpi
 from . import wifi as wifi_mod
+from . import heat as heat_mod
 from . import rooms as rooms_mod
 from . import runtime as runtime_mod
 from .zone_adjust import adjust_zones, adjust_subzones
@@ -3622,6 +3625,10 @@ _person_visits = {}
 # view: {"candidates", "aps": {mac: {"name", "floor", "room", "area_id", "floor_id"}},
 # "assigned": {person: {"entity", "how", "confidence"}}, "people": {person: wifi dict}}.
 _wifi_store = wifi_mod.new_store()
+# The Wi-Fi signal map (heat.py): samples pooled per metre cell, saved on its own.
+_wifi_heat = heat_mod.new_store()
+_wifi_heat_saved_at = 0.0
+_wifi_heat_tick = 0.0
 _wifi_now = {}
 
 
@@ -3844,8 +3851,18 @@ def _seed_last_seen_from_history(hass):
         _LOGGER.debug("No history to date the last sighting from: %s", e)
 
 
-async def _save_runtime(hass):
-    """Write the state a restart would otherwise lose."""
+async def _save_runtime(hass, final=False):
+    """Write the state a restart would otherwise lose. The Wi-Fi signal map
+    goes too, every ten minutes and on the way down (``final``): it is big
+    next to the rest and changes slowly."""
+    global _wifi_heat_saved_at
+    now = time.time()
+    if final or now - _wifi_heat_saved_at >= WIFI_HEAT_SAVE_EVERY_S:
+        _wifi_heat_saved_at = now
+        try:
+            await save_wifi_heat(hass, _wifi_heat)
+        except Exception as e:  # noqa: BLE001
+            _LOGGER.warning("Could not save the Wi-Fi signal map: %s", e)
     try:
         rows = [r for r in (hass.data.get(DOMAIN, {}).get("apitricords") or []) if isinstance(r, dict)]
         # A thing that has gone quiet is pruned out of the rows, but where it
@@ -4005,6 +4022,124 @@ def _wifi_access_points(hass, layout, macs):
     for mac in placed:
         if mac not in out:
             out[mac] = where(mac, {"name": names.get(mac), "floor": None, "room": None, "area_id": None, "floor_id": None})
+    return out
+
+
+WIFI_HEAT_SAVE_EVERY_S = 600.0
+# How fresh a thing's BLE fix must be to place its Wi-Fi reading, and the
+# controller's reading itself; and how often the map is sampled at all.
+WIFI_HEAT_FIX_S = 15.0
+WIFI_HEAT_SEEN_S = 120.0
+WIFI_HEAT_EVERY_S = 10.0
+
+
+def _unifi_clients(hass):
+    """{mac: raw} for every wireless client the UniFi controller has, or None
+    while no UniFi hub is set up. All of them, whatever Home Assistant tracks:
+    the signal map needs the proxies, which are not tracked."""
+    out, loaded = {}, False
+    for entry in hass.config_entries.async_entries("unifi"):
+        clients = getattr(getattr(getattr(entry, "runtime_data", None), "api", None), "clients", None)
+        try:
+            raws = [getattr(c, "raw", None) for c in clients.values()]
+        except Exception:  # noqa: BLE001 - an entry not set up (yet)
+            continue
+        loaded = True
+        for raw in raws:
+            if isinstance(raw, dict) and not raw.get("is_wired"):
+                mac = wifi_mod.norm_mac(raw.get("mac"))
+                if mac:
+                    out[mac] = raw
+    return out if loaded else None
+
+
+def _wifi_reading(raw, now):
+    """(access point, dBm) from a client's raw record when it is a current
+    association, else None."""
+    if not isinstance(raw, dict):
+        return None
+    ap, signal, seen = wifi_mod.norm_mac(raw.get("ap_mac")), raw.get("signal"), raw.get("last_seen")
+    if ap is None or not isinstance(signal, (int, float)) or isinstance(signal, bool) or not math.isfinite(signal):
+        return None
+    if isinstance(seen, (int, float)) and not isinstance(seen, bool) and now - seen > WIFI_HEAT_SEEN_S:
+        return None
+    return ap, float(signal)
+
+
+def _wifi_heat_cycle(hass, layout, view, by_person, rows, classes, now):
+    """Samples for the Wi-Fi signal map (heat.py): every placed proxy on the
+    Wi-Fi, where it is (the reference), and each person's phone and watch
+    where its BLE fix puts it this cycle."""
+    global _wifi_heat_tick
+    if 0 <= now - _wifi_heat_tick < WIFI_HEAT_EVERY_S:
+        return
+    _wifi_heat_tick = now
+    clients = _unifi_clients(hass)
+    if not clients:
+        return
+    floors = {f.get("name"): f for f in layout.get("floor") or [] if isinstance(f, dict) and f.get("name")}
+    macs = set(clients)
+    for name, floor in floors.items():
+        scale = floor.get("scale")
+        for rc in floor.get("receivers") or []:
+            cords = rc.get("cords") if isinstance(rc, dict) else None
+            mac = heat_mod.wifi_mac_for_proxy(rc.get("address"), macs) if isinstance(cords, dict) else None
+            if mac is None or not heat_mod.due(_wifi_heat, mac, now):
+                continue
+            got = _wifi_reading(clients[mac], now)
+            if got:
+                heat_mod.add(_wifi_heat, name, cords.get("x"), cords.get("y"), scale, got[0], got[1], mac, now, reference=True)
+    for person, things in by_person.items():
+        for a in (view.get("assigned") or {}).get(person) or []:
+            c = (view.get("candidates") or {}).get(a.get("entity")) or {}
+            mac = c.get("mac")
+            if not c.get("home") or not mac or mac not in clients or not heat_mod.due(_wifi_heat, mac, now):
+                continue
+            # Which of their things it is: a tracker called a watch is the
+            # watch, anything else the phone. Only when exactly one such
+            # thing has a fix this cycle - two phones, and the reading could
+            # belong to either spot.
+            kind = "watch" if "watch" in f"{c.get('name')} {a.get('entity')}".lower() else "phone"
+            mine = [e for e in things if classes.get(e) == kind and isinstance((rows.get(e) or {}).get("updated"), (int, float))
+                    and 0 <= now - rows[e]["updated"] <= WIFI_HEAT_FIX_S]
+            if len(mine) != 1:
+                continue
+            row = rows[mine[0]]
+            floor, cords = floors.get(row.get("floor")), row.get("cords")
+            got = _wifi_reading(clients[mac], now)
+            if floor and got and isinstance(cords, (list, tuple)) and len(cords) >= 2:
+                heat_mod.add(_wifi_heat, row["floor"], cords[0], cords[1], floor.get("scale"), got[0], got[1], mac, now)
+
+
+def wifi_heat_report(hass, layout, floor=None):
+    """The signal map for the page: the cells of ``floor`` (none without
+    one), every floor's rooms weakest first, and the access points' names."""
+    rooms_by_floor = _selftest_rooms(layout)
+    out = {"cell_m": heat_mod.CELL_M, "cells": [], "rooms": [], "aps": {}, "bias": {}}
+    for a in _unifi_access_points(hass) or []:
+        out["aps"][a["mac"]] = a["name"]
+    for f in layout.get("floor") or []:
+        if not isinstance(f, dict) or not f.get("name"):
+            continue
+        cells = heat_mod.view(_wifi_heat, f["name"], f.get("scale"))
+        if f["name"] == floor:
+            out["cells"] = cells
+        for r in heat_mod.rooms(cells, lambda x, y, fl=f["name"]: _room_at(rooms_by_floor.get(fl), x, y)):
+            out["rooms"].append({"floor": f["name"], **r})
+    out["rooms"].sort(key=lambda r: r["dbm"])
+    # Offsets by whose device it is ("Michelle's Watch"): the trackers' own
+    # names are "iPhone" and "Watch" three times over.
+    owner = {a.get("entity"): person for person, picks in (_wifi_now.get("assigned") or {}).items() for a in picks or []}
+    names = {}
+    for entity, c in (_wifi_now.get("candidates") or {}).items():
+        if not c.get("mac"):
+            continue
+        person = owner.get(entity)
+        st = hass.states.get(person) if person and getattr(hass, "states", None) is not None else None
+        who = str((getattr(st, "attributes", None) or {}).get("friendly_name") or "").split(" ")[0]
+        names[c["mac"]] = f"{who}'s {c.get('name')}" if who else c.get("name")
+    out["bias"] = {names[m]: round(v, 1) for m, v in (_wifi_heat.get("bias") or {}).items() if m in names}
+    out["samples"] = int(sum(row[0] for cell in (_wifi_heat.get("cells") or {}).values() for row in cell["aps"].values()))
     return out
 
 
@@ -4211,6 +4346,10 @@ def _update_person_sensors(hass):
         tracker = trackers.get(slug)
         if tracker is not None:
             tracker.set_fix(persons_mod.tracker_fix(presence, gps, _person_visits[person], wifi))
+    try:
+        _wifi_heat_cycle(hass, layout, view, by_person, rows, classes, now)
+    except Exception as e:  # noqa: BLE001 - the signal map is a picture, never a stop
+        _LOGGER.debug("Wi-Fi signal map not sampled: %s", e)
 
 def _maintain_rooms(hass):
     """The room sensors after a cycle - or after a cycle that had nothing to
@@ -5927,7 +6066,7 @@ async def async_setup(hass, config):
     # comes first and FINAL_WRITE last, which is where Home Assistant expects
     # its stores to be written; taking both costs one extra write.
     async def _on_stop(_event):
-        await _save_runtime(hass)
+        await _save_runtime(hass, final=True)
 
     # Once per Home Assistant run: sextant_initialized is cleared on unload,
     # so every reload (each options change) used to add another set, and a
@@ -6095,7 +6234,7 @@ async def async_unload_entry(hass: HomeAssistant, entry):
     update_task = hass.data.pop("sextant_update_task", None)
     if update_task:
         update_task.cancel()
-    await _save_runtime(hass)
+    await _save_runtime(hass, final=True)
 
     # Get whatever the tracking loop buffered since the last 60 s flush onto
     # disk before the task goes away. The in-memory ring survives an unload
@@ -6165,6 +6304,8 @@ async def async_setup_entry(hass, entry):
         _restore_fp_gains(await load_fp_gains(hass))
     except Exception as e:  # noqa: BLE001
         _LOGGER.warning("Truth marks or learned gains not loaded: %s", e)
+    global _wifi_heat
+    _wifi_heat = heat_mod.clean(await load_wifi_heat(hass))
     await _restore_runtime(hass)
     cleanup_legacy_sextant_registry_and_states(hass)
     await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "binary_sensor", "device_tracker"])
