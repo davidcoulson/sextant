@@ -179,7 +179,7 @@ class SextantHealth extends LitElement {
 
   async _loadWifiHeat() {
     if (!this.hass || !this._isAdmin()) { this._wifiHeat = null; return; }
-    const r = await this.hass.callWS({ type: "sextant/wifi/heat" }).catch(() => null);
+    const r = await this.hass.callWS({ type: "sextant/wifi/heat", field: true }).catch(() => null);
     // Asked again after the answer: admin may have gone while it was on its way.
     this._wifiHeat = this._isAdmin() ? r : null;
     this.requestUpdate();
@@ -563,6 +563,7 @@ class SextantHealth extends LitElement {
         <tr><th>Room</th><th class="num">Median</th><th class="num">Weakest</th><th>Mostly on</th><th class="num">Squares</th></tr>
         ${rooms.map((r) => html`<tr><td>${r.room} <span class="muted small">${r.floor}</span></td><td class="num nowrap">${this._dbmPill(r.dbm)}</td><td class="num nowrap">${fmtNum(r.worst, 0)} dBm</td><td>${h.aps?.[r.ap] || r.ap}</td><td class="num">${r.cells}</td></tr>`)}
       </table></div>` : html`<p class="small">No room has enough samples yet. The proxies on the Wi-Fi fill their own squares within minutes; phones and watches fill the rooms people use over a few days.</p>`}
+      ${h.field?.model?.used ? html`<p class="small muted">The Live page's estimate between the measured squares is a model of each placed access point fitted to them: walls cost about ${fmtNum(h.field.model.wall, 1)} dB each and a floor ${fmtNum(h.field.model.floor, 0)} dB, and it is typically ${fmtNum(h.field.model.rms, 0)} dB off what was measured (${h.field.model.used} squares). That is mostly the devices: a proxy's own transmit strength differs from the next by as much, and one that never moves cannot be told apart from where it is. Phones and watches walking about pin it down.</p>` : nothing}
       <div class="row small muted">${fmtNum(h.samples || 0, 0)} samples so far${offsets.length ? html` · learned offsets: ${offsets.map(([n, v]) => `${n} ${v > 0 ? "+" : ""}${fmtNum(v, 1)} dB`).join(", ")}` : nothing}
         <span class="grow"></span>${uiButton({ label: "Start over", kind: "text", onClick: () => this._clearWifiHeat(), title: "Drop every sample: after moving or replacing access points" })}</div>
     </section>`;

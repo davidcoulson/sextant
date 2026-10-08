@@ -207,3 +207,33 @@ def test_offsets_are_named_by_whose_device_it_is(monkeypatch):
         config_entries = types.SimpleNamespace(async_entries=lambda domain: [])
         states = types.SimpleNamespace(get=lambda e: types.SimpleNamespace(attributes={"friendly_name": "Michelle Bauer"}) if e == "person.michelle_bauer" else None)
     assert core.wifi_heat_report(Hass(), {"floor": []})["bias"] == {"Michelle's Watch": -4.4}
+
+
+def test_the_field_is_fitted_once_and_reused_until_the_plan_changes(monkeypatch):
+    import sextant as core
+    from sextant import field as field_mod
+
+    room = [{"x": 0, "y": 0}, {"x": 500, "y": 0}, {"x": 500, "y": 500}, {"x": 0, "y": 500}]
+    layout = {"floor": [{"name": "Ground", "scale": SCALE, "zones": [{"entity_id": "Kitchen", "cords": room, "poly": True}],
+                         "access_points": [{"mac": KITCHEN, "cords": {"x": 250, "y": 250}}]}]}
+    s = heat.new_store()
+    for x in (50, 150, 350, 450):
+        for _ in range(3):
+            heat.add(s, "Ground", x, 250, SCALE, KITCHEN, -45 - abs(x - 250) / 20, f"p{x}", 0, reference=True)
+    monkeypatch.setattr(core, "_wifi_heat", s)
+    monkeypatch.setattr(core, "_wifi_field_cache", {"at": 0.0, "key": None, "model": None})
+    calls = []
+    real_fit = field_mod.fit
+    monkeypatch.setattr(field_mod, "fit", lambda *a: calls.append(1) or real_fit(*a))
+    squares = core.wifi_field_squares(layout)
+    assert len(squares) == 4 and squares[0][0] == "Ground" and squares[0][3] == KITCHEN
+    out = core.wifi_field(layout, "Ground", squares, now=1000.0)
+    assert out["model"]["used"] == 4 and out["grid"]["aps"] == [KITCHEN]
+    core.wifi_field(layout, "Ground", squares, now=1100.0)
+    assert len(calls) == 1                                   # reused within five minutes
+    core.wifi_field(layout, "Ground", squares, now=1000.0 + core.WIFI_FIELD_EVERY_S + 1)
+    assert len(calls) == 2                                   # refitted after
+    layout["floor"][0]["access_points"][0]["cords"] = {"x": 100, "y": 100}
+    core.wifi_field(layout, "Ground", squares, now=1000.0 + core.WIFI_FIELD_EVERY_S + 2)
+    assert len(calls) == 3                                   # and when an access point moves
+    assert core.wifi_field(layout, None, squares, now=2000.0)["grid"] is None

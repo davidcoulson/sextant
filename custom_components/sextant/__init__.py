@@ -4143,6 +4143,43 @@ def wifi_heat_report(hass, layout, floor=None):
     return out
 
 
+# The fitted field (field.py) is cached: a fit every page load is waste, the
+# samples change slowly. Refitted after this long, or when the plan changes.
+WIFI_FIELD_EVERY_S = 300.0
+_wifi_field_cache = {"at": 0.0, "key": None, "model": None}
+
+
+def wifi_field_squares(layout):
+    """Every floor's measured squares as field.fit takes them: (floor, centre
+    x px, centre y px, access point, mean dBm, samples). Built on the event
+    loop, where the store is written; the fit then runs in the executor."""
+    out = []
+    for f in layout.get("floor") or []:
+        if not isinstance(f, dict) or not f.get("name"):
+            continue
+        for c in heat_mod.view(_wifi_heat, f["name"], f.get("scale")):
+            half = c["size"] / 2.0
+            for ap, (dbm, n) in c["aps"].items():
+                out.append((f["name"], c["x"] + half, c["y"] + half, ap, dbm, n))
+    return out
+
+
+def wifi_field(layout, floor, squares, now=None):
+    """{"grid": field.grid for ``floor``, "model": the fit} - in the executor.
+    The fit is reused for WIFI_FIELD_EVERY_S unless the plan changed."""
+    from . import field as field_mod  # noqa: PLC0415 - numpy, and only when the field is asked for
+
+    now = time.time() if now is None else now
+    key = json.dumps([[f.get("name"), f.get("scale"), f.get("elevation"), f.get("level"), f.get("pins"),
+                       f.get("access_points"), f.get("zones")] for f in layout.get("floor") or [] if isinstance(f, dict)],
+                     sort_keys=True, default=str)
+    cache = _wifi_field_cache
+    if cache["key"] != key or not 0 <= now - cache["at"] < WIFI_FIELD_EVERY_S:
+        cache.update(at=now, key=key, model=field_mod.fit(layout, squares))
+    model = cache["model"]
+    return {"grid": field_mod.grid(layout, model, floor, squares) if model and floor else None, "model": model}
+
+
 def _wifi_cycle(hass, layout, by_person):
     """This cycle's Wi-Fi view (see _wifi_now): the client trackers, the
     access points, and which tracker is whose - the People card's table
