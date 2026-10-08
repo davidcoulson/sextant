@@ -4054,8 +4054,9 @@ def _unifi_clients(hass):
 
 
 def _wifi_reading(raw, now):
-    """(access point, dBm) from a client's raw record when it is a current
-    association, else None."""
+    """(access point, dBm, band) from a client's raw record when it is a
+    current association, else None. The band is None when the record does
+    not say (heat.band_of)."""
     if not isinstance(raw, dict):
         return None
     ap, signal, seen = wifi_mod.norm_mac(raw.get("ap_mac")), raw.get("signal"), raw.get("last_seen")
@@ -4063,7 +4064,7 @@ def _wifi_reading(raw, now):
         return None
     if isinstance(seen, (int, float)) and not isinstance(seen, bool) and now - seen > WIFI_HEAT_SEEN_S:
         return None
-    return ap, float(signal)
+    return ap, float(signal), heat_mod.band_of(raw.get("radio"), raw.get("channel"))
 
 
 def _wifi_heat_cycle(hass, layout, view, by_person, rows, classes, now):
@@ -4088,7 +4089,7 @@ def _wifi_heat_cycle(hass, layout, view, by_person, rows, classes, now):
                 continue
             got = _wifi_reading(clients[mac], now)
             if got:
-                heat_mod.add(_wifi_heat, name, cords.get("x"), cords.get("y"), scale, got[0], got[1], mac, now, reference=True)
+                heat_mod.add(_wifi_heat, name, cords.get("x"), cords.get("y"), scale, got[0], got[1], mac, now, reference=True, band=got[2])
     for person, things in by_person.items():
         for a in (view.get("assigned") or {}).get(person) or []:
             c = (view.get("candidates") or {}).get(a.get("entity")) or {}
@@ -4108,20 +4109,21 @@ def _wifi_heat_cycle(hass, layout, view, by_person, rows, classes, now):
             floor, cords = floors.get(row.get("floor")), row.get("cords")
             got = _wifi_reading(clients[mac], now)
             if floor and got and isinstance(cords, (list, tuple)) and len(cords) >= 2:
-                heat_mod.add(_wifi_heat, row["floor"], cords[0], cords[1], floor.get("scale"), got[0], got[1], mac, now)
+                heat_mod.add(_wifi_heat, row["floor"], cords[0], cords[1], floor.get("scale"), got[0], got[1], mac, now, band=got[2])
 
 
-def wifi_heat_report(hass, layout, floor=None):
+def wifi_heat_report(hass, layout, floor=None, band=None):
     """The signal map for the page: the cells of ``floor`` (none without
     one), every floor's rooms weakest first, and the access points' names."""
     rooms_by_floor = _selftest_rooms(layout)
-    out = {"cell_m": heat_mod.CELL_M, "cells": [], "rooms": [], "aps": {}, "bias": {}}
+    out = {"cell_m": heat_mod.CELL_M, "cells": [], "rooms": [], "aps": {}, "bias": {},
+           "band": band, "bands": heat_mod.bands_present(_wifi_heat)}
     for a in _unifi_access_points(hass) or []:
         out["aps"][a["mac"]] = a["name"]
     for f in layout.get("floor") or []:
         if not isinstance(f, dict) or not f.get("name"):
             continue
-        cells = heat_mod.view(_wifi_heat, f["name"], f.get("scale"))
+        cells = heat_mod.view(_wifi_heat, f["name"], f.get("scale"), band=band)
         if f["name"] == floor:
             out["cells"] = cells
         for r in heat_mod.rooms(cells, lambda x, y, fl=f["name"]: _room_at(rooms_by_floor.get(fl), x, y)):
@@ -4150,23 +4152,26 @@ _wifi_field_cache = {"at": 0.0, "key": None, "model": None}
 
 
 def wifi_field_squares(layout):
-    """Every floor's measured squares as field.fit takes them: (floor, centre
-    x px, centre y px, access point, mean dBm, samples). Built on the event
-    loop, where the store is written; the fit then runs in the executor."""
+    """Every floor's measured squares as field.fit_bands takes them: (floor,
+    centre x px, centre y px, access point, mean dBm, samples, band or None),
+    one per access point and band. Built on the event loop, where the store
+    is written; the fit then runs in the executor."""
     out = []
     for f in layout.get("floor") or []:
         if not isinstance(f, dict) or not f.get("name"):
             continue
         for c in heat_mod.view(_wifi_heat, f["name"], f.get("scale")):
             half = c["size"] / 2.0
-            for ap, (dbm, n) in c["aps"].items():
-                out.append((f["name"], c["x"] + half, c["y"] + half, ap, dbm, n))
+            for key, (dbm, n) in c["rows"].items():
+                ap, band = heat_mod.split_row(key)
+                out.append((f["name"], c["x"] + half, c["y"] + half, ap, dbm, n, band))
     return out
 
 
-def wifi_field(layout, floor, squares, now=None):
-    """{"grid": field.grid for ``floor``, "model": the fit} - in the executor.
-    The fit is reused for WIFI_FIELD_EVERY_S unless the plan changed."""
+def wifi_field(layout, floor, squares, now=None, band=None):
+    """{"grid": field.grid_bands for ``floor`` (one band, or all), "models":
+    {band: the fit}} - in the executor. The fits are reused for
+    WIFI_FIELD_EVERY_S unless the plan changed."""
     from . import field as field_mod  # noqa: PLC0415 - numpy, and only when the field is asked for
 
     now = time.time() if now is None else now
@@ -4175,9 +4180,9 @@ def wifi_field(layout, floor, squares, now=None):
                      sort_keys=True, default=str)
     cache = _wifi_field_cache
     if cache["key"] != key or not 0 <= now - cache["at"] < WIFI_FIELD_EVERY_S:
-        cache.update(at=now, key=key, model=field_mod.fit(layout, squares))
-    model = cache["model"]
-    return {"grid": field_mod.grid(layout, model, floor, squares) if model and floor else None, "model": model}
+        cache.update(at=now, key=key, model=field_mod.fit_bands(layout, squares))
+    models = cache["model"] or {}
+    return {"grid": field_mod.grid_bands(layout, models, floor, squares, band) if models and floor else None, "models": models}
 
 
 def _wifi_cycle(hass, layout, by_person):

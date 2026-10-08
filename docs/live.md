@@ -235,6 +235,15 @@ squares. The map has three views, all drawn as a continuous picture at
   point a floor away. Estimated says which access point is strongest at a
   point; this view says which one clients actually used there.
 
+Each sample keeps its Wi-Fi band (2.4, 5 or 6 GHz, as the controller
+reports it). The bands travel differently, since 2.4 GHz goes through walls
+far better, and they come from different devices: every ESP32 proxy is on
+2.4 GHz, while phones are mostly on 5 or 6. Each band therefore gets its own
+model once it has a dozen measured squares. Until then, the squares are
+fitted together. The **Band** choice in the legend keeps the map, the
+estimate and the room table to one band. **All** shows the strongest access
+point and band at each point.
+
 Point at the map, or tap it, for the reading there. In Estimated it gives
 the strongest access point and whether the point was measured nearby or is
 only the model's estimate.

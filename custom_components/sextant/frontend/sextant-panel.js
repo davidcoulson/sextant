@@ -1042,7 +1042,7 @@ class SextantLive extends LitElement {
       // and the floor's scale (the cells are in plan pixels at that scale).
       // A label or trails switch is not a reason to ask again.
       const on = !!this._options.wifi_heat && this._isAdmin();
-      const key = on ? `${this.floor}|${this._floorObj()?.scale ?? ""}` : null;
+      const key = on ? `${this.floor}|${this._floorObj()?.scale ?? ""}|${this._wifiBand() || ""}` : null;
       if (key !== this._wifiHeatKey) {
         this._wifiHeatKey = key;
         if (on) this._loadWifiHeat(); else { this._wifiHeat = null; this._map.setWifiHeat(null); }
@@ -1387,9 +1387,10 @@ class SextantLive extends LitElement {
   async _loadWifiHeat() {
     const floor = this.floor;
     if (!this._isAdmin()) return;
-    const r = await this.hass?.callWS({ type: "sextant/wifi/heat", floor, field: true }).catch(() => null);
+    const band = this._wifiBand();
+    const r = await this.hass?.callWS({ type: "sextant/wifi/heat", floor, field: true, ...(band ? { band } : {}) }).catch(() => null);
     // Switched off, another floor, or admin gone, while it was on its way.
-    if (!this._options.wifi_heat || floor !== this.floor || !this._isAdmin()) return;
+    if (!this._options.wifi_heat || floor !== this.floor || band !== this._wifiBand() || !this._isAdmin()) return;
     this._wifiHeat = r;
     this._pushWifiHeat();
   }
@@ -1409,6 +1410,19 @@ class SextantLive extends LitElement {
 
   /** The signal map's view: the estimated field unless measured or access
    * point was picked ("signal", the old name for measured, reads as it). */
+  /** The band the signal map keeps to ("2.4", "5", "6"), or null for all. */
+  _wifiBand() {
+    const b = this._options.wifi_heat_band;
+    return ["2.4", "5", "6"].includes(b) ? b : null;
+  }
+
+  /** What each band's model says, for the legend: "2.4 GHz ±6 dB, 5 GHz ±8 dB". */
+  _wifiModelText(models) {
+    const parts = Object.entries(models || {}).filter(([, m]) => m?.rms != null)
+      .map(([b, m]) => (b === "mixed" ? `±${Math.round(m.rms)} dB (bands not told apart yet)` : `${b} GHz ±${Math.round(m.rms)} dB`));
+    return parts.join(", ");
+  }
+
   _wifiMode() {
     const m = this._options.wifi_heat_mode;
     return m === "ap" ? "ap" : m === "measured" || m === "signal" ? "measured" : "estimated";
@@ -1419,7 +1433,9 @@ class SextantLive extends LitElement {
     if (!this._options.wifi_heat || !r) return nothing;
     const mode = this._wifiMode(), byAp = mode === "ap";
     const cells = r.cells || [];
-    const model = r.field?.model;
+    const models = r.field?.models;
+    const band = this._wifiBand();
+    const bands = r.bands || [];
     const here = [...new Set(cells.map((c) => c.ap))].sort((a, b) => String(r.aps?.[a] || a).localeCompare(String(r.aps?.[b] || b)));
     return html`<div class="wifilegend ${this._history ? "lifted" : ""}">
       ${uiSegmented({ label: "Wi-Fi signal map", value: mode, options: [
@@ -1427,12 +1443,18 @@ class SextantLive extends LitElement {
         { value: "measured", label: "Measured", title: "Only where phones, watches and proxies have measured it" },
         { value: "ap", label: "Access point", title: "Which access point clients were on, where they measured it" }],
         onChange: (v) => { this._setOption("wifi_heat_mode", v); this._pushWifiHeat(); } })}
-      ${mode === "estimated" && !r.field?.grid ? html`<div class="muted">No estimate: place the access points on the plan (Edit, Wi-Fi). Showing what was measured.</div>` : nothing}
+      ${bands.length > 1 || band ? uiSegmented({ label: "Band", value: band || "all", options: [
+        { value: "all", label: "All", title: "Every band: the strongest access point and band at each point" },
+        ...["2.4", "5", "6"].filter((b) => bands.includes(b) || b === band).map((b) => ({ value: b, label: `${b} GHz`, title: `Only ${b} GHz` }))],
+        onChange: (v) => this._setOption("wifi_heat_band", v === "all" ? null : v) }) : nothing}
+      ${mode === "estimated" && !r.field?.grid ? html`<div class="muted">${band && models && !models[band]
+        ? `No estimate for ${band} GHz yet: it needs a dozen measured squares on that band. Showing what was measured.`
+        : "No estimate: place the access points on the plan (Edit, Wi-Fi). Showing what was measured."}</div>` : nothing}
       ${!cells.length ? html`<div class="muted">No samples on this floor yet.</div>`
         : byAp ? html`<div class="apkeys">${here.map((m) => html`<span><i style=${`background:${this._wifiColours?.[m]}`}></i>${r.aps?.[m] || m}</span>`)}</div>`
         : html`<div class="ramp"><span>-80</span><i style=${`background: linear-gradient(90deg, ${[-80, -72, -65, -58, -50].map((d) => signalColour(d, 0.85)).join(", ")})`}></i><span>-50 dBm</span></div>`}
       ${cells.length ? html`<div class="muted">${mode === "estimated" && r.field?.grid
-        ? html`Strong where measured, faded where only the model says${model?.rms != null ? html` · the model is typically ${Math.round(model.rms)} dB off what was measured` : nothing}`
+        ? html`Strong where measured, faded where only the model says${this._wifiModelText(models) ? html` · typical error ${this._wifiModelText(models)}` : nothing}`
         : html`${cells.length} measured square${cells.length === 1 ? "" : "s"} on this floor`} · point at the map, or tap it</div>` : nothing}
     </div>`;
   }

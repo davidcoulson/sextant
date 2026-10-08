@@ -1698,22 +1698,24 @@ async def ws_person_wifi_set(hass, connection, msg):
 
 
 @websocket_api.websocket_command({vol.Required("type"): "sextant/wifi/heat", vol.Optional("floor"): str,
-                                   vol.Optional("field", default=False): bool})
+                                   vol.Optional("field", default=False): bool,
+                                   vol.Optional("band"): vol.In(["2.4", "5", "6"])})
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_wifi_heat(hass, connection, msg):
     """The Wi-Fi signal map (heat.py): one floor's cells when ``floor`` is
     given, and every floor's rooms, weakest first; with ``field``, also the
-    estimated field for that floor and the model behind it (field.py). Admin
+    estimated field for that floor and the models behind it (field.py).
+    ``band`` ("2.4", "5", "6") keeps to one Wi-Fi band throughout. Admin
     only, like the history: the cells are where people's phones have been."""
     core = _core()
     layout = get_layout(hass)
     layout = layout if isinstance(layout, dict) else {}
-    out = core.wifi_heat_report(hass, layout, msg.get("floor"))
+    out = core.wifi_heat_report(hass, layout, msg.get("floor"), msg.get("band"))
     if msg["field"]:
         squares = core.wifi_field_squares(layout)
         try:
-            out["field"] = await hass.async_add_executor_job(core.wifi_field, layout, msg.get("floor"), squares)
+            out["field"] = await hass.async_add_executor_job(core.wifi_field, layout, msg.get("floor"), squares, None, msg.get("band"))
         except Exception as e:  # noqa: BLE001 - the measured map still stands without the estimate
             _LOGGER.warning("Wi-Fi signal field not computed: %s", e)
             out["field"] = None

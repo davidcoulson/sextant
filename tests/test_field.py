@@ -136,3 +136,35 @@ def test_nothing_to_fit_or_draw():
     assert field.grid(layout, model, "Nowhere", []) is None
     g = field.grid(layout, model, "Ground", [])
     assert g is not None and max(g["conf"]) == 0
+
+
+def test_each_band_is_fitted_on_its_own_once_it_has_enough_squares():
+    layout = _layout([{"floor": "Ground", "mac": A, "cords": {"x": 250, "y": 250}}])
+    squares = []
+    for x in np.arange(0.5, 10, 1.0):
+        for y in np.arange(0.5, 5, 1.0):
+            d = math.hypot(x - 2.5, y - 2.5)
+            walls = 1 if x > 5 else 0
+            # 2.4 GHz: strong, slow fall-off, a light wall. 5 GHz: weaker, faster, a heavy wall.
+            squares.append(("Ground", x * S, y * S, A, _truth(-30, 2.2, d, walls, 3.0), 20, "2.4"))
+            squares.append(("Ground", x * S, y * S, A, _truth(-38, 3.4, d, walls, 9.0), 20, "5"))
+    models = field.fit_bands(layout, squares)
+    assert sorted(models) == ["2.4", "5"]
+    assert models["2.4"]["aps"][A]["n"] < models["5"]["aps"][A]["n"]
+    assert models["2.4"]["wall"] < models["5"]["wall"]
+    assert models["5"]["rms"] < 1.5 and models["2.4"]["rms"] < 1.5
+    g = field.grid_bands(layout, models, "Ground", squares)
+    assert g["aps"] == [f"{A}|2.4", f"{A}|5"]
+    five = field.grid_bands(layout, models, "Ground", squares, "5")
+    assert five["aps"] == [f"{A}|5"] and five["w"] == g["w"]
+    assert field.grid_bands(layout, models, "Ground", squares, "6") is None
+
+
+def test_too_few_squares_on_any_band_are_fitted_together():
+    layout = _layout([{"floor": "Ground", "mac": A, "cords": {"x": 250, "y": 250}}])
+    squares = [("Ground", x * S, 250, A, _truth(-35, 2.5, abs(x - 2.5)), 10, b)
+               for x, b in ((0.5, "2.4"), (1.5, "5"), (3.5, None), (4.5, "2.4"))]
+    models = field.fit_bands(layout, squares)
+    assert list(models) == [field.MIXED] and models[field.MIXED]["used"] == 4
+    assert field.grid_bands(layout, models, "Ground", squares)["aps"] == [f"{A}|mixed"]
+    assert field.fit_bands({"floor": []}, squares) == {}

@@ -1487,7 +1487,9 @@ export class SextantMap {
     ctx.restore();
     const at = this._wifiAt;
     if (at && at.idx < r.dbm.length && Number.isFinite(r.dbm[at.idx])) {
-      const h = this.wifiHeat, name = (m) => h.names?.[m] || m;
+      const h = this.wifiHeat;
+      // Field keys are "mac|band" ("mac|mixed" before the bands are told apart).
+      const name = (m) => { const [mac, b] = String(m).split("|"); return `${h.names?.[mac] || mac}${b && b !== "mixed" ? ` ${b} GHz` : ""}`; };
       const ap = r.aps[r.ap[at.idx]];
       const dbm = Math.round(r.dbm[at.idx]);
       // What was DRAWN decides the words: asked for the estimate with no

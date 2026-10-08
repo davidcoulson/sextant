@@ -43,6 +43,36 @@ BIAS_MIN_REF = 3
 DBM_RANGE = (-110.0, -10.0)
 # One sample per client this often, at most.
 SAMPLE_EVERY_S = 30.0
+# The Wi-Fi bands, as UniFi's raw "radio" names them. 2.4 and 5/6 GHz do not
+# behave alike - 2.4 goes through walls far better - and the house's samples
+# are split by them: every ESP32 proxy is on 2.4, the phones mostly on 5 or
+# 6. Kept apart, each band is fitted on its own (field.py).
+BANDS = ("2.4", "5", "6")
+RADIO_BAND = {"ng": "2.4", "na": "5", "6e": "6"}
+
+
+def band_of(radio, channel=None) -> str | None:
+    """A client's band from the controller's ``radio`` ("ng", "na", "6e"),
+    else from its channel where that is unambiguous (1-14 is only 2.4 GHz;
+    5 and 6 GHz channel numbers overlap), else None."""
+    band = RADIO_BAND.get(str(radio or "").lower())
+    if band:
+        return band
+    if isinstance(channel, int) and not isinstance(channel, bool) and 1 <= channel <= 14:
+        return "2.4"
+    return None
+
+
+def _row_key(ap, band) -> str:
+    """A cell's row: one per access point and band ("mac|5"); a reading with
+    no band (stored before bands were kept) is the bare MAC."""
+    return f"{ap}|{band}" if band in BANDS else str(ap)
+
+
+def split_row(key) -> tuple:
+    """(access point, band or None) from a cell's row key."""
+    ap, _, band = str(key).partition("|")
+    return ap, (band if band in BANDS else None)
 
 
 def new_store() -> dict:
@@ -74,17 +104,18 @@ def due(store: dict, client, now) -> bool:
     return not _finite(last) or now - last >= SAMPLE_EVERY_S or now < last
 
 
-def add(store: dict, floor, x_px, y_px, scale, ap, dbm, client, now, reference=False) -> bool:
+def add(store: dict, floor, x_px, y_px, scale, ap, dbm, client, now, reference=False, band=None) -> bool:
     """One reading into its cell. ``reference`` is a fixed client (a placed
     proxy); a moving one has its learned offset taken off first, and learns
-    it from the proxies' samples in the cell. True when it was taken."""
+    it from the proxies' samples in the cell on the same access point and
+    band. True when it was taken."""
     idx = cell_index(x_px, y_px, scale)
     if idx is None or not floor or not ap or not client or not _finite(dbm) or not DBM_RANGE[0] <= dbm <= DBM_RANGE[1]:
         return False
     cells, bias = store.setdefault("cells", {}), store.setdefault("bias", {})
     key = _key(floor, *idx)
     cell = cells.setdefault(key, {"t": now, "aps": {}})
-    row = cell["aps"].setdefault(ap, [0.0, 0.0, 0.0, 0.0])
+    row = cell["aps"].setdefault(_row_key(ap, band), [0.0, 0.0, 0.0, 0.0])
     value = float(dbm)
     if not reference:
         if row[2] >= BIAS_MIN_REF:
@@ -111,11 +142,13 @@ def add(store: dict, floor, x_px, y_px, scale, ap, dbm, client, now, reference=F
     return True
 
 
-def view(store: dict, floor, scale, min_samples=MIN_SAMPLES) -> list:
+def view(store: dict, floor, scale, min_samples=MIN_SAMPLES, band=None) -> list:
     """This floor's cells to draw: [{"x", "y", "size", "dbm", "ap", "n",
-    "aps": {ap: [dbm, n]}}], in plan pixels (x, y the cell's top-left). The
-    signal is the mean over every sample in the cell; ``ap`` is the access
-    point most of them were on."""
+    "aps": {ap: [dbm, n]}, "rows": {"ap|band" or "ap": [dbm, n]}, "bands"}], in
+    plan pixels (x, y the cell's top-left). The signal is the mean over every
+    sample in the cell; ``ap`` is the access point most of them were on.
+    ``band`` keeps only that band's samples ("2.4", "5", "6"); without it,
+    every sample counts, those with no band too."""
     out = []
     if not (_finite(scale) and scale > 0):
         return out
@@ -128,16 +161,30 @@ def view(store: dict, floor, scale, min_samples=MIN_SAMPLES) -> list:
             ix, iy = (int(v) for v in key[len(prefix):].split("|"))
         except ValueError:
             continue
-        aps = {ap: row for ap, row in (cell.get("aps") or {}).items() if row and row[0] > 0}
-        n = sum(row[0] for row in aps.values())
+        rows = {k: row for k, row in (cell.get("aps") or {}).items()
+                if row and row[0] > 0 and (band is None or split_row(k)[1] == band)}
+        aps: dict = {}
+        for k, row in rows.items():
+            acc = aps.setdefault(split_row(k)[0], [0.0, 0.0])
+            acc[0] += row[0]
+            acc[1] += row[1]
+        n = sum(a[0] for a in aps.values())
         if n < min_samples:
             continue
-        total = sum(row[1] for row in aps.values())
+        total = sum(a[1] for a in aps.values())
         top = max(aps, key=lambda a: aps[a][0])
         out.append({"x": round(ix * step, 1), "y": round(iy * step, 1), "size": round(step, 2),
                     "dbm": round(total / n, 1), "ap": top, "n": int(round(n)),
-                    "aps": {ap: [round(row[1] / row[0], 1), int(round(row[0]))] for ap, row in aps.items()}})
+                    "aps": {ap: [round(a[1] / a[0], 1), int(round(a[0]))] for ap, a in aps.items()},
+                    "rows": {k: [round(row[1] / row[0], 1), int(round(row[0]))] for k, row in rows.items()},
+                    "bands": sorted({b for b in (split_row(k)[1] for k in rows) if b}, key=BANDS.index)})
     return out
+
+
+def bands_present(store: dict) -> list:
+    """The bands the map has samples on, in order (2.4, 5, 6)."""
+    seen = {split_row(k)[1] for cell in (store.get("cells") or {}).values() for k in (cell.get("aps") or {})}
+    return [b for b in BANDS if b in seen]
 
 
 def rooms(cells: list, room_of) -> list:
