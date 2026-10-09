@@ -617,8 +617,10 @@ def async_get_scanner_addresses_by_slug(hass) -> dict[str, str] | None:
 def async_get_scanner_directory(hass) -> dict[str, dict] | None:
     """
     ``{scanner address: {"slug", "name", "unique_id", "address_wifi_mac",
-    "last_seen_age"}}`` for every scanner Bermuda knows (the ``scanners``
-    feature), lower-cased addresses. None when unsupported.
+    "area_id", "area_name", "last_seen_age"}}`` for every scanner Bermuda
+    knows (the ``scanners`` feature), lower-cased addresses. None when
+    unsupported. The area is the one Bermuda resolved for the proxy (its
+    device's Home Assistant area), so the Edit page can say where each one is.
 
     This is the join table for placements keyed by address: a placement's
     label (its slug) can follow a rename, its identity cannot.
@@ -638,6 +640,8 @@ def async_get_scanner_directory(hass) -> dict[str, dict] | None:
             "name": scanner.get("name") or "",
             "unique_id": (scanner.get("unique_id") or "") or None,
             "address_wifi_mac": (scanner.get("address_wifi_mac") or "") or None,
+            "area_id": scanner.get("area_id") or None,
+            "area_name": scanner.get("area_name") or None,
             "last_seen_age": scanner.get("last_seen_age"),
         }
     return out

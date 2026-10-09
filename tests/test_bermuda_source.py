@@ -636,3 +636,38 @@ def test_rssi_offset_helpers_are_none_without_the_feature(monkeypatch):
     assert bermuda_source.async_set_rssi_offsets(object(), {"aa:01": 1.0}) is None
     _install_bermuda_api(monkeypatch, _snapshot())  # plain v1: no scanners either
     assert bermuda_source.async_get_scanner_addresses_by_slug(object()) is None
+
+
+def test_scanner_directory_carries_each_proxys_area(monkeypatch):
+    """The Edit page's proxy picker shows where each proxy is: the directory
+    passes Bermuda's area through (it used to drop it, so it was always blank)."""
+    api = _install_bermuda_api(monkeypatch, _snapshot())
+    api.SNAPSHOT_FEATURES = ("scanners",)
+    api.async_get_scanners = lambda _hass: {
+        "AA:BB:CC:DD:EE:01": {"name": "Kitchen proxy", "slug": "kitchen_proxy", "unique_id": "aa:bb:cc:dd:ee:00",
+                              "address_wifi_mac": "aa:bb:cc:dd:ee:00", "area_id": "kitchen", "area_name": "Kitchen",
+                              "last_seen_age": 2.0},
+        "AA:BB:CC:DD:EE:02": {"name": "Shed proxy", "slug": "shed_proxy", "area_id": None, "area_name": "", "last_seen_age": None},
+    }
+    d = bermuda_source.async_get_scanner_directory(object())
+    assert d["aa:bb:cc:dd:ee:01"]["area_id"] == "kitchen" and d["aa:bb:cc:dd:ee:01"]["area_name"] == "Kitchen"
+    assert d["aa:bb:cc:dd:ee:02"]["area_id"] is None and d["aa:bb:cc:dd:ee:02"]["area_name"] is None
+
+
+def test_registry_devices_are_walked_without_the_deprecated_mapping():
+    """Sextant reads every device through _iter_registry_devices: on current
+    cores ``devices`` iterates entries (``.values()`` is deprecated, removed
+    in 2027.9); on older ones it iterates ids, resolved through the mapping."""
+    from sextant import _iter_registry_devices
+
+    entry = types.SimpleNamespace(id="d1", name="Kitchen proxy")
+
+    class NewView:
+        def __iter__(self):
+            return iter([entry])
+
+        def values(self):
+            raise AssertionError("deprecated .values() used")
+
+    assert list(_iter_registry_devices(types.SimpleNamespace(devices=NewView()))) == [entry]
+    assert list(_iter_registry_devices(types.SimpleNamespace(devices={"d1": entry}))) == [entry]
