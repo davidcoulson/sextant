@@ -1020,7 +1020,7 @@ def _proxy_device(hass, slug, address):
     # a device of its own, carrying the chip and pointing at the node that
     # owns it. Some nodes claim that address too, so the chip is only read
     # from a device that hangs off another - never from the node itself.
-    matches = [d for d in devices.devices.values()
+    matches = [d for d in _core()._iter_registry_devices(devices)
                if any(kind == "bluetooth" and str(v).lower() == address for kind, v in d.connections)]
     scanner = next((d for d in matches if d.via_device_id), None)
     node = devices.async_get(scanner.via_device_id) if scanner else next((d for d in matches if not d.via_device_id), None)
@@ -1028,7 +1028,7 @@ def _proxy_device(hass, slug, address):
         entry = next((e for e in entities.entities.values() if slug in e.entity_id and e.device_id), None)
         node = devices.async_get(entry.device_id) if entry else None
     if scanner is None and node is not None:
-        scanner = next((d for d in devices.devices.values()
+        scanner = next((d for d in _core()._iter_registry_devices(devices)
                         if d.via_device_id == node.id and any(kind == "bluetooth" for kind, _ in d.connections)), None)
     if scanner:
         out["chip"] = scanner.model

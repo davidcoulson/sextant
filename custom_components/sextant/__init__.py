@@ -3944,7 +3944,7 @@ def _unifi_access_points(hass):
     registry = {}
     try:
         from homeassistant.helpers import device_registry as dr  # noqa: PLC0415
-        for device in dr.async_get(hass).devices.values():
+        for device in _iter_registry_devices(dr.async_get(hass)):
             if not str(getattr(device, "manufacturer", "") or "").startswith("Ubiquiti"):
                 continue
             for kind, value in getattr(device, "connections", None) or ():
@@ -4005,7 +4005,7 @@ def _wifi_access_points(hass, layout, macs):
             for z in floor.get("zones") or []:
                 if isinstance(z.get("area_id"), str) and z["area_id"] and not z.get("no_go"):
                     rooms_by_area.setdefault(z["area_id"], (floor["name"], z["entity_id"]))
-        for device in dev_reg.devices.values():
+        for device in _iter_registry_devices(dev_reg):
             found = [k for k in (wifi_mod._mac_key(c[1]) for c in (getattr(device, "connections", None) or ()) if c[0] == "mac") if k in wanted]
             if not found:
                 continue

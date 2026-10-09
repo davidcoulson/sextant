@@ -636,3 +636,90 @@ def test_rssi_offset_helpers_are_none_without_the_feature(monkeypatch):
     assert bermuda_source.async_set_rssi_offsets(object(), {"aa:01": 1.0}) is None
     _install_bermuda_api(monkeypatch, _snapshot())  # plain v1: no scanners either
     assert bermuda_source.async_get_scanner_addresses_by_slug(object()) is None
+
+
+def test_scanner_directory_carries_each_proxys_area(monkeypatch):
+    """The Edit page's proxy picker shows where each proxy is: the directory
+    passes Bermuda's area through (it used to drop it, so it was always blank)."""
+    api = _install_bermuda_api(monkeypatch, _snapshot())
+    api.SNAPSHOT_FEATURES = ("scanners",)
+    api.async_get_scanners = lambda _hass: {
+        "AA:BB:CC:DD:EE:01": {"name": "Kitchen proxy", "slug": "kitchen_proxy", "unique_id": "aa:bb:cc:dd:ee:00",
+                              "address_wifi_mac": "aa:bb:cc:dd:ee:00", "area_id": "kitchen", "area_name": "Kitchen",
+                              "last_seen_age": 2.0},
+        "AA:BB:CC:DD:EE:02": {"name": "Shed proxy", "slug": "shed_proxy", "area_id": None, "area_name": "", "last_seen_age": None},
+    }
+    d = bermuda_source.async_get_scanner_directory(object())
+    assert d["aa:bb:cc:dd:ee:01"]["area_id"] == "kitchen" and d["aa:bb:cc:dd:ee:01"]["area_name"] == "Kitchen"
+    assert d["aa:bb:cc:dd:ee:02"]["area_id"] is None and d["aa:bb:cc:dd:ee:02"]["area_name"] is None
+
+
+def test_registry_devices_are_walked_without_the_deprecated_mapping():
+    """Sextant reads every device through _iter_registry_devices: on current
+    cores ``devices`` iterates entries (``.values()`` is deprecated, removed
+    in 2027.9); on older ones it iterates ids, resolved through the mapping."""
+    from sextant import _iter_registry_devices
+
+    entry = types.SimpleNamespace(id="d1", name="Kitchen proxy")
+
+    class NewView:
+        def __iter__(self):
+            return iter([entry])
+
+        def values(self):
+            raise AssertionError("deprecated .values() used")
+
+    assert list(_iter_registry_devices(types.SimpleNamespace(devices=NewView()))) == [entry]
+    assert list(_iter_registry_devices(types.SimpleNamespace(devices={"d1": entry}))) == [entry]
+
+
+def _new_style_registry(entries):
+    """A device registry like Home Assistant 2026.10's: ``devices`` iterates
+    entries and its deprecated mapping use raises."""
+    class View:
+        def __iter__(self):
+            return iter(entries)
+
+        def values(self):
+            raise AssertionError("deprecated .devices.values() used")
+
+        def __getitem__(self, key):
+            raise AssertionError("deprecated .devices[...] used")
+
+    return types.SimpleNamespace(devices=View(), async_get=lambda device_id: None)
+
+
+def test_unifi_and_wifi_access_points_read_a_new_style_registry(monkeypatch):
+    """The call sites, not just the helper: both read names and areas through
+    a registry whose deprecated mapping use raises. _unifi_access_points
+    swallows exceptions, so the registry-derived name is what proves it."""
+    import sextant as core
+
+    # The test environment's Home Assistant is a stub: give it the two
+    # registry modules the call sites import.
+    helpers = sys.modules.get("homeassistant.helpers") or types.ModuleType("homeassistant.helpers")
+    dr, ar = types.ModuleType("homeassistant.helpers.device_registry"), types.ModuleType("homeassistant.helpers.area_registry")
+    for name, mod in (("device_registry", dr), ("area_registry", ar)):
+        monkeypatch.setitem(sys.modules, f"homeassistant.helpers.{name}", mod)
+        monkeypatch.setattr(helpers, name, mod, raising=False)
+    monkeypatch.setitem(sys.modules, "homeassistant.helpers", helpers)
+
+    kitchen = types.SimpleNamespace(id="d1", name="U7 ctrl name", name_by_user="Kitchen E7", manufacturer="Ubiquiti Inc.",
+                                    area_id="kitchen", connections={("mac", "8c:ed:e1:00:de:ed")})
+    registry = _new_style_registry([kitchen])
+    dr.async_get = lambda hass: registry
+    ar.async_get = (lambda hass: types.SimpleNamespace(
+        async_get_area=lambda area_id: types.SimpleNamespace(floor_id="ground") if area_id == "kitchen" else None))
+    hub = types.SimpleNamespace(api=types.SimpleNamespace(devices={"a": types.SimpleNamespace(
+        raw={"type": "uap", "mac": "8c:ed:e1:00:de:ed", "name": "U7 ctrl name", "num_sta": 3, "state": 1})}))
+
+    class Hass:
+        config_entries = types.SimpleNamespace(async_entries=lambda domain: [types.SimpleNamespace(runtime_data=hub)] if domain == "unifi" else [])
+
+    aps = core._unifi_access_points(Hass())
+    assert [(a["name"], a["area_id"]) for a in aps] == [("Kitchen E7", "kitchen")]   # from the registry
+
+    layout = {"floor": [{"name": "Ground", "floor_id": "ground", "zones": [
+        {"entity_id": "Kitchen", "area_id": "kitchen", "cords": [{"x": 0, "y": 0}, {"x": 1, "y": 0}, {"x": 1, "y": 1}]}]}]}
+    placed = core._wifi_access_points(Hass(), layout, ["8c:ed:e1:00:de:ed"])
+    assert placed["8c:ed:e1:00:de:ed"]["room"] == "Kitchen" and placed["8c:ed:e1:00:de:ed"]["name"] == "Kitchen E7"
