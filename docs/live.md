@@ -26,7 +26,7 @@ ago* rather than a blank. A row of buttons over the map draws or hides the
 plan image, the labels, the trails, the spots, the proxies, the Wi-Fi
 access points placed on the plan, the solver's distance circles and the
 fingerprint fix; each lights up while it is on.
-Labels names the rooms and the things (and whichever proxy you point at),
+Labels names the rooms and the things (and whichever proxy you point at); a room's name sits at its most open point, so an L-shaped room's label is never in a corner or outside it,
 while Proxies draws the proxies themselves, which a busy plan is often
 better without. In the corner, a countdown says how many seconds until the
 next positioning cycle, and falls back to how long ago the last one was
@@ -200,6 +200,15 @@ does not pile hours onto its last square. History keeps 6 hours by
 default; **History kept (hours)** on the Tuning page raises it, up to a
 week. Asking for more than is kept says how far back it goes.
 
+
+## Signal lines
+
+With a thing selected, **Signal lines** (on by default) draws a line from it
+to every proxy the solver used for it this cycle. Each line is green when the
+proxy is close and red by ten metres, labelled with the distance, and thicker
+for the proxies the solver weighted most. A phone or watch also gets a dashed
+line to the Wi-Fi access point it is joined to, when its owner's Wi-Fi tracker
+of the same kind is on an access point placed on this floor.
 
 ## Wi-Fi signal
 

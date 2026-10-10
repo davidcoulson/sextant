@@ -2778,8 +2778,9 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
                 "speed": None if zone_speed is None else round(zone_speed, 2),
                 "floor": lowest_floor_name,
                 # The exact solver input (post-correction, post-filter), for
-                # the panel's trilateration circles.
-                "radii": [[float(pt[0]), float(pt[1]), float(pt[2])] for pt in weighted],
+                # the panel's trilateration circles and signal lines: proxy x,
+                # y, distance (px), and the weight the solver gave it.
+                "radii": [[float(pt[0]), float(pt[1]), float(pt[2]), round(float(pt[3]), 4)] for pt in weighted],
                 # Smoothed floor-election probabilities, for debugging "why
                 # did it pick this floor" (issue #94).
                 "floors": {f: round(p, 3) for f, p in probs.items()},

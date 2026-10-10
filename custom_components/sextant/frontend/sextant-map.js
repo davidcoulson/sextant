@@ -180,6 +180,56 @@ export function polygonCentroid(points) {
   return { x: cx / (6 * area), y: cy / (6 * area) };
 }
 
+/** Signed distance from a point to a polygon's outline: positive inside. */
+function signedEdgeDistance(x, y, pts) {
+  let inside = false, best = Infinity;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const a = pts[i], b = pts[j];
+    if ((a.y > y) !== (b.y > y) && x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
+    best = Math.min(best, distToSegment({ x, y }, a, b));
+  }
+  return inside ? best : -best;
+}
+
+/**
+ * The point inside a polygon furthest from its outline (the "pole of
+ * inaccessibility"), found by quadtree search to within `precision` px.
+ * A room label goes here rather than at the centroid: an L-shaped room's
+ * centroid can sit in its corner or outside it altogether. Exported for the
+ * tests.
+ */
+export function polygonPole(pts, precision) {
+  if (!pts || pts.length < 3) return polygonCentroid(pts || []);
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of pts) { minX = Math.min(minX, p.x); minY = Math.min(minY, p.y); maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y); }
+  const w = maxX - minX, h = maxY - minY, size = Math.min(w, h);
+  if (!(size > 0)) return polygonCentroid(pts);
+  const prec = precision ?? Math.max(size / 50, 1e-6);
+  const cell = (x, y, half) => {
+    const d = signedEdgeDistance(x, y, pts);
+    return { x, y, half, d, max: d + half * Math.SQRT2 };
+  };
+  const queue = [];
+  for (let x = minX; x < maxX; x += size) for (let y = minY; y < maxY; y += size) queue.push(cell(x + size / 2, y + size / 2, size / 2));
+  const c = polygonCentroid(pts);
+  let best = cell(c.x, c.y, 0);
+  const box = cell(minX + w / 2, minY + h / 2, 0);
+  if (box.d > best.d) best = box;
+  let guard = 0;
+  while (queue.length && guard++ < 20000) {
+    // Most promising cell first; the queue stays small for a room outline.
+    let k = 0;
+    for (let i = 1; i < queue.length; i++) if (queue[i].max > queue[k].max) k = i;
+    const q = queue.splice(k, 1)[0];
+    if (q.d > best.d) best = q;
+    if (q.max - best.d <= prec) continue;
+    const half = q.half / 2;
+    queue.push(cell(q.x - half, q.y - half, half), cell(q.x + half, q.y - half, half),
+               cell(q.x - half, q.y + half, half), cell(q.x + half, q.y + half, half));
+  }
+  return { x: best.x, y: best.y };
+}
+
 export function pointInPolygon(pt, points) {
   let inside = false;
   for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
@@ -610,6 +660,7 @@ export class SextantMap {
     this.radarTargets = [];  // mmWave targets on this floor: [{cords, thing, room, radar_name}]
     this.radarLive = null;   // the Edit page's selected radar, live: {radar_id, targets: [{index, cords}]}
     this.apInfo = null;      // mac -> {name, clients, online}: the UniFi access points, null until known
+    this.focusWifi = null;   // the focused thing's Wi-Fi link: {ent, x, y, name}, or null
     this.wifiHeat = null;    // the Wi-Fi signal map: {cells, mode: "signal"|"ap", names: {mac: name}, colours: {mac: css}}
     this._wifiAt = null;     // the signal map's readout point: {x, y, idx} under the pointer (or the last tap)
     this.hover = null;
@@ -1261,7 +1312,7 @@ export class SextantMap {
       ctx.setLineDash([]);
       if (noGo) this._hatch(ctx, pts);
       if (this.options.labels && item.entity_id) {
-        const c = polygonCentroid(pts);
+        const c = this._labelPoint(pts);
         const icon = kind === "zone" ? this.areaIcons[item.area_id] : null;
         this._label(ctx, item.entity_id, c.x, c.y, kind === "subzone" ? 11 : 13, kind === "subzone" ? 0.75 : 0.9,
           icon ? mdiPath(icon, () => this.invalidate()) : null, LABEL_PRIO.place);
@@ -1274,6 +1325,54 @@ export class SextantMap {
         }
       }
     });
+  }
+
+  /** The focused thing's Wi-Fi link (see _drawSignalLines), or null. */
+  setFocusWifi(link) { this.focusWifi = link || null; this.invalidate(); }
+
+  /** Lines from the focused thing to every proxy the solver used for it,
+   * green when close and red by ten metres, thicker for the proxies it
+   * leaned on most; and, for a phone or watch, a dashed line to the Wi-Fi
+   * access point it is joined to. Easier to read than the range circles:
+   * which proxies are hearing it, and which ones count. */
+  _drawSignalLines(ctx, t) {
+    const k = this.view.k, scale = this.floor?.scale || PX_PER_M_FALLBACK;
+    const [tx, ty] = t.cords;
+    const radii = Array.isArray(t.radii) ? t.radii : [];
+    const top = Math.max(...radii.map((r) => Number(r[3]) || 0), 0);
+    ctx.save();
+    ctx.lineCap = "round";
+    for (const r of radii) {
+      const [x, y, d] = r;
+      const metres = d / scale;
+      // The same red-to-green ramp as the Wi-Fi map: 10 m and further is red.
+      ctx.strokeStyle = signalColour(-80 + 30 * Math.max(0, Math.min(1, (10 - metres) / 9)), 0.85);
+      const share = top > 0 ? (Number(r[3]) || 0) / top : 0.5;
+      ctx.lineWidth = (1 + 2.5 * share) / k;
+      ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(x, y); ctx.stroke();
+      if (this.options.labels) this._label(ctx, `${metres < 10 ? metres.toFixed(1) : Math.round(metres)} m`, (tx + x) / 2, (ty + y) / 2, 9, 0.7, null, LABEL_PRIO.proxy);
+    }
+    const w = this.focusWifi;
+    if (w && w.ent === t.ent && Number.isFinite(w.x) && Number.isFinite(w.y)) {
+      ctx.strokeStyle = "#4f5bd5"; ctx.lineWidth = 2 / k; ctx.setLineDash([7 / k, 5 / k]);
+      ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(w.x, w.y); ctx.stroke(); ctx.setLineDash([]);
+      if (this.options.labels) this._label(ctx, `Wi-Fi · ${w.name}`, (tx + w.x) / 2, (ty + w.y) / 2 - 10 / k, 9, 0.85, null, LABEL_PRIO.other);
+    }
+    ctx.restore();
+  }
+
+  /** Where a room's or spot's name goes: the most open point inside it,
+   * cached by outline (a drag reshapes it, so the key is the corners). */
+  _labelPoint(pts) {
+    const key = pts.map((p) => `${Math.round(p.x)},${Math.round(p.y)}`).join(";");
+    this._labelCache = this._labelCache || new Map();
+    let at = this._labelCache.get(key);
+    if (!at) {
+      at = polygonPole(pts);
+      if (this._labelCache.size > 500) this._labelCache.clear();
+      this._labelCache.set(key, at);
+    }
+    return at;
   }
 
   _hatch(ctx, pts) {
@@ -1918,6 +2017,7 @@ export class SextantMap {
         trail.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])));
         ctx.strokeStyle = paint(0.5); ctx.lineWidth = 2 / k; ctx.stroke();
       }
+      if (focused && this.options.links !== false) this._drawSignalLines(ctx, t);
       if (this.options.circles && Array.isArray(t.radii)) {
         for (const [x, y, r] of t.radii) {
           ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
