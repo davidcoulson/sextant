@@ -40,3 +40,10 @@ test("degenerate outlines fall back without throwing", () => {
   const flat = polygonPole(P([[0, 0], [10, 0], [20, 0]]));
   assert.ok(Number.isFinite(flat.x) && Number.isFinite(flat.y));
 });
+
+test("a sliver of a polygon is placed quickly, inside its box", () => {
+  const t0 = Date.now();
+  const p = polygonPole(P([[0, 0], [2000, 0], [2000, 0.001], [0, 0.001]]));
+  assert.ok(Date.now() - t0 < 200);
+  assert.ok(p.x >= 0 && p.x <= 2000 && p.y >= 0 && p.y <= 0.001);
+});

@@ -204,13 +204,16 @@ export function polygonPole(pts, precision) {
   for (const p of pts) { minX = Math.min(minX, p.x); minY = Math.min(minY, p.y); maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y); }
   const w = maxX - minX, h = maxY - minY, size = Math.min(w, h);
   if (!(size > 0)) return polygonCentroid(pts);
-  const prec = precision ?? Math.max(size / 50, 1e-6);
+  const prec = precision ?? Math.max(size / 50, Math.max(w, h) / 2000, 1e-6);
   const cell = (x, y, half) => {
     const d = signedEdgeDistance(x, y, pts);
     return { x, y, half, d, max: d + half * Math.SQRT2 };
   };
+  // Seed with at most 16 cells along the long side: a sliver of a room (a
+  // spot drawn 2000 px by 0.001) must not seed millions of them.
+  const step = Math.max(size, Math.max(w, h) / 16);
   const queue = [];
-  for (let x = minX; x < maxX; x += size) for (let y = minY; y < maxY; y += size) queue.push(cell(x + size / 2, y + size / 2, size / 2));
+  for (let x = minX; x < maxX; x += step) for (let y = minY; y < maxY; y += step) queue.push(cell(x + step / 2, y + step / 2, step / 2));
   const c = polygonCentroid(pts);
   let best = cell(c.x, c.y, 0);
   const box = cell(minX + w / 2, minY + h / 2, 0);

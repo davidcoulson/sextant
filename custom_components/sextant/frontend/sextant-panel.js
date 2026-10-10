@@ -1109,7 +1109,10 @@ class SextantLive extends LitElement {
     const ent = this._selected, layout = this.data?.layout || {}, wifi = this.data?.wifi || {};
     const cls = (layout.thing_classes || {})[ent], owner = (layout.thing_owners || {})[ent];
     let link = null;
-    if (ent && owner && (cls === "phone" || cls === "watch")) {
+    // Scrubbing this thing's history shows a past position; its Wi-Fi link
+    // is the current one, so it waits until Live resumes.
+    const scrubbing = this._scrub != null && this._history?.ent === ent;
+    if (ent && owner && !scrubbing && (cls === "phone" || cls === "watch")) {
       const cands = wifi.candidates || {};
       const pick = (wifi.assigned?.[owner] || []).map((a) => [a.entity, cands[a.entity]])
         .find(([e, c]) => c && c.home && c.ap && /watch/i.test(`${c.name} ${e}`) === (cls === "watch"));
