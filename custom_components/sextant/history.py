@@ -502,143 +502,217 @@ class PositionHistory:
     def entities(self):
         return sorted(e for e, tr in self.tracks.items() if tr.t)
 
-    def query(self, ent, frm, to, max_points):
-        """Points for one thing in [frm, to], decimated to ~max_points.
-
-        Decimation keeps a uniform stride so the trail spans the WHOLE window,
-        and always keeps the first and last point, every gap and every floor
-        change - dropping those would silently join unrelated stretches.
-        """
-        empty = {"ent": ent, "floors": [], "scales": [], "zones": [""], "spots": [""],
-                 "t": [], "x_m": [], "y_m": [], "f": [], "gap": [], "z": [], "sp": [],
-                 "count": 0, "total": 0, "stride": 1}
+    def window(self, ent, frm, to):
+        """A copy of one thing's points in [frm, to], and whether it starts at
+        the first point retained; None when there are none. Slicing the
+        columns is a memory copy, cheap on the event loop, and the copy is
+        safe to hand to an executor thread while the cycle keeps appending to
+        the live track. See query_window and timeline_window."""
         track = self.tracks.get(ent)
         if track is None or not track.t:
-            return empty
-        lo = bisect.bisect_left(track.t, frm)
-        hi = bisect.bisect_right(track.t, to)
-        total = hi - lo
-        if total <= 0:
-            return empty
-        cap = max(2, int(max_points))
-        stride = 1 if total <= cap else -(-total // cap)   # ceil division
-
-        keep = []
-        for i in range(lo, hi):
-            if (i == lo or i == hi - 1 or track.gap[i]
-                    or (i > lo and track.f[i] != track.f[i - 1])
-                    or (i > lo and track.z[i] != track.z[i - 1])
-                    or (i > lo and track.sp[i] != track.sp[i - 1])
-                    or (i - lo) % stride == 0):
-                keep.append(i)
-        # Breaks and floor changes are force-kept above, so data that flaps
-        # between floors (or a device pruned and re-seen over and over) can
-        # defeat the stride entirely and return the whole buffer - megabytes of
-        # JSON for a request that asked for a few thousand points. Thin the
-        # result uniformly if that happened; the endpoints and the ordering
-        # survive, some breaks do not.
-        hard_cap = cap * 2
-        gap_out = {}
-        if len(keep) > hard_cap:
-            step = -(-len(keep) // hard_cap)
-            thinned = keep[::step]
-            if thinned[-1] != keep[-1]:
-                thinned.append(keep[-1])
-            # A frame break may be sacrificed here; a DROPOUT may not. The room
-            # band and the trail both promise that nothing is drawn across an
-            # interval where nothing was recorded, and that promise rests
-            # entirely on this flag reaching the client. Re-adding the dropped
-            # index would push us back over the cap this block exists to
-            # enforce, so carry the flag FORWARD onto the next surviving point
-            # instead: the count is unchanged, and the hole can only widen to
-            # the next kept point, which errs toward honesty.
-            survivors = set(thinned)
-            carry = False
-            for i in keep:
-                if i in survivors:
-                    if carry:
-                        gap_out[i] = GAP_DROPOUT
-                        carry = False
-                elif track.gap[i] == GAP_DROPOUT:
-                    carry = True
-            keep = thinned
-            stride = max(stride, step)
-
-        return {
-            "ent": ent,
-            "floors": list(track.floors),
-            "scales": list(track.scales),
-            "zones": list(track.zones),
-            "spots": list(track.spots),
-            "t": [round(track.t[i], 2) for i in keep],
-            "x_m": [round(track.x[i], 3) for i in keep],
-            "y_m": [round(track.y[i], 3) for i in keep],
-            "f": [track.f[i] for i in keep],
-            "gap": [gap_out.get(i, track.gap[i]) for i in keep],
-            "z": [track.z[i] for i in keep],
-            "sp": [track.sp[i] for i in keep],
-            "count": len(keep),
-            "total": total,
-            "stride": stride,
-        }
-
-
-    def timeline(self, ent, frm, to, max_segments=200):
-        """Where a thing has been over [frm, to], as stays rather than points.
-
-        Consecutive points on the same floor, in the same room and spot are
-        one stay. A stay ends where the next one starts - the recorder keeps a
-        point on every room and spot change, so that is the crossing - except
-        across a dropout, where the thing went unheard: the stay ends at the
-        last point heard and an ``unheard`` stay covers the silence, so the
-        timeline never claims a thing was somewhere nobody could hear it.
-
-        Reads the full-resolution record, not the decimated trail: a short
-        stay is exactly what decimation would drop. ``partial`` marks the
-        first stay when it begins at the start of what is retained, so "here
-        for 6 h" can be told apart from "here for at least 6 h".
-        """
-        track = self.tracks.get(ent)
-        out = {"ent": ent, "from": frm, "to": to, "stays": [], "last_heard": None}
-        if track is None or not track.t:
-            return out
+            return None
         lo = bisect.bisect_left(track.t, frm)
         hi = bisect.bisect_right(track.t, to)
         if hi <= lo:
-            return out
-        stays = []
-        for i in range(lo, hi):
-            ts = track.t[i]
-            key = (track.f[i], track.z[i], track.sp[i])
-            dropout = track.gap[i] == GAP_DROPOUT and stays
-            if dropout:
-                last = stays[-1]
-                stays.append({"key": None, "start": last["end"], "end": ts})
-            if not stays or dropout or key != stays[-1]["key"]:
-                if stays and not dropout:
-                    stays[-1]["end"] = ts
-                stays.append({"key": key, "start": ts, "end": ts})
-            else:
-                stays[-1]["end"] = ts
-        rows = []
-        for s in stays:
-            if s["key"] is None:
-                if s["end"] > s["start"]:
-                    rows.append({"start": round(s["start"], 1), "end": round(s["end"], 1), "unheard": True})
-                continue
-            fi, zi, si = s["key"]
-            rows.append({
-                "start": round(s["start"], 1),
-                "end": round(s["end"], 1),
-                "floor": track.floors[fi] if fi < len(track.floors) else "",
-                "room": track.zones[zi] or None,
-                "spot": track.spots[si] or None,
-            })
-        if rows:
-            rows[0]["partial"] = lo == 0
-        out["stays"] = rows[-max_segments:]
-        out["last_heard"] = round(track.t[hi - 1], 1)
+            return None
+        w = _Track()
+        for col in ("t", "x", "y", "f", "gap", "z", "sp"):
+            setattr(w, col, getattr(track, col)[lo:hi])
+        w.floors, w.scales = list(track.floors), list(track.scales)
+        w.zones, w.spots = list(track.zones), list(track.spots)
+        return w, lo == 0
+
+    def recent_points(self, ent, frm):
+        """One thing's points from ``frm`` on as (t, floor, x_m, y_m, gap),
+        oldest first, made on demand: a read-only view of the live track for
+        the event loop (persons.settled_since walks back from the newest and
+        stops early). None with no points."""
+        track = self.tracks.get(ent)
+        if track is None or not track.t:
+            return None
+        return _PointView(track, bisect.bisect_left(track.t, frm), len(track.t))
+
+    def query(self, ent, frm, to, max_points):
+        return query_track(ent, self.tracks.get(ent), frm, to, max_points)
+
+    def timeline(self, ent, frm, to, max_segments=200):
+        return timeline_track(ent, self.tracks.get(ent), frm, to, max_segments)
+
+
+class _PointView:
+    """Points lo..hi-1 of a track as (t, floor name, x, y, gap) tuples, built
+    only when read. Indexable, sized and reversible."""
+
+    __slots__ = ("_track", "_lo", "_hi")
+
+    def __init__(self, track, lo, hi):
+        self._track, self._lo, self._hi = track, lo, hi
+
+    def __len__(self):
+        return max(0, self._hi - self._lo)
+
+    def _point(self, i):
+        tr = self._track
+        fi = tr.f[i]
+        return (tr.t[i], tr.floors[fi] if fi < len(tr.floors) else fi, tr.x[i], tr.y[i], tr.gap[i])
+
+    def __getitem__(self, k):
+        if not -len(self) <= k < len(self):
+            raise IndexError(k)
+        return self._point(self._lo + (k % len(self)))
+
+    def __iter__(self):
+        return (self._point(i) for i in range(self._lo, self._hi))
+
+    def __reversed__(self):
+        return (self._point(i) for i in range(self._hi - 1, self._lo - 1, -1))
+
+
+def query_window(ent, win, frm, to, max_points):
+    """query() over a window() copy: safe in an executor thread."""
+    return query_track(ent, win[0] if win else None, frm, to, max_points)
+
+
+def timeline_window(ent, win, frm, to, max_segments=200):
+    """timeline() over a window() copy: safe in an executor thread."""
+    return timeline_track(ent, win[0] if win else None, frm, to, max_segments, at_start=win[1] if win else None)
+
+
+def query_track(ent, track, frm, to, max_points):
+    """Points for one thing in [frm, to], decimated to ~max_points.
+
+    Decimation keeps a uniform stride so the trail spans the WHOLE window,
+    and always keeps the first and last point, every gap and every floor
+    change - dropping those would silently join unrelated stretches.
+    """
+    empty = {"ent": ent, "floors": [], "scales": [], "zones": [""], "spots": [""],
+             "t": [], "x_m": [], "y_m": [], "f": [], "gap": [], "z": [], "sp": [],
+             "count": 0, "total": 0, "stride": 1}
+    if track is None or not track.t:
+        return empty
+    lo = bisect.bisect_left(track.t, frm)
+    hi = bisect.bisect_right(track.t, to)
+    total = hi - lo
+    if total <= 0:
+        return empty
+    cap = max(2, int(max_points))
+    stride = 1 if total <= cap else -(-total // cap)   # ceil division
+
+    keep = []
+    for i in range(lo, hi):
+        if (i == lo or i == hi - 1 or track.gap[i]
+                or (i > lo and track.f[i] != track.f[i - 1])
+                or (i > lo and track.z[i] != track.z[i - 1])
+                or (i > lo and track.sp[i] != track.sp[i - 1])
+                or (i - lo) % stride == 0):
+            keep.append(i)
+    # Breaks and floor changes are force-kept above, so data that flaps
+    # between floors (or a device pruned and re-seen over and over) can
+    # defeat the stride entirely and return the whole buffer - megabytes of
+    # JSON for a request that asked for a few thousand points. Thin the
+    # result uniformly if that happened; the endpoints and the ordering
+    # survive, some breaks do not.
+    hard_cap = cap * 2
+    gap_out = {}
+    if len(keep) > hard_cap:
+        step = -(-len(keep) // hard_cap)
+        thinned = keep[::step]
+        if thinned[-1] != keep[-1]:
+            thinned.append(keep[-1])
+        # A frame break may be sacrificed here; a DROPOUT may not. The room
+        # band and the trail both promise that nothing is drawn across an
+        # interval where nothing was recorded, and that promise rests
+        # entirely on this flag reaching the client. Re-adding the dropped
+        # index would push us back over the cap this block exists to
+        # enforce, so carry the flag FORWARD onto the next surviving point
+        # instead: the count is unchanged, and the hole can only widen to
+        # the next kept point, which errs toward honesty.
+        survivors = set(thinned)
+        carry = False
+        for i in keep:
+            if i in survivors:
+                if carry:
+                    gap_out[i] = GAP_DROPOUT
+                    carry = False
+            elif track.gap[i] == GAP_DROPOUT:
+                carry = True
+        keep = thinned
+        stride = max(stride, step)
+
+    return {
+        "ent": ent,
+        "floors": list(track.floors),
+        "scales": list(track.scales),
+        "zones": list(track.zones),
+        "spots": list(track.spots),
+        "t": [round(track.t[i], 2) for i in keep],
+        "x_m": [round(track.x[i], 3) for i in keep],
+        "y_m": [round(track.y[i], 3) for i in keep],
+        "f": [track.f[i] for i in keep],
+        "gap": [gap_out.get(i, track.gap[i]) for i in keep],
+        "z": [track.z[i] for i in keep],
+        "sp": [track.sp[i] for i in keep],
+        "count": len(keep),
+        "total": total,
+        "stride": stride,
+    }
+
+
+def timeline_track(ent, track, frm, to, max_segments=200, at_start=None):
+    """Where a thing has been over [frm, to], as stays rather than points.
+
+    Consecutive points on the same floor, in the same room and spot are
+    one stay. A stay ends where the next one starts - the recorder keeps a
+    point on every room and spot change, so that is the crossing - except
+    across a dropout, where the thing went unheard: the stay ends at the
+    last point heard and an ``unheard`` stay covers the silence, so the
+    timeline never claims a thing was somewhere nobody could hear it.
+
+    Reads the full-resolution record, not the decimated trail: a short
+    stay is exactly what decimation would drop. ``partial`` marks the
+    first stay when it begins at the start of what is retained, so "here
+    for 6 h" can be told apart from "here for at least 6 h".
+    """
+    out = {"ent": ent, "from": frm, "to": to, "stays": [], "last_heard": None}
+    if track is None or not track.t:
         return out
+    lo = bisect.bisect_left(track.t, frm)
+    hi = bisect.bisect_right(track.t, to)
+    if hi <= lo:
+        return out
+    stays = []
+    for i in range(lo, hi):
+        ts = track.t[i]
+        key = (track.f[i], track.z[i], track.sp[i])
+        dropout = track.gap[i] == GAP_DROPOUT and stays
+        if dropout:
+            last = stays[-1]
+            stays.append({"key": None, "start": last["end"], "end": ts})
+        if not stays or dropout or key != stays[-1]["key"]:
+            if stays and not dropout:
+                stays[-1]["end"] = ts
+            stays.append({"key": key, "start": ts, "end": ts})
+        else:
+            stays[-1]["end"] = ts
+    rows = []
+    for s in stays:
+        if s["key"] is None:
+            if s["end"] > s["start"]:
+                rows.append({"start": round(s["start"], 1), "end": round(s["end"], 1), "unheard": True})
+            continue
+        fi, zi, si = s["key"]
+        rows.append({
+            "start": round(s["start"], 1),
+            "end": round(s["end"], 1),
+            "floor": track.floors[fi] if fi < len(track.floors) else "",
+            "room": track.zones[zi] or None,
+            "spot": track.spots[si] or None,
+        })
+    if rows:
+        rows[0]["partial"] = lo == 0 if at_start is None else (at_start and lo == 0)
+    out["stays"] = rows[-max_segments:]
+    out["last_heard"] = round(track.t[hi - 1], 1)
+    return out
 
 
 def day_key(ts):

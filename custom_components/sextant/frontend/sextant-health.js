@@ -75,7 +75,6 @@ const TUNING_LABELS = {
   spot_proxy_ratio: ["Spot proxy: clearly nearest ×", "every other proxy must read this many times farther for full weight (none within 1.25×)"],
   zone_lock_warmup_secs: ["Lock warm-up (s)", "no stationary lock until a thing has been tracked this long since a start or a floor change"],
   fingerprint_marks_scope: ["Pins guide", "whose location pins place a thing: own = only its own; class = also those of things of its class (the cats share one another's); all = everyone's"],
-  history_admin_only: ["History for admins only", "only administrators may read where things have been (scrubber, timeline, Activity); live positions stay visible to everyone"],
   history_hours: ["History kept (hours)", "how far back the history scrubber, the timeline and Activity reach (1 to 168)"],
   calibration_target: ["Calibration writes to", "sextant = a per-proxy factor in the layout; bermuda = per-scanner RSSI offsets in Bermuda"],
   correction_close_fade: ["Fade stretch up close", "a proxy calibration stretches (factor above 1) pushes a thing lying right beside it away; fade that stretch out at short range"],
@@ -688,7 +687,7 @@ class SextantHealth extends LitElement {
       ["People", ["gps_stale_secs"]],
       ["Robots and mmWave", ["robot_poll_secs", "mmwave_fusion", "mmwave_auto_pins", "mmwave_pair_m"]],
       ["Calibration", ["calibration_target", "correction_close_fade", "correction_fade_near_m", "correction_fade_far_m"]],
-      ["History and display", ["history_hours", "history_admin_only", "stale_after_secs", "away_after_secs", "restore_state_secs", "election_log_hours"]],
+      ["History and display", ["history_hours", "stale_after_secs", "away_after_secs", "restore_state_secs", "election_log_hours"]],
     ];
     const known = new Set(groups.flatMap((g) => g[1]));
     const rest = Object.keys(spec).filter((k) => !known.has(k));

@@ -85,7 +85,6 @@ distances in metres.
 | `away_after_secs` | 900 | when the Live list stops waiting for a thing and calls it away |
 | `fingerprint_marks_scope` | `class` | whose location pins place a thing: `own`, `class` (also things of its class) or `all` |
 | `history_hours` | 6 | hours of position history kept (scrubber, timeline, Activity), 1 to 168 |
-| `history_admin_only` | off | only administrators may read where things have been (scrubber, timeline, Activity) |
 | `stale_after_secs` | 120 | unheard this long, a thing is drawn as a ghost on Live (display only) |
 | `mmwave_fusion` | on | a thing whose Bluetooth fix is near an mmWave target is placed on the target |
 | `mmwave_auto_pins` | on | one still target and one still thing make a location pin |

@@ -240,3 +240,11 @@ def test_tune_without_a_layout_is_rejected(tmp_path):
     hass = make_hass(tmp_path)
     run(st_mod.load_layout(hass))
     assert "No layout" in _tune(hass, entity="phone", ref_offset_db=1.0).errors[0]
+
+
+def test_the_map_picker_lists_every_format_the_upload_accepts(tmp_path):
+    for name in ("a.png", "b.GIF", "c.svg", "d.avif", "e.bmp", "notes.txt", "f.html"):
+        (tmp_path / name).write_bytes(b"x")
+    (tmp_path / "sub.png").mkdir()
+    listed = set(sextant.list_map_files(str(tmp_path)))
+    assert listed == {"a.png", "b.GIF", "c.svg", "d.avif", "e.bmp"}

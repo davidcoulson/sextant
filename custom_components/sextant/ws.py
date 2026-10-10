@@ -719,16 +719,6 @@ async def ws_truth_apply(hass, connection, msg):
 # --- history -----------------------------------------------------------------
 
 
-def _history_denied(hass, connection, msg) -> bool:
-    """True (and an error sent) when history is for admins only and the caller is not one."""
-    if not _core()._tuning(get_layout(hass), "history_admin_only"):
-        return False
-    if getattr(getattr(connection, "user", None), "is_admin", False):
-        return False
-    _error(connection, msg, "Location history is for administrators on this install")
-    return True
-
-
 def _history(hass):
     core = _core()
     hist = core.get_position_history(hass)
@@ -741,8 +731,6 @@ def _history(hass):
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_history_index(hass, connection, msg):
-    if _history_denied(hass, connection, msg):
-        return
     core = _core()
     hist = _history(hass)
     files, size = await hass.async_add_executor_job(history_mod.disk_usage, core.history_dir(hass))
@@ -764,8 +752,6 @@ async def ws_history_index(hass, connection, msg):
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_history_get(hass, connection, msg):
-    if _history_denied(hass, connection, msg):
-        return
     core = _core()
     hist = _history(hass)
     now = time.time()
@@ -774,7 +760,10 @@ async def ws_history_get(hass, connection, msg):
     if frm > to:
         frm, to = to, frm
     max_points = int(min(max(2, msg.get("max_points") or core.HISTORY_DEFAULT_POINTS), core.HISTORY_MAX_QUERY_POINTS))
-    data = hist.query(msg["entity"], frm, to, max_points)
+    # The window is copied here, on the loop; decimating it (a pass over every
+    # point, more for a week of a busy thing) runs in a worker thread.
+    win = hist.window(msg["entity"], frm, to)
+    data = await hass.async_add_executor_job(history_mod.query_window, msg["entity"], win, frm, to, max_points)
     data.update({"now": now, "from": frm, "to": to, "retained": hist.retained(msg["entity"]), "config": dict(hist.cfg)})
     connection.send_result(msg["id"], data)
 
@@ -792,12 +781,11 @@ async def ws_history_timeline(hass, connection, msg):
     What the Live page's timeline and its "here for" line are drawn from.
     Covers the last ``hours`` (default 24), capped at what history retains.
     """
-    if _history_denied(hass, connection, msg):
-        return
     hist = _history(hass)
     now = time.time()
     span = min(float(msg.get("hours") or 24.0) * 3600.0, hist.cfg["max_age"])
-    data = hist.timeline(msg["entity"], now - span, now)
+    win = hist.window(msg["entity"], now - span, now)
+    data = await hass.async_add_executor_job(history_mod.timeline_window, msg["entity"], win, now - span, now)
     data.update({"now": now, "retained": hist.retained(msg["entity"])})
     connection.send_result(msg["id"], data)
 
@@ -1202,6 +1190,7 @@ async def _compute_kpi(hass, hours):
     vol.Optional("hours", default=12.0): vol.Coerce(float),
     vol.Optional("baseline"): str,
 })
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_kpi(hass, connection, msg):
     """Stability KPI for the window; with ``baseline`` also the deltas against
@@ -1225,6 +1214,7 @@ async def ws_kpi(hass, connection, msg):
 
 
 @websocket_api.websocket_command({vol.Required("type"): "sextant/kpi/baselines"})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_kpi_baselines(hass, connection, msg):
     baselines = await load_kpi_baselines(hass)

@@ -40,6 +40,13 @@ STAY_RADIUS_M = 2.0
 # minute after a restart when a watch on its nightstand was placed a floor
 # down three times running.
 MOVE_CONFIRM_SECS = 120.0
+# Unheard for longer than this, and the stay is over even when it comes back
+# to the same place: it left (the default away_after_secs). A restart's
+# silence, a minute or two, is far shorter and passes over as before.
+ABSENCE_ENDS_STAY_SECS = 900.0
+# The history's "dropout" mark (history.GAP_DROPOUT): nothing was heard
+# between this point and the one before it.
+GAP_DROPOUT = 2
 # Higher speaks for its owner first, among things equally recently moved.
 CARRY_PRIORITY = {"cat": 4, "dog": 4, "paw": 4, "watch": 3, "phone": 2, "headphones": 1}
 # Classes whose place is their owner's place, unless the thing says otherwise
@@ -88,22 +95,31 @@ def on_charger(state) -> bool:
     return isinstance(state, str) and state.strip().lower() in CHARGER_STATES
 
 
-def settled_since(points, here, radius=STAY_RADIUS_M, confirm_secs=MOVE_CONFIRM_SECS):
+def settled_since(points, here, radius=STAY_RADIUS_M, confirm_secs=MOVE_CONFIRM_SECS,
+                  absence_secs=ABSENCE_ENDS_STAY_SECS):
     """When a thing arrived within ``radius`` metres of ``here``, from its history.
 
-    ``points``: (t, floor, x_m, y_m), oldest first; ``here``: (floor, x_m, y_m).
-    Walks back from the newest point until the thing had been elsewhere
-    (another floor, or farther than ``radius``) for ``confirm_secs``; returns
+    ``points``: (t, floor, x_m, y_m) or (t, floor, x_m, y_m, gap), oldest
+    first; ``here``: (floor, x_m, y_m). Walks back from the newest point
+    until the thing had been elsewhere (another floor, or farther than
+    ``radius``) for ``confirm_secs``, or went unheard for ``absence_secs``
+    (a point whose gap is GAP_DROPOUT, after that long a silence); returns
     the time of the first point of the stay that followed, or None with no
     history here. Shorter absences are passed over as noise.
     """
     floor, hx, hy = here
     since = None
-    for t, f, x, y in reversed(points):
+    newer = None   # (t, gap) of the point after this one
+    for p in reversed(points):
+        t, f, x, y = p[:4]
+        if (since is not None and newer is not None and newer[1] == GAP_DROPOUT
+                and newer[0] - t >= absence_secs):
+            break
         if f == floor and x is not None and y is not None and math.hypot(x - hx, y - hy) <= radius:
             since = t
         elif since is not None and since - t >= confirm_secs:
             break
+        newer = (t, p[4] if len(p) > 4 else 0)
     return since
 
 

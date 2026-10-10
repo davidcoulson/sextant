@@ -510,3 +510,31 @@ def test_history_hours_from_the_tuning_page_sets_the_window():
     assert hm.history_config({"tuning": {"history_hours": 9999}})["max_age"] == hm.MAX_AGE_LIMIT
     # A hand-set history_max_age is more specific and wins.
     assert hm.history_config({"history_max_age": 7200, "tuning": {"history_hours": 24}})["max_age"] == 7200
+
+
+def test_window_is_a_copy_the_cycle_can_keep_appending_past():
+    h = H.PositionHistory({"max_age": 86400, "max_points": 100000, "heartbeat": 30})
+    for i in range(10):
+        h.record("phone", 1000.0 + i * 60, i, 0.0, "Ground", 100.0, zone="Kitchen")
+    win = h.window("phone", 0, 5000)
+    assert win is not None and win[1] is True
+    before = H.query_window("phone", win, 0, 5000, 1000)
+    h.record("phone", 2000.0, 50.0, 0.0, "Ground", 100.0, zone="Hall")
+    # The live track moved on; the copy did not.
+    assert H.query_window("phone", win, 0, 5000, 1000) == before
+    assert H.timeline_window("phone", win, 0, 5000)["stays"][0]["partial"] is True
+    assert H.query_window("phone", None, 0, 5000, 10)["count"] == 0
+    assert H.timeline_window("phone", h.window("phone", 1500, 5000), 1500, 5000)["stays"][0]["partial"] is False
+
+
+def test_recent_points_is_a_lazy_full_resolution_view():
+    h = H.PositionHistory({"max_age": 86400, "max_points": 100000, "heartbeat": 30})
+    for i in range(5):
+        h.record("watch", 1000.0 + i * 60, 1.0 + i, 2.0, "Ground", 100.0)
+    pts = h.recent_points("watch", 1100)
+    assert len(pts) == 3
+    newest = next(reversed(pts))
+    assert newest[0] == 1240.0 and newest[1] == "Ground" and abs(newest[2] - 5.0) < 1e-6
+    assert [p[0] for p in pts] == [1120.0, 1180.0, 1240.0]
+    assert pts[-1] == newest and pts[0][0] == 1120.0
+    assert h.recent_points("nobody", 0) is None

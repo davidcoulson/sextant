@@ -141,3 +141,19 @@ def test_what_counts_as_on_the_charger():
         assert persons.on_charger(s), s
     for s in ("Not Charging", "NotCharging", "not_charging", "Discharging", "off", "unavailable", "unknown", "", None, 42):
         assert not persons.on_charger(s), s
+
+
+def test_a_long_silence_ends_the_stay_but_a_restart_does_not():
+    from sextant import history
+    assert persons.GAP_DROPOUT == history.GAP_DROPOUT
+    here = ("Ground", 1.0, 1.0)
+    # Here at 0..600 s, unheard for an hour, back in the same place from 4200 s.
+    gone = [(t, "Ground", 1.0, 1.0, 0) for t in range(0, 601, 60)]
+    gone += [(4200, "Ground", 1.0, 1.0, persons.GAP_DROPOUT), (4260, "Ground", 1.0, 1.0, 0)]
+    assert persons.settled_since(gone, here) == 4200
+    # The same with a two-minute restart in the middle: one stay from 0 s.
+    restart = [(t, "Ground", 1.0, 1.0, 0) for t in range(0, 601, 60)]
+    restart += [(720, "Ground", 1.0, 1.0, persons.GAP_DROPOUT), (780, "Ground", 1.0, 1.0, 0)]
+    assert persons.settled_since(restart, here) == 0
+    # Points without a gap column behave as before.
+    assert persons.settled_since([p[:4] for p in gone], here) == 0

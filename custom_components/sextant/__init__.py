@@ -692,10 +692,9 @@ TUNING_SPEC = {
     # timeline and Activity reach back this far. Applied on the next
     # cycle; an explicit top-level history_max_age (seconds) still wins.
     "history_hours": (6.0, float, 1.0, 168.0),
-    # Who may read where things have been (the scrubber, timeline and Activity):
-    # everyone signed in, or admins only. Live positions and the sensors stay
-    # visible to every user either way, as all Home Assistant entities are.
-    "history_admin_only": (False, bool),
+    # (history_admin_only, removed in 2026.10.10: where things have been -
+    # the scrubber, timeline, Activity and the stability KPI - is always for
+    # administrators; a stored value is ignored.)
 }
 
 # Reference fingerprints: receiver-to-receiver ranges, refreshed on a slow
@@ -3882,12 +3881,16 @@ async def _save_runtime(hass, final=False):
 
 def _history_arrival(hass, ent, floor, x, y, now):
     """When the position history says this thing came to stay within a couple
-    of metres of (x, y), or None when it has nothing to say (yet)."""
+    of metres of (x, y), or None when it has nothing to say (yet).
+
+    Reads the full-resolution track, newest first, through a view that makes
+    each point only when it is reached: settled_since stops at the start of
+    the stay, usually a few points back, and the decimated query could move a
+    dropout mark onto a later point and stretch a restart's silence."""
     try:
-        q = get_position_history(hass).query(ent, now - 86400, now, 5000)
-        floors = q.get("floors") or []
-        points = [(t, floors[fi] if isinstance(fi, int) and fi < len(floors) else fi, xm, ym)
-                  for t, fi, xm, ym in zip(q.get("t", []), q.get("f", []), q.get("x_m", []), q.get("y_m", []))]
+        points = get_position_history(hass).recent_points(ent, now - 86400)
+        if points is None:
+            return None
         return persons_mod.settled_since(points, (floor, x, y))
     except Exception:  # noqa: BLE001 - no history is not an error
         return None
@@ -6566,7 +6569,9 @@ def list_map_files(maps_path):
         return [
             entry.name
             for entry in entries
-            if entry.is_file() and entry.name.lower().endswith((".png", ".jpg", ".jpeg", ".webp"))
+            # The same list the upload accepts: a map uploaded as a GIF or SVG
+            # was saved but never offered.
+            if entry.is_file() and os.path.splitext(entry.name)[1].lower() in _ALLOWED_MAP_EXTS
         ]
 
 
