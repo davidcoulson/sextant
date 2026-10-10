@@ -21,7 +21,8 @@ def test_finite_xy():
 
 def test_layout_check_accepts_a_normal_layout():
     layout = {"floor": [{"name": "Ground", "scale": 100.0, "level": 0,
-                         "receivers": [{"entity_id": "kitchen", "cords": {"x": 1, "y": 2, "r": 3}}],
+                         "receivers": [{"entity_id": "kitchen", "cords": {"x": 1, "y": 2, "r": 3}},
+                                       {"entity_id": "unplaced", "cords": {}}, {"entity_id": "none", "cords": None}],
                          "zones": [{"entity_id": "Kitchen", "cords": [{"x": 0, "y": 0}, {"x": 5, "y": 0}, {"x": 5, "y": 5}]}],
                          "subzones": [], "pins": [{"name": "A", "cords": {"x": 1, "y": 1}}]}],
               "thing_names": {"phone": "Phone"}, "tuning": {}}
@@ -42,6 +43,12 @@ def test_layout_check_refuses_what_would_break_a_cycle():
         {"floor": [{"name": "G", "zones": [{"cords": [{"x": 0, "y": 0}] * (layout_check.MAX_VERTICES + 1)}]}]},
         {"floor": [], "thing_names": ["x"]},
         {"floor": [], "tuning": 3},
+        # A corner needs both coordinates; an outline must be a list; a
+        # position must be an object.
+        {"floor": [{"name": "G", "zones": [{"cords": [{"y": 0}, {"x": 1, "y": 0}, {"x": 1, "y": 1}]}]}]},
+        {"floor": [{"name": "G", "zones": [{"cords": {"x": 1, "y": 1}}]}]},
+        {"floor": [{"name": "G", "receivers": [{"cords": [{"x": 1, "y": 1}]}]}]},
+        {"floor": [{"name": "G", "receivers": [{"cords": {"x": 1}}]}]},
     ]
     for layout in bad:
         assert layout_check.layout_problem(layout) is not None, layout

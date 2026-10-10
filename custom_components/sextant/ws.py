@@ -1611,7 +1611,16 @@ async def ws_thing_forget(hass, connection, msg):
         # store, which the next periodic save rewrites without it): a thing
         # re-added under the same name starts from its seed, not from a
         # ghost's learning.
-        core._fingerprint_db.thing_gain.pop(ent, None)
+        if core._fingerprint_db.thing_gain.pop(ent, None) is not None:
+            # Saved now, not at the next periodic save: a reload before then
+            # would read the old gain back from its store.
+            snap = {"learned_gain": round(core._fingerprint_db.learned_gain, 4),
+                    "thing_gain": {e: round(g, 4) for e, g in core._fingerprint_db.thing_gain.items()}}
+            core._persist_fp_gains.saved = snap
+            try:
+                await core.save_fp_gains(hass, snap)
+            except Exception as e:  # noqa: BLE001 - the in-memory forget still stands
+                _LOGGER.debug("Fingerprint gains not saved after forgetting %s: %s", ent, e)
         async with LAYOUT_LOCK:
             layout = get_layout_for_edit(hass)
             if isinstance(layout, dict):

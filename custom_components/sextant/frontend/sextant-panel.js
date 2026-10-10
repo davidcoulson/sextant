@@ -535,7 +535,20 @@ class SextantLive extends LitElement {
    * time: firstUpdated runs once, disconnectedCallback every time. */
   connectedCallback() {
     super.connectedCallback();
-    if (this.hasUpdated && this._tornDown) { this._tornDown = false; this._setup(); this._map.setOptions({ ...this._options, focus: this._selected }); }
+    if (this.hasUpdated && this._tornDown) {
+      this._tornDown = false;
+      this._setup();
+      // A rebuilt map starts blank: replay what updated() only pushes on a
+      // change - areas, access points, the selection's marks and heatmap, the
+      // Wi-Fi map and the signal lines.
+      this._map.setOptions({ ...this._options, focus: this._selected });
+      this._map.setAreas(this.hass?.areas);
+      this._map.setAccessPoints(Array.isArray(this.data?.access_points) ? this.data.access_points : null);
+      this._pushMarks();
+      this._pushHeat();
+      this._pushWifiHeat();
+      this._pushFocusWifi();
+    }
   }
 
   _setup() {

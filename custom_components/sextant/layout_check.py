@@ -29,29 +29,43 @@ def _finite(v) -> bool:
     return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
 
 
-def _point_problem(p, where) -> str | None:
+# Rooms and spots are outlines (a list of corners); everything else on a floor
+# sits at one point (an object with x and y, or nothing yet: unplaced).
+SHAPE_LISTS = ("zones", "subzones")
+
+
+def _xy_problem(p, where, required) -> str | None:
+    """A point's x and y must be finite numbers: always for a corner; for a
+    placed item once either is given (an empty object is "not placed")."""
     if not isinstance(p, dict):
         return f"{where}: a point must be an object with x and y"
-    for k in ("x", "y", "r"):
-        if k in p and p[k] is not None and not _finite(p[k]):
-            return f"{where}: {k} must be a finite number"
+    if required or "x" in p or "y" in p:
+        for k in ("x", "y"):
+            if not _finite(p.get(k)):
+                return f"{where}: {k} must be a finite number"
+    if p.get("r") is not None and not _finite(p["r"]):
+        return f"{where}: r must be a finite number"
     return None
 
 
-def _cords_problem(cords, where) -> str | None:
-    """``cords`` is a point or circle ({x, y[, r]}) or a list of points."""
+def _cords_problem(cords, where, key) -> str | None:
+    """``cords`` as this kind of item needs it: a list of corners for a room
+    or spot, a point for anything else. None is always allowed (not drawn,
+    not placed)."""
     if cords is None:
         return None
-    if isinstance(cords, dict):
-        return _point_problem(cords, where)
-    if isinstance(cords, list):
+    if key in SHAPE_LISTS:
+        if not isinstance(cords, list):
+            return f"{where}: an outline must be a list of corners"
         if len(cords) > MAX_VERTICES:
             return f"{where}: more than {MAX_VERTICES} corners"
         for i, p in enumerate(cords):
-            if (problem := _point_problem(p, f"{where} corner {i + 1}")) is not None:
+            if (problem := _xy_problem(p, f"{where} corner {i + 1}", True)) is not None:
                 return problem
         return None
-    return f"{where}: cords must be a point or a list of points"
+    if not isinstance(cords, dict):
+        return f"{where}: a position must be an object with x and y"
+    return _xy_problem(cords, where, False)
 
 
 def layout_problem(layout) -> str | None:
@@ -85,7 +99,7 @@ def layout_problem(layout) -> str | None:
                 if not isinstance(item, dict):
                     return f"{name}: {key} {i + 1} must be an object"
                 label = item.get("entity_id") or item.get("name") or item.get("mac") or f"{key} {i + 1}"
-                if (problem := _cords_problem(item.get("cords"), f"{name}: {label}")) is not None:
+                if (problem := _cords_problem(item.get("cords"), f"{name}: {label}", key)) is not None:
                     return problem
     for key, value in layout.items():
         if any(key.startswith(p) for p in MAP_PREFIXES) and value is not None and not isinstance(value, dict):

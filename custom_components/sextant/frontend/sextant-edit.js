@@ -221,7 +221,13 @@ class SextantEdit extends LitElement {
     this._map.setOptions({ labels: true, subzones: true, receivers: true, trails: false });
     this._map.setLocks(this._locks);
     this._syncDraft(first);
-    if (first) this._loadRadarDevices();
+    // A rebuilt map starts blank: give it what updated() would only push on a
+    // change - the tool in hand, and the radars' devices.
+    this._map.setTool(["measure", "receiver", "pin", "remark", "radar", "ap"].includes(this._tool) ? "select" : this._tool);
+    this._map.setAreas(this.hass?.areas);
+    this._map.setAccessPoints(Array.isArray(this.data?.access_points) ? this.data.access_points : null);
+    this._loadRadarDevices();
+    if (!first) this._loadBiasView();
     // A reload or a closed tab would take the draft with it.
     this._warnUnload = (ev) => { if (this.unsaved) { ev.preventDefault(); ev.returnValue = ""; } };
     window.addEventListener("beforeunload", this._warnUnload);
@@ -996,14 +1002,16 @@ class SextantEdit extends LitElement {
     const f = this._floorObj();
     if (!f) return;
     this._busy = true;
+    const floor = f.name;
     const r = await callWS(this, this.hass, { type: "sextant/adjust_zones", target, zones: f.zones || [], subzones: f.subzones || [], options: {} });
     this._busy = false;
-    // The floor it was made for: Accept applies it there and nowhere else.
-    if (r) this._proposal = { target, floor: f.name, ...r };
+    // The floor it was made for: Accept applies it there and nowhere else, and
+    // a reply that comes back after a floor switch is dropped.
+    if (r && floor === this.floor) this._proposal = { target, floor, ...r };
   }
 
   _acceptProposal() {
-    const p = this._proposal, f = p && (this._draft?.floor || []).find((x) => x.name === p.floor);
+    const p = this._proposal, f = p && p.floor === this.floor && (this._draft?.floor || []).find((x) => x.name === p.floor);
     if (!f || !p) { this._proposal = null; return; }
     this._snapshot();
     if (p.zones) f.zones = p.zones;
