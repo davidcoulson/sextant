@@ -194,7 +194,18 @@ class SextantEdit extends LitElement {
     if (this._selection?.kind === kind && locked) this._selection = null;
   }
 
-  firstUpdated() {
+  firstUpdated() { this._setup(true); }
+
+  /** Home Assistant can detach a panel and attach the same element again
+   * later: firstUpdated does not run twice, so the map and the listeners
+   * taken down in disconnectedCallback are built again here. The draft is
+   * kept - it is what the user was editing. */
+  connectedCallback() {
+    super.connectedCallback();
+    if (this.hasUpdated && this._tornDown) { this._tornDown = false; this._setup(false); }
+  }
+
+  _setup(first) {
     this._map = new SextantMap(this.renderRoot.querySelector("canvas"), {
       fetch: (url) => this.hass.fetchWithAuth(url),
       onSelect: (hit) => { this._selection = hit; },
@@ -209,10 +220,10 @@ class SextantEdit extends LitElement {
     this._map.setMode("edit");
     this._map.setOptions({ labels: true, subzones: true, receivers: true, trails: false });
     this._map.setLocks(this._locks);
-    this._syncDraft(true);
-    this._loadRadarDevices();
+    this._syncDraft(first);
+    if (first) this._loadRadarDevices();
     // A reload or a closed tab would take the draft with it.
-    this._warnUnload = (ev) => { if (this._dirty) { ev.preventDefault(); ev.returnValue = ""; } };
+    this._warnUnload = (ev) => { if (this.unsaved) { ev.preventDefault(); ev.returnValue = ""; } };
     window.addEventListener("beforeunload", this._warnUnload);
     this._keys = (e) => this._onKey(e);
     window.addEventListener("keydown", this._keys);
@@ -224,22 +235,30 @@ class SextantEdit extends LitElement {
     clearInterval(this._radarTimer);
     window.removeEventListener("beforeunload", this._warnUnload);
     window.removeEventListener("keydown", this._keys);
-    this._map?.destroy();
+    this._map?.destroy();   // kept, not nulled: a late reply may still call it
+    this._tornDown = true;
   }
 
   /** Whether the draft holds changes that are not saved. */
-  get unsaved() { return !!this._dirty; }
+  get unsaved() { return !!this._dirty || this._drawing(); }
+
+  /** Corners of a room or spot drawn but not yet closed (they live in the map). */
+  _drawing() { return !!this._map?.draft?.length; }
 
   /** Ask before something would throw the draft away (another floor, another
    * page). True to go ahead. */
   confirmLeave(what = "Leave") {
-    return !this._dirty || confirmDialog(`${what} without saving? The changes to this floor plan will be lost.`);
+    if (!this.unsaved) return true;
+    const msg = this._dirty
+      ? `${what} without saving? The changes to this floor plan will be lost.`
+      : `${what}? The shape you are drawing is not finished and will be lost.`;
+    return confirmDialog(msg);
   }
 
   updated(changed) {
     if (!this._map) return;
     if (changed.has("data")) this._syncDraft(!this._dirty);
-    if (changed.has("floor")) this._pushFloor();
+    if (changed.has("floor")) { this._pushFloor(); this._proposal = null; }
     if (changed.has("hass")) this._map.setAreas(this.hass?.areas);
     if (changed.has("data")) this._map.setAccessPoints(Array.isArray(this.data?.access_points) ? this.data.access_points : null);
     if (changed.has("floor") || changed.has("data")) this._loadBiasView();
@@ -910,6 +929,7 @@ class SextantEdit extends LitElement {
     const lost = lostShapes(this.data?.layout, draft);
     if (lost.length && !confirmDialog(`This save would break ${lost.length === 1 ? "a shape" : `${lost.length} shapes`}:\n\n${lost.join("\n")}\n\nSave anyway? The plan as it is now is kept under History.`)) return null;
     this._busy = true;
+    const sent = layoutKey(draft);
     const r = await callWS(this, this.hass, { type: "sextant/layout/save", layout: draft, ...(removeMap ? { remove_map: removeMap } : {}) });
     this._busy = false;
     if (r) {
@@ -918,7 +938,10 @@ class SextantEdit extends LitElement {
       // The server's own check, in case a shape went wrong on the way in.
       if (r.lost?.length) toast(this, `Saved, but ${r.lost.length === 1 ? "a shape was" : `${r.lost.length} shapes were`} lost: ${r.lost[0]}${r.lost.length > 1 ? " …" : ""}. Restore the earlier copy from History if that was not meant.`, 10000);
       this._history = null;   // stale now: a copy was just added
-      this._dirty = false;
+      // Anything changed while the save was on its way is still unsaved, and
+      // the reload that follows must not replace it (updated() keeps a dirty
+      // draft).
+      this._dirty = layoutKey(this._cleanDraft()) !== sent;
       this.dispatchEvent(new CustomEvent("layout-changed"));
     }
     return r;
@@ -975,12 +998,13 @@ class SextantEdit extends LitElement {
     this._busy = true;
     const r = await callWS(this, this.hass, { type: "sextant/adjust_zones", target, zones: f.zones || [], subzones: f.subzones || [], options: {} });
     this._busy = false;
-    if (r) this._proposal = { target, ...r };
+    // The floor it was made for: Accept applies it there and nowhere else.
+    if (r) this._proposal = { target, floor: f.name, ...r };
   }
 
   _acceptProposal() {
-    const f = this._floorObj(), p = this._proposal;
-    if (!f || !p) return;
+    const p = this._proposal, f = p && (this._draft?.floor || []).find((x) => x.name === p.floor);
+    if (!f || !p) { this._proposal = null; return; }
     this._snapshot();
     if (p.zones) f.zones = p.zones;
     if (p.subzones) f.subzones = p.subzones;
@@ -1046,9 +1070,9 @@ class SextantEdit extends LitElement {
                     hundredth of a pixel per metre is already far finer than any
                     measurement behind it, so show and store it rounded. */ ""}
               ${uiField({ label: "Scale (px per m)", type: "number", step: 0.01, value: f.scale == null ? "" : Math.round(f.scale * 100) / 100, onChange: (v) => { this._snapshot(); f.scale = Number(v) || null; this._dirty = true; this.requestUpdate(); }, style: "width: 150px" })}
-              ${uiField({ label: "Level", type: "number", step: 1, value: f.level ?? "", placeholder: "0", onChange: (v) => { if (v === "" || v == null) delete f.level; else f.level = Math.round(Number(v)); this._dirty = true; this.requestUpdate(); }, style: "width: 90px" })}
+              ${uiField({ label: "Level", type: "number", step: 1, value: f.level ?? "", placeholder: "0", onChange: (v) => { this._snapshot(); if (v === "" || v == null) delete f.level; else f.level = Math.round(Number(v)); this._dirty = true; this.requestUpdate(); }, style: "width: 90px" })}
               ${uiField({ label: `Elevation (${lenUnit(this.hass)})`, type: "number", step: 0.05, value: toDisplayLen(f.elevation, this.hass), placeholder: String(toDisplayLen((f.level || 0) * 3, this.hass)), onChange: (v) => { this._snapshot(); const m = fromDisplayLen(v, this.hass); if (m == null || isNaN(m)) delete f.elevation; else f.elevation = m; this._dirty = true; this._refreshAlignment(); this.requestUpdate(); }, style: "width: 130px" })}
-              ${uiField({ label: "Election bias", type: "number", step: 0.05, min: 0.25, max: 4, value: f.bias ?? "", placeholder: "1", onChange: (v) => { if (v === "" || v == null) delete f.bias; else f.bias = Number(v); this._dirty = true; this.requestUpdate(); }, style: "width: 120px" })}
+              ${uiField({ label: "Election bias", type: "number", step: 0.05, min: 0.25, max: 4, value: f.bias ?? "", placeholder: "1", onChange: (v) => { this._snapshot(); if (v === "" || v == null) delete f.bias; else f.bias = Number(v); this._dirty = true; this.requestUpdate(); }, style: "width: 120px" })}
               ${Object.keys(this.hass?.floors || {}).length ? uiSelect({ label: "Home Assistant floor", value: f.floor_id || "", options: [{ value: "", label: "not linked" }, ...Object.values(this.hass.floors).map((x) => ({ value: x.floor_id, label: x.name }))], onChange: (v) => { this._snapshot(); if (v) f.floor_id = v; else delete f.floor_id; this._dirty = true; this.requestUpdate(); }, style: "width: 170px" }) : nothing}
             </div>
           </div>` : html`<div class="card muted">No floor yet. Add one below.</div>`}
