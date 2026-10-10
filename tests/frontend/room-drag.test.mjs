@@ -130,3 +130,18 @@ test("the pointer-up after Esc is not a click", () => {
   map._up(ev("pointerup", 600, 600));
   assert.equal(map.lastDragMoved, false);
 });
+
+test("a drag the browser cancels goes back where it started", () => {
+  const { map, changes } = editMap();
+  start(map, 350, 350);
+  map._move(ev("pointermove", 420, 400));
+  // Through the map's own pointercancel listener, so the test fails if the
+  // listener stops putting the drag back.
+  const onCancel = (map._listeners || []).find(([type]) => type === "pointercancel")?.[1];
+  assert.ok(onCancel, "the map listens for pointercancel");
+  onCancel(ev("pointercancel", 420, 400));
+  assert.deepEqual(map.floor.zones[0].cords[0], { x: 100, y: 100 });
+  assert.deepEqual(map.floor.subzones[0].cords[0], { x: 200, y: 200 });
+  assert.deepEqual(changes, []);
+  assert.equal(map.lastDragMoved, true);
+});

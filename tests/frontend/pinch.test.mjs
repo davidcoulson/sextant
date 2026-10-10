@@ -142,3 +142,18 @@ test("the map reads light or dark from the page's own background", () => {
     assert.equal(map.dark, false, `${light} is light`);
   }
 });
+
+test("the last finger of a pinch does not count as a tap for the editor's click handler", () => {
+  const map = mapWith();
+  map._down(ev("pointerdown", 1, 100, 100));
+  map._down(ev("pointerdown", 2, 200, 100));
+  map._move(ev("pointermove", 2, 250, 100));
+  map._up(ev("pointerup", 2, 250, 100));
+  map._up(ev("pointerup", 1, 100, 100));
+  // The editor's canvas click reads this to tell a tap from a gesture.
+  assert.equal(map.lastDragMoved, true);
+  // A plain tap after it is a tap again.
+  map._down(ev("pointerdown", 1, 100, 100));
+  map._up(ev("pointerup", 1, 100, 100));
+  assert.equal(map.lastDragMoved, false);
+});

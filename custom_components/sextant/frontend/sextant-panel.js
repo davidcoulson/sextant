@@ -115,6 +115,12 @@ class SextantPanel extends LitElement {
     if (this._unsub) { this._unsub.then((u) => u()).catch(() => {}); this._unsub = null; }
   }
 
+  willUpdate(changed) {
+    // A page remembered in this browser may be one this user cannot open (an
+    // admin used it last): Live instead, as the tabs offer.
+    if (changed.has("hass") && this.hass?.user && !this._modes().some(([id]) => id === this._mode)) this._mode = "live";
+  }
+
   updated(changed) {
     const now = Date.now();
     if (changed.has("hass") && this.hass && !this._data && !this._loading && !(now - (this._loadFailedAt || 0) < RETRY_MS)) this._load();
@@ -523,7 +529,29 @@ class SextantLive extends LitElement {
   /** Ask the panel to switch pages, for a quick-action shortcut. */
   _goto(mode) { this.dispatchEvent(new CustomEvent("quick-nav", { detail: mode, bubbles: true, composed: true })); }
 
-  firstUpdated() {
+  firstUpdated() { this._setup(); }
+
+  /** Built again when Home Assistant attaches this same element a second
+   * time: firstUpdated runs once, disconnectedCallback every time. */
+  connectedCallback() {
+    super.connectedCallback();
+    if (this.hasUpdated && this._tornDown) {
+      this._tornDown = false;
+      this._setup();
+      // A rebuilt map starts blank: replay what updated() only pushes on a
+      // change - areas, access points, the selection's marks and heatmap, the
+      // Wi-Fi map and the signal lines.
+      this._map.setOptions({ ...this._options, focus: this._selected });
+      this._map.setAreas(this.hass?.areas);
+      this._map.setAccessPoints(Array.isArray(this.data?.access_points) ? this.data.access_points : null);
+      this._pushMarks();
+      this._pushHeat();
+      this._pushWifiHeat();
+      this._pushFocusWifi();
+    }
+  }
+
+  _setup() {
     this._restoreDetailHeight();
     // The room for the card changes with the screen and with the map: a
     // height saved on a tall phone is cut to fit a short one.
@@ -548,7 +576,14 @@ class SextantLive extends LitElement {
     this._pushThings();
   }
 
-  disconnectedCallback() { super.disconnectedCallback(); this._map?.destroy(); clearInterval(this._linksTimer); clearInterval(this._wifiHeatTimer); this._hostResize?.disconnect(); }
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    this._map?.destroy();   // kept, not nulled: a late reply may still call it
+    clearInterval(this._linksTimer);
+    clearInterval(this._wifiHeatTimer);
+    this._hostResize?.disconnect();
+    this._tornDown = true;
+  }
 
   _select(ent) {
     if (ent !== this._selected) { this._truth = null; this._marking = false; this._blend = null; this._heat = null; }

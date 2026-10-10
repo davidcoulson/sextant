@@ -818,7 +818,10 @@ export class SextantMap {
       ["pointerdown", (e) => this._down(e)],
       ["pointermove", (e) => this._move(e)],
       ["pointerup", (e) => this._up(e)],
-      ["pointercancel", (e) => this._up(e)],
+      // The browser took the gesture away (a scroll, a system gesture, a
+      // call): a drag in progress goes back where it started, as with Esc,
+      // rather than being committed where the finger last was.
+      ["pointercancel", (e) => { this.cancelDrag(); this._up(e); }],
       ["wheel", (e) => this._wheel(e), { passive: false }],
       ["dblclick", (e) => this._dblclick(e)],
       ["contextmenu", (e) => { e.preventDefault(); const hit = this.hitTest(this._local(e)); if (this.host.onContextMenu) this.host.onContextMenu(hit, e); }],
@@ -1100,7 +1103,10 @@ export class SextantMap {
   _up(e) {
     this._pointers.delete(e.pointerId);
     // Lifting one finger of a pinch ends it; the other does not start a pan.
-    if (this._drag?.kind === "pinch") { if (this._pointers.size < 2) { this._drag = null; this.lastDragMoved = true; } return; }
+    // The finger still down then lifts too, with no drag: _dragCancelled
+    // keeps its pointer-up (and the click after it) from counting as a tap,
+    // which with a placement tool armed would drop an anchor.
+    if (this._drag?.kind === "pinch") { if (this._pointers.size < 2) { this._drag = null; this.lastDragMoved = true; this._dragCancelled = true; } return; }
     const d = this._drag;
     this._drag = null;
     if (d?.kind === "pan" && d.place && !d.moved && e.type === "pointerup" && this.host.onMapClick) this.host.onMapClick(d.place);

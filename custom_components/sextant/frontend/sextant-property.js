@@ -53,6 +53,9 @@ class SextantProperty extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
+    // Attached again after a detach: firstUpdated will not run, so the size
+    // watcher it set up comes back here.
+    if (this._canvas && this._resize) this._resize.observe(this._canvas);
     this._load();
     this._tokenTimer = setInterval(() => { if (this._source === "street") this._loadToken(); }, 4 * 60 * 1000);
   }
@@ -61,6 +64,7 @@ class SextantProperty extends LitElement {
     super.disconnectedCallback();
     clearInterval(this._tokenTimer);
     this._resize?.disconnect();
+    if (this._raf) { cancelAnimationFrame(this._raf); this._raf = 0; }
   }
 
   updated(changed) {

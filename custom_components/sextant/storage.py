@@ -220,7 +220,17 @@ async def load_layout(hass):
 
     A corrupt/unreadable store must not abort setup — the old flat-file reader
     tolerated bad JSON and ran with an empty layout, so keep that resilience.
+
+    Under LAYOUT_LOCK, like every writer: the websocket commands are live
+    before setup gets here, and a save landing between this read and the
+    cache assignment below would otherwise be replaced in memory by the older
+    copy read from disk, and written back over itself by the next save.
     """
+    async with LAYOUT_LOCK:
+        return await _load_layout_locked(hass)
+
+
+async def _load_layout_locked(hass):
     try:
         data = await _layout_store(hass).async_load()
     except Exception as e:

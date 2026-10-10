@@ -25,7 +25,7 @@ from importlib import import_module
 import voluptuous as vol
 from homeassistant.components import websocket_api
 
-from . import bermuda_source, kpi
+from . import bermuda_source, kpi, layout_check
 from . import history as history_mod
 from .const import PROBE_BEACON_UUID
 from . import fingerprint as fingerprint_mod
@@ -320,12 +320,8 @@ def _confine_spots(layout):
 async def ws_layout_save(hass, connection, msg):
     core = _core()
     layout = msg["layout"]
-    floors = layout.get("floor")
-    if not isinstance(floors, list):
-        return _error(connection, msg, "layout.floor must be a list")
-    for floor in floors:
-        if not isinstance(floor, dict) or not floor.get("name"):
-            return _error(connection, msg, "every floor needs a name")
+    if (problem := layout_check.layout_problem(layout)) is not None:
+        return _error(connection, msg, f"Not saved: {problem}")
     remove_target = None
     remove = msg.get("remove_map")
     if remove:
@@ -1611,6 +1607,20 @@ async def ws_thing_forget(hass, connection, msg):
         removed_points = await hass.async_add_executor_job(history_mod.drop_entity, core.history_dir(hass), ent)
     dropped = []
     if not tracked:
+        # Its learned fingerprint gain too (kept in memory and in its own
+        # store, which the next periodic save rewrites without it): a thing
+        # re-added under the same name starts from its seed, not from a
+        # ghost's learning.
+        if core._fingerprint_db.thing_gain.pop(ent, None) is not None:
+            # Saved now, not at the next periodic save: a reload before then
+            # would read the old gain back from its store.
+            snap = {"learned_gain": round(core._fingerprint_db.learned_gain, 4),
+                    "thing_gain": {e: round(g, 4) for e, g in core._fingerprint_db.thing_gain.items()}}
+            core._persist_fp_gains.saved = snap
+            try:
+                await core.save_fp_gains(hass, snap)
+            except Exception as e:  # noqa: BLE001 - the in-memory forget still stands
+                _LOGGER.debug("Fingerprint gains not saved after forgetting %s: %s", ent, e)
         async with LAYOUT_LOCK:
             layout = get_layout_for_edit(hass)
             if isinstance(layout, dict):
@@ -1627,6 +1637,9 @@ async def ws_thing_forget(hass, connection, msg):
     connection.send_result(msg["id"], {"entity": ent, "tracked": tracked, "history_removed": removed_points, "settings_dropped": dropped})
 
 
+MAX_PERSON_TRACKERS = 20
+
+
 @websocket_api.websocket_command({
     vol.Required("type"): "sextant/person/trackers/set",
     vol.Required("person"): str,
@@ -1641,6 +1654,10 @@ async def ws_person_trackers_set(hass, connection, msg):
     if not person.startswith("person."):
         return _error(connection, msg, "person must be a person.* entity")
     trackers = list(dict.fromkeys(t for t in msg["trackers"] if isinstance(t, str) and t.startswith("device_tracker.")))
+    if len(trackers) > MAX_PERSON_TRACKERS:
+        # Each one is tried in turn and listed on the person's sensor: a few
+        # is a household, hundreds would overrun the sensor's attributes.
+        return _error(connection, msg, f"At most {MAX_PERSON_TRACKERS} trackers per person")
     async with LAYOUT_LOCK:
         layout = get_layout_for_edit(hass)
         if not isinstance(layout, dict):
@@ -1802,6 +1819,8 @@ async def ws_snapshots_restore(hass, connection, msg):
         return _error(connection, msg, f"Could not read that snapshot: {e}")
     if not isinstance(layout, dict) or not layout.get("floor"):
         return _error(connection, msg, "That snapshot has no floors in it")
+    if (problem := layout_check.layout_problem(layout)) is not None:
+        return _error(connection, msg, f"That snapshot cannot be restored: {problem}")
     async with LAYOUT_LOCK:
         await save_layout(hass, layout)
     try:
