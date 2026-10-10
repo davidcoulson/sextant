@@ -1113,10 +1113,14 @@ class SextantLive extends LitElement {
     // is the current one, so it waits until Live resumes.
     const scrubbing = this._scrub != null && this._history?.ent === ent;
     if (ent && owner && !scrubbing && (cls === "phone" || cls === "watch")) {
-      const cands = wifi.candidates || {};
+      // The live payload says which access point each tracker is on now;
+      // the snapshot in this.data is from when the page loaded.
+      const cands = wifi.candidates || {}, live = this.positions?.wifi_aps;
+      const apOf = (e, c) => (live ? live[e] : c?.home && c?.ap) || null;
       const pick = (wifi.assigned?.[owner] || []).map((a) => [a.entity, cands[a.entity]])
-        .find(([e, c]) => c && c.home && c.ap && /watch/i.test(`${c.name} ${e}`) === (cls === "watch"));
-      const ap = pick && (this._floorObj()?.access_points || []).find((a) => a.mac === pick[1].ap && a.cords);
+        .find(([e, c]) => c && apOf(e, c) && /watch/i.test(`${c.name} ${e}`) === (cls === "watch"));
+      const mac = pick && apOf(...pick);
+      const ap = mac && (this._floorObj()?.access_points || []).find((a) => a.mac === mac && a.cords);
       if (ap) {
         const name = (this.data?.access_points || []).find((a) => a.mac === ap.mac)?.name || ap.name || ap.mac;
         link = { ent, x: ap.cords.x, y: ap.cords.y, name };

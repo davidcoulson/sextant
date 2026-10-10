@@ -5777,6 +5777,10 @@ def _push_payload(hass):
         # The refresh interval and when the last cycle ran, for the countdown
         # (and its menu, which sets a temporary interval).
         "interval": interval_info(),
+        # Which access point each Wi-Fi tracker at home is on now, for the
+        # panel's signal lines: the layout snapshot's copy goes stale as a
+        # phone roams.
+        "wifi_aps": {e: c["ap"] for e, c in (_wifi_now.get("candidates") or {}).items() if c.get("home") and c.get("ap")},
     }
 
 
