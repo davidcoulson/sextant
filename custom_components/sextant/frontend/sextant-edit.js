@@ -18,7 +18,7 @@ import { lostShapes } from "./sextant-shapes.js";
 const NEW_PIN = "\u0000new";
 
 const TOOLS = [
-  ["select", "Select", "mdi:cursor-default-outline", "Select and drag proxies, rooms and vertices. A dragged proxy snaps onto a nearby wall on the side you are dragging from; hold Alt to place it freely"],
+  ["select", "Select", "mdi:cursor-default-outline", "Select and drag proxies, rooms and vertices. A dragged proxy snaps onto a nearby wall on the side you are dragging from; hold Alt to place it freely. A room dragged whole takes its spots along (hold Shift to take everything inside it) and snaps back home near where it started. Esc cancels a drag, Ctrl/Cmd+Z undoes, Ctrl/Cmd+Shift+Z redoes, Delete removes the selection"],
   ["receiver", "Proxy", "mdi:access-point-plus", "Place a proxy: pick one Bermuda knows, then click the map"],
   ["zone", "Room", "mdi:vector-polygon", "Draw a room: click corners, close on the first one"],
   ["subzone", "Spot", "mdi:vector-rectangle", "Draw a spot (a couch, a desk, a bedside table) inside a room"],
@@ -71,6 +71,7 @@ class SextantEdit extends LitElement {
     _busy: { state: true },
     _locks: { state: true },
     _undo: { state: true },
+    _redo: { state: true },
     _history: { state: true },     // the kept copies of the plan, once asked for
     _alignment: { state: true },
     _radarDevices: { state: true },   // devices reporting mmWave target coordinates
@@ -94,24 +95,97 @@ class SextantEdit extends LitElement {
     // slip while moving a proxy must not move a wall.
     this._locks = { zone: true, subzone: false, receiver: false, pin: false };
     this._undo = [];
+    this._redo = [];
     this._alignment = null; // how the floors stack, graded by the backend against this draft
   }
 
   // --- undo ---------------------------------------------------------------------
 
+  /** The draft as an undo step: without the marks the map draws with. */
+  _serial() {
+    return JSON.stringify(this._draft, (k, v) => (k === "linked" || k === "miss" || k === "missLabel" ? undefined : v));
+  }
+
   _snapshot() {
     if (!this._draft) return;
-    this._undo = [...this._undo.slice(-(UNDO_DEPTH - 1)), JSON.stringify(this._draft, (k, v) => (k === "linked" || k === "miss" || k === "missLabel" ? undefined : v))];
+    this._undo = [...this._undo.slice(-(UNDO_DEPTH - 1)), this._serial()];
+    this._redo = [];   // a new change ends the redo history, as everywhere
+  }
+
+  /** The undo step taken when a drag started, now that it changed the draft. */
+  _commitDragStep() {
+    const step = this._dragStep;
+    this._dragStep = null;
+    if (step == null || step === this._serial()) return;
+    this._undo = [...this._undo.slice(-(UNDO_DEPTH - 1)), step];
+    this._redo = [];
+  }
+
+  /** Undo from the toolbar or the keyboard: while a shape is being drawn,
+   * its last corner (a layout restore would drop the unfinished shape). */
+  _undoAction() {
+    if (this._map?.draft?.length) { this._map.undoDraftPoint(); this.requestUpdate(); } else this._undoLast();
+  }
+
+  _redoAction() {
+    if (!this._map?.draft?.length) this._redoLast();
+  }
+
+  _restore(serial) {
+    this._draft = JSON.parse(serial);
+    this._dirty = layoutKey(this._draft) !== layoutKey(this.data?.layout || { floor: [] });
+    this._proposal = null;
+    this._pushFloor();
   }
 
   _undoLast() {
     if (!this._undo.length) return;
     const prev = this._undo[this._undo.length - 1];
     this._undo = this._undo.slice(0, -1);
-    this._draft = JSON.parse(prev);
-    this._dirty = layoutKey(this._draft) !== layoutKey(this.data?.layout || { floor: [] });
-    this._proposal = null;
-    this._pushFloor();
+    this._redo = [...this._redo.slice(-(UNDO_DEPTH - 1)), this._serial()];
+    this._restore(prev);
+  }
+
+  _redoLast() {
+    if (!this._redo.length) return;
+    const next = this._redo[this._redo.length - 1];
+    this._redo = this._redo.slice(0, -1);
+    this._undo = [...this._undo.slice(-(UNDO_DEPTH - 1)), this._serial()];
+    this._restore(next);
+  }
+
+  /** The editor's keys, while it is on screen and nothing is being typed in:
+   * Esc cancels (a drag puts its item back; a shape being drawn is dropped;
+   * a tool goes back to Select; else the selection clears), Ctrl/Cmd+Z
+   * undoes (while drawing, the last corner), Ctrl/Cmd+Shift+Z or Ctrl+Y
+   * redoes, Delete/Backspace deletes the selection (while drawing, the last
+   * corner). */
+  _onKey(e) {
+    if (!this.isConnected || !this._map || e.defaultPrevented || this.offsetParent === null) return;
+    const typing = e.composedPath().some((el) => el instanceof HTMLElement
+      && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || /^HA-(TEXTFIELD|TEXTAREA|SELECTOR|SELECT|COMBO-BOX)/.test(el.tagName)));
+    if (typing) return;
+    const key = e.key.length === 1 ? e.key.toLowerCase() : e.key, mod = e.ctrlKey || e.metaKey;
+    const drawing = !!this._map.draft?.length;
+    let handled = true;
+    if (key === "Escape") {
+      if (this._map.cancelDrag()) {
+        this._dragStep = null;   // nothing changed after all
+        this.requestUpdate();
+      } else if (drawing) this._map.cancelDraft();
+      else if (this._tool !== "select") this._setTool("select");
+      else if (this._selection) { this._selection = null; this._map.setSelection(null); }
+      else handled = false;
+    } else if (mod && key === "z" && !e.shiftKey) {
+      this._undoAction();
+    } else if (mod && ((key === "z" && e.shiftKey) || key === "y")) {
+      this._redoAction();
+    } else if ((key === "Delete" || key === "Backspace") && !mod) {
+      if (drawing) this._map.undoDraftPoint();
+      else if (this._selection) this._deleteSelection();
+      else handled = false;
+    } else handled = false;
+    if (handled) e.preventDefault();
   }
 
   _setLock(kind, locked) {
@@ -124,8 +198,10 @@ class SextantEdit extends LitElement {
     this._map = new SextantMap(this.renderRoot.querySelector("canvas"), {
       fetch: (url) => this.hass.fetchWithAuth(url),
       onSelect: (hit) => { this._selection = hit; },
-      onDragStart: () => this._snapshot(),
-      onChange: (kind) => { this._dirty = true; this._tick++; if (kind === "pin") this._refreshAlignment(); this.requestUpdate(); },
+      // A press on an item may only select it: its undo step is kept only
+      // once the drag has changed something (see _commitDragStep).
+      onDragStart: () => { this._dragStep = this._serial(); },
+      onChange: (kind) => { this._commitDragStep(); this._dirty = true; this._tick++; if (kind === "pin") this._refreshAlignment(); this.requestUpdate(); },
       onDrawPoint: () => this.requestUpdate(),
       onDrawClose: () => this._closeDraft(),
       onContextMenu: (hit) => this._context(hit),
@@ -138,6 +214,8 @@ class SextantEdit extends LitElement {
     // A reload or a closed tab would take the draft with it.
     this._warnUnload = (ev) => { if (this._dirty) { ev.preventDefault(); ev.returnValue = ""; } };
     window.addEventListener("beforeunload", this._warnUnload);
+    this._keys = (e) => this._onKey(e);
+    window.addEventListener("keydown", this._keys);
   }
 
   disconnectedCallback() {
@@ -145,6 +223,7 @@ class SextantEdit extends LitElement {
     clearTimeout(this._alignTimer);
     clearInterval(this._radarTimer);
     window.removeEventListener("beforeunload", this._warnUnload);
+    window.removeEventListener("keydown", this._keys);
     this._map?.destroy();
   }
 
@@ -175,6 +254,7 @@ class SextantEdit extends LitElement {
       this._dirty = false;
       this._selection = null;
       this._undo = [];
+      this._redo = [];
     }
     this._pushFloor();
   }
@@ -930,7 +1010,8 @@ class SextantEdit extends LitElement {
           ${LOCKS.map(([kind, label, icon]) => html`<button class="tool lock ${this._locks[kind] ? "locked" : ""}" aria-label=${`${label} ${this._locks[kind] ? "locked" : "unlocked"}`} aria-pressed=${!!this._locks[kind]} title=${this._locks[kind] ? `${label} are locked: click to allow selecting and moving them` : `${label} can be moved: click to lock them`} @click=${() => this._setLock(kind, !this._locks[kind])}>
             <span class="lockicons"><ha-icon icon=${icon}></ha-icon><ha-icon class="badge" icon=${this._locks[kind] ? "mdi:lock" : "mdi:lock-open-variant-outline"}></ha-icon></span><span>${label}</span></button>`)}
           <span class="sep"></span>
-          <button class="tool" aria-label="Undo" title="Undo the last change (${this._undo.length} step${this._undo.length === 1 ? "" : "s"})" ?disabled=${!this._undo.length} @click=${() => this._undoLast()}><ha-icon icon="mdi:undo"></ha-icon><span>Undo</span></button>
+          <button class="tool" aria-label="Undo" title="Undo the last change (${this._undo.length} step${this._undo.length === 1 ? "" : "s"}) - Ctrl/Cmd+Z" ?disabled=${!this._undo.length && !this._map?.draft?.length} @click=${() => this._undoAction()}><ha-icon icon="mdi:undo"></ha-icon><span>Undo</span></button>
+          <button class="tool" aria-label="Redo" title="Redo what was undone (${this._redo.length} step${this._redo.length === 1 ? "" : "s"}) - Ctrl/Cmd+Shift+Z or Ctrl+Y" ?disabled=${!this._redo.length || !!this._map?.draft?.length} @click=${() => this._redoAction()}><ha-icon icon="mdi:redo"></ha-icon><span>Redo</span></button>
           ${uiButton({ label: "Save", kind: "primary", disabled: !this._dirty || this._busy, onClick: () => this._save(), title: "Write the floor plan to the store" })}
           ${uiButton({ label: "Discard", kind: "text", disabled: !this._dirty, onClick: () => this._discard() })}
         </div>

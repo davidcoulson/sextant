@@ -21,6 +21,7 @@ import { VERSION as PANEL_VERSION } from "./sextant-version.js";
 import "./sextant-devices.js";
 import "./sextant-health.js";
 import "./sextant-edit.js";
+import "./sextant-property.js";
 
 // No advised spots: one array for every render, so the editor does not see a
 // new value (and repaint) each time the clock ticks.
@@ -81,6 +82,7 @@ class SextantPanel extends LitElement {
     _now: { state: true },        // ticks every second, for the countdown
     _intervalMenu: { state: true }, // the countdown's refresh menu is open
     _floor: { state: true },
+    _property: { state: true },   // Live shows the Property view (every floor on a map) instead of one floor
     _error: { state: true },
   };
 
@@ -240,12 +242,15 @@ class SextantPanel extends LitElement {
       ${floors.length && FLOOR_MODES.has(this._mode) ? html`
         <div class="floor-tabs" role="tablist" aria-label="Floor">
           ${sortFloors(floors, true).map((f) => {
-            const on = f.name === this._floor;
+            const on = f.name === this._floor && !(this._mode === "live" && this._property);
             const n = this._mode === "live" ? this._thingsOn(f.name) : null;
             return html`<button role="tab" class=${on ? "active" : ""} aria-selected=${on}
               title=${n === null ? f.name : `${f.name}: ${n} thing${n === 1 ? "" : "s"} here now`}
               @click=${() => this._pickFloor(f.name)}>${f.name}${n ? html`<span class="n">${n}</span>` : nothing}</button>`;
           })}
+          ${this._mode === "live" ? html`<button role="tab" class=${this._property ? "active" : ""} aria-selected=${!!this._property}
+            title="The whole property on a street or aerial map: every floor, and everything outdoors"
+            @click=${() => { this._property = true; }}><ha-icon icon="mdi:map-outline" style="--mdc-icon-size:16px"></ha-icon>Property</button>` : nothing}
         </div>` : nothing}
       ${this._renderStamp()}
     `;
@@ -254,6 +259,7 @@ class SextantPanel extends LitElement {
   /** One click to another floor. It goes through the same unsaved-draft guard
    * the dropdown did: in Edit a floor switch is an unsaved plan being left. */
   _pickFloor(name) {
+    this._property = false;
     if (name === this._floor) return;
     if (!this._mayLeaveEdit(`Switch to ${name}`)) return;
     this._floor = name;
@@ -349,6 +355,10 @@ class SextantPanel extends LitElement {
                                     @layout-changed=${() => this._onLayoutChanged()}
                                     @show-spots=${(e) => { this._spots = e.detail.spots; this._floor = e.detail.floor; this._setMode("edit"); this._spots = e.detail.spots; }}></sextant-health>`;
       default:
+        if (this._property) {
+          return html`<sextant-property .hass=${this.hass} .data=${this._data} .positions=${this._positions}
+                                        @layout-changed=${() => this._onLayoutChanged()}></sextant-property>`;
+        }
         return html`<sextant-live .hass=${this.hass} .data=${this._data} .positions=${this._positions} .floor=${this._floor}
                                   @layout-changed=${() => this._onLayoutChanged()} @floor-changed=${(e) => { this._floor = e.detail; }}
                                   @quick-nav=${(e) => this._setMode(e.detail)}></sextant-live>`;

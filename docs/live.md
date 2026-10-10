@@ -276,3 +276,16 @@ from the proxies in the same square is learned (up to 15 dB) and taken off
 its samples. The **Wi-Fi signal by room** card on the
 [Proxies](proxies.md) page lists every room weakest first, with the learned
 offsets and a **Start over** button for after an access point moves.
+
+## Property view
+
+**Property**, at the end of the floor tabs, shows the whole house on a map instead of one floor: every floor's rooms over a street map or aerial photo, the outdoor proxies and placed access points, and everyone with a fix, on whichever floor they are. It is the one picture of the house and the garden together.
+
+- **Street** comes through Home Assistant's own map service (2026.10 or later), so the browser only talks to Home Assistant.
+- **Aerial** is Esri World Imagery, fetched by the browser straight from Esri. Esri then sees which map tiles are looked at, so it is off until you pick it. The choice is remembered in this browser.
+
+Floors are placed through their anchors (Edit → Anchor), the same registration the stacked 3D view uses. A floor that is not anchored to the others is drawn on its own frame and the page says so.
+
+**Lining up** (admins): until the house has a site, it is drawn at the home location from Settings → System → General, unturned. Press **Line up the house**, drag the plan onto its footprint on the map, turn it with the rotate buttons (15° and 1° steps, about the middle of the house) until the walls match, and **Save**. The site is stored with the layout and restored with layout snapshots. **Cancel** puts it back.
+
+Drag to pan, scroll or use **+**/**−** to zoom (past the map's last tile level the photo is enlarged), and the house button brings the view back to the house.
