@@ -16,7 +16,7 @@
 import { LitElement, html, css, nothing } from "./lit.js";
 import { thingColor } from "./sextant-map.js";
 import { sharedStyles, toast, callWS, thingName, uiButton, uiSegmented } from "./sextant-ui.js";
-import { TILE, project, unproject, houseToWorld } from "./sextant-geo.js";
+import { TILE, project, unproject, houseToWorld, pinchView } from "./sextant-geo.js";
 
 const MIN_ZOOM = 15, MAX_ZOOM = 22;
 // Tiles exist to this zoom; past it the last level is drawn larger.
@@ -222,14 +222,37 @@ class SextantProperty extends LitElement {
   _down(e) {
     this._canvas.setPointerCapture?.(e.pointerId);
     this._pointers.set(e.pointerId, this._local(e));
-    const p = this._local(e);
-    this._drag = { start: p, view: { ...this._view }, site: this._site ? { ...this._site } : null, moved: false };
+    this._startGesture();
+  }
+
+  /** (Re)start the gesture from the pointers down now: one pans (or, lining
+   * up, moves the house), two pinch-zoom the map. Called whenever a finger
+   * lands or lifts, so the next move is measured from where things are. */
+  _startGesture() {
+    const pts = [...this._pointers.values()];
+    if (!pts.length) { this._drag = null; return; }
+    if (pts.length >= 2) {
+      const [a, b] = pts;
+      this._drag = { pinch: true, view: { ...this._view }, mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+                     dist: Math.hypot(a.x - b.x, a.y - b.y) };
+      return;
+    }
+    this._drag = { start: pts[0], view: { ...this._view }, site: this._site ? { ...this._site } : null, moved: false };
   }
 
   _move(e) {
     if (!this._pointers.has(e.pointerId) || !this._drag) return;
     const p = this._local(e), d = this._drag;
     this._pointers.set(e.pointerId, p);
+    if (d.pinch) {
+      const [a, b] = [...this._pointers.values()];
+      if (!b) return;
+      const r = this._canvas.getBoundingClientRect();
+      this._view = pinchView(d.view, d.mid, d.dist, { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, Math.hypot(a.x - b.x, a.y - b.y),
+        r.width, r.height, MIN_ZOOM, MAX_ZOOM);
+      this._draw();
+      return;
+    }
     const dx = p.x - d.start.x, dy = p.y - d.start.y;
     if (Math.abs(dx) + Math.abs(dy) > 3) d.moved = true;
     const z = this._view.zoom;
@@ -244,7 +267,11 @@ class SextantProperty extends LitElement {
     this._draw();
   }
 
-  _up(e) { this._pointers.delete(e.pointerId); this._drag = null; }
+  _up(e) {
+    this._pointers.delete(e.pointerId);
+    // A finger left: carry on with the one still down, from where it is.
+    this._startGesture();
+  }
 
   _wheel(e) {
     e.preventDefault();

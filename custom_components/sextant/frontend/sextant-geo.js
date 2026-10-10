@@ -25,3 +25,17 @@ export function houseToWorld(hx, hy, site, z) {
   const o = project(site.lat, site.lon, z), m = metresPerPixel(site.lat, z);
   return { x: o.x + (hx * c - hy * s) / m, y: o.y + (hx * s + hy * c) / m };
 }
+
+/** The view after a two-finger pinch, from where it started: zoomed by the
+ * change in finger spread (clamped to [minZoom, maxZoom]), and moved so the
+ * map point that was between the fingers stays between them. ``view`` is
+ * {lat, lon, zoom}; ``mid0``/``mid`` the fingers' midpoint at the start and
+ * now, in screen px from the canvas's top-left; ``w``/``h`` its size. */
+export function pinchView(view, mid0, dist0, mid, dist, w, h, minZoom, maxZoom) {
+  const zoom = Math.max(minZoom, Math.min(maxZoom, view.zoom + Math.log2(Math.max(dist, 1) / Math.max(dist0, 1))));
+  const c0 = project(view.lat, view.lon, view.zoom);
+  const under = unproject(c0.x + mid0.x - w / 2, c0.y + mid0.y - h / 2, view.zoom);
+  const u = project(under.lat, under.lon, zoom);
+  const c = unproject(u.x - (mid.x - w / 2), u.y - (mid.y - h / 2), zoom);
+  return { lat: c.lat, lon: c.lon, zoom };
+}

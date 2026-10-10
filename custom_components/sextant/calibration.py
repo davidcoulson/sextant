@@ -59,6 +59,12 @@ MIN_DURATION = 60
 MAX_DURATION = 3600
 MAX_CONSECUTIVE_FAILURES = 6
 AUTO_SAMPLE_INTERVAL = 30  # seconds between sample rounds in continuous mode
+# On stock Bermuda the samples come from its dump_devices service, which
+# serialises every configured device on the event loop (several MB, a good
+# part of a second) - work Sextant cannot move off the loop. Those rounds are
+# spaced this many times further apart; the solve needs the spread over the
+# window, not the count.
+DUMP_INTERVAL_FACTOR = 4
 AUTO_SOLVE_INTERVAL = 900  # seconds between re-solves in continuous mode
 AUTO_MIN_WINDOW = 300  # seconds of data before the first auto solve
 APPLY_EPSILON = 0.01  # relative correction change worth persisting
@@ -762,13 +768,20 @@ async def _collect_samples(hass, cal: dict) -> str:
     return "dump"
 
 
+def _round_gap(interval: float, source: str) -> float:
+    """Seconds to the next sample round: longer when the last one came from
+    the dump_devices service (DUMP_INTERVAL_FACTOR)."""
+    return interval * (DUMP_INTERVAL_FACTOR if source == "dump" else 1)
+
+
 async def _sample_loop(hass, cal: dict) -> None:
     """One-shot, floor-scoped sampling window (manual run)."""
     failures = 0
     try:
         while time.time() < cal["ends_at"]:
+            source = "ranging"
             try:
-                await _collect_samples(hass, cal)
+                source = await _collect_samples(hass, cal)
                 failures = 0
             except Exception as e:  # service missing, timeout, bad payload
                 failures += 1
@@ -781,7 +794,7 @@ async def _sample_loop(hass, cal: dict) -> None:
                         f"integration installed and current? Last error: {e}"
                     )
                     return
-            await asyncio.sleep(SAMPLE_INTERVAL)
+            await asyncio.sleep(_round_gap(SAMPLE_INTERVAL, source))
 
         # One final round before solving so placements edited late in the
         # window (re-link + save inside the last sample gap) are matched and
@@ -819,8 +832,9 @@ async def _auto_loop(hass, cal: dict) -> None:
     last_solve = 0.0
     try:
         while True:
+            source = "ranging"
             try:
-                await _collect_samples(hass, cal)
+                source = await _collect_samples(hass, cal)
                 if cal["error"] and cal["error"].startswith("Bermuda sampling"):
                     cal["error"] = None
             except Exception as e:
@@ -836,7 +850,7 @@ async def _auto_loop(hass, cal: dict) -> None:
                 except Exception as e:
                     _LOGGER.exception("Auto-calibration solve failed")
                     cal["error"] = str(e)
-            await asyncio.sleep(AUTO_SAMPLE_INTERVAL)
+            await asyncio.sleep(_round_gap(AUTO_SAMPLE_INTERVAL, source))
     except asyncio.CancelledError:
         raise
 

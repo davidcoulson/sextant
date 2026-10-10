@@ -432,7 +432,9 @@ def test_every_write_and_bermuda_command_requires_admin():
     assert not any(name.startswith("ws_bermuda_") for name in open_)
     assert {"ws_history_get", "ws_history_timeline", "ws_history_index", "ws_truth_list"} <= admin
     assert {"ws_layout_get", "ws_calibration_status", "ws_selftest",
-            "ws_advice", "ws_receivers", "ws_kpi"} <= open_
+            "ws_advice", "ws_receivers"} <= open_
+    # Room-transition history from the recorder: admins only, like history.
+    assert {"ws_kpi", "ws_kpi_baselines"} <= admin
 
 
 def test_ignored_scanners_leave_the_unplaced_lists_and_survive_an_editor_save(tmp_path, monkeypatch):
@@ -636,21 +638,9 @@ def test_thing_tune_sets_and_clears_a_battery_sensor(tmp_path):
     assert st.get_layout(hass)["thing_battery_entity"] == {}
 
 
-def test_history_can_be_kept_to_admins(tmp_path):
-    layout = _layout()
-    layout["tuning"] = {"history_admin_only": True}
-    hass = _hass_with_layout(tmp_path, layout)
-    guest, admin = _Conn(), _Conn()
-    guest.user = types.SimpleNamespace(is_admin=False)
-    admin.user = types.SimpleNamespace(is_admin=True)
-    run(ws.ws_history_index(hass, guest, {"id": 1, "type": "sextant/history/index"}))
-    assert guest.errors and "administrators" in guest.errors[0][2] and not guest.results
-    run(ws.ws_history_index(hass, admin, {"id": 2, "type": "sextant/history/index"}))
-    assert admin.results and not admin.errors
-    # Off (the default): everyone signed in may read it.
-    open_hass = _hass_with_layout(tmp_path / "open", _layout())
-    anyone = _Conn()
-    anyone.user = types.SimpleNamespace(is_admin=False)
-    run(ws.ws_history_index(open_hass, anyone, {"id": 3, "type": "sextant/history/index"}))
-    assert anyone.results and not anyone.errors
-
+def test_history_and_kpi_are_admin_only():
+    """Where things have been - the scrubber, timeline, index and the
+    stability KPI (room transitions from the recorder) - is for admins."""
+    for cmd in (ws.ws_history_index, ws.ws_history_get, ws.ws_history_timeline,
+                ws.ws_kpi, ws.ws_kpi_baselines, ws.ws_kpi_baseline_save, ws.ws_kpi_baseline_delete):
+        assert getattr(cmd, "_ws_admin", False), cmd.__name__

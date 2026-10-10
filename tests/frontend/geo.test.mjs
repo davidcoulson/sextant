@@ -31,3 +31,19 @@ test("rotation turns the house clockwise", () => {
   near(p.x, o.x, 1e-6);
   assert.ok(p.y > o.y);
 });
+
+test("a pinch zooms by the finger spread and keeps the point between the fingers still", async () => {
+  const { pinchView } = await import("../../custom_components/sextant/frontend/sextant-geo.js");
+  const view = { lat: 41.3, lon: -81.76, zoom: 19 }, W = 800, H = 600;
+  const mid0 = { x: 200, y: 150 };
+  const v = pinchView(view, mid0, 100, mid0, 200, W, H, 15, 22);
+  near(v.zoom, 20, 1e-9);
+  // The map point that was under mid0 is still under it.
+  const before = project(view.lat, view.lon, 19), after = project(v.lat, v.lon, 20);
+  const pBefore = unproject(before.x + mid0.x - W / 2, before.y + mid0.y - H / 2, 19);
+  const pAfter = unproject(after.x + mid0.x - W / 2, after.y + mid0.y - H / 2, 20);
+  near(pAfter.lat, pBefore.lat, 1e-9);
+  near(pAfter.lon, pBefore.lon, 1e-9);
+  // Clamped at the limits.
+  near(pinchView(view, mid0, 100, mid0, 10000, W, H, 15, 22).zoom, 22, 1e-9);
+});

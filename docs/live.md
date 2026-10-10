@@ -288,4 +288,4 @@ Floors are placed through their anchors (Edit → Anchor), the same registration
 
 **Lining up** (admins): until the house has a site, it is drawn at the home location from Settings → System → General, unturned. Press **Line up the house**, drag the plan onto its footprint on the map, turn it with the rotate buttons (15° and 1° steps, about the middle of the house) until the walls match, and **Save**. The site is stored with the layout and restored with layout snapshots. **Cancel** puts it back.
 
-Drag to pan, scroll or use **+**/**−** to zoom (past the map's last tile level the photo is enlarged), and the house button brings the view back to the house.
+Drag to pan, scroll, pinch or use **+**/**−** to zoom (past the map's last tile level the photo is enlarged), and the house button brings the view back to the house.
