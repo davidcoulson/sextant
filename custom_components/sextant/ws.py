@@ -1735,6 +1735,47 @@ async def ws_wifi_heat_clear(hass, connection, msg):
     connection.send_result(msg["id"], {"cleared": True})
 
 
+@websocket_api.websocket_command({vol.Required("type"): "sextant/property"})
+@websocket_api.async_response
+async def ws_property(hass, connection, msg):
+    """The Property view's geometry (property_view.py): every floor's rooms,
+    proxies and access points in the house frame, each floor's transform for
+    live positions, the site, and Home Assistant's home location (where an
+    unplaced site starts). Open like the Live page: no history in it."""
+    from . import property_view  # noqa: PLC0415
+
+    layout = get_layout(hass)
+    out = property_view.view(layout if isinstance(layout, dict) else {})
+    out["home"] = {"lat": getattr(hass.config, "latitude", None), "lon": getattr(hass.config, "longitude", None)}
+    out["map_tiles"] = "map_tiles" in hass.config.components
+    connection.send_result(msg["id"], out)
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): "sextant/site/set",
+    vol.Required("lat"): vol.Coerce(float),
+    vol.Required("lon"): vol.Coerce(float),
+    vol.Optional("rotation", default=0.0): vol.Coerce(float),
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_site_set(hass, connection, msg):
+    """Where the house frame's origin is on the earth, and which way the
+    house turns (degrees clockwise): what lines the plan up on the map."""
+    from . import property_view  # noqa: PLC0415
+
+    site = property_view.clean_site({"lat": msg["lat"], "lon": msg["lon"], "rotation": msg["rotation"]})
+    if site is None:
+        return _error(connection, msg, "lat must be within ±85 and lon within ±180")
+    async with LAYOUT_LOCK:
+        layout = get_layout_for_edit(hass)
+        if not isinstance(layout, dict):
+            return _error(connection, msg, "No layout yet")
+        layout["site"] = site
+        await save_layout(hass, layout)
+    connection.send_result(msg["id"], {"site": site})
+
+
 @websocket_api.websocket_command({vol.Required("type"): "sextant/snapshots/list"})
 @websocket_api.require_admin
 @websocket_api.async_response
@@ -2019,7 +2060,7 @@ async def ws_robot_remove(hass, connection, msg):
 COMMANDS = (
     ws_advice,
     ws_snapshots_list, ws_snapshots_restore, ws_thing_forget, ws_person_trackers_set, ws_person_wifi_set,
-    ws_wifi_heat, ws_wifi_heat_clear,
+    ws_wifi_heat, ws_wifi_heat_clear, ws_property, ws_site_set,
     ws_robot_list, ws_robot_align, ws_robot_dock, ws_robot_remove, ws_election_log_clear, ws_interval_set,
     ws_radar_devices, ws_radar_targets,
     ws_layout_get, ws_layout_save, ws_tuning_set, ws_thing_tune,
