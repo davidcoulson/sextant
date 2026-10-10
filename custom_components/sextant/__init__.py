@@ -75,6 +75,7 @@ from .storage import (
 from .const import ACCURACY_ENTITY_ID, PEOPLE_HOME_ENTITY_ID, UNTRACKED_ENTITY_ID
 from . import history as history_mod
 from . import bermuda_source
+from . import layout_check
 from . import election_log
 from . import robots as robots_mod
 from . import radars as radars_mod
@@ -301,6 +302,15 @@ MAX_MAP_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB
 # images only — an .svg or .html there would run script on HA's own origin.
 _ALLOWED_ICON_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 MAX_ICON_UPLOAD_BYTES = 2 * 1024 * 1024  # 2 MB
+# Room for the form's other fields (the layout JSON) around the file itself.
+UPLOAD_FORM_SLACK_BYTES = 4 * 1024 * 1024
+
+
+def _too_large(request, limit) -> bool:
+    """The request says up front it is bigger than ``limit`` plus the form
+    around it: refused before anything is read into memory."""
+    length = getattr(request, "content_length", None)
+    return isinstance(length, int) and length > limit + UPLOAD_FORM_SLACK_BYTES
 
 
 def _is_admin_request(request) -> bool:
@@ -1339,13 +1349,19 @@ def _kalman_position_update(entity, floor_name, meas, scale, bounds):
         minx, miny, maxx, maxy = bounds
         return min(max(px, minx), maxx), min(max(py, miny), maxy)
 
-    if st is None or st["floor"] != floor_name or now - st["ts"] > KF_MAX_GAP_S:
+    # A rescaled floor is a new pixel frame: the state from the old one (its
+    # position and velocity in old pixels) would drag the estimate off for a
+    # while, so the filter starts again. A state from before this was kept
+    # has no scale and is taken as matching.
+    rescaled = st is not None and st.get("scale") not in (None, s)
+    if st is None or st["floor"] != floor_name or now - st["ts"] > KF_MAX_GAP_S or rescaled:
         v_var = (KF_INIT_VEL_UNC_MS * s) ** 2
         _kf_position_state[entity] = {
             "x": np.array([zx, zy, 0.0, 0.0], dtype=float),
             "P": np.diag([r_var, r_var, v_var, v_var]).astype(float),
             "ts": now,
             "floor": floor_name,
+            "scale": s,
         }
         return _clip(zx, zy)
 
@@ -1355,6 +1371,7 @@ def _kalman_position_update(entity, floor_name, meas, scale, bounds):
     x, P, moving, nis = _kf_step(st["x"], st["P"], (zx, zy), dt, r_var, a_var, a_still,
                                  st.get("moving", 0), KF_MOVE_NIS, KF_MOVE_HOLD_S, elapsed=elapsed)
     st["x"], st["P"], st["ts"], st["floor"], st["moving"], st["nis"] = x, P, now, floor_name, moving, nis
+    st["scale"] = s
     return _clip(float(x[0]), float(x[1]))
 
 
@@ -2254,8 +2271,12 @@ async def update_receiver_radii(hass, eids):
         readings = bermuda_source.async_get_readings(hass, include_history=use_median)
     for floor in (f for f in eids["data"]["floor"] if f["scale"] is not None):
         for receiver in floor["receivers"]:
-            if not isinstance(receiver.get("cords"), dict):
-                continue  # not placed: no circle to size, and cords["r"] below would raise
+            if not _placed(receiver):
+                # Not placed (or placed with a coordinate that is not a
+                # number, from a hand-edited store): no circle to size, and
+                # one such proxy must not break the solve for every thing.
+                receiver.pop("distance", None)
+                continue
             entity_id = "sensor." + eids["entity"] + "_distance_to_" + receiver["entity_id"]
             reading = None
             address = receiver.get("address")
@@ -2303,6 +2324,13 @@ async def update_receiver_radii(hass, eids):
                 unit = rec_value.attributes.get("unit_of_measurement")
                 if unit in DistanceConverter.VALID_UNITS and unit != UnitOfLength.METERS:
                     distance_m = DistanceConverter.convert(distance_m, unit, UnitOfLength.METERS)
+
+            # A distance must be a positive, finite number of metres: -1 is a
+            # common "no reading" sentinel, and a NaN would carry through the
+            # solve into the Kalman state and stay there.
+            if not (isinstance(distance_m, (int, float)) and math.isfinite(distance_m) and distance_m > 0):
+                receiver.pop("distance", None)
+                continue
 
             # Drop a STUCK reading: when a scanner stops hearing the
             # thing its distance sensor keeps the last value instead of
@@ -2700,6 +2728,12 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
     # The Bluetooth answer, kept as "raw" even when a radar target replaces
     # it: the radar pairing is made against it, so it must not become the
     # target it was paired with, or a thing would stick to a target for good.
+    # A fix that is not a pair of finite numbers (a NaN from a bad input
+    # upstream) is no fix: fed to the filter it would stay in its state and
+    # spoil every position after it.
+    if tricords is not None and not _finite_xy(tricords):
+        _LOGGER.debug("Dropping a non-finite fix for %s on %s", entity, lowest_floor_name)
+        tricords = None
     ble_fix = tricords
     radar_claim = _radar_claim(entity, lowest_floor_name, layout)
     if radar_claim is not None and tricords is not None:
@@ -6070,7 +6104,9 @@ def _register_calibration_services(hass) -> None:
                 vol.Coerce(float), vol.Range(min=floor_field.FIELD_MIN, max=floor_field.FIELD_MAX)),
             vol.Optional("mode", default="set"): vol.In(["set", "multiply"]),
             vol.Optional("area"): cv.string,
-            vol.Optional("points"): [vol.All([vol.Coerce(float)], vol.Length(min=2, max=2))],
+            # Bounded: painting tests every edge against every cell, on the loop.
+            vol.Optional("points"): vol.All([vol.All([vol.Coerce(float)], vol.Length(min=2, max=2))],
+                                            vol.Length(max=500)),
         }),
         supports_response=SupportsResponse.OPTIONAL,
     )
@@ -6265,12 +6301,16 @@ async def async_setup(hass, config):
 
     async def handle_homeassistant_started(event):
         """Handles the 'homeassistant_started' event"""
+        hass.data.pop("sextant_started_unsub", None)   # a once-listener: gone now
         await initialize_sextant()
 
     if hass.is_running:
         await initialize_sextant()
     else:
-        hass.bus.async_listen_once("homeassistant_started", handle_homeassistant_started)
+        # Kept so an unload before Home Assistant has started can take it back:
+        # otherwise the event fires later and starts Sextant after its unload.
+        hass.data["sextant_started_unsub"] = hass.bus.async_listen_once(
+            "homeassistant_started", handle_homeassistant_started)
 
     return True
 
@@ -6278,9 +6318,17 @@ async def async_unload_entry(hass: HomeAssistant, entry):
     """Remove a configuration entry"""
     _LOGGER.info("Attempting to offload platforms for entry: %s", entry.entry_id)
 
-    state_listener_unsub = hass.data.pop("sextant_state_listener_unsub", None)
-    if state_listener_unsub:
-        state_listener_unsub()
+    # Everything setup attached to: the state listener, Bermuda's coordinator
+    # (and a retry still waiting for it), and the start event when Home
+    # Assistant had not started yet - each would otherwise outlive the unload.
+    for key in ("sextant_state_listener_unsub", "sextant_bermuda_listener_unsub",
+                "sextant_bermuda_retry_unsub", "sextant_started_unsub"):
+        unsub = hass.data.pop(key, None)
+        if unsub:
+            try:
+                unsub()
+            except Exception as e:  # noqa: BLE001 - one stale handle must not stop the unload
+                _LOGGER.debug("Unsubscribing %s on unload: %s", key, e)
 
     # Stop the loop before anything below can fail and return early (which
     # left it running against half-torn-down state), and write the runtime
@@ -6458,6 +6506,8 @@ class SextantSaveAPIText(HomeAssistantView):
         if (denied := _admin_only(request)) is not None:
             return denied
         hass = request.app["hass"]
+        if _too_large(request, MAX_MAP_UPLOAD_BYTES):
+            return web.Response(status=413, text="Map file too large")
         data = await request.post()
 
         coordinates = data.get("coordinates")
@@ -6469,6 +6519,8 @@ class SextantSaveAPIText(HomeAssistantView):
             coords_obj = json.loads(coordinates)
         except (ValueError, TypeError):
             return web.Response(status=400, text="Coordinates must be valid JSON")
+        if (problem := layout_check.layout_problem(coords_obj)) is not None:
+            return web.Response(status=400, text=f"Not saved: {problem}")
 
         maps_path = maps_dir(hass)
 
@@ -6518,7 +6570,8 @@ class SextantSaveAPIText(HomeAssistantView):
             if map_target is None:
                 return web.Response(status=400, text="Invalid map filename")
             # Up to 25 MB off aiohttp's temp file: not on the event loop.
-            map_bytes = await hass.async_add_executor_job(map_file.file.read)
+            # One byte past the limit is enough to know: never the whole file.
+            map_bytes = await hass.async_add_executor_job(map_file.file.read, MAX_MAP_UPLOAD_BYTES + 1)
             if len(map_bytes) > MAX_MAP_UPLOAD_BYTES:
                 return web.Response(status=413, text="Map file too large")
 
@@ -6544,7 +6597,13 @@ class SextantSaveAPIText(HomeAssistantView):
                 _LOGGER.error(f"Failed to save maps: {e}")
                 return web.Response(status=500, text="Failed to save maps")
 
-        await save_layout(hass, coords_obj)
+        # The editor sends its whole copy of the layout, loaded when the page
+        # opened: merged like layout/save, so what the server owns (proxy
+        # corrections, calibration, thing names and colours set elsewhere
+        # since) is not put back to that copy's older values.
+        from .ws import merge_editor_layout  # noqa: PLC0415 - ws imports this module
+
+        await save_layout(hass, merge_editor_layout(get_layout_for_edit(hass), coords_obj))
 
         # Never delete the map we just wrote (a replace with the same filename).
         if remove_target is not None and remove_target != map_target:
@@ -6598,6 +6657,8 @@ class SextantUploadThingIconAPI(HomeAssistantView):
         if (denied := _admin_only(request)) is not None:
             return denied
         hass = request.app["hass"]
+        if _too_large(request, MAX_ICON_UPLOAD_BYTES):
+            return web.Response(status=413, text="Icon file too large (2 MB max)")
         data = await request.post()
         icon_file = data.get("icon")
         if not icon_file:
@@ -6606,7 +6667,7 @@ class SextantUploadThingIconAPI(HomeAssistantView):
         safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", Path(icon_file.filename).name)
         if not safe_name or Path(safe_name).suffix.lower() not in _ALLOWED_ICON_EXTS:
             return web.Response(status=400, text="Icons must be png, jpg, webp or gif")
-        icon_bytes = await hass.async_add_executor_job(icon_file.file.read)
+        icon_bytes = await hass.async_add_executor_job(icon_file.file.read, MAX_ICON_UPLOAD_BYTES + 1)
         if len(icon_bytes) > MAX_ICON_UPLOAD_BYTES:
             return web.Response(status=413, text="Icon file too large (2 MB max)")
 
@@ -6650,6 +6711,21 @@ class SextantCordsAPI(HomeAssistantView):
 # Floor on the distance used in the Jacobian's direction vector. Only guards
 # the 0/0 at a fit sitting exactly on a receiver; far below any real geometry.
 _JAC_MIN_DIST = 1e-9
+
+
+def _finite_xy(pt) -> bool:
+    """The first two values of ``pt`` are finite numbers."""
+    try:
+        return math.isfinite(float(pt[0])) and math.isfinite(float(pt[1]))
+    except (TypeError, ValueError, IndexError):
+        return False
+
+
+def _placed(receiver) -> bool:
+    """A receiver placed on its plan with a finite x and y."""
+    c = receiver.get("cords") if isinstance(receiver, dict) else None
+    return (isinstance(c, dict) and all(isinstance(c.get(k), (int, float)) and not isinstance(c.get(k), bool)
+                                        and math.isfinite(c[k]) for k in ("x", "y")))
 
 
 def _solver_weight(pt, scale) -> float:

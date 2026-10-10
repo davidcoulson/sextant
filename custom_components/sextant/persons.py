@@ -274,7 +274,9 @@ def fuse(best, why, presence, held, gps, ignored, home=None, wifi=None):
                          gps_accuracy=gps.get("accuracy"), tracker=gps.get("entity"))
         if home and None not in home and gps.get("latitude") is not None:
             gps_attrs["distance_m"] = round(_haversine_m(home, (gps["latitude"], gps["longitude"])))
-    common = {"presence": presence, "gps_ignored": list(ignored or [])}
+    # Capped: an attribute list has no business being long, and a state
+    # write over Home Assistant's 16 KB attribute limit is refused.
+    common = {"presence": presence, "gps_ignored": list(ignored or [])[:20]}
     if presence in ("here", "quiet") and (best or held):
         out = states(best or held, why)
         source = "ble" if best else "held"

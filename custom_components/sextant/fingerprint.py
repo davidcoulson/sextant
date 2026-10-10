@@ -154,6 +154,10 @@ def trust(ratio):
     return max(0.0, 1.0 - abs(math.log(ratio)) / TRUST_SCALE)
 
 
+def _finite_number(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
 def _median(values):
     ordered = sorted(values)
     n = len(ordered)
@@ -198,8 +202,9 @@ def build_references(layout, vectors, gain=1.0, extra=None):
         for receiver in floor.get("receivers", []) or []:
             address = receiver.get("address")
             cords = receiver.get("cords") or {}
-            if not isinstance(address, str) or not address or cords.get("x") is None or cords.get("y") is None:
-                continue
+            if not isinstance(address, str) or not address or not _finite_number(cords.get("x")) \
+                    or not _finite_number(cords.get("y")):
+                continue  # unplaced, or a coordinate that is not a number: never a reference
             address = address.lower()
             heard = vectors.get(address) or {}
             vector = {}

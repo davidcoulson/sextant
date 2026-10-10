@@ -216,7 +216,8 @@ def prune_matches(store: dict, now, max_age=MATCH_RETENTION_S, max_pairs=MATCH_M
     gone = 0
     doomed = [(t, p) for seen, t, p in pairs if now - seen > max_age]
     if len(pairs) - len(doomed) > max_pairs:
-        keep = sorted((x for x in pairs if (x[1], x[2]) not in set(doomed)), reverse=True)[max_pairs:]
+        doomed_set = set(doomed)   # built once, not once per pair
+        keep = sorted((x for x in pairs if (x[1], x[2]) not in doomed_set), reverse=True)[max_pairs:]
         doomed += [(t, p) for _s, t, p in keep]
     for tracker, person in doomed:
         if tracker in matches and person in matches[tracker]:
