@@ -79,7 +79,7 @@ class SextantProperty extends LitElement {
     if (!geo) return;
     this._geo = geo;
     if (!this._adjust) this._site = geo.site || (Number.isFinite(geo.home?.lat) ? { lat: geo.home.lat, lon: geo.home.lon, rotation: 0 } : null);
-    if (!this._view && this._site) this._view = { lat: this._site.lat, lon: this._site.lon, zoom: 19 };
+    if (!this._view && this._site) this._fit();
     if (this._source === "street") await this._loadToken();
     this._draw();
   }
@@ -192,15 +192,21 @@ class SextantProperty extends LitElement {
       labels.push([thingName(this.data, t.ent), sx, sy + 17]);
     }
     ctx.font = "600 11px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    // A label that would cover one already drawn is left off; the dot stays,
+    // and zooming in makes room for it.
+    const taken = [];
     for (const [text, x, y] of labels) {
       const w = ctx.measureText(text).width + 8;
+      const box = [x - w / 2, y - 8, x + w / 2, y + 8];
+      if (taken.some((b) => box[0] < b[2] && box[2] > b[0] && box[1] < b[3] && box[3] > b[1])) continue;
+      taken.push(box);
       ctx.fillStyle = dark ? "rgba(20,24,30,0.78)" : "rgba(255,255,255,0.82)";
       ctx.fillRect(x - w / 2, y - 8, w, 16);
       ctx.fillStyle = dark ? "#e8eaed" : "#1b1f24"; ctx.fillText(text, x, y);
     }
     if (this._adjust) {
-      // The site's origin, the point the drag moves and the rotation turns about.
-      const [ox, oy] = toScreen(0, 0);
+      // The house's middle, the point the turn buttons pivot on.
+      const [ox, oy] = toScreen(...this._middle());
       ctx.strokeStyle = "#d63384"; ctx.lineWidth = 2;
       ctx.beginPath(); ctx.moveTo(ox - 10, oy); ctx.lineTo(ox + 10, oy); ctx.moveTo(ox, oy - 10); ctx.lineTo(ox, oy + 10); ctx.stroke();
     }
@@ -260,9 +266,19 @@ class SextantProperty extends LitElement {
     this._zoomAt({ x: r.width / 2, y: r.height / 2 }, this._view.zoom + step);
   }
 
+  /** The view that shows the whole house: centred on its rooms, zoomed so
+   * they fill most of the page. */
   _fit() {
     if (!this._site) return;
-    this._view = { lat: this._site.lat, lon: this._site.lon, zoom: 19 };
+    const pts = (this._geo?.floors || []).flatMap((f) => f.rooms.flatMap((r) => r.points));
+    const rect = this._canvas?.getBoundingClientRect(), W = rect?.width || 800, H = rect?.height || 600;
+    if (!pts.length) { this._view = { lat: this._site.lat, lon: this._site.lon, zoom: 20 }; this._draw(); return; }
+    const z0 = 20, ws = pts.map(([x, y]) => houseToWorld(x, y, this._site, z0));
+    const xs = ws.map((w) => w.x), ys = ws.map((w) => w.y);
+    const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+    const fill = Math.min((W * 0.7) / Math.max(maxX - minX, 1), (H * 0.7) / Math.max(maxY - minY, 1));
+    const c = unproject((minX + maxX) / 2, (minY + maxY) / 2, z0);
+    this._view = { lat: c.lat, lon: c.lon, zoom: Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, z0 + Math.log2(fill))) };
     this._draw();
   }
 
@@ -274,9 +290,23 @@ class SextantProperty extends LitElement {
     this._draw();
   }
 
+  /** The middle of the house's rooms, in house metres. */
+  _middle() {
+    const pts = (this._geo?.floors || []).flatMap((f) => f.rooms.flatMap((r) => r.points));
+    if (!pts.length) return [0, 0];
+    const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+    return [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2];
+  }
+
+  /** Turn the house about its middle (not the plan's origin, which can sit
+   * well off to one side): the site turns, then moves so the middle stays put. */
   _turn(deg) {
     if (!this._site) return;
-    this._site = { ...this._site, rotation: ((((this._site.rotation || 0) + deg) % 360) + 360) % 360 };
+    const mid = this._middle(), z = 20, before = houseToWorld(mid[0], mid[1], this._site, z);
+    const turned = { ...this._site, rotation: ((((this._site.rotation || 0) + deg) % 360) + 360) % 360 };
+    const after = houseToWorld(mid[0], mid[1], turned, z), o = project(turned.lat, turned.lon, z);
+    const at = unproject(o.x + before.x - after.x, o.y + before.y - after.y, z);
+    this._site = { ...turned, lat: at.lat, lon: at.lon };
     this._draw();
   }
 
@@ -316,15 +346,15 @@ class SextantProperty extends LitElement {
         ${this._adjust ? html`<div class="adjust">
           <div class="small">Drag the house onto its footprint on the map, then turn it to match.</div>
           <div class="row">
-            <button class="iconbtn" title="Turn 15° anticlockwise" @click=${() => this._turn(-15)}>⟲15</button>
-            <button class="iconbtn" title="Turn 1° anticlockwise" @click=${() => this._turn(-1)}>⟲1</button>
+            <button class="iconbtn" title="Turn 15° anticlockwise" @click=${() => this._turn(-15)}><ha-icon icon="mdi:rotate-left"></ha-icon>15°</button>
+            <button class="iconbtn" title="Turn 1° anticlockwise" @click=${() => this._turn(-1)}><ha-icon icon="mdi:rotate-left"></ha-icon>1°</button>
             <span class="deg">${Math.round((this._site?.rotation || 0) * 10) / 10}°</span>
-            <button class="iconbtn" title="Turn 1° clockwise" @click=${() => this._turn(1)}>⟳1</button>
-            <button class="iconbtn" title="Turn 15° clockwise" @click=${() => this._turn(15)}>⟳15</button>
+            <button class="iconbtn" title="Turn 1° clockwise" @click=${() => this._turn(1)}><ha-icon icon="mdi:rotate-right"></ha-icon>1°</button>
+            <button class="iconbtn" title="Turn 15° clockwise" @click=${() => this._turn(15)}><ha-icon icon="mdi:rotate-right"></ha-icon>15°</button>
           </div>
           <div class="row">${uiButton({ label: "Save", kind: "primary", disabled: this._busy, onClick: () => this._saveSite() })}${uiButton({ label: "Cancel", kind: "text", onClick: () => this._cancelAdjust() })}</div>
         </div>` : nothing}
-        ${!geo ? html`<div class="note">Loading…</div>`
+        ${this._adjust ? nothing : !geo ? html`<div class="note">Loading…</div>`
           : !this._site ? html`<div class="note">Set your home location in Home Assistant (Settings → System → General) to start the map there.</div>`
           : noTiles ? html`<div class="note">The street map needs Home Assistant 2026.10 or later. Aerial imagery still works.</div>`
           : !geo.site ? html`<div class="note">Not lined up yet: the house is drawn at your home location${admin ? ". Use “Line up the house” to move and turn it onto its footprint" : ""}.</div>`
@@ -342,13 +372,17 @@ class SextantProperty extends LitElement {
     :host { display: block; height: 100%; }
     .stage { position: relative; width: 100%; height: 100%; min-height: 360px; overflow: hidden; }
     canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: grab; }
-    .bar { position: absolute; left: 10px; top: 10px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-    .adjust, .note { position: absolute; left: 10px; top: 58px; max-width: min(380px, calc(100% - 20px)); padding: 8px 10px; border-radius: 10px;
+    .bar { position: absolute; left: 10px; top: 10px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 4px 6px; border-radius: 12px;
+      background: var(--card-background-color); box-shadow: var(--ha-card-box-shadow, 0 2px 6px rgba(0,0,0,0.25)); }
+    .adjust, .note { position: absolute; left: 10px; top: 64px; max-width: min(380px, calc(100% - 20px)); padding: 8px 10px; border-radius: 10px;
       background: var(--card-background-color); box-shadow: var(--ha-card-box-shadow, 0 2px 6px rgba(0,0,0,0.25)); font-size: 13px; }
     .adjust { display: flex; flex-direction: column; gap: 8px; }
     .adjust .row { display: flex; gap: 6px; align-items: center; }
     .adjust .deg { min-width: 48px; text-align: center; font-variant-numeric: tabular-nums; }
-    .iconbtn { border: 1px solid var(--divider-color); background: transparent; color: var(--primary-text-color); border-radius: 8px; padding: 4px 8px; cursor: pointer; }
+    .iconbtn { display: inline-flex; align-items: center; gap: 2px; border: 1px solid var(--divider-color); background: var(--secondary-background-color, transparent);
+      color: var(--primary-text-color); font: inherit; font-size: 12px; font-weight: 600; border-radius: 8px; padding: 4px 8px; cursor: pointer; --mdc-icon-size: 16px; }
+    .iconbtn:hover { border-color: var(--primary-color); }
+    .iconbtn:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 1px; }
     .zoom { position: absolute; right: 10px; bottom: 26px; display: flex; gap: 2px; padding: 4px; border-radius: 12px; background: var(--card-background-color); box-shadow: var(--ha-card-box-shadow, 0 2px 6px rgba(0,0,0,0.25)); }
     .zoom button { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--primary-text-color); cursor: pointer; }
     .attribution { position: absolute; right: 6px; bottom: 4px; font-size: 10px; padding: 1px 6px; border-radius: 4px; background: rgba(255,255,255,0.75); color: #333; }
