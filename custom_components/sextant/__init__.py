@@ -3881,14 +3881,16 @@ async def _save_runtime(hass, final=False):
 
 def _history_arrival(hass, ent, floor, x, y, now):
     """When the position history says this thing came to stay within a couple
-    of metres of (x, y), or None when it has nothing to say (yet)."""
+    of metres of (x, y), or None when it has nothing to say (yet).
+
+    Reads the full-resolution track, newest first, through a view that makes
+    each point only when it is reached: settled_since stops at the start of
+    the stay, usually a few points back, and the decimated query could move a
+    dropout mark onto a later point and stretch a restart's silence."""
     try:
-        q = get_position_history(hass).query(ent, now - 86400, now, 5000)
-        floors = q.get("floors") or []
-        # The gap marks go along: a long silence ends a stay (settled_since).
-        points = [(t, floors[fi] if isinstance(fi, int) and fi < len(floors) else fi, xm, ym, gap)
-                  for t, fi, xm, ym, gap in zip(q.get("t", []), q.get("f", []), q.get("x_m", []), q.get("y_m", []),
-                                                q.get("gap", []))]
+        points = get_position_history(hass).recent_points(ent, now - 86400)
+        if points is None:
+            return None
         return persons_mod.settled_since(points, (floor, x, y))
     except Exception:  # noqa: BLE001 - no history is not an error
         return None

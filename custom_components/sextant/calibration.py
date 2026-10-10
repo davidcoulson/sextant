@@ -756,6 +756,9 @@ async def _collect_samples(hass, cal: dict) -> str:
     every configured device with all of its adverts on the event loop
     (several MB, a good part of a second, every round).
     """
+    # What this round tries, kept even when it fails, so a failing dump is
+    # retried at the dump's slower pace too (_round_gap).
+    cal["sample_attempt"] = "ranging"
     ranging = bermuda_source.async_get_scanner_ranging(hass, max_age=STALE_ADVERT_SECS)
     if ranging is not None:
         directory = bermuda_source.async_get_scanner_directory(hass)
@@ -763,6 +766,7 @@ async def _collect_samples(hass, cal: dict) -> str:
             _ingest_ranging(cal, ranging, directory)
             cal["sample_source"] = "ranging"
             return "ranging"
+    cal["sample_attempt"] = "dump"
     _ingest_dump(cal, await _dump_devices(hass))
     cal["sample_source"] = "dump"
     return "dump"
@@ -779,9 +783,8 @@ async def _sample_loop(hass, cal: dict) -> None:
     failures = 0
     try:
         while time.time() < cal["ends_at"]:
-            source = "ranging"
             try:
-                source = await _collect_samples(hass, cal)
+                await _collect_samples(hass, cal)
                 failures = 0
             except Exception as e:  # service missing, timeout, bad payload
                 failures += 1
@@ -794,7 +797,7 @@ async def _sample_loop(hass, cal: dict) -> None:
                         f"integration installed and current? Last error: {e}"
                     )
                     return
-            await asyncio.sleep(_round_gap(SAMPLE_INTERVAL, source))
+            await asyncio.sleep(_round_gap(SAMPLE_INTERVAL, cal.get("sample_attempt")))
 
         # One final round before solving so placements edited late in the
         # window (re-link + save inside the last sample gap) are matched and
@@ -832,9 +835,8 @@ async def _auto_loop(hass, cal: dict) -> None:
     last_solve = 0.0
     try:
         while True:
-            source = "ranging"
             try:
-                source = await _collect_samples(hass, cal)
+                await _collect_samples(hass, cal)
                 if cal["error"] and cal["error"].startswith("Bermuda sampling"):
                     cal["error"] = None
             except Exception as e:
@@ -850,7 +852,7 @@ async def _auto_loop(hass, cal: dict) -> None:
                 except Exception as e:
                     _LOGGER.exception("Auto-calibration solve failed")
                     cal["error"] = str(e)
-            await asyncio.sleep(_round_gap(AUTO_SAMPLE_INTERVAL, source))
+            await asyncio.sleep(_round_gap(AUTO_SAMPLE_INTERVAL, cal.get("sample_attempt")))
     except asyncio.CancelledError:
         raise
 

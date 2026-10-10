@@ -525,3 +525,16 @@ def test_window_is_a_copy_the_cycle_can_keep_appending_past():
     assert H.timeline_window("phone", win, 0, 5000)["stays"][0]["partial"] is True
     assert H.query_window("phone", None, 0, 5000, 10)["count"] == 0
     assert H.timeline_window("phone", h.window("phone", 1500, 5000), 1500, 5000)["stays"][0]["partial"] is False
+
+
+def test_recent_points_is_a_lazy_full_resolution_view():
+    h = H.PositionHistory({"max_age": 86400, "max_points": 100000, "heartbeat": 30})
+    for i in range(5):
+        h.record("watch", 1000.0 + i * 60, 1.0 + i, 2.0, "Ground", 100.0)
+    pts = h.recent_points("watch", 1100)
+    assert len(pts) == 3
+    newest = next(reversed(pts))
+    assert newest[0] == 1240.0 and newest[1] == "Ground" and abs(newest[2] - 5.0) < 1e-6
+    assert [p[0] for p in pts] == [1120.0, 1180.0, 1240.0]
+    assert pts[-1] == newest and pts[0][0] == 1120.0
+    assert h.recent_points("nobody", 0) is None

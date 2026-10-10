@@ -522,11 +522,50 @@ class PositionHistory:
         w.zones, w.spots = list(track.zones), list(track.spots)
         return w, lo == 0
 
+    def recent_points(self, ent, frm):
+        """One thing's points from ``frm`` on as (t, floor, x_m, y_m, gap),
+        oldest first, made on demand: a read-only view of the live track for
+        the event loop (persons.settled_since walks back from the newest and
+        stops early). None with no points."""
+        track = self.tracks.get(ent)
+        if track is None or not track.t:
+            return None
+        return _PointView(track, bisect.bisect_left(track.t, frm), len(track.t))
+
     def query(self, ent, frm, to, max_points):
         return query_track(ent, self.tracks.get(ent), frm, to, max_points)
 
     def timeline(self, ent, frm, to, max_segments=200):
         return timeline_track(ent, self.tracks.get(ent), frm, to, max_segments)
+
+
+class _PointView:
+    """Points lo..hi-1 of a track as (t, floor name, x, y, gap) tuples, built
+    only when read. Indexable, sized and reversible."""
+
+    __slots__ = ("_track", "_lo", "_hi")
+
+    def __init__(self, track, lo, hi):
+        self._track, self._lo, self._hi = track, lo, hi
+
+    def __len__(self):
+        return max(0, self._hi - self._lo)
+
+    def _point(self, i):
+        tr = self._track
+        fi = tr.f[i]
+        return (tr.t[i], tr.floors[fi] if fi < len(tr.floors) else fi, tr.x[i], tr.y[i], tr.gap[i])
+
+    def __getitem__(self, k):
+        if not -len(self) <= k < len(self):
+            raise IndexError(k)
+        return self._point(self._lo + (k % len(self)))
+
+    def __iter__(self):
+        return (self._point(i) for i in range(self._lo, self._hi))
+
+    def __reversed__(self):
+        return (self._point(i) for i in range(self._hi - 1, self._lo - 1, -1))
 
 
 def query_window(ent, win, frm, to, max_points):
