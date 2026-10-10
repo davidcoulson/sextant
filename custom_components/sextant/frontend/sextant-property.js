@@ -220,7 +220,8 @@ class SextantProperty extends LitElement {
   _local(e) { const r = this._canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
 
   _down(e) {
-    this._canvas.setPointerCapture?.(e.pointerId);
+    // Capture can fail (a pointer already gone); the gesture must not.
+    try { this._canvas.setPointerCapture?.(e.pointerId); } catch { /* ignore */ }
     this._pointers.set(e.pointerId, this._local(e));
     this._startGesture();
   }
