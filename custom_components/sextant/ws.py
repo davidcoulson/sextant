@@ -1745,7 +1745,8 @@ async def ws_property(hass, connection, msg):
     from . import property_view  # noqa: PLC0415
 
     layout = get_layout(hass)
-    out = property_view.view(layout if isinstance(layout, dict) else {})
+    # registration.solve searches the anchors for agreeing sets: off the loop.
+    out = await hass.async_add_executor_job(property_view.view, layout if isinstance(layout, dict) else {})
     out["home"] = {"lat": getattr(hass.config, "latitude", None), "lon": getattr(hass.config, "longitude", None)}
     out["map_tiles"] = "map_tiles" in hass.config.components
     connection.send_result(msg["id"], out)
@@ -1766,7 +1767,7 @@ async def ws_site_set(hass, connection, msg):
 
     site = property_view.clean_site({"lat": msg["lat"], "lon": msg["lon"], "rotation": msg["rotation"]})
     if site is None:
-        return _error(connection, msg, "lat must be within ±85 and lon within ±180")
+        return _error(connection, msg, "lat must be within ±85, lon within ±180, and rotation a number")
     async with LAYOUT_LOCK:
         layout = get_layout_for_edit(hass)
         if not isinstance(layout, dict):

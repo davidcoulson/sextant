@@ -65,7 +65,10 @@ class SextantProperty extends LitElement {
 
   updated(changed) {
     if (changed.has("data") && changed.get("data") && changed.get("data") !== this.data) this._load();
-    this._draw();
+    // hass changes many times a second; only a theme change redraws for it.
+    const dark = !!this.hass?.themes?.darkMode, themed = dark !== this._dark;
+    this._dark = dark;
+    if (themed || ["positions", "data", "_site", "_source", "_adjust", "_geo"].some((k) => changed.has(k))) this._draw();
   }
 
   firstUpdated() {

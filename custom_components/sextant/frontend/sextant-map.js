@@ -930,7 +930,10 @@ export class SextantMap {
     if (d?.kind !== "item") return false;
     this._restoreDrag(d);
     this._drag = null;
-    this.lastDragMoved = true;   // the pointer-up that follows is not a click
+    // The pointer-up that follows (and its click) is not a click on the plan:
+    // with a placement tool armed it would place something.
+    this._dragCancelled = true;
+    this.lastDragMoved = true;
     this.invalidate();
     return true;
   }
@@ -945,7 +948,10 @@ export class SextantMap {
     const ring = room.cords, out = [];
     (f.subzones || []).forEach((sz, i) => {
       const pts = sz.cords || [];
-      if (pts.length && ((room.zone_id && sz.parent === room.zone_id) || pts.every((q) => pointInPolygon(q, ring)))) {
+      // A spot assigned to a room goes with that room only; an unassigned
+      // one goes with the room it lies inside.
+      const mine = sz.parent ? !!room.zone_id && sz.parent === room.zone_id : pts.every((q) => pointInPolygon(q, ring));
+      if (pts.length && mine) {
         out.push({ list: "subzones", index: i, origin: pts.map((q) => ({ ...q })) });
       }
     });
@@ -1081,6 +1087,7 @@ export class SextantMap {
         // Brought back close to where it started, it snaps exactly home.
         const home = Math.hypot(dx, dy) <= HIT_SLOP * 1.5 / this.view.k;
         const ox = home ? 0 : dx, oy = home ? 0 : dy;
+        d.home = home;
         item.cords = d.origin.map((q) => ({ x: q.x + ox, y: q.y + oy }));
         for (const c of d.carry || []) {
           f[c.list][c.index].cords = Array.isArray(c.origin) ? c.origin.map((q) => ({ x: q.x + ox, y: q.y + oy })) : { x: c.origin.x + ox, y: c.origin.y + oy };
@@ -1099,9 +1106,11 @@ export class SextantMap {
     if (d?.kind === "pan" && d.place && !d.moved && e.type === "pointerup" && this.host.onMapClick) this.host.onMapClick(d.place);
     this._snap = null;
     this._pinSnap = null;
-    this.lastDragMoved = !!(d && d.moved);
+    this.lastDragMoved = !!(d && d.moved) || !!this._dragCancelled;
+    this._dragCancelled = false;
     if (!d) return;
-    if (d.kind === "item" && d.moved) {
+    // A room dropped back home is no change.
+    if (d.kind === "item" && d.moved && !d.home) {
       const f = this.floor, hit = d.hit;
       const round = (q) => ({ x: Math.round(q.x * 1000) / 1000, y: Math.round(q.y * 1000) / 1000 });
       if (hit.kind === "receiver") f.receivers[hit.index].cords = round(f.receivers[hit.index].cords);

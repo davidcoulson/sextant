@@ -99,3 +99,34 @@ test("a corner of a shape being drawn can be taken back", () => {
   assert.equal(map.draft, null);
   assert.equal(map.undoDraftPoint(), false);
 });
+
+test("a spot assigned to another room stays, even lying inside the dragged one", () => {
+  const { map } = editMap();
+  map.floor.subzones.push({ entity_id: "Stray", parent: "z2", cords: rect(300, 300, 320, 320) });
+  start(map, 350, 350);
+  map._move(ev("pointermove", 400, 380));
+  map._up(ev("pointerup", 400, 380));
+  assert.deepEqual(map.floor.subzones[2].cords[0], { x: 300, y: 300 });
+});
+
+test("a room dropped back home reports no change", () => {
+  const { map, changes } = editMap();
+  start(map, 350, 350);
+  map._move(ev("pointermove", 420, 400));
+  map._move(ev("pointermove", 352, 351));
+  map._up(ev("pointerup", 352, 351));
+  assert.deepEqual(map.floor.zones[0].cords[0], { x: 100, y: 100 });
+  assert.deepEqual(changes, []);
+});
+
+test("the pointer-up after Esc is not a click", () => {
+  const { map } = editMap();
+  start(map, 350, 350);
+  map._move(ev("pointermove", 420, 400));
+  assert.equal(map.cancelDrag(), true);
+  map._up(ev("pointerup", 420, 400));
+  assert.equal(map.lastDragMoved, true);
+  map._down(ev("pointerdown", 600, 600));
+  map._up(ev("pointerup", 600, 600));
+  assert.equal(map.lastDragMoved, false);
+});

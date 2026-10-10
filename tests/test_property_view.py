@@ -64,3 +64,9 @@ def test_sites_are_cleaned():
     for bad in (None, {}, {"lat": 95, "lon": 0}, {"lat": 0, "lon": 200}, {"lat": "x", "lon": 1}, {"lat": True, "lon": 1}):
         assert property_view.clean_site(bad) is None
     assert property_view.view({})["floors"] == [] and property_view.view(None)["site"] is None
+
+
+def test_site_rotation_missing_is_zero_but_nan_is_rejected():
+    assert property_view.clean_site({"lat": 41.0, "lon": -81.0})["rotation"] == 0.0
+    assert property_view.clean_site({"lat": 41.0, "lon": -81.0, "rotation": float("nan")}) is None
+    assert property_view.clean_site({"lat": 41.0, "lon": -81.0, "rotation": -90})["rotation"] == 270.0

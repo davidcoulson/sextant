@@ -28,11 +28,14 @@ def _num(v) -> float | None:
 
 def clean_site(site) -> dict | None:
     """{"lat", "lon", "rotation"} from a stored or submitted site, else None.
-    Rotation is degrees clockwise, kept in [0, 360)."""
+    Rotation is degrees clockwise, kept in [0, 360); a non-finite one makes
+    the site invalid."""
     if not isinstance(site, dict):
         return None
-    lat, lon, rot = _num(site.get("lat")), _num(site.get("lon")), _num(site.get("rotation")) or 0.0
-    if lat is None or lon is None or not (-85.0 <= lat <= 85.0) or not (-180.0 <= lon <= 180.0):
+    lat, lon = _num(site.get("lat")), _num(site.get("lon"))
+    # A missing rotation is none; a supplied one that is not a number is an error.
+    rot = _num(site.get("rotation")) if site.get("rotation") is not None else 0.0
+    if lat is None or lon is None or rot is None or not (-85.0 <= lat <= 85.0) or not (-180.0 <= lon <= 180.0):
         return None
     return {"lat": round(lat, 8), "lon": round(lon, 8), "rotation": round(rot % 360.0, 3)}
 
