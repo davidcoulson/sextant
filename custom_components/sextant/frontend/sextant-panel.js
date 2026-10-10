@@ -488,7 +488,7 @@ class SextantLive extends LitElement {
     this._truth = null;     // the last mark's evaluation {mark, rows, current_weight}
     this._marks = [];       // the selected thing's marks
     this._blend = null;     // slider value while it is being dragged (0..100)
-    this._options = { circles: false, fingerprint: false, trails: true, grid: "off", labels: true, subzones: true, receivers: true, access_points: true, image: true };
+    this._options = { circles: false, fingerprint: false, trails: true, grid: "off", labels: true, subzones: true, receivers: true, access_points: true, links: true, image: true };
     try { Object.assign(this._options, JSON.parse(localStorage.getItem("sextant.live.options") || "{}")); } catch { /* ignore */ }
     this._history = null; // {ent, from, to, points:[{t,x,y,f}] }
     this._timeline = null; // {ent, at, stays:[{start,end,floor,room,spot,unheard?,partial?}], last_heard}
@@ -543,6 +543,7 @@ class SextantLive extends LitElement {
   _select(ent) {
     if (ent !== this._selected) { this._truth = null; this._marking = false; this._blend = null; this._heat = null; }
     this._selected = ent;
+    this._pushFocusWifi();
     if (ent) {
       this._mapOpen = true; // a phone: the map opens under this thing's details
       // The quick actions open inside the selected row, so keep that row in
@@ -1092,12 +1093,41 @@ class SextantLive extends LitElement {
       }
     }
     this._map.setThings(things);
+    this._pushFocusWifi();
     this._map.setOffline(this.positions?.offline_receivers || []);
     // mmWave targets on this floor: the map draws the ones no thing claimed.
     this._map.setRadarTargets((this.positions?.radar_targets || []).filter((t) => t.floor === this.floor));
   }
 
   _label(ent) { return thingName(this.data, ent); }
+
+  /** The selected thing's Wi-Fi link for the map's signal lines: a phone or
+   * watch whose owner has a Wi-Fi tracker of the same kind (a tracker called
+   * a watch is the watch, any other the phone), joined to an access point
+   * placed on this floor. Anything else has none. */
+  _pushFocusWifi() {
+    const ent = this._selected, layout = this.data?.layout || {}, wifi = this.data?.wifi || {};
+    const cls = (layout.thing_classes || {})[ent], owner = (layout.thing_owners || {})[ent];
+    let link = null;
+    // Scrubbing this thing's history shows a past position; its Wi-Fi link
+    // is the current one, so it waits until Live resumes.
+    const scrubbing = this._scrub != null && this._history?.ent === ent;
+    if (ent && owner && !scrubbing && (cls === "phone" || cls === "watch")) {
+      // The live payload says which access point each tracker is on now;
+      // the snapshot in this.data is from when the page loaded.
+      const cands = wifi.candidates || {}, live = this.positions?.wifi_aps;
+      const apOf = (e, c) => (live ? live[e] : c?.home && c?.ap) || null;
+      const pick = (wifi.assigned?.[owner] || []).map((a) => [a.entity, cands[a.entity]])
+        .find(([e, c]) => c && apOf(e, c) && /watch/i.test(`${c.name} ${e}`) === (cls === "watch"));
+      const mac = pick && apOf(...pick);
+      const ap = mac && (this._floorObj()?.access_points || []).find((a) => a.mac === mac && a.cords);
+      if (ap) {
+        const name = (this.data?.access_points || []).find((a) => a.mac === ap.mac)?.name || ap.name || ap.mac;
+        link = { ent, x: ap.cords.x, y: ap.cords.y, name };
+      }
+    }
+    this._map?.setFocusWifi(link);
+  }
 
   /**
    * The list, grouped by whose things they are: each Home Assistant person
@@ -1495,6 +1525,7 @@ class SextantLive extends LitElement {
       ["receivers", "Proxies", "Draw the proxies. Whichever one you point at is named; Labels names the rooms and things", "mdi:access-point"],
       ["access_points", "Wi-Fi", "Draw the Wi-Fi access points placed on the plan. Point at one (or tap it) for its name and how many clients it has", "mdi:wifi"],
       ...(this._isAdmin() ? [["wifi_heat", "Signal", "The Wi-Fi signal map: how strong the signal is in each square metre, or which access point clients are on there, measured from the proxies and the people's phones and watches", "mdi:wifi-strength-3"]] : []),
+      ["links", "Signal lines", "With a thing selected: a line to each proxy that heard it, green when close and red by ten metres, thicker for the ones that count most - and for a phone or watch, a dashed line to its Wi-Fi access point", "mdi:transit-connection-variant"],
       ["circles", "Range circles", "The distance each proxy measured, as a circle: the fix is where they meet", "mdi:radar"],
       ["fingerprint", "Fingerprint fix", "Where the fingerprint estimator alone would put each thing (dashed), next to the published fix", "mdi:fingerprint"],
     ];

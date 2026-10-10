@@ -2778,8 +2778,9 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
                 "speed": None if zone_speed is None else round(zone_speed, 2),
                 "floor": lowest_floor_name,
                 # The exact solver input (post-correction, post-filter), for
-                # the panel's trilateration circles.
-                "radii": [[float(pt[0]), float(pt[1]), float(pt[2])] for pt in weighted],
+                # the panel's trilateration circles and signal lines: proxy x,
+                # y, distance (px), and the weight the solver gave it.
+                "radii": [[float(pt[0]), float(pt[1]), float(pt[2]), _solver_weight(pt, scale)] for pt in weighted],
                 # Smoothed floor-election probabilities, for debugging "why
                 # did it pick this floor" (issue #94).
                 "floors": {f: round(p, 3) for f, p in probs.items()},
@@ -5776,6 +5777,10 @@ def _push_payload(hass):
         # The refresh interval and when the last cycle ran, for the countdown
         # (and its menu, which sets a temporary interval).
         "interval": interval_info(),
+        # Which access point each Wi-Fi tracker at home is on now, for the
+        # panel's signal lines: the layout snapshot's copy goes stale as a
+        # phone roams.
+        "wifi_aps": {e: c["ap"] for e, c in (_wifi_now.get("candidates") or {}).items() if c.get("home") and c.get("ap")},
     }
 
 
@@ -6640,6 +6645,16 @@ class SextantCordsAPI(HomeAssistantView):
 # Floor on the distance used in the Jacobian's direction vector. Only guards
 # the 0/0 at a fit sitting exactly on a receiver; far below any real geometry.
 _JAC_MIN_DIST = 1e-9
+
+
+def _solver_weight(pt, scale) -> float:
+    """The weight trilaterate() gives a weighted point: its reliability over
+    the clamped measured slant squared, per square metre so it reads the same
+    on every floor's scale. The panel scales its signal lines by it."""
+    min_wr = MIN_WEIGHT_RADIUS_M * scale if scale else 1e-3
+    wrad = pt[4] if len(pt) > 4 else pt[2]
+    w = float(pt[3]) / max(float(wrad), min_wr) ** 2
+    return round(w * (scale or 1.0) ** 2, 4)
 
 
 def trilaterate(known_points, bounds=None, min_weight_radius=1e-3, stable_hint=None):
