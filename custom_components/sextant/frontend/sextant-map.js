@@ -744,6 +744,15 @@ export class SextantMap {
     return pts && pts.length >= 3 ? pts : null;
   }
   cancelDraft() { this.draft = null; this._drawHover = null; this.invalidate(); }
+  /** Take back the last corner of the shape being drawn. True if there was one. */
+  undoDraftPoint() {
+    if (!this.draft?.length) return false;
+    this.draft.pop();
+    if (!this.draft.length) this.draft = null;
+    if (this.host.onDrawPoint) this.host.onDrawPoint(this.draft || []);
+    this.invalidate();
+    return true;
+  }
 
   // --- view --------------------------------------------------------------------
 
@@ -855,7 +864,10 @@ export class SextantMap {
       this.selection = hit;
       if (this.host.onSelect) this.host.onSelect(hit);
       const m = this.toMap(p);
-      this._drag = { kind: "item", hit, start: m, moved: false, origin: this._itemPoints(hit) };
+      const origin = this._itemPoints(hit);
+      this._drag = { kind: "item", hit, start: m, moved: false, origin, initial: origin.map((q) => ({ ...q })),
+                     // A room dragged whole takes its spots along; with Shift, everything inside it.
+                     carry: hit.kind === "zone" && hit.vertex == null && hit.edge == null ? this._roomContents(hit.index, e.shiftKey) : [] };
       if (this.host.onDragStart) this.host.onDragStart(hit);
       this.invalidate();
       return;
@@ -879,17 +891,75 @@ export class SextantMap {
   }
 
   /** A second finger landed: undo what the first one started, then pinch. */
+  /** While a room or spot is dragged whole, a dashed outline of where it
+   * started: something to bring it back to (it snaps home near it). */
+  _drawDragOrigin(ctx) {
+    const d = this._drag;
+    if (d?.kind !== "item" || !d.moved || !(d.hit.kind === "zone" || d.hit.kind === "subzone") || d.hit.vertex != null || (d.initial || []).length < 3) return;
+    const k = this.view.k;
+    ctx.save();
+    ctx.beginPath();
+    d.initial.forEach((q, i) => (i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)));
+    ctx.closePath();
+    ctx.setLineDash([6 / k, 5 / k]);
+    ctx.strokeStyle = this.dark ? "rgba(255,255,255,0.7)" : "rgba(20,24,30,0.65)";
+    ctx.lineWidth = 1.5 / k;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /** Put a drag's item (and whatever it carried) back where the drag began. */
+  _restoreDrag(d) {
+    if (d?.kind !== "item" || !d.moved) return false;
+    const f = this.floor, hit = d.hit, at = d.initial || d.origin;
+    if (hit.kind === "receiver") f.receivers[hit.index].cords = { ...at[0] };
+    else if (hit.kind === "pin") f.pins[hit.index].cords = { ...at[0] };
+    else if (hit.kind === "remark") f.remarks[hit.index].cords = { ...at[0] };
+    else if (hit.kind === "radar") f.radars[hit.index].cords = { ...at[0] };
+    else if (hit.kind === "ap") f.access_points[hit.index].cords = { ...at[0] };
+    else (hit.kind === "zone" ? f.zones : f.subzones)[hit.index].cords = at.map((q) => ({ ...q }));
+    for (const c of d.carry || []) f[c.list][c.index].cords = Array.isArray(c.origin) ? c.origin.map((q) => ({ ...q })) : { ...c.origin };
+    this._snap = null; this._pinSnap = null;
+    return true;
+  }
+
+  /** Esc in the middle of a drag: everything back where it was. True when a
+   * drag was cancelled (the host then has nothing else to cancel). */
+  cancelDrag() {
+    const d = this._drag;
+    if (d?.kind !== "item") return false;
+    this._restoreDrag(d);
+    this._drag = null;
+    this.lastDragMoved = true;   // the pointer-up that follows is not a click
+    this.invalidate();
+    return true;
+  }
+
+  /** What dragging room ``index`` takes along: its spots (a spot belongs to
+   * its room), and with ``everything`` also the proxies, mmWave sensors,
+   * access points and notes inside it. Anchors never move - they are how the
+   * floors line up. */
+  _roomContents(index, everything) {
+    const f = this.floor, room = f?.zones?.[index];
+    if (!room || (room.cords || []).length < 3) return [];
+    const ring = room.cords, out = [];
+    (f.subzones || []).forEach((sz, i) => {
+      const pts = sz.cords || [];
+      if (pts.length && ((room.zone_id && sz.parent === room.zone_id) || pts.every((q) => pointInPolygon(q, ring)))) {
+        out.push({ list: "subzones", index: i, origin: pts.map((q) => ({ ...q })) });
+      }
+    });
+    if (everything) {
+      for (const list of ["receivers", "radars", "access_points", "remarks"]) {
+        (f[list] || []).forEach((it, i) => { if (it.cords && pointInPolygon(it.cords, ring)) out.push({ list, index: i, origin: { ...it.cords } }); });
+      }
+    }
+    return out;
+  }
+
   _startPinch() {
     const d = this._drag;
-    if (d?.kind === "item" && d.moved) {
-      const f = this.floor, hit = d.hit;
-      if (hit.kind === "receiver") f.receivers[hit.index].cords = { ...d.origin[0] };
-      else if (hit.kind === "pin") f.pins[hit.index].cords = { ...d.origin[0] };
-      else if (hit.kind === "remark") f.remarks[hit.index].cords = { ...d.origin[0] };
-      else if (hit.kind === "radar") f.radars[hit.index].cords = { ...d.origin[0] };
-      else if (hit.kind === "ap") f.access_points[hit.index].cords = { ...d.origin[0] };
-      else (hit.kind === "zone" ? f.zones : f.subzones)[hit.index].cords = d.origin.map((q) => ({ ...q }));
-    }
+    this._restoreDrag(d);
     // The first finger of a pinch is not a corner.
     if (this.draft?.length && this._draftPush && performance.now() - this._draftPush < 600) {
       this.draft.pop();
@@ -1008,7 +1078,13 @@ export class SextantMap {
         d.origin[at] = { x: m.x - dx, y: m.y - dy };
         this.selection = d.hit;
       } else {
-        item.cords = d.origin.map((q) => ({ x: q.x + dx, y: q.y + dy }));
+        // Brought back close to where it started, it snaps exactly home.
+        const home = Math.hypot(dx, dy) <= HIT_SLOP * 1.5 / this.view.k;
+        const ox = home ? 0 : dx, oy = home ? 0 : dy;
+        item.cords = d.origin.map((q) => ({ x: q.x + ox, y: q.y + oy }));
+        for (const c of d.carry || []) {
+          f[c.list][c.index].cords = Array.isArray(c.origin) ? c.origin.map((q) => ({ x: q.x + ox, y: q.y + oy })) : { x: c.origin.x + ox, y: c.origin.y + oy };
+        }
       }
     }
     this.invalidate();
@@ -1034,6 +1110,7 @@ export class SextantMap {
       else if (hit.kind === "radar") f.radars[hit.index].cords = round(f.radars[hit.index].cords);
       else if (hit.kind === "ap") f.access_points[hit.index].cords = round(f.access_points[hit.index].cords);
       else { const list = hit.kind === "zone" ? f.zones : f.subzones; list[hit.index].cords = list[hit.index].cords.map(round); }
+      for (const c of d.carry || []) { const it = f[c.list][c.index]; it.cords = Array.isArray(it.cords) ? it.cords.map(round) : round(it.cords); }
       if (this.host.onChange) this.host.onChange(hit.kind, hit.index);
     }
     this.invalidate();
@@ -1191,6 +1268,7 @@ export class SextantMap {
     if (this.heat && this.mode !== "edit") this._drawHeat(ctx);
     if (this.wifiHeat && this.mode !== "edit") this._drawWifiHeat(ctx);
     this._drawDraft(ctx);
+    this._drawDragOrigin(ctx);
     if (this._snap) this._drawSnap(ctx);
     // "Proxies" off hides them entirely: a plan with dozens of them is busy,
     // and most of the time you are looking at the things, not the proxies.

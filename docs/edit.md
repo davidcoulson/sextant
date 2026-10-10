@@ -18,6 +18,20 @@ target:
   area_id: "{{ state_attr('sensor.david_sextant_person_location', 'area_id') }}"
 ```
 
+**Keys:** **Esc** cancels whatever is in progress. In the middle of a drag
+it puts the item, and anything it carried, back where it was; while drawing
+it drops the shape; otherwise it returns the tool to Select, then clears the
+selection. **Ctrl/Cmd+Z** undoes and **Ctrl/Cmd+Shift+Z** (or **Ctrl+Y**)
+redoes, as do the Undo and Redo buttons. **Delete** or **Backspace** removes
+what is selected. While drawing, Ctrl/Cmd+Z, Delete and Backspace take back
+the last corner instead. None of these fire while you are typing in a field.
+
+**Moving a room** by dragging its body takes its spots along. Hold
+**Shift** to take everything inside it as well: proxies, mmWave sensors,
+access points and notes. Anchors never move, because they are how the floors
+line up. A dashed outline marks where the room started, and dropping it close
+to that outline snaps it exactly home.
+
 Changes live in the page until **Save**. Switching floor, leaving the Edit
 page, or reloading asks first, so a draft is not lost by accident;
 **Discard** throws it away on purpose.
