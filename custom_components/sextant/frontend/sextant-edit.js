@@ -228,6 +228,8 @@ class SextantEdit extends LitElement {
     this._map.setAccessPoints(Array.isArray(this.data?.access_points) ? this.data.access_points : null);
     this._loadRadarDevices();
     if (!first) this._loadBiasView();
+    if (!first && this._keptDraft) { this._map.draft = this._keptDraft; this._map.invalidate(); }
+    this._keptDraft = null;
     // A reload or a closed tab would take the draft with it.
     this._warnUnload = (ev) => { if (this.unsaved) { ev.preventDefault(); ev.returnValue = ""; } };
     window.addEventListener("beforeunload", this._warnUnload);
@@ -241,6 +243,9 @@ class SextantEdit extends LitElement {
     clearInterval(this._radarTimer);
     window.removeEventListener("beforeunload", this._warnUnload);
     window.removeEventListener("keydown", this._keys);
+    // The corners of a shape being drawn live in the map, which goes now:
+    // kept here so the rebuilt map (connectedCallback) takes them back.
+    this._keptDraft = this._map?.draft?.length ? this._map.draft.map((q) => ({ ...q })) : null;
     this._map?.destroy();   // kept, not nulled: a late reply may still call it
     this._tornDown = true;
   }
@@ -1002,12 +1007,13 @@ class SextantEdit extends LitElement {
     const f = this._floorObj();
     if (!f) return;
     this._busy = true;
-    const floor = f.name;
+    const floor = f.name, rev = this._serial();
     const r = await callWS(this, this.hass, { type: "sextant/adjust_zones", target, zones: f.zones || [], subzones: f.subzones || [], options: {} });
     this._busy = false;
-    // The floor it was made for: Accept applies it there and nowhere else, and
-    // a reply that comes back after a floor switch is dropped.
-    if (r && floor === this.floor) this._proposal = { target, floor, ...r };
+    // The floor it was made for: Accept applies it there and nowhere else. A
+    // reply that comes back after a floor switch, or after the plan was edited
+    // while it was being worked out, is dropped: accepting it would undo that.
+    if (r && floor === this.floor && rev === this._serial()) this._proposal = { target, floor, ...r };
   }
 
   _acceptProposal() {
