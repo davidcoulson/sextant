@@ -39,3 +39,19 @@ export function pinchView(view, mid0, dist0, mid, dist, w, h, minZoom, maxZoom) 
   const c = unproject(u.x - (mid.x - w / 2), u.y - (mid.y - h / 2), zoom);
   return { lat: c.lat, lon: c.lon, zoom };
 }
+
+/** The scale bar under a map: the longest round length (1, 2 or 5 times a
+ * power of ten, in metres or feet) that fits in ``maxPx`` screen pixels, and
+ * how wide it is. ``pxPerMetre`` is screen pixels per metre at the current
+ * zoom. Null when there is no scale to show. */
+export function scaleBar(pxPerMetre, imperial = false, maxPx = 120) {
+  if (!(Number.isFinite(pxPerMetre) && pxPerMetre > 0 && maxPx > 0)) return null;
+  const pxPerUnit = pxPerMetre * (imperial ? 0.3048 : 1);
+  const fits = maxPx / pxPerUnit;               // the longest length that fits, in units
+  const p = 10 ** Math.floor(Math.log10(fits));
+  const length = [5, 2, 1].map((m) => m * p).find((l) => l <= fits * (1 + 1e-9)) ?? p;
+  // A clean number to show: 0.2, not 0.20000000000000004.
+  const shown = Number(length.toPrecision(1));
+  const unit = imperial ? "ft" : "m";
+  return { length: shown, unit, label: `${shown} ${unit}`, width: Math.max(1, Math.round(shown * pxPerUnit)) };
+}

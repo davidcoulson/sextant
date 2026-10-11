@@ -34,6 +34,35 @@ export function signalColour(dbm, alpha = 1) {
   const t = Math.max(0, Math.min(1, (Number(dbm) + 80) / 30));
   return `hsla(${Math.round(t * 125)}, 72%, 46%, ${alpha})`;
 }
+/** ``color`` (#rgb, #rrggbb, rgb(), hsl()) with ``alpha`` applied, for a
+ * see-through fill: a spot's colour picked in the editor is hex, and a hex
+ * fill used to go down fully opaque over the plan. */
+export function withAlpha(color, alpha) {
+  const c = String(color || "").trim();
+  let m = /^#([0-9a-f]{3})$/i.exec(c);
+  if (m) { const [r, g, b] = m[1].split("").map((d) => parseInt(d + d, 16)); return `rgba(${r}, ${g}, ${b}, ${alpha})`; }
+  m = /^#([0-9a-f]{6})$/i.exec(c);
+  if (m) { const n = parseInt(m[1], 16); return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`; }
+  m = /^(rgb|hsl)a?\(([^)]*)\)$/i.exec(c);
+  if (m) {
+    const fn = m[1].toLowerCase(), body = m[2].trim();
+    if (body.includes(",")) {
+      const parts = body.split(",").slice(0, 3).map((x) => x.trim());
+      return `${fn}a(${parts.join(", ")}, ${alpha})`;
+    }
+    // CSS Color 4: space-separated, any alpha after a slash.
+    const parts = body.split("/")[0].trim().split(/\s+/).slice(0, 3);
+    return `${fn}(${parts.join(" ")} / ${alpha})`;
+  }
+  return c;
+}
+
+/** A signal line's colour by how far the proxy reads the thing: green when
+ * close, red by ten metres (the Wi-Fi map's ramp). Shared by the lines, their
+ * legend and the Live page's "Heard by" list. */
+export function distanceColour(metres, alpha = 1) {
+  return signalColour(-80 + 30 * Math.max(0, Math.min(1, (10 - Number(metres)) / 9)), alpha);
+}
 const LABEL_TRIES = 7;           // how far a label may step from its marker before it is dropped
 
 /** Where each label of a frame goes so that no two overlap.
@@ -1389,7 +1418,7 @@ export class SextantMap {
       pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
       if (pts.length >= 3) ctx.closePath();
       if (kind === "subzone") {
-        ctx.fillStyle = (item.color || "hsl(175,70%,45%)").replace(/\)$/, ", 0.22)").replace("hsl(", "hsla(");
+        ctx.fillStyle = withAlpha(item.color || "hsl(175,70%,45%)", 0.22);
         ctx.strokeStyle = item.color || "hsl(175,70%,45%)";
       } else if (noGo) {
         // A void is read at a glance, not studied: the dashed outline and a
@@ -1397,6 +1426,10 @@ export class SextantMap {
         // used to bury a stairwell's worth of plan under it.
         ctx.fillStyle = "rgba(110,110,110,0.14)";
         ctx.strokeStyle = "rgba(70,70,70,0.75)";
+      } else if (item.color) {
+        // A colour picked for the room (Edit, from Home Assistant's list).
+        ctx.fillStyle = withAlpha(item.color, selected || hovered ? 0.28 : 0.16);
+        ctx.strokeStyle = withAlpha(item.color, 0.9);
       } else {
         ctx.fillStyle = `hsla(${hue}, 60%, 55%, ${selected || hovered ? 0.28 : 0.16})`;
         ctx.strokeStyle = `hsla(${hue}, 60%, 40%, 0.9)`;
@@ -1442,7 +1475,7 @@ export class SextantMap {
       const [x, y, d] = r;
       const metres = d / scale;
       // The same red-to-green ramp as the Wi-Fi map: 10 m and further is red.
-      ctx.strokeStyle = signalColour(-80 + 30 * Math.max(0, Math.min(1, (10 - metres) / 9)), 0.85);
+      ctx.strokeStyle = distanceColour(metres, 0.85);
       const share = top > 0 ? (Number(r[3]) || 0) / top : 0.5;
       ctx.lineWidth = (1 + 2.5 * share) / k;
       ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(x, y); ctx.stroke();
