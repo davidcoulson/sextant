@@ -17,6 +17,8 @@ import { lostShapes } from "./sextant-shapes.js";
 /** The Anchor tool's "New anchor" choice (not a name any anchor can have). */
 const NEW_PIN = "\u0000new";
 
+// Fields on the draft that are drawn or derived, never edited (see _serial).
+const DERIVED_KEYS = new Set(["linked", "miss", "missLabel", "label", "unmatched"]);
 const TOOLS = [
   ["select", "Select", "mdi:cursor-default-outline", "Select and drag proxies, rooms and vertices. A dragged proxy snaps onto a nearby wall on the side you are dragging from; hold Alt to place it freely. A room dragged whole takes its spots along (hold Shift to take everything inside it) and snaps back home near where it started. Esc cancels a drag, Ctrl/Cmd+Z undoes, Ctrl/Cmd+Shift+Z redoes, Delete removes the selection"],
   ["receiver", "Proxy", "mdi:access-point-plus", "Place a proxy: pick one Bermuda knows, then click the map"],
@@ -101,9 +103,12 @@ class SextantEdit extends LitElement {
 
   // --- undo ---------------------------------------------------------------------
 
-  /** The draft as an undo step: without the marks the map draws with. */
+  /** The draft as an undo step and as a revision: without the marks the map
+   * draws with, nor the fields _pushFloor derives from scanner data (a
+   * proxy's label, whether Bermuda knows it) - a scanner update rewrites those
+   * without anyone editing the plan, and must not make a proposal look stale. */
   _serial() {
-    return JSON.stringify(this._draft, (k, v) => (k === "linked" || k === "miss" || k === "missLabel" ? undefined : v));
+    return JSON.stringify(this._draft, (k, v) => (DERIVED_KEYS.has(k) ? undefined : v));
   }
 
   _snapshot() {
@@ -1016,12 +1021,19 @@ class SextantEdit extends LitElement {
     // The floor it was made for: Accept applies it there and nowhere else. A
     // reply that comes back after a floor switch, or after the plan was edited
     // while it was being worked out, is dropped: accepting it would undo that.
-    if (r && floor === this.floor && rev === this._serial()) this._proposal = { target, floor, ...r };
+    if (r && floor === this.floor && rev === this._serial()) this._proposal = { target, floor, rev, ...r };
   }
 
   _acceptProposal() {
     const p = this._proposal, f = p && p.floor === this.floor && (this._draft?.floor || []).find((x) => x.name === p.floor);
     if (!f || !p) { this._proposal = null; return; }
+    // Worked out from the plan as it was when it arrived: anything edited
+    // since would be replaced by it, so it is dropped instead.
+    if (p.rev !== undefined && p.rev !== this._serial()) {
+      this._proposal = null;
+      toast(this, "The plan has changed since this was proposed: run it again to see it against the plan as it is now", 6000);
+      return;
+    }
     this._snapshot();
     if (p.zones) f.zones = p.zones;
     if (p.subzones) f.subzones = p.subzones;

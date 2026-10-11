@@ -644,3 +644,15 @@ def test_history_and_kpi_are_admin_only():
     for cmd in (ws.ws_history_index, ws.ws_history_get, ws.ws_history_timeline,
                 ws.ws_kpi, ws.ws_kpi_baselines, ws.ws_kpi_baseline_save, ws.ws_kpi_baseline_delete):
         assert getattr(cmd, "_ws_admin", False), cmd.__name__
+
+
+def test_a_layout_with_the_single_thing_height_saves(tmp_path):
+    """thing_height is one number, not a map: layout/save must take it."""
+    layout = _layout()
+    layout["thing_height"] = 0.7
+    hass = _hass_with_layout(tmp_path, layout)
+    conn = _Conn()
+    # The editor sends back its whole copy, the setting included.
+    run(ws.ws_layout_save(hass, conn, {"id": 1, "type": "sextant/layout/save", "layout": dict(layout)}))
+    assert conn.results and not conn.errors, conn.errors
+    assert st.get_layout(hass)["thing_height"] == 0.7
