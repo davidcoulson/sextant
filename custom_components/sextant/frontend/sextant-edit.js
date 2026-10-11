@@ -17,6 +17,8 @@ import { lostShapes } from "./sextant-shapes.js";
 /** The Anchor tool's "New anchor" choice (not a name any anchor can have). */
 const NEW_PIN = "\u0000new";
 
+// Fields on the draft that are drawn or derived, never edited (see _serial).
+const DERIVED_KEYS = new Set(["linked", "miss", "missLabel", "label", "unmatched"]);
 const TOOLS = [
   ["select", "Select", "mdi:cursor-default-outline", "Select and drag proxies, rooms and vertices. A dragged proxy snaps onto a nearby wall on the side you are dragging from; hold Alt to place it freely. A room dragged whole takes its spots along (hold Shift to take everything inside it) and snaps back home near where it started. Esc cancels a drag, Ctrl/Cmd+Z undoes, Ctrl/Cmd+Shift+Z redoes, Delete removes the selection"],
   ["receiver", "Proxy", "mdi:access-point-plus", "Place a proxy: pick one Bermuda knows, then click the map"],
@@ -101,9 +103,12 @@ class SextantEdit extends LitElement {
 
   // --- undo ---------------------------------------------------------------------
 
-  /** The draft as an undo step: without the marks the map draws with. */
+  /** The draft as an undo step and as a revision: without the marks the map
+   * draws with, nor the fields _pushFloor derives from scanner data (a
+   * proxy's label, whether Bermuda knows it) - a scanner update rewrites those
+   * without anyone editing the plan, and must not make a proposal look stale. */
   _serial() {
-    return JSON.stringify(this._draft, (k, v) => (k === "linked" || k === "miss" || k === "missLabel" ? undefined : v));
+    return JSON.stringify(this._draft, (k, v) => (DERIVED_KEYS.has(k) ? undefined : v));
   }
 
   _snapshot() {
