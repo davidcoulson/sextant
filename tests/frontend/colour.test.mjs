@@ -12,6 +12,9 @@ test("withAlpha makes hex, rgb and hsl see-through", () => {
   assert.equal(withAlpha("hsl(175,70%,45%)", 0.22), "hsla(175, 70%, 45%, 0.22)");
   assert.equal(withAlpha("rgb(1, 2, 3)", 0.1), "rgba(1, 2, 3, 0.1)");
   assert.equal(withAlpha("rgba(1, 2, 3, 0.9)", 0.1), "rgba(1, 2, 3, 0.1)");
+  // CSS Color 4 space-separated syntax, with or without an alpha.
+  assert.equal(withAlpha("rgb(1 2 3 / 50%)", 0.22), "rgb(1 2 3 / 0.22)");
+  assert.equal(withAlpha("hsl(175 70% 45%)", 0.22), "hsl(175 70% 45% / 0.22)");
 });
 
 test("signal-line colours go from red far away to green close", () => {

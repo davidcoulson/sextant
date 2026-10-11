@@ -1956,6 +1956,9 @@ class SextantLive extends LitElement {
     /* The selected thing's card holds the bottom-left corner: the scale bar
        and the signal key move to its right. */
     .mapcorner.besidecard { left: 360px; }
+    /* Between the phone layout and room for both: the card, the corner and
+       the Things list would meet, so the corner waits for the card to close. */
+    @media (min-width: 721px) and (max-width: 1000px) { .mapcorner.besidecard { display: none; } }
     .detail h4 { display: flex; align-items: center; gap: 6px; }
     .list { list-style: none; margin: 0 0 12px; padding: 0; }
     .list li { display: grid; grid-template-columns: 30px 1fr auto; grid-template-rows: auto auto; column-gap: 10px; align-items: center; padding: 6px 8px; border-radius: 6px; cursor: pointer; }

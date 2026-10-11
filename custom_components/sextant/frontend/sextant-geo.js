@@ -40,17 +40,18 @@ export function pinchView(view, mid0, dist0, mid, dist, w, h, minZoom, maxZoom) 
   return { lat: c.lat, lon: c.lon, zoom };
 }
 
-/** The scale bar under a map: the longest round length (1, 2 or 5 of a
+/** The scale bar under a map: the longest round length (1, 2 or 5 times a
  * power of ten, in metres or feet) that fits in ``maxPx`` screen pixels, and
  * how wide it is. ``pxPerMetre`` is screen pixels per metre at the current
  * zoom. Null when there is no scale to show. */
 export function scaleBar(pxPerMetre, imperial = false, maxPx = 120) {
-  if (!(Number.isFinite(pxPerMetre) && pxPerMetre > 0)) return null;
-  const unit = imperial ? 0.3048 : 1;
-  const pxPerUnit = pxPerMetre * unit;
-  const steps = imperial ? [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
-    : [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000];
-  let pick = steps[0];
-  for (const s of steps) { if (s * pxPerUnit <= maxPx) pick = s; else break; }
-  return { length: pick, unit: imperial ? "ft" : "m", label: `${pick} ${imperial ? "ft" : "m"}`, width: Math.max(8, Math.round(pick * pxPerUnit)) };
+  if (!(Number.isFinite(pxPerMetre) && pxPerMetre > 0 && maxPx > 0)) return null;
+  const pxPerUnit = pxPerMetre * (imperial ? 0.3048 : 1);
+  const fits = maxPx / pxPerUnit;               // the longest length that fits, in units
+  const p = 10 ** Math.floor(Math.log10(fits));
+  const length = [5, 2, 1].map((m) => m * p).find((l) => l <= fits * (1 + 1e-9)) ?? p;
+  // A clean number to show: 0.2, not 0.20000000000000004.
+  const shown = Number(length.toPrecision(1));
+  const unit = imperial ? "ft" : "m";
+  return { length: shown, unit, label: `${shown} ${unit}`, width: Math.max(1, Math.round(shown * pxPerUnit)) };
 }

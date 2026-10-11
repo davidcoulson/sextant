@@ -1219,12 +1219,12 @@ class SextantEdit extends LitElement {
         <div class="muted small">Calibration skips it: it is left out of the fit and its correction is never overwritten. For a radio whose distances are the wrong shape rather than the wrong scale - a tablet or a phone, which read long up close and far too short across a room - where no single multiplier fits.</div>
         <div class="muted small">${item.unmatched ? "Bermuda does not report this proxy right now." : "Linked."} x ${fmtNum(item.cords?.x, 0)}, y ${fmtNum(item.cords?.y, 0)}</div>` : nothing}
       ${sel.kind === "zone" ? uiSwitch({ label: "No-go area (things can never be here)", checked: !!item.no_go, onChange: (v) => this._edit("no_go", v) }) : nothing}
-      ${sel.kind === "zone" && !item.no_go ? html`<div class="row">${uiColour({ host: this, value: item.color || null, auto: "Automatic (from the name)", autoSwatch: `hsl(${thingHue(item.entity_id || "")}, 60%, 55%)`, onChange: (v) => this._edit("color", v || undefined) })}</div>` : nothing}
+      ${sel.kind === "zone" && !item.no_go ? html`<div class="row">${uiColour({ host: this, value: item.color || null, auto: "Automatic (from the name)", autoSwatch: `hsl(${thingHue(item.entity_id || "")}, 60%, 55%)`, custom: this._customColourFor === item, onCustom: (on) => { this._customColourFor = on ? item : null; this.requestUpdate(); }, onChange: (v) => this._edit("color", v || undefined) })}</div>` : nothing}
       ${sel.kind === "zone" && !item.no_go ? this._renderAreaLink(item) : nothing}
       ${sel.kind === "subzone" ? html`
         <div class="row">
           ${uiSelect({ label: "Parent room", value: item.parent || "", options: [{ value: "", label: "none" }, ...zones.map((z) => ({ value: z.zone_id, label: z.entity_id }))], onChange: (v) => this._edit("parent", v || null), style: "flex: 1" })}
-          ${uiColour({ host: this, value: item.color ? this._hex(item.color) : null, customHex: this._hex(item.color), onChange: (v) => this._edit("color", v || undefined) })}
+          ${uiColour({ host: this, value: item.color ? this._hex(item.color) : null, customHex: this._hex(item.color), custom: this._customColourFor === item, onCustom: (on) => { this._customColourFor = on ? item : null; this.requestUpdate(); }, onChange: (v) => this._edit("color", v || undefined) })}
         </div>
         <div class="classes">
           <div class="muted small">Takes which things? None picked means any of them. A bedside table is for a phone, a watch and keys; a cat bed is for the cat.</div>

@@ -44,7 +44,16 @@ export function withAlpha(color, alpha) {
   m = /^#([0-9a-f]{6})$/i.exec(c);
   if (m) { const n = parseInt(m[1], 16); return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`; }
   m = /^(rgb|hsl)a?\(([^)]*)\)$/i.exec(c);
-  if (m) { const parts = m[2].split(",").slice(0, 3).map((x) => x.trim()); return `${m[1].toLowerCase()}a(${parts.join(", ")}, ${alpha})`; }
+  if (m) {
+    const fn = m[1].toLowerCase(), body = m[2].trim();
+    if (body.includes(",")) {
+      const parts = body.split(",").slice(0, 3).map((x) => x.trim());
+      return `${fn}a(${parts.join(", ")}, ${alpha})`;
+    }
+    // CSS Color 4: space-separated, any alpha after a slash.
+    const parts = body.split("/")[0].trim().split(/\s+/).slice(0, 3);
+    return `${fn}(${parts.join(" ")} / ${alpha})`;
+  }
   return c;
 }
 

@@ -445,16 +445,19 @@ export function haColourValue(el, key) {
 }
 
 /** A colour field: Home Assistant's named colours, "Automatic" (when
- * ``auto`` names what that means), and "Custom" with the browser's picker. */
-export function uiColour({ host, label = "Colour", value, onChange, auto = null, autoSwatch = null, customHex = "#2a9d8f" }) {
+ * ``auto`` names what that means), and "Custom" with the browser's picker.
+ * ``custom`` keeps Custom chosen even while the colour equals a named one
+ * (the host remembers the choice and gets it back through ``onCustom``). */
+export function uiColour({ host, label = "Colour", value, onChange, auto = null, autoSwatch = null, customHex = "#2a9d8f", custom = false, onCustom = null }) {
   const current = value ? String(value).toLowerCase() : "";
   const named = HA_COLOURS.find(([k]) => haColourValue(host, k) === current);
-  const choice = !current ? (auto ? "auto" : "custom") : named ? named[0] : "custom";
+  const choice = custom && current ? "custom" : !current ? (auto ? "auto" : "custom") : named ? named[0] : "custom";
   const options = [...(auto ? [{ value: "auto", label: auto }] : []), ...HA_COLOURS.map(([k, l]) => ({ value: k, label: l })), { value: "custom", label: "Custom…" }];
   const swatch = current || (auto ? autoSwatch || "transparent" : customHex);
   return html`<span class="colourfield">
     <i class="swatch" style=${`background:${swatch}`} aria-hidden="true"></i>
     ${uiSelect({ label, value: choice, options, onChange: (v) => {
+      onCustom?.(v === "custom");
       if (v === "auto") onChange(null);
       else if (v === "custom") onChange(current || customHex);
       else onChange(haColourValue(host, v));
