@@ -63,3 +63,12 @@ def test_person_trackers_are_capped():
     import asyncio
     asyncio.run(ws.ws_person_trackers_set(hass, conn, msg))
     assert errors and "At most" in errors[0]
+
+
+def test_layout_check_accepts_the_single_thing_height_setting():
+    """thing_height is one number for every thing, not a map (_thing_height)."""
+    layout = {"floor": [{"name": "Ground", "scale": 100.0}], "thing_height": 0.7, "thing_names": {}}
+    assert layout_check.layout_problem(layout) is None
+    assert sextant._thing_height(layout) == 0.7
+    # The maps the cycle reads with .get() must still be maps.
+    assert layout_check.layout_problem({"floor": [], "thing_owners": "david"}) is not None

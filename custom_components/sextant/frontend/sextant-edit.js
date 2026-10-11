@@ -1016,12 +1016,19 @@ class SextantEdit extends LitElement {
     // The floor it was made for: Accept applies it there and nowhere else. A
     // reply that comes back after a floor switch, or after the plan was edited
     // while it was being worked out, is dropped: accepting it would undo that.
-    if (r && floor === this.floor && rev === this._serial()) this._proposal = { target, floor, ...r };
+    if (r && floor === this.floor && rev === this._serial()) this._proposal = { target, floor, rev, ...r };
   }
 
   _acceptProposal() {
     const p = this._proposal, f = p && p.floor === this.floor && (this._draft?.floor || []).find((x) => x.name === p.floor);
     if (!f || !p) { this._proposal = null; return; }
+    // Worked out from the plan as it was when it arrived: anything edited
+    // since would be replaced by it, so it is dropped instead.
+    if (p.rev !== undefined && p.rev !== this._serial()) {
+      this._proposal = null;
+      toast(this, "The plan has changed since this was proposed: run it again to see it against the plan as it is now", 6000);
+      return;
+    }
     this._snapshot();
     if (p.zones) f.zones = p.zones;
     if (p.subzones) f.subzones = p.subzones;

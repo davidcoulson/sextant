@@ -16,8 +16,14 @@ import math
 
 # The lists a floor may carry, each of dicts.
 FLOOR_LISTS = ("receivers", "zones", "subzones", "pins", "remarks", "radars", "access_points")
-# Top-level maps keyed by thing (or by anything): each must be a dict when present.
-MAP_PREFIXES = ("thing_",)
+# Top-level maps keyed by thing: each must be a dict when present, as the
+# cycle reads them with .get(). Named one by one: not every thing_* key is a
+# map - thing_height is one number for every thing (see _thing_height).
+MAP_KEYS = (
+    "thing_names", "thing_classes", "thing_colors", "thing_icons", "thing_heights", "thing_estimators",
+    "thing_fp_weights", "thing_fp_gains", "thing_ref_offsets", "thing_owners", "thing_pronouns",
+    "thing_locates_owner", "thing_battery_entity", "thing_charging_entity",
+)
 # Upper bounds that keep a single save from stalling the loop (see the shapes
 # and the spot confinement, which walk every vertex).
 MAX_FLOORS = 50
@@ -101,8 +107,8 @@ def layout_problem(layout) -> str | None:
                 label = item.get("entity_id") or item.get("name") or item.get("mac") or f"{key} {i + 1}"
                 if (problem := _cords_problem(item.get("cords"), f"{name}: {label}", key)) is not None:
                     return problem
-    for key, value in layout.items():
-        if any(key.startswith(p) for p in MAP_PREFIXES) and value is not None and not isinstance(value, dict):
+    for key in MAP_KEYS:
+        if layout.get(key) is not None and not isinstance(layout[key], dict):
             return f"layout.{key} must be an object"
     if layout.get("tuning") is not None and not isinstance(layout["tuning"], dict):
         return "layout.tuning must be an object"
