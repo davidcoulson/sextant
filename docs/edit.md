@@ -91,6 +91,15 @@ Undo holds fifty steps. **Adjust rooms** squares
 near-rectangles, snaps neighbours to shared walls and removes overlaps
 with a live preview. Nothing is written until Save.
 
+## Colours and scale
+
+A room is coloured from its name unless you pick a colour for it; a spot has a
+colour of its own. Both offer Home Assistant's own colour list, so they match
+the rest of Home Assistant and follow the theme, or **Custom…** for any colour.
+
+The scale bar sits over the zoom buttons. On a floor with no scale it reads
+**No scale**: click it to start the Scale tool.
+
 ## A busier plan than the map needs
 
 A plan drawn for a builder carries a tile hatch over every floor, room

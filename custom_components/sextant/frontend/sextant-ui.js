@@ -145,6 +145,8 @@ export function slugLabel(slug) {
 // defines them, and each helper falls back to a plain element when one is
 // missing, so the panel never renders an inert unknown tag.
 import { html, nothing } from "./lit.js";
+import { distanceColour } from "./sextant-map.js";
+import { scaleBar } from "./sextant-geo.js";
 
 let _haReady = null;
 export function ensureHaComponents() {
@@ -375,3 +377,89 @@ export const CLASS_FAMILIES = {
   paw: ["dog", "cat"],
   bag: ["backpack", "purse", "luggage"],
 };
+
+/** The corner of a map under its plan (bottom-left): the scale bar, with the
+ * signal-lines legend above it when it shows. ``.lifted`` clears the history
+ * scrubber. */
+export const mapOverlayStyles = css`
+  .mapcorner { position: absolute; left: 10px; bottom: 10px; z-index: 2; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; pointer-events: none; }
+  .mapcorner.lifted { bottom: 62px; }
+  .mapcorner > * { pointer-events: auto; }
+  .scalebar, .siglegend, .noscale { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 8px; background: var(--card-background-color); box-shadow: var(--ha-card-box-shadow, 0 2px 6px rgba(0,0,0,0.25)); font-size: 11px; color: var(--primary-text-color); font-variant-numeric: tabular-nums; }
+  .scalebar { flex-direction: column; align-items: flex-start; gap: 2px; }
+  .scalebar .line { height: 5px; border: 2px solid currentColor; border-top: 0; box-sizing: border-box; }
+  .noscale { border: 0; font: inherit; font-size: 11px; cursor: pointer; --mdc-icon-size: 14px; }
+  .noscale[disabled] { cursor: default; }
+  .noscale:not([disabled]):hover { color: var(--primary-color); }
+  .siglegend i.ramp { width: 90px; height: 8px; border-radius: 4px; }
+  .siglegend .wifi { display: inline-block; width: 18px; border-top: 2px dashed #4f5bd5; }
+`;
+
+/** The scale bar for a floor at the current zoom (``k`` screen px per plan
+ * px; ``scale`` plan px per metre), or, on a floor with no scale, a chip that
+ * says so - a button when ``onNoScale`` is given (it leads to the Scale tool). */
+export function renderScaleBar(scale, k, imperial, onNoScale, noScaleTitle) {
+  if (!(scale > 0)) {
+    return html`<button class="noscale" title=${noScaleTitle || "This floor has no scale yet"} ?disabled=${!onNoScale}
+      @click=${() => onNoScale?.()}><ha-icon icon="mdi:ruler"></ha-icon>No scale</button>`;
+  }
+  const bar = scaleBar(scale * (k || 1), imperial);
+  if (!bar) return nothing;
+  return html`<div class="scalebar" role="img" aria-label=${`Scale: ${bar.label}`}><span>${bar.label}</span><span class="line" style=${`width:${bar.width}px`}></span></div>`;
+}
+
+/** What the signal lines' colours mean: close (green) to ten metres and
+ * further (red), and the dashed Wi-Fi line. */
+export function signalLegend(imperial = false) {
+  const ramp = [10, 7.5, 5, 2.5, 1].map((m) => distanceColour(m)).join(", ");
+  return html`<div class="siglegend" title="Signal lines: how far each proxy reads the selected thing. Thicker lines count for more in the position">
+    <span>${imperial ? "33 ft+" : "10 m+"}</span><i class="ramp" style=${`background: linear-gradient(90deg, ${ramp})`}></i><span>near</span>
+    <span class="wifi" aria-hidden="true"></span><span>Wi-Fi</span>
+  </div>`;
+}
+
+/** Home Assistant's own colour list (what its colour pickers offer), each by
+ * the theme variable that defines it, with HA's default as the fallback. A
+ * room or spot stores the resolved #rrggbb, as the layout holds plain colours. */
+export const HA_COLOURS = [
+  ["red", "Red", "--red-color", "#f44336"], ["pink", "Pink", "--pink-color", "#e91e63"],
+  ["purple", "Purple", "--purple-color", "#926bc7"], ["deep-purple", "Deep purple", "--deep-purple-color", "#6e41ab"],
+  ["indigo", "Indigo", "--indigo-color", "#3f51b5"], ["blue", "Blue", "--blue-color", "#2196f3"],
+  ["light-blue", "Light blue", "--light-blue-color", "#03a9f4"], ["cyan", "Cyan", "--cyan-color", "#00bcd4"],
+  ["teal", "Teal", "--teal-color", "#009688"], ["green", "Green", "--green-color", "#4caf50"],
+  ["light-green", "Light green", "--light-green-color", "#8bc34a"], ["lime", "Lime", "--lime-color", "#cddc39"],
+  ["yellow", "Yellow", "--yellow-color", "#ffeb3b"], ["amber", "Amber", "--amber-color", "#ffc107"],
+  ["orange", "Orange", "--orange-color", "#ff9800"], ["deep-orange", "Deep orange", "--deep-orange-color", "#ff6f22"],
+  ["brown", "Brown", "--brown-color", "#795548"], ["grey", "Grey", "--grey-color", "#9e9e9e"],
+  ["blue-grey", "Blue grey", "--blue-grey-color", "#607d8b"],
+];
+
+/** One of HA_COLOURS as #rrggbb under the current theme (``el`` is any
+ * element inside the panel, for its computed style). */
+export function haColourValue(el, key) {
+  const c = HA_COLOURS.find(([k]) => k === key);
+  if (!c) return null;
+  let v = "";
+  try { v = getComputedStyle(el).getPropertyValue(c[2]).trim(); } catch { /* not in a document */ }
+  return /^#[0-9a-f]{6}$/i.test(v) ? v.toLowerCase() : c[3];
+}
+
+/** A colour field: Home Assistant's named colours, "Automatic" (when
+ * ``auto`` names what that means), and "Custom" with the browser's picker. */
+export function uiColour({ host, label = "Colour", value, onChange, auto = null, customHex = "#2a9d8f" }) {
+  const current = value ? String(value).toLowerCase() : "";
+  const named = HA_COLOURS.find(([k]) => haColourValue(host, k) === current);
+  const choice = !current ? (auto ? "" : "custom") : named ? named[0] : "custom";
+  const options = [...(auto ? [{ value: "", label: auto }] : []), ...HA_COLOURS.map(([k, l]) => ({ value: k, label: l })), { value: "custom", label: "Custom…" }];
+  const swatch = current || (auto ? "transparent" : customHex);
+  return html`<span class="colourfield">
+    <i class="swatch" style=${`background:${swatch}`} aria-hidden="true"></i>
+    ${uiSelect({ label, value: choice, options, onChange: (v) => {
+      if (v === "") onChange(null);
+      else if (v === "custom") onChange(current || customHex);
+      else onChange(haColourValue(host, v));
+    } })}
+    ${choice === "custom" ? html`<input type="color" title="Pick any colour" aria-label="Custom colour" .value=${/^#[0-9a-f]{6}$/i.test(current) ? current : customHex}
+      @change=${(e) => onChange(e.target.value)}>` : nothing}
+  </span>`;
+}

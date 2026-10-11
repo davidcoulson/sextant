@@ -210,6 +210,18 @@ for the proxies the solver weighted most. A phone or watch also gets a dashed
 line to the Wi-Fi access point it is joined to, when its owner's Wi-Fi tracker
 of the same kind is on an access point placed on this floor.
 
+A key in the bottom-left corner says what the colours mean while the lines
+show. The thing's details list the same proxies under **Heard by**: each one's
+name, how far it reads the thing, and its share of the weight, the ones that
+count most first, with the line's colour beside it.
+
+## Scale bar
+
+The bottom-left corner of the map has a scale bar, a round length (1, 2 or 5
+metres or feet, or a power of ten of them) that grows and shrinks as you zoom.
+A floor with no scale shows **No scale** there instead; for an admin it opens
+the Edit page, where the Scale tool sets one.
+
 ## Wi-Fi signal
 
 With UniFi Network set up, the **Signal** switch over the map (admins only)

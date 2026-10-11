@@ -12,8 +12,8 @@
  *   tuning       stability KPI, live tuning, history retention
  */
 import { LitElement, html, css, nothing } from "./lit.js";
-import { signalColour, SextantMap, thingColor, thingHue, staleness, shortAge, heatCells, pointInPolygon } from "./sextant-map.js";
-import { sharedStyles, widgetStyles, fmtAge, fmtNum, toast, confirmDialog, ensureHaComponents, uiSelect, uiButton, callWS, sortFloors, thingName, proxyName, fmtLen, fmtSpeed, classIcon, pronounsFor, uiIconButton, uiSegmented } from "./sextant-ui.js";
+import { signalColour, distanceColour, SextantMap, thingColor, thingHue, staleness, shortAge, heatCells, pointInPolygon } from "./sextant-map.js";
+import { sharedStyles, widgetStyles, fmtAge, fmtNum, toast, confirmDialog, ensureHaComponents, uiSelect, uiButton, callWS, sortFloors, thingName, proxyName, fmtLen, fmtSpeed, classIcon, pronounsFor, uiIconButton, uiSegmented, isImperial, mapOverlayStyles, renderScaleBar, signalLegend } from "./sextant-ui.js";
 
 // What this page is running: the version of the files it was loaded from
 // (sextant-version.js), not the one in its URL - see that file.
@@ -372,7 +372,7 @@ class SextantPanel extends LitElement {
   }
 
   static styles = [sharedStyles, css`
-    :host { display: flex; flex-direction: column; height: 100vh; background: var(--primary-background-color); color: var(--primary-text-color); }
+    :host { display: flex; flex-direction: column; height: 100vh; height: 100dvh; background: var(--primary-background-color); color: var(--primary-text-color); }
     .topbar { display: flex; align-items: center; gap: 10px; padding: 0 12px; height: 56px; background: var(--app-header-background-color, var(--primary-color)); color: var(--app-header-text-color, #fff); flex: none; }
     .brand { display: flex; align-items: center; gap: 8px; margin-right: 8px; color: inherit; text-decoration: none; }
     .brand ha-icon { --mdc-icon-size: 26px; }
@@ -566,7 +566,7 @@ class SextantLive extends LitElement {
       },
       onMapClick: (m) => this._placeMark(m),
       isPlacing: () => this._marking,
-      onView: () => this._pinViewChanged(),
+      onView: () => { this._pinViewChanged(); this._scaleViewChanged(); },
       onFloorReady: () => { if (this._pin?.step === "where") requestAnimationFrame(() => this._pinZoom()); },
     });
     this._linksTimer = setInterval(() => { if (this._selected) this._loadLinks(); }, 10000);
@@ -1503,6 +1503,36 @@ class SextantLive extends LitElement {
     return m === "ap" ? "ap" : m === "measured" || m === "signal" ? "measured" : "estimated";
   }
 
+  /** The scale bar follows the zoom: re-render when the screen size of a
+   * metre changes (onView fires every frame; most frames move nothing). */
+  _scaleViewChanged() {
+    const k = this._map?.view?.k, scale = this._floorObj()?.scale;
+    const key = `${k}|${scale}`;
+    if (key !== this._scaleKey) { this._scaleKey = key; this.requestUpdate(); }
+  }
+
+  /** The proxies the solver used for the selected thing, nearest pull first:
+   * what the signal lines draw, as a list (name, distance, share of the
+   * weight, and the line's own colour). */
+  _renderHeardBy(sel) {
+    const f = (this.data?.layout?.floor || []).find((x) => x.name === sel.floor);
+    const radii = Array.isArray(sel.radii) ? sel.radii : [];
+    if (!f?.scale || !radii.length) return nothing;
+    const total = radii.reduce((a, r) => a + (Number(r[3]) || 0), 0);
+    const rows = radii.map((r) => {
+      const rx = (f.receivers || []).find((q) => q.cords && Math.abs(q.cords.x - r[0]) < 1 && Math.abs(q.cords.y - r[1]) < 1);
+      const metres = r[2] / f.scale;
+      return { name: rx ? proxyName(this.data, rx.address || rx.entity_id) : "a proxy", metres,
+               share: total > 0 ? (Number(r[3]) || 0) / total : null,
+               colour: distanceColour(metres) };
+    }).sort((a, b) => (b.share ?? 0) - (a.share ?? 0) || a.metres - b.metres);
+    return html`<details class="telemetry heardby">
+      <summary>Heard by <span class="muted small">${rows.length} ${rows.length === 1 ? "proxy" : "proxies"} in the solve, the ones that count most first</span></summary>
+      <ul class="plain heard">${rows.map((r) => html`<li><i class="dot" style=${`background:${r.colour}`}></i><span class="grow">${r.name}</span>
+        <span class="muted small">${fmtLen(r.metres, this.hass)}${r.share != null ? html` · ${Math.round(r.share * 100)}%` : nothing}</span></li>`)}</ul>
+    </details>`;
+  }
+
   _renderWifiLegend() {
     const r = this._wifiHeat;
     if (!this._options.wifi_heat || !r) return nothing;
@@ -1615,6 +1645,11 @@ class SextantLive extends LitElement {
         </div>
         ${zoom}
         ${pinning ? nothing : this._renderWifiLegend()}
+        ${pinning ? nothing : html`<div class="mapcorner ${this._history ? "lifted" : ""}">
+          ${sel && this._options.links !== false && sel.radii?.length && sel.floor === this.floor ? signalLegend(isImperial(this.hass)) : nothing}
+          ${renderScaleBar(this._floorObj()?.scale, this._map?.view?.k, isImperial(this.hass),
+            this._isAdmin() ? () => this._goto("edit") : null, "No scale on this floor. Set it in Edit with the Scale tool")}
+        </div>`}
         ${this._optionsOpen ? html`
           <div class="opts-backdrop narrow-only" @click=${() => { this._optionsOpen = false; }}></div>
           <div class="opts-sheet narrow-only">
@@ -1680,6 +1715,7 @@ class SextantLive extends LitElement {
               <dt>Updated</dt><dd>${typeof sel.updated === "number" && sel.updated > 0 ? html`${fmtAge(Date.now() / 1000 - sel.updated)} ago` : html`<span class="muted">not heard since the last restart</span>`}${staleness(sel, this._staleAfter()).ghost ? html` <span class="pill warn" title=${`Nothing has heard ${this._label(sel.ent)} since; this is where ${this._pn(sel.ent).subj} ${this._pn(sel.ent).was} last placed`}>not heard</span>` : nothing}</dd>
             </dl>
             ${this._renderTimeline(sel)}
+            ${sel.robot ? nothing : this._renderHeardBy(sel)}
             ${sel.robot ? nothing : html`<details class="telemetry">
               <summary>Confidence <span class="muted small">how sure Sextant is, and why</span></summary>
               <dl>
@@ -1866,7 +1902,7 @@ class SextantLive extends LitElement {
     </details>`;
   }
 
-  static styles = [sharedStyles, widgetStyles, css`
+  static styles = [sharedStyles, widgetStyles, mapOverlayStyles, css`
     /* The list floats over the map rather than taking a column from it: the
        plan runs the full width, and what is on it is read on top. The focused
        thing's detail floats in the opposite corner, out of the toolbar's way.
@@ -1894,6 +1930,9 @@ class SextantLive extends LitElement {
     .zoom.lifted { bottom: 62px; }
     .wifilegend { position: absolute; right: 320px; bottom: 62px; z-index: 2; display: flex; flex-direction: column; gap: 6px; max-width: min(340px, calc(100% - 20px)); padding: 8px 10px; border-radius: 10px; background: var(--card-background-color); box-shadow: var(--ha-card-box-shadow, 0 2px 6px rgba(0,0,0,0.25)); font-size: 12px; }
     .wifilegend.lifted { bottom: 114px; }
+    .heard li { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+    .heard .dot { flex: none; width: 10px; height: 10px; border-radius: 50%; }
+    .heard .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .wifilegend .ramp { display: flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
     .wifilegend .ramp i { flex: 1; height: 10px; min-width: 120px; border-radius: 5px; }
     .wifilegend .apkeys { display: flex; flex-wrap: wrap; gap: 4px 10px; }

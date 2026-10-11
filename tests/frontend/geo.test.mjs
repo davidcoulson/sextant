@@ -47,3 +47,13 @@ test("a pinch zooms by the finger spread and keeps the point between the fingers
   // Clamped at the limits.
   near(pinchView(view, mid0, 100, mid0, 10000, W, H, 15, 22).zoom, 22, 1e-9);
 });
+
+test("the scale bar picks the longest round length that fits", async () => {
+  const { scaleBar } = await import("../../custom_components/sextant/frontend/sextant-geo.js");
+  assert.deepEqual(scaleBar(40), { length: 2, unit: "m", label: "2 m", width: 80 });        // 5 m would be 200 px
+  assert.equal(scaleBar(4).label, "20 m");
+  assert.equal(scaleBar(2000).label, "0.1 m");                                               // never empty: the smallest step
+  assert.equal(scaleBar(40, true).label, "5 ft");                                            // 12.2 px a foot
+  assert.equal(scaleBar(0), null);
+  assert.equal(scaleBar(NaN), null);
+});

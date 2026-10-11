@@ -9,7 +9,7 @@
  */
 import { LitElement, html, css, nothing } from "./lit.js";
 import { SextantMap, polygonCentroid, snapToVertex, squareUp } from "./sextant-map.js";
-import { sharedStyles, widgetStyles, toast, callWS, confirmDialog, fmtNum, fmtLen, uiField, uiSelect, uiSwitch, uiButton, uiIconButton, uiMenu, proxyName, lenUnit, toDisplayLen, fromDisplayLen, fmtScale, isImperial, THING_CLASSES, CLASS_FAMILIES } from "./sextant-ui.js";
+import { sharedStyles, widgetStyles, toast, callWS, confirmDialog, fmtNum, fmtLen, uiField, uiSelect, uiSwitch, uiButton, uiIconButton, uiMenu, proxyName, lenUnit, toDisplayLen, fromDisplayLen, fmtScale, isImperial, THING_CLASSES, CLASS_FAMILIES, mapOverlayStyles, renderScaleBar, uiColour } from "./sextant-ui.js";
 import { mapUrlFor } from "./sextant-panel.js";
 import { lostShapes } from "./sextant-shapes.js";
 
@@ -215,6 +215,8 @@ class SextantEdit extends LitElement {
       onChange: (kind) => { this._commitDragStep(); this._dirty = true; this._tick++; if (kind === "pin") this._refreshAlignment(); this.requestUpdate(); },
       onDrawPoint: () => this.requestUpdate(),
       onDrawClose: () => this._closeDraft(),
+      // The scale bar follows the zoom (onView fires every frame).
+      onView: (v) => { const key = `${v.k}|${this._floorObj()?.scale}`; if (key !== this._scaleKey) { this._scaleKey = key; this.requestUpdate(); } },
       onContextMenu: (hit) => this._context(hit),
     });
     this._map.setMode("edit");
@@ -884,6 +886,7 @@ class SextantEdit extends LitElement {
     else item[field] = value;
     if (item.height === undefined) delete item.height;
     if (item.correction === undefined) delete item.correction;
+    if (item.color === undefined) delete item.color;
     if (item[field] === undefined) delete item[field];
     this._dirty = true;
     this._map.invalidate();
@@ -1037,6 +1040,8 @@ class SextantEdit extends LitElement {
     return html`
       <div class="stage">
         <canvas @click=${(e) => this._onCanvasClick(e)}></canvas>
+        <div class="mapcorner">${renderScaleBar(this._floorObj()?.scale, this._map?.view?.k, isImperial(this.hass),
+          () => this._setTool("measure"), "This floor has no scale yet: click to measure a known distance with the Scale tool")}</div>
         <div class="zoom" role="group" aria-label="Zoom">
           <button title="Fit the whole floor into view" aria-label="Fit the whole floor" @click=${() => this._map.fit()}><ha-icon icon="mdi:fit-to-screen-outline"></ha-icon></button>
           <button title="Zoom in" aria-label="Zoom in" @click=${() => this._map.zoomBy(1.3)}><ha-icon icon="mdi:plus"></ha-icon></button>
@@ -1214,11 +1219,12 @@ class SextantEdit extends LitElement {
         <div class="muted small">Calibration skips it: it is left out of the fit and its correction is never overwritten. For a radio whose distances are the wrong shape rather than the wrong scale - a tablet or a phone, which read long up close and far too short across a room - where no single multiplier fits.</div>
         <div class="muted small">${item.unmatched ? "Bermuda does not report this proxy right now." : "Linked."} x ${fmtNum(item.cords?.x, 0)}, y ${fmtNum(item.cords?.y, 0)}</div>` : nothing}
       ${sel.kind === "zone" ? uiSwitch({ label: "No-go area (things can never be here)", checked: !!item.no_go, onChange: (v) => this._edit("no_go", v) }) : nothing}
+      ${sel.kind === "zone" && !item.no_go ? html`<div class="row">${uiColour({ host: this, value: item.color || null, auto: "Automatic (from the name)", onChange: (v) => this._edit("color", v || undefined) })}</div>` : nothing}
       ${sel.kind === "zone" && !item.no_go ? this._renderAreaLink(item) : nothing}
       ${sel.kind === "subzone" ? html`
         <div class="row">
           ${uiSelect({ label: "Parent room", value: item.parent || "", options: [{ value: "", label: "none" }, ...zones.map((z) => ({ value: z.zone_id, label: z.entity_id }))], onChange: (v) => this._edit("parent", v || null), style: "flex: 1" })}
-          <label class="field">Colour<input type="color" .value=${this._hex(item.color)} @change=${(e) => this._edit("color", e.target.value)}></label>
+          ${uiColour({ host: this, value: item.color ? this._hex(item.color) : null, customHex: this._hex(item.color), onChange: (v) => this._edit("color", v || undefined) })}
         </div>
         <div class="classes">
           <div class="muted small">Takes which things? None picked means any of them. A bedside table is for a phone, a watch and keys; a cat bed is for the cat.</div>
@@ -1281,7 +1287,12 @@ class SextantEdit extends LitElement {
     return `#${f(0)}${f(8)}${f(4)}`;
   }
 
-  static styles = [sharedStyles, widgetStyles, css`
+  static styles = [sharedStyles, widgetStyles, mapOverlayStyles, css`
+    /* Over the zoom buttons: the tool hint has the bottom-left corner here. */
+    .mapcorner { left: auto; right: 10px; bottom: 58px; align-items: flex-end; }
+    .colourfield { display: inline-flex; align-items: center; gap: 8px; }
+    .colourfield .swatch { flex: none; width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--divider-color); }
+    .colourfield input[type="color"] { width: 36px; height: 32px; padding: 0; border: 0; background: none; }
     .classes { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
     /* One icon per class rather than seventeen labelled switches: picked is
        the page's own ink, the rest sit back in grey. The name is on hover. */
