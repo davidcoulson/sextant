@@ -8,7 +8,7 @@
  * view, the one thing the websocket does not carry).
  */
 import { LitElement, html, css, nothing } from "./lit.js";
-import { SextantMap, polygonCentroid, snapToVertex, squareUp } from "./sextant-map.js";
+import { SextantMap, polygonCentroid, snapToVertex, squareUp, thingHue } from "./sextant-map.js";
 import { sharedStyles, widgetStyles, toast, callWS, confirmDialog, fmtNum, fmtLen, uiField, uiSelect, uiSwitch, uiButton, uiIconButton, uiMenu, proxyName, lenUnit, toDisplayLen, fromDisplayLen, fmtScale, isImperial, THING_CLASSES, CLASS_FAMILIES, mapOverlayStyles, renderScaleBar, uiColour } from "./sextant-ui.js";
 import { mapUrlFor } from "./sextant-panel.js";
 import { lostShapes } from "./sextant-shapes.js";
@@ -1219,7 +1219,7 @@ class SextantEdit extends LitElement {
         <div class="muted small">Calibration skips it: it is left out of the fit and its correction is never overwritten. For a radio whose distances are the wrong shape rather than the wrong scale - a tablet or a phone, which read long up close and far too short across a room - where no single multiplier fits.</div>
         <div class="muted small">${item.unmatched ? "Bermuda does not report this proxy right now." : "Linked."} x ${fmtNum(item.cords?.x, 0)}, y ${fmtNum(item.cords?.y, 0)}</div>` : nothing}
       ${sel.kind === "zone" ? uiSwitch({ label: "No-go area (things can never be here)", checked: !!item.no_go, onChange: (v) => this._edit("no_go", v) }) : nothing}
-      ${sel.kind === "zone" && !item.no_go ? html`<div class="row">${uiColour({ host: this, value: item.color || null, auto: "Automatic (from the name)", onChange: (v) => this._edit("color", v || undefined) })}</div>` : nothing}
+      ${sel.kind === "zone" && !item.no_go ? html`<div class="row">${uiColour({ host: this, value: item.color || null, auto: "Automatic (from the name)", autoSwatch: `hsl(${thingHue(item.entity_id || "")}, 60%, 55%)`, onChange: (v) => this._edit("color", v || undefined) })}</div>` : nothing}
       ${sel.kind === "zone" && !item.no_go ? this._renderAreaLink(item) : nothing}
       ${sel.kind === "subzone" ? html`
         <div class="row">

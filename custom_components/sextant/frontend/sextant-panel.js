@@ -1513,7 +1513,8 @@ class SextantLive extends LitElement {
 
   /** The proxies the solver used for the selected thing, nearest pull first:
    * what the signal lines draw, as a list (name, distance, share of the
-   * weight, and the line's own colour). */
+   * weight, and the line's own colour). "Heard by", further down, is every
+   * placed proxy that hears it; this is the ones the position came from. */
   _renderHeardBy(sel) {
     const f = (this.data?.layout?.floor || []).find((x) => x.name === sel.floor);
     const radii = Array.isArray(sel.radii) ? sel.radii : [];
@@ -1527,7 +1528,7 @@ class SextantLive extends LitElement {
                colour: distanceColour(metres) };
     }).sort((a, b) => (b.share ?? 0) - (a.share ?? 0) || a.metres - b.metres);
     return html`<details class="telemetry heardby">
-      <summary>Heard by <span class="muted small">${rows.length} ${rows.length === 1 ? "proxy" : "proxies"} in the solve, the ones that count most first</span></summary>
+      <summary>In the solve <span class="muted small">${rows.length} ${rows.length === 1 ? "proxy" : "proxies"} the position comes from, the ones that count most first</span></summary>
       <ul class="plain heard">${rows.map((r) => html`<li><i class="dot" style=${`background:${r.colour}`}></i><span class="grow">${r.name}</span>
         <span class="muted small">${fmtLen(r.metres, this.hass)}${r.share != null ? html` · ${Math.round(r.share * 100)}%` : nothing}</span></li>`)}</ul>
     </details>`;
@@ -1645,7 +1646,7 @@ class SextantLive extends LitElement {
         </div>
         ${zoom}
         ${pinning ? nothing : this._renderWifiLegend()}
-        ${pinning ? nothing : html`<div class="mapcorner ${this._history ? "lifted" : ""}">
+        ${pinning ? nothing : html`<div class="mapcorner ${this._history ? "lifted" : ""} ${sel ? "besidecard" : ""}">
           ${sel && this._options.links !== false && sel.radii?.length && sel.floor === this.floor ? signalLegend(isImperial(this.hass)) : nothing}
           ${renderScaleBar(this._floorObj()?.scale, this._map?.view?.k, isImperial(this.hass),
             this._isAdmin() ? () => this._goto("edit") : null, "No scale on this floor. Set it in Edit with the Scale tool")}
@@ -1952,6 +1953,9 @@ class SextantLive extends LitElement {
     .side { position: absolute; right: 10px; top: 10px; bottom: 10px; width: 300px; z-index: 3; overflow: auto; padding: 10px 12px; border-radius: 12px; background: var(--card-background-color); box-shadow: var(--ha-card-box-shadow, 0 2px 8px rgba(0,0,0,0.3)); }
     .detail { position: absolute; left: 10px; bottom: 10px; width: 340px; max-width: calc(100% - 340px); max-height: min(62%, calc(100% - 86px)); overflow: auto; z-index: 3; margin: 0; }
     .detail.lifted { bottom: 62px; max-height: min(62%, calc(100% - 138px)); }
+    /* The selected thing's card holds the bottom-left corner: the scale bar
+       and the signal key move to its right. */
+    .mapcorner.besidecard { left: 360px; }
     .detail h4 { display: flex; align-items: center; gap: 6px; }
     .list { list-style: none; margin: 0 0 12px; padding: 0; }
     .list li { display: grid; grid-template-columns: 30px 1fr auto; grid-template-rows: auto auto; column-gap: 10px; align-items: center; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
@@ -2146,6 +2150,7 @@ class SextantLive extends LitElement {
       .detail .grip:active span, .detail .grip:focus-visible span { background: var(--primary-color, #03a9f4); }
       .detail .grip:focus-visible { outline: none; }
       .scrub, .zoom, .wifilegend { right: 10px; }
+      .mapcorner.besidecard { left: 10px; }   /* the card sits under the map here */
       /* Things, and with it Hide map, stays reachable however far the list
          is scrolled - it used to scroll away and leave no way to close a map
          taking half the screen. */

@@ -211,7 +211,7 @@ line to the Wi-Fi access point it is joined to, when its owner's Wi-Fi tracker
 of the same kind is on an access point placed on this floor.
 
 A key in the bottom-left corner says what the colours mean while the lines
-show. The thing's details list the same proxies under **Heard by**: each one's
+show. The thing's details list the same proxies under **In the solve**: each one's
 name, how far it reads the thing, and its share of the weight, the ones that
 count most first, with the line's colour beside it.
 
