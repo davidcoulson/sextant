@@ -142,6 +142,30 @@ disagree on which side positive x is). An installation angle set on the
 device already turns the coordinates it reports, so face the marker the way
 that turned frame points.
 
+**Line it up** does the turning for you. Stand still a couple of metres out,
+off to one side of the centre line, press **Freeze** on the dot that's you,
+then tap the plan where you were really standing. The card says how far to
+turn the marker (and to what), and for a sensor on the wall whether the
+distance read long or short - a mount height that accounts for it is
+offered alongside. **Apply** puts the change in the draft; Save keeps it.
+One spot gives a rough answer, so do it again from somewhere else to check.
+
+**Mounted** is on the wall (the default) or on the ceiling. On the ceiling
+the sensor sees a circle below it, sized by the mount height, and its x/y
+are taken as offsets across the floor from the point below it; the facing
+is the way its y axis points. An LD2450-type sensor (x and y only) is made
+to look out from a wall, and the card says so if you put one on the
+ceiling: looking down, it loses one floor direction.
+
+A **3D sensor** - one that also reports `target_N_z`, such as the Hi-Link
+LD6004 - reports positions across the floor already, so the height doesn't
+change them, and it says how high each target is. Its dot shows that height
+and a rough posture (lying, sitting or standing). Firmwares disagree on
+what z means, so **Its z is** picks how to read it: down from the sensor
+(the default on the ceiling), up from it (the default on the wall), or
+height above the floor. Stand under it and check your dot reads about chest
+height. Sensors with more than three targets are read in full.
+
 **Mount height** is how high the sensor is. It measures a straight line from
 there to your chest (about a metre up), so from 2 m up someone a metre out
 reads 40 % too far and someone 3 m out 5 % too far; with the height set,
@@ -154,6 +178,12 @@ too. Targets outside the room are hollow dots while you check it, and the
 wedge is filled only inside the room. To stop it seeing past a doorway at
 all, lower the max distance on the device itself.
 
+Two sensors that can see the same spot both report whoever is there. Their
+targets within `mmwave_merge_m` (0.8 m) of each other are one person - one
+sensor's targets are always different people, however close, and so are two
+sensors' targets kept to different rooms (two people either side of a
+wall) - placed at the mean of the two, claimed once and counted once.
+
 Saved, a placed sensor does three things every cycle:
 
 - **Places things.** A thing whose Bluetooth fix is within
@@ -163,8 +193,8 @@ Saved, a placed sensor does three things every cycle:
   a thing with no class - because the radar sees people and animals, not
   objects: headphones on the desk or a Tile on the shelf never take the
   person sitting beside them.
-- **Takes location pins.** When a sensor sees exactly one target, one thing
-  has claimed it, and both have been still for a minute, that is a location
+- **Takes location pins.** When every sensor that sees someone sees only
+  them (one target each), one thing has claimed them, and both have been still for a minute, that is a location
   pin nobody had to tap - at most one per thing per half hour, never within
   a metre of that thing's last, and the newest 30 per thing kept. They join
   the pins you place yourself, as fingerprint references and in the

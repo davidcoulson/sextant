@@ -68,6 +68,7 @@ const TUNING_LABELS = {
   mmwave_fusion: ["Place things on mmWave targets", "a thing whose Bluetooth fix is near a radar target is placed on the target"],
   mmwave_auto_pins: ["Pins from mmWave", "one still target and one still thing make a location pin (at most one per thing per half hour)"],
   mmwave_pair_m: ["Claim a target within (m)", "how near a thing's Bluetooth fix must be to an mmWave target to be placed on it"],
+  mmwave_merge_m: ["One person within (m)", "two mmWave sensors' targets this close are one person seen by both, counted and claimed once"],
   election_log_hours: ["Election log (hours)", "keep every floor election on disk for this long (config/sextant_election_log, ~6 MB an hour for twenty things) for tools/replay_floors.py; 0 = off"],
   stale_after_secs: ["Ghost after (s)", "a thing unheard this long is drawn faded on Live, with how long ago it was heard"],
   spot_proxy_near_m: ["Spot proxy: full within (m)", "a spot's own proxy hearing a thing this close counts fully as the thing being on the spot"],
@@ -685,7 +686,7 @@ class SextantHealth extends LitElement {
       ["Near-field anchor", ["anchor_max_m", "anchor_ratio", "anchor_secs", "anchor_release_m"]],
       ["Floors", ["floor_switch_secs", "floor_switch_margin", "floor_tenure_bonus", "floor_tenure_full_secs", "floor_proximity_weight", "floor_proximity_blend", "floor_proximity_k", "wifi_floor_weight"]],
       ["People", ["gps_stale_secs"]],
-      ["Robots and mmWave", ["robot_poll_secs", "mmwave_fusion", "mmwave_auto_pins", "mmwave_pair_m"]],
+      ["Robots and mmWave", ["robot_poll_secs", "mmwave_fusion", "mmwave_auto_pins", "mmwave_pair_m", "mmwave_merge_m"]],
       ["Calibration", ["calibration_target", "correction_close_fade", "correction_fade_near_m", "correction_fade_far_m"]],
       ["History and display", ["history_hours", "stale_after_secs", "away_after_secs", "restore_state_secs", "election_log_hours"]],
     ];

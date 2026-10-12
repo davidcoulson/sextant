@@ -9,6 +9,8 @@ import math
 import time
 import types
 
+import pytest
+
 import sextant
 from sextant import radars
 from sextant import storage as st
@@ -57,8 +59,8 @@ def test_targets_are_read_in_metres_and_the_empty_ones_skipped():
               "number.range": state(600, "cm")}
     got = radars.read_targets(SPEC, states.get)
     assert len(got) == 1, "target 2 at the origin is the radar's 'none'"
-    i, x, y, speed = got[0]
-    assert i == 1 and abs(x + 0.508) < 1e-9 and abs(y - 2.032) < 1e-9 and speed == 0.0
+    i, x, y, speed, z = got[0]
+    assert i == 1 and abs(x + 0.508) < 1e-9 and abs(y - 2.032) < 1e-9 and speed == 0.0 and z is None
     states["binary_sensor.t1a"] = state("off")
     assert radars.read_targets(SPEC, states.get) == [], "inactive"
     states["binary_sensor.t1a"] = state("on")
@@ -265,3 +267,198 @@ def test_an_object_on_the_desk_does_not_claim_the_person_at_it(tmp_path):
     sextant.apitricords = [_thing("unclassed", (505, 805))]
     run(sextant._radar_cycle(hass, st.get_layout(hass)))
     assert sextant._radar_frame["targets"][0]["thing"] == "unclassed", "no class: usually a phone nobody classed"
+
+
+# --- 3D radars and the ceiling -----------------------------------------------------
+
+def test_a_3d_radar_reports_z_and_more_than_three_targets():
+    ids = [f"sensor.ld_target_{n}_{a}" for n in (1, 4) for a in ("x", "y", "z")]
+    spec = radars.device_spec(ids)
+    assert [t["z"] for t in spec["targets"]] == ["sensor.ld_target_1_z", "sensor.ld_target_4_z"] and spec["has_z"]
+    assert not radars.device_spec(["sensor.ep_target_1_x", "sensor.ep_target_1_y"])["has_z"]
+    spec3 = {"targets": [{"x": "sensor.x", "y": "sensor.y", "z": "sensor.z", "speed": None, "active": None}], "range_entity": None}
+    states = {"sensor.x": state(500, "mm"), "sensor.y": state(1500, "mm"), "sensor.z": state(-1800, "mm")}
+    [(i, x, y, _speed, z)] = radars.read_targets(spec3, states.get)
+    assert (i, x, y, z) == (1, 0.5, 1.5, -1.8)
+
+
+def test_only_a_2d_radar_on_the_wall_is_slant_corrected():
+    wall = {"cords": {"x": 0.0, "y": 0.0}, "heading": 90.0, "height_m": 2.0}
+    assert radars.to_plan(wall, 0.0, 3.0, 100.0)[0] < 300, "2D on the wall: the slant is shortened"
+    assert radars.to_plan(wall, 0.0, 3.0, 100.0, z_m=0.5) == pytest.approx((300.0, 0.0)), "3D: x/y are across the floor already"
+    ceiling = {**wall, "mount": "ceiling", "height_m": 3.0}
+    assert radars.to_plan(ceiling, 1.0, 2.0, 100.0) == pytest.approx((200.0, 100.0)), "ceiling: offsets from the point below, as reported"
+
+
+def test_a_3d_target_has_a_height_and_a_posture():
+    wall = {"height_m": 1.8}
+    assert radars.target_height_m(wall, -0.6) == pytest.approx(1.2), "on the wall z is up from the sensor"
+    ceiling = {"mount": "ceiling", "height_m": 3.0}
+    assert radars.target_height_m(ceiling, -1.8) == pytest.approx(1.2) and radars.target_height_m(ceiling, 1.8) == pytest.approx(1.2), "down from it, either sign"
+    assert radars.target_height_m({**ceiling, "z_ref": "floor"}, 0.9) == 0.9
+    assert radars.target_height_m({"mount": "ceiling"}, 1.8) is None, "from the sensor needs its height"
+    assert radars.target_height_m(ceiling, None) is None
+    assert [radars.posture(h) for h in (0.3, 0.9, 1.3, None)] == ["lying", "sitting", "standing", None]
+
+
+def test_a_ceiling_radar_covers_a_circle_below_it():
+    ceiling = {"mount": "ceiling", "height_m": 3.0}
+    # 2 m above a chest, a ±60° cone reaches 3.46 m out; a 6 m range more than that.
+    assert abs(radars.floor_reach_m(ceiling, 6.0) - 2.0 * math.tan(math.radians(60))) < 1e-9
+    assert abs(radars.floor_reach_m(ceiling, 2.5) - 1.5) < 1e-9, "a short range stops sooner"
+    assert radars.floor_reach_m({"height_m": 2.0}, 6.0) == radars.floor_range_m(6.0, 2.0), "on the wall: as before"
+
+
+# --- one person, two radars ----------------------------------------------------------
+
+def test_two_radars_seeing_one_person_are_one_target():
+    got = radars.merge([("a1", "A", (0.0, 0.0)), ("b1", "B", (0.5, 0.0))], radius=0.8)
+    assert got == [["a1", "b1"]]
+
+
+def test_two_people_seen_by_one_radar_stay_two_however_close():
+    got = radars.merge([("a1", "A", (0.0, 0.0)), ("a2", "A", (0.3, 0.0))], radius=0.8)
+    assert sorted(got) == [["a1"], ["a2"]]
+
+
+def test_three_radars_and_two_people():
+    targets = [("a1", "A", (0.0, 0.0)), ("b1", "B", (0.2, 0.0)), ("c1", "C", (0.1, 0.3)),
+               ("a2", "A", (5.0, 0.0)), ("b2", "B", (5.3, 0.0))]
+    got = sorted(sorted(c) for c in radars.merge(targets, radius=0.8))
+    assert got == [["a1", "b1", "c1"], ["a2", "b2"]]
+
+
+def test_targets_just_beyond_the_radius_are_not_merged():
+    assert len(radars.merge([("a1", "A", (0.0, 0.0)), ("b1", "B", (0.81, 0.0))], radius=0.8)) == 2
+
+
+def test_a_person_between_two_others_joins_the_nearer():
+    # B's target is 0.5 from A's and 0.6 from C's; A and C (1.1 apart) can't both be the same person as B.
+    got = radars.merge([("a1", "A", (0.0, 0.0)), ("b1", "B", (0.5, 0.0)), ("c1", "C", (1.1, 0.0))], radius=0.8)
+    assert sorted(sorted(c) for c in got) == [["a1", "b1"], ["c1"]]
+
+
+SPEC2 = {"targets": [{"x": "sensor.u1x", "y": "sensor.u1y", "speed": None, "active": None},
+                     {"x": "sensor.u2x", "y": "sensor.u2y", "speed": None, "active": None}],
+         "range_entity": None, "name": "Corner Presence"}
+
+
+def _two_radars(tmp_path, second=None):
+    """The office radar (1 m ahead of it: (500, 800)) and a second one in the
+    corner at (100, 500) facing right, seeing the same person from 5 m."""
+    hass, states = _hass(tmp_path)
+    layout = st.get_layout(hass)
+    layout["floor"][0]["radars"].append({"radar_id": "r2", "device_id": "dev2", "cords": {"x": 100.0, "y": 500.0}, "heading": 90.0})
+    run(st.save_layout(hass, layout))
+    states.update({"sensor.u1x": state(3.2, "m"), "sensor.u1y": state(4.0, "m")})     # (500, 820)
+    if second:
+        states.update({"sensor.u2x": state(second[0], "m"), "sensor.u2y": state(second[1], "m")})
+    sextant._radar_specs_cache["specs"]["dev2"] = SPEC2
+    return hass, states
+
+
+def _written(hass, at=None):
+    written = {}
+    orig = sextant.update_sextant_sensor_state
+    sextant.update_sextant_sensor_state = lambda h, e, s, a=None: written.__setitem__(e, (s, a))
+    try:
+        if at is not None:
+            sextant._radar_specs_cache["at"] = at
+        run(sextant._radar_cycle(hass, st.get_layout(hass), now=at))
+    finally:
+        sextant.update_sextant_sensor_state = orig
+    return written
+
+
+def test_one_person_seen_by_two_radars_counts_once(tmp_path):
+    hass, _ = _two_radars(tmp_path)
+    sextant.apitricords = [_thing("watch", (900, 200))]
+    count, attrs = _written(hass)[sextant.UNTRACKED_ENTITY_ID]
+    assert count == 1 and attrs["targets"][0]["radar"] == "Office Presence, Corner Presence"
+    [t] = sextant._radar_frame["targets"]
+    assert t["cords"] == [500.0, 810.0] and t["radars"] == ["r1", "r2"], "at the mean of the two"
+
+
+def test_a_person_seen_by_two_radars_is_claimed_once(tmp_path):
+    hass, _ = _two_radars(tmp_path)
+    sextant.apitricords = [_thing("phone", (520, 815))]
+    count, _attrs = _written(hass)[sextant.UNTRACKED_ENTITY_ID]
+    assert count == 0 and sextant._radar_frame["targets"][0]["thing"] == "phone"
+
+
+def test_two_overlapping_radars_still_take_a_pin(tmp_path, monkeypatch):
+    hass, _ = _two_radars(tmp_path)
+    monkeypatch.setattr(sextant._truth_buffer, "samples", lambda ent, since=None, floor=None: [{"t": 0, "floors": {}}] * 5)
+    t0 = time.time()
+    for dt in (0, 61):
+        sextant.apitricords = [_thing("phone", (520, 815), at=t0 + dt)]
+        _written(hass, at=t0 + dt)
+    marks = run(st.load_truth(hass))["marks"]
+    assert len(marks) == 1 and marks[0]["source"] == "mmwave:Office Presence+Corner Presence"
+
+
+def test_no_pin_when_one_of_the_radars_sees_someone_else_too(tmp_path, monkeypatch):
+    hass, _ = _two_radars(tmp_path, second=(0.0, 1.5))                # a second person, 1.5 m in front of the corner radar
+    monkeypatch.setattr(sextant._truth_buffer, "samples", lambda ent, since=None, floor=None: [{"t": 0, "floors": {}}] * 5)
+    t0 = time.time()
+    for dt in (0, 61):
+        sextant.apitricords = [_thing("phone", (520, 815), at=t0 + dt)]
+        _written(hass, at=t0 + dt)
+    assert run(st.load_truth(hass)).get("marks", []) == []
+
+
+def test_someone_right_below_a_ceiling_3d_sensor_is_a_target():
+    spec3 = {"targets": [{"x": "sensor.x", "y": "sensor.y", "z": "sensor.z", "speed": None, "active": None}], "range_entity": None}
+    states = {"sensor.x": state(0, "m"), "sensor.y": state(0, "m"), "sensor.z": state(-1.8, "m")}
+    assert [(i, x, y, z) for i, x, y, _s, z in radars.read_targets(spec3, states.get)] == [(1, 0.0, 0.0, -1.8)]
+    states["sensor.z"] = state(0, "m")
+    assert radars.read_targets(spec3, states.get) == [], "all zero is still 'none'"
+
+
+def test_no_pin_when_the_sensor_also_sees_someone_through_the_wall(tmp_path, monkeypatch):
+    hass, states = _hass(tmp_path)
+    layout = st.get_layout(hass)
+    # Make the office room end 1.5 m in front of the sensor, and put a second person 3 m out, beyond it.
+    layout["floor"][0]["zones"][0]["cords"] = [{"x": 0, "y": 750}, {"x": 1000, "y": 750}, {"x": 1000, "y": 1000}, {"x": 0, "y": 1000}]
+    run(st.save_layout(hass, layout))
+    states.update({"sensor.t2x": state(0, "in"), "sensor.t2y": state(118.1, "in")})
+    monkeypatch.setattr(sextant._truth_buffer, "samples", lambda ent, since=None, floor=None: [{"t": 0, "floors": {}}] * 5)
+    t0 = time.time()
+    for dt in (0, 61):
+        _cycle(hass, st.get_layout(hass), t0 + dt)
+    assert [t["cords"] for t in sextant._radar_frame["targets"]] == [[500.0, 800.0]], "the one through the wall isn't counted"
+    assert run(st.load_truth(hass)).get("marks", []) == [], "but the sensor saw two people: no pin"
+
+
+def test_a_3d_sensor_whose_z_drops_out_keeps_its_positions():
+    wall = {"cords": {"x": 0.0, "y": 0.0}, "heading": 90.0, "height_m": 3.0}
+    assert radars.to_plan(wall, 0.0, 2.0, 100.0, z_m=None, three_d=True) == pytest.approx((200.0, 0.0)), \
+        "the device is 3D: x/y are across the floor whether or not this z came through"
+    assert radars.to_plan(wall, 0.0, 2.0, 100.0)[0] < 200.0, "a 2D sensor's are still a slant"
+
+
+def test_two_people_either_side_of_a_wall_are_not_merged():
+    got = radars.merge([("a1", "A", (0.0, 0.0), "Office"), ("b1", "B", (0.7, 0.0), "Den")], radius=0.8)
+    assert sorted(got) == [["a1"], ["b1"]]
+    assert radars.merge([("a1", "A", (0.0, 0.0), "Office"), ("b1", "B", (0.7, 0.0), "Office")], radius=0.8) == [["a1", "b1"]]
+    assert radars.merge([("a1", "A", (0.0, 0.0), "Office"), ("b1", "B", (0.7, 0.0), None)], radius=0.8) == [["a1", "b1"]], \
+        "a sensor with no room limit can be the same person as one with"
+
+
+def test_adjacent_rooms_two_people_two_targets_one_untracked(tmp_path):
+    hass, states = _hass(tmp_path)
+    layout = st.get_layout(hass)
+    fl = layout["floor"][0]
+    # Office is the bottom half (y 500-1000); the Den above it shares the wall at y = 500.
+    fl["zones"] = [{"entity_id": "Office", "poly": True, "cords": [{"x": 0, "y": 500}, {"x": 1000, "y": 500}, {"x": 1000, "y": 1000}, {"x": 0, "y": 1000}]},
+                   {"entity_id": "Den", "poly": True, "cords": [{"x": 0, "y": 0}, {"x": 1000, "y": 0}, {"x": 1000, "y": 500}, {"x": 0, "y": 500}]}]
+    fl["radars"][0]["room"] = "Office"
+    fl["radars"].append({"radar_id": "r2", "device_id": "dev2", "cords": {"x": 500.0, "y": 100.0}, "heading": 180.0, "room": "Den"})
+    run(st.save_layout(hass, layout))
+    sextant._radar_specs_cache["specs"]["dev2"] = SPEC2
+    # Office sensor at (500, 900) sees someone 3.65 m ahead: (500, 535). Den sensor at (500, 100) facing down sees someone 3.65 m ahead: (500, 465).
+    states.update({"sensor.t1x": state(0, "in"), "sensor.t1y": state(3.65 / 0.0254, "in"),
+                   "sensor.u1x": state(0.0, "m"), "sensor.u1y": state(3.65, "m")})
+    sextant.apitricords = [_thing("phone", (500, 540))]
+    count, _attrs = _written(hass)[sextant.UNTRACKED_ENTITY_ID]
+    assert len(sextant._radar_frame["targets"]) == 2 and count == 1

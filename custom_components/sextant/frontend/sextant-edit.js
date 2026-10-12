@@ -8,7 +8,7 @@
  * view, the one thing the websocket does not carry).
  */
 import { LitElement, html, css, nothing } from "./lit.js";
-import { SextantMap, polygonCentroid, snapToVertex, squareUp, thingHue } from "./sextant-map.js";
+import { SextantMap, polygonCentroid, snapToVertex, squareUp, thingHue, radarCalibration } from "./sextant-map.js";
 import { sharedStyles, widgetStyles, toast, callWS, confirmDialog, fmtNum, fmtLen, uiField, uiSelect, uiSwitch, uiButton, uiIconButton, uiMenu, proxyName, lenUnit, toDisplayLen, fromDisplayLen, fmtScale, isImperial, THING_CLASSES, CLASS_FAMILIES, mapOverlayStyles, renderScaleBar, uiColour } from "./sextant-ui.js";
 import { mapUrlFor } from "./sextant-panel.js";
 import { lostShapes } from "./sextant-shapes.js";
@@ -78,6 +78,7 @@ class SextantEdit extends LitElement {
     _alignment: { state: true },
     _radarDevices: { state: true },   // devices reporting mmWave target coordinates
     _radarLive: { state: true },      // the selected radar's targets right now
+    _calib: { state: true },          // lining the selected radar up: {stage: "freeze" | "place" | "done", ...}
     _placingAp: { state: true },      // the Wi-Fi tool's access point, waiting for a click
   };
 
@@ -214,6 +215,9 @@ class SextantEdit extends LitElement {
     this._map = new SextantMap(this.renderRoot.querySelector("canvas"), {
       fetch: (url) => this.hass.fetchWithAuth(url),
       onSelect: (hit) => { this._selection = hit; },
+      // Lining a radar up: the next tap on the plan is where you were standing.
+      isPlacing: () => this._calib?.stage === "place",
+      onMapClick: (pt) => this._calibAt(pt),
       // A press on an item may only select it: its undo step is kept only
       // once the drag has changed something (see _commitDragStep).
       onDragStart: () => { this._dragStep = this._serial(); },
@@ -448,6 +452,7 @@ class SextantEdit extends LitElement {
   _watchRadar() {
     clearInterval(this._radarTimer);
     this._radarTimer = null;
+    this._calibCancel();
     if (this._selection?.kind !== "radar") { this._radarLive = null; this._map?.setRadarLive(null); return; }
     this._pollRadar();
     this._radarTimer = setInterval(() => this._pollRadar(), 2000);
@@ -459,11 +464,87 @@ class SextantEdit extends LitElement {
     if (!item?.device_id || !item.cords) { this._radarLive = null; this._map?.setRadarLive(null); return; }
     const r = await this.hass.callWS({ type: "sextant/radar/targets", device_id: item.device_id, floor: this.floor,
       x: item.cords.x, y: item.cords.y, heading: item.heading || 0, flip: !!item.flip,
-      height_m: item.height_m ?? null, room: item.room ?? null }).catch(() => null);
+      height_m: item.height_m ?? null, room: item.room ?? null, mount: item.mount ?? null, z_ref: item.z_ref ?? null }).catch(() => null);
     if (this._selection !== sel) return;
-    this._radarLive = r?.targets || [];
+    this._radarLive = (r?.targets || []).map((t) => ({ ...t,
+      heightLabel: t.height_m != null ? `${t.posture ? `${t.posture} · ` : ""}${fmtLen(t.height_m, this.hass)} up` : null }));
     this._radarRoom = r?.room ?? null;
     this._map?.setRadarLive({ radar_id: item.radar_id, targets: this._radarLive });
+  }
+
+  // --- lining a radar up ---------------------------------------------------------
+  //
+  // Stand still where the sensor sees you, freeze the dot it puts you at, and
+  // tap where you really are: the turn between the two is how far its facing
+  // is off (radarCalibration), and for a sensor on the wall the distance says
+  // whether the mounting height is right. Nothing changes until Apply, and
+  // nothing is kept until the plan is saved.
+
+  _calibStart() { this._calib = { stage: "freeze" }; this._map?.setRadarCalib(null); }
+
+  _calibFreeze(t) {
+    const f = this._floorObj(), item = f?.radars?.[this._selection?.index];
+    if (!item?.cords) return;
+    this._calib = { stage: "place", index: t.index, frozen: [...t.cords], x_m: t.x_m, y_m: t.y_m,
+      from: [item.cords.x, item.cords.y], heading: item.heading || 0 };
+    this._map?.setRadarCalib({ from: this._calib.from, frozen: this._calib.frozen, at: null });
+  }
+
+  _calibAt(pt) {
+    const c = this._calib, f = this._floorObj(), item = f?.radars?.[this._selection?.index];
+    if (c?.stage !== "place" || !item) return;
+    const dev = (this._radarDevices || []).find((d) => d.device_id === item.device_id);
+    const at = [Math.round(pt.x * 10) / 10, Math.round(pt.y * 10) / 10];
+    const result = radarCalibration({ from: c.from, frozen: c.frozen, at, heading: c.heading, scale: f.scale,
+      x_m: c.x_m, y_m: c.y_m, mount: item.mount, has_z: !!dev?.has_z });
+    this._calib = { ...c, stage: "done", at, result };
+    this._map?.setRadarCalib({ from: c.from, frozen: c.frozen, at });
+  }
+
+  _calibApply(useHeight) {
+    const r = this._calib?.result;
+    if (!r || r.tooClose) return;
+    this._edit("heading", r.heading);
+    if (useHeight && r.height != null) this._edit("height_m", r.height);
+    this._calibCancel();
+    this._pollRadar();
+  }
+
+  _calibCancel() { this._calib = null; this._map?.setRadarCalib(null); }
+
+  _renderCalib(item, live, dev) {
+    const c = this._calib;
+    if (!item.device_id || !item.cords) return nothing;
+    if (!c) {
+      return html`<div class="row">${uiButton({ label: "Line it up", icon: "mdi:crosshairs-gps", onClick: () => this._calibStart() })}
+        <span class="muted small">Stand where it sees you, freeze your dot, tap where you are: it works out the facing${(item.mount || "wall") === "wall" && !dev?.has_z ? " and the height" : ""}.</span></div>`;
+    }
+    const cancel = uiButton({ label: "Cancel", onClick: () => this._calibCancel() });
+    if (c.stage === "freeze") {
+      return html`<div class="calib"><div class="small"><b>1.</b> Stand still a couple of metres out, off to one side of its centre line, and freeze the dot that's you - hollow or not: while it faces the wrong way, you may be shown outside the room.</div>
+        <div class="row">${live.length ? live.map((t) => uiButton({ label: `Freeze ${t.index}${t.outside ? " (outside the room)" : ""}`, icon: "mdi:snowflake", onClick: () => this._calibFreeze(t) })) : html`<span class="muted small">No target yet - step into its view.</span>`}
+        <span class="grow"></span>${cancel}</div></div>`;
+    }
+    if (c.stage === "place") {
+      return html`<div class="calib"><div class="small"><b>2.</b> Now tap the plan where you were standing (the orange dot is where it put you).</div>
+        <div class="row"><span class="grow"></span>${cancel}</div></div>`;
+    }
+    const r = c.result || {};
+    if (r.tooClose) {
+      return html`<div class="calib"><div class="small">That's too close to the sensor to judge the direction. Stand at least a metre and a half out and try again.</div>
+        <div class="row">${uiButton({ label: "Again", onClick: () => this._calibStart() })}<span class="grow"></span>${cancel}</div></div>`;
+    }
+    const pct = Math.round((r.reportedM / r.actualM - 1) * 100);
+    // Two places in the user's unit: fmtLen rounds feet past five to whole ones, and a few inches is the point here.
+    const len = (m) => `${Number(toDisplayLen(m, this.hass)).toFixed(2)} ${lenUnit(this.hass)}`;
+    return html`<div class="calib">
+      <div class="small">${r.turn === 0 ? html`It's facing the right way.` : html`Turn it <b>${Math.abs(r.turn)}° ${r.turn > 0 ? "clockwise" : "anticlockwise"}</b>, to ${r.heading}°.`}
+        ${Math.abs(pct) >= 5 ? html` It read the distance ${Math.abs(pct)} % ${pct > 0 ? "long" : "short"} (${len(r.reportedM)} against ${len(r.actualM)}).` : nothing}
+        ${r.height != null ? html` A mount height of <b>${len(r.height)}</b> (now ${item.height_m != null ? len(item.height_m) : "unset"}) would account for that.` : Math.abs(pct) >= 10 ? html` Check the floor's scale${(item.mount || "wall") === "wall" && !dev?.has_z ? " and the mount height" : ""}.` : nothing}</div>
+      <div class="row">${uiButton({ label: r.turn === 0 ? "OK" : "Apply the turn", kind: "primary", onClick: () => this._calibApply(false) })}
+        ${r.height != null ? uiButton({ label: "Apply turn and height", onClick: () => this._calibApply(true) }) : nothing}
+        ${uiButton({ label: "Again", onClick: () => this._calibStart() })}<span class="grow"></span>${cancel}</div>
+      <div class="muted small">Applied changes go into the plan; Save keeps them. One spot is a rough answer - do it again from somewhere else to check.</div></div>`;
   }
 
   _renderRadar(item) {
@@ -475,12 +556,18 @@ class SextantEdit extends LitElement {
     const counted = live.filter((t) => !t.outside);
     const rooms = (this._floorObj()?.zones || []).filter((z) => !z.no_go && z.entity_id).map((z) => z.entity_id);
     const auto = item.room == null || item.room === "";
+    const ceiling = item.mount === "ceiling";
+    const zRef = item.z_ref || (ceiling ? "down" : "up");
     return html`<div class="card">
       <h4>mmWave sensor</h4>
       <div class="row">${uiSelect({ label: "Device", value: item.device_id || "", options: [{ value: "", label: devices.length ? "pick one" : "no mmWave sensors found" }, ...devices.map((d) => ({ value: d.device_id, label: `${d.name}${d.model ? ` · ${d.model}` : ""}${placed.has(d.device_id) ? " (placed elsewhere)" : ""}` }))], onChange: (v) => { this._edit("device_id", v || null); this._pollRadar(); }, style: "flex: 1" })}</div>
       <div class="row">
-        ${uiField({ label: "Facing (degrees clockwise from up)", type: "number", step: 1, min: 0, max: 359, value: item.heading ?? 0, onChange: (v) => { this._edit("heading", (((Number(v) || 0) % 360) + 360) % 360); this._pollRadar(); }, style: "width: 230px" })}
+        ${uiSelect({ label: "Mounted", value: ceiling ? "ceiling" : "wall", style: "width: 180px",
+          options: [{ value: "wall", label: "On the wall" }, { value: "ceiling", label: "On the ceiling" }],
+          onChange: (v) => { this._edit("mount", v === "ceiling" ? "ceiling" : undefined); this._pollRadar(); } })}
+        ${uiField({ label: ceiling ? "Its y axis points (degrees clockwise from up)" : "Facing (degrees clockwise from up)", type: "number", step: 1, min: 0, max: 359, value: item.heading ?? 0, onChange: (v) => { this._edit("heading", (((Number(v) || 0) % 360) + 360) % 360); this._pollRadar(); }, style: "flex: 1; min-width: 200px" })}
       </div>
+      ${ceiling && dev && !dev.has_z ? html`<div class="warn small">This sensor reports only x and y (an LD2450-type radar). Those are made to look out from a wall: looking down, one floor direction is lost, so its positions will be off. A 3D radar such as the LD6004 is made for the ceiling.</div>` : nothing}
       <div class="iconrow">
         ${[["mdi:arrow-up", 0, "up"], ["mdi:arrow-right", 90, "right"], ["mdi:arrow-down", 180, "down"], ["mdi:arrow-left", 270, "left"]].map(([icon, a, way]) =>
           uiIconButton({ icon, box: true, active: (item.heading ?? 0) === a, title: `Face ${way} the plan (${a}°)`, onClick: () => { this._edit("heading", a); this._pollRadar(); } }))}
@@ -497,9 +584,14 @@ class SextantEdit extends LitElement {
           options: [{ value: "auto", label: `The room it's in${auto && this._radarRoom ? ` (${this._radarRoom})` : ""}` }, ...rooms.map((n) => ({ value: n, label: n })), { value: "*", label: "Everywhere it sees" }],
           onChange: (v) => { this._edit("room", v && v !== "auto" ? v : undefined); this._pollRadar(); } })}
       </div>
-      <div class="muted small">The height turns what it measures - a straight line down to your chest - into distance across the floor; from 2 m up, someone a metre out otherwise reads 40 % too far. It sees through drywall, so targets outside the room are ignored (hollow dots here, and the wedge is filled only inside the room).</div>
+      ${dev?.has_z ? html`<div class="row">${uiSelect({ label: "Its z is", value: zRef, style: "flex: 1",
+          options: [{ value: "down", label: "Down from the sensor" }, { value: "up", label: "Up from the sensor" }, { value: "floor", label: "Height above the floor" }],
+          onChange: (v) => { this._edit("z_ref", v === (ceiling ? "down" : "up") ? undefined : v); this._pollRadar(); } })}</div>
+        <div class="muted small">It's a 3D sensor: it reports how high each target is. Stand under it and check the height on your dot reads about chest height (around ${fmtLen(1.2, this.hass)}); if not, pick the other reading of z.${zRef !== "floor" ? " Measured from the sensor, the mount height must be set." : ""}</div>` : nothing}
+      <div class="muted small">${ceiling ? html`On the ceiling it sees a circle below it; set the mount height to size it. ` : dev?.has_z ? html`It reports positions across the floor already, so the height only sizes the wedge. ` : html`The height turns what it measures - a straight line down to your chest - into distance across the floor; from 2 m up, someone a metre out otherwise reads 40 % too far. `}It sees through drywall, so targets outside the room are ignored (hollow dots here, and the ${ceiling ? "circle" : "wedge"} is filled only inside the room).</div>
       <div class="muted small">${dev ? html`Sees ${fmtLen(dev.range_m, this.hass)} out, ±${Math.round((dev.fov_deg || 120) / 2)}° either side (the range set on the device).${dev.installation_angle ? html` Its installation angle is set to ${dev.installation_angle}° on the device, which already turns the coordinates it reports: face this marker the way that turned frame points.` : nothing}` : "Pick the device, then turn the marker the way the sensor faces."}</div>
-      ${item.device_id ? html`<div class="small"><b>${counted.length}</b> target${counted.length === 1 ? "" : "s"} right now${live.length > counted.length ? html` (and ${live.length - counted.length} outside the room)` : nothing}${live.length ? html` - the pink dots. Walk straight away from it: the dot should move along the wedge's centre line; if it goes off at an angle, turn the marker; if it moves the wrong way sideways, flip.` : html` - walk in front of it to see yourself as a pink dot.`}</div>` : nothing}
+      ${item.device_id ? html`<div class="small"><b>${counted.length}</b> target${counted.length === 1 ? "" : "s"} right now${live.length > counted.length ? html` (and ${live.length - counted.length} outside the room)` : nothing}${live.length ? html` - the pink dots. ${ceiling ? "Walk across below it: the dot should follow you; if it goes the wrong way, turn the marker, and if it mirrors you, flip." : "Walk straight away from it: the dot should move along the wedge's centre line; if it goes off at an angle, turn the marker; if it moves the wrong way sideways, flip."}` : html` - walk in front of it to see yourself as a pink dot.`}</div>` : nothing}
+      ${this._renderCalib(item, live, dev)}
       <div class="muted small">Save the plan to put it to work: a thing whose Bluetooth fix is near a target is placed on the target, one still target and one still thing make a location pin, and a target nobody's device accounts for counts in sensor.sextant_untracked_people.</div>
       <div class="row"><span class="grow"></span>${uiButton({ label: "Delete", kind: "danger", onClick: () => this._deleteSelection() })}</div>
     </div>`;
@@ -1359,6 +1451,7 @@ class SextantEdit extends LitElement {
     .chip { padding: 2px 9px; border-radius: 999px; border: 1px solid var(--divider-color); background: var(--secondary-background-color); color: var(--primary-text-color); font: inherit; font-size: 12px; cursor: pointer; }
     .chip:hover { border-color: var(--primary-color); }
     .warn { color: var(--warning-color, #9a5b00); }
+    .calib { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(240,140,0,0.45); background: rgba(240,140,0,0.06); }
     .side { border-left: 1px solid var(--divider-color); overflow: auto; padding: 12px; }
     ul.plain { list-style: none; padding: 0; margin: 4px 0; }
     @media (max-width: 720px) { :host { grid-template-columns: 1fr; grid-template-rows: 1fr auto; } .side { border-left: 0; border-top: 1px solid var(--divider-color); max-height: 45vh; } .toolbar { flex-wrap: wrap; max-width: calc(100% - 20px); gap: 3px; padding: 4px; } .toolbar button.tool { width: 34px; height: 34px; } }
