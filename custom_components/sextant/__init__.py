@@ -3433,14 +3433,15 @@ def _radar_targets(hass, layout, floor, radar, spec):
 
 def _merge_radar_targets(layout, targets):
     """One target per person: the targets two or more radars on a floor see
-    within mmwave_merge_m of each other become one, at their mean, with every
+    within mmwave_merge_m of each other become one - unless the radars are
+    kept to different rooms - at their mean, with every
     radar that saw it in ``radars`` (and ``radar_names``). Its speed is the
     fastest of theirs (still only if all agree), its height their mean."""
     radius_m = _tuning(layout, "mmwave_merge_m")
     out = []
     for floor in dict.fromkeys(t["floor"] for t in targets):
         scale = next((f.get("scale") for f in layout["floor"] if f.get("name") == floor), None) or 1.0
-        mine = [(i, t["radar"], tuple(t["cords"])) for i, t in enumerate(targets) if t["floor"] == floor]
+        mine = [(i, t["radar"], tuple(t["cords"]), t.get("limit")) for i, t in enumerate(targets) if t["floor"] == floor]
         for keys in radars_mod.merge(mine, radius_m * scale):
             group = [targets[i] for i in keys]
             first = group[0]
@@ -3488,7 +3489,7 @@ async def _radar_cycle(hass, layout, now=None):
                 continue                     # behind a wall: someone else's room
             targets.append({"floor": floor["name"], "radar": radar.get("radar_id"), "radar_name": spec.get("name"),
                             "index": t["index"], "cords": t["cords"], "speed": t["speed"],
-                            "height_m": t["height_m"], "posture": t["posture"], "thing": None})
+                            "height_m": t["height_m"], "posture": t["posture"], "limit": t["limit"], "thing": None})
     targets = _merge_radar_targets(layout, targets)
     # Pair per floor, against each thing's Bluetooth fix from the last cycle.
     rows = [r for r in apitricords if isinstance(r, dict) and now - (r.get("updated") or 0) <= RADAR_FRESH_S]

@@ -180,8 +180,9 @@ all, lower the max distance on the device itself.
 
 Two sensors that can see the same spot both report whoever is there. Their
 targets within `mmwave_merge_m` (0.8 m) of each other are one person - one
-sensor's targets are always different people, however close - placed at the
-mean of the two, claimed once and counted once.
+sensor's targets are always different people, however close, and so are two
+sensors' targets kept to different rooms (two people either side of a
+wall) - placed at the mean of the two, claimed once and counted once.
 
 Saved, a placed sensor does three things every cycle:
 

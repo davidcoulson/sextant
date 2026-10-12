@@ -260,11 +260,14 @@ def to_plan(radar, x_m, y_m, px_per_m, z_m=None, three_d=None):
 def merge(targets, radius):
     """Which targets are the same person, seen by more than one radar.
 
-    ``targets`` is [(key, radar, (x, y))]. Returns a list of clusters, each
-    a list of keys: two clusters join while their centres are within
-    ``radius`` and no radar is in both (a radar sees each person once).
+    ``targets`` is [(key, radar, (x, y))] or [(key, radar, (x, y), room)].
+    Returns a list of clusters, each a list of keys: two clusters join while
+    their centres are within ``radius``, no radar is in both (a radar sees
+    each person once), and they are not kept to different rooms (two people
+    either side of a wall, each counted by their own room's sensor, are two).
     Closest pair first, so a person between two others joins the nearer."""
-    clusters = [{"keys": [k], "radars": {r}, "pts": [p]} for k, r, p in targets]
+    clusters = [{"keys": [t[0]], "radars": {t[1]}, "pts": [t[2]], "rooms": {t[3]} if len(t) > 3 and t[3] else set()}
+                for t in targets]
 
     def centre(c):
         return (sum(p[0] for p in c["pts"]) / len(c["pts"]), sum(p[1] for p in c["pts"]) / len(c["pts"]))
@@ -274,7 +277,7 @@ def merge(targets, radius):
         for i in range(len(clusters)):
             ci = centre(clusters[i])
             for j in range(i + 1, len(clusters)):
-                if clusters[i]["radars"] & clusters[j]["radars"]:
+                if clusters[i]["radars"] & clusters[j]["radars"] or len(clusters[i]["rooms"] | clusters[j]["rooms"]) > 1:
                     continue
                 cj = centre(clusters[j])
                 d = math.hypot(ci[0] - cj[0], ci[1] - cj[1])
@@ -287,6 +290,7 @@ def merge(targets, radius):
         a["keys"] += b["keys"]
         a["radars"] |= b["radars"]
         a["pts"] += b["pts"]
+        a["rooms"] |= b["rooms"]
 
 
 def pair(targets, things, radius):

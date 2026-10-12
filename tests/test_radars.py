@@ -435,3 +435,30 @@ def test_a_3d_sensor_whose_z_drops_out_keeps_its_positions():
     assert radars.to_plan(wall, 0.0, 2.0, 100.0, z_m=None, three_d=True) == pytest.approx((200.0, 0.0)), \
         "the device is 3D: x/y are across the floor whether or not this z came through"
     assert radars.to_plan(wall, 0.0, 2.0, 100.0)[0] < 200.0, "a 2D sensor's are still a slant"
+
+
+def test_two_people_either_side_of_a_wall_are_not_merged():
+    got = radars.merge([("a1", "A", (0.0, 0.0), "Office"), ("b1", "B", (0.7, 0.0), "Den")], radius=0.8)
+    assert sorted(got) == [["a1"], ["b1"]]
+    assert radars.merge([("a1", "A", (0.0, 0.0), "Office"), ("b1", "B", (0.7, 0.0), "Office")], radius=0.8) == [["a1", "b1"]]
+    assert radars.merge([("a1", "A", (0.0, 0.0), "Office"), ("b1", "B", (0.7, 0.0), None)], radius=0.8) == [["a1", "b1"]], \
+        "a sensor with no room limit can be the same person as one with"
+
+
+def test_adjacent_rooms_two_people_two_targets_one_untracked(tmp_path):
+    hass, states = _hass(tmp_path)
+    layout = st.get_layout(hass)
+    fl = layout["floor"][0]
+    # Office is the bottom half (y 500-1000); the Den above it shares the wall at y = 500.
+    fl["zones"] = [{"entity_id": "Office", "poly": True, "cords": [{"x": 0, "y": 500}, {"x": 1000, "y": 500}, {"x": 1000, "y": 1000}, {"x": 0, "y": 1000}]},
+                   {"entity_id": "Den", "poly": True, "cords": [{"x": 0, "y": 0}, {"x": 1000, "y": 0}, {"x": 1000, "y": 500}, {"x": 0, "y": 500}]}]
+    fl["radars"][0]["room"] = "Office"
+    fl["radars"].append({"radar_id": "r2", "device_id": "dev2", "cords": {"x": 500.0, "y": 100.0}, "heading": 180.0, "room": "Den"})
+    run(st.save_layout(hass, layout))
+    sextant._radar_specs_cache["specs"]["dev2"] = SPEC2
+    # Office sensor at (500, 900) sees someone 3.65 m ahead: (500, 535). Den sensor at (500, 100) facing down sees someone 3.65 m ahead: (500, 465).
+    states.update({"sensor.t1x": state(0, "in"), "sensor.t1y": state(3.65 / 0.0254, "in"),
+                   "sensor.u1x": state(0.0, "m"), "sensor.u1y": state(3.65, "m")})
+    sextant.apitricords = [_thing("phone", (500, 540))]
+    count, _attrs = _written(hass)[sextant.UNTRACKED_ENTITY_ID]
+    assert len(sextant._radar_frame["targets"]) == 2 and count == 1
