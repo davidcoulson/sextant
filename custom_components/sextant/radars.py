@@ -126,7 +126,14 @@ def read_targets(spec, get_state, range_m=None):
             continue
         x = to_metres(xs.state, xs.attributes.get("unit_of_measurement"))
         y = to_metres(ys.state, ys.attributes.get("unit_of_measurement"))
-        if x is None or y is None or (abs(x) < NO_TARGET_M and abs(y) < NO_TARGET_M):
+        z = None
+        if t.get("z"):
+            zs = get_state(t["z"])
+            if zs is not None:
+                z = to_metres(zs.state, zs.attributes.get("unit_of_measurement"))
+        # All zero is the radar's "none" - but a 3D sensor on the ceiling has
+        # someone right below it at x = y = 0, with a height.
+        if x is None or y is None or (abs(x) < NO_TARGET_M and abs(y) < NO_TARGET_M and (z is None or abs(z) < NO_TARGET_M)):
             continue
         if math.hypot(x, y) > rng + 0.5:
             continue
@@ -140,11 +147,6 @@ def read_targets(spec, get_state, range_m=None):
                     speed = abs(float(ss.state)) * per if per else None
                 except (TypeError, ValueError):
                     speed = None
-        z = None
-        if t.get("z"):
-            zs = get_state(t["z"])
-            if zs is not None:
-                z = to_metres(zs.state, zs.attributes.get("unit_of_measurement"))
         out.append((i, x, y, speed, z))
     return out
 

@@ -405,3 +405,26 @@ def test_no_pin_when_one_of_the_radars_sees_someone_else_too(tmp_path, monkeypat
         sextant.apitricords = [_thing("phone", (520, 815), at=t0 + dt)]
         _written(hass, at=t0 + dt)
     assert run(st.load_truth(hass)).get("marks", []) == []
+
+
+def test_someone_right_below_a_ceiling_3d_sensor_is_a_target():
+    spec3 = {"targets": [{"x": "sensor.x", "y": "sensor.y", "z": "sensor.z", "speed": None, "active": None}], "range_entity": None}
+    states = {"sensor.x": state(0, "m"), "sensor.y": state(0, "m"), "sensor.z": state(-1.8, "m")}
+    assert [(i, x, y, z) for i, x, y, _s, z in radars.read_targets(spec3, states.get)] == [(1, 0.0, 0.0, -1.8)]
+    states["sensor.z"] = state(0, "m")
+    assert radars.read_targets(spec3, states.get) == [], "all zero is still 'none'"
+
+
+def test_no_pin_when_the_sensor_also_sees_someone_through_the_wall(tmp_path, monkeypatch):
+    hass, states = _hass(tmp_path)
+    layout = st.get_layout(hass)
+    # Make the office room end 1.5 m in front of the sensor, and put a second person 3 m out, beyond it.
+    layout["floor"][0]["zones"][0]["cords"] = [{"x": 0, "y": 750}, {"x": 1000, "y": 750}, {"x": 1000, "y": 1000}, {"x": 0, "y": 1000}]
+    run(st.save_layout(hass, layout))
+    states.update({"sensor.t2x": state(0, "in"), "sensor.t2y": state(118.1, "in")})
+    monkeypatch.setattr(sextant._truth_buffer, "samples", lambda ent, since=None, floor=None: [{"t": 0, "floors": {}}] * 5)
+    t0 = time.time()
+    for dt in (0, 61):
+        _cycle(hass, st.get_layout(hass), t0 + dt)
+    assert [t["cords"] for t in sextant._radar_frame["targets"]] == [[500.0, 800.0]], "the one through the wall isn't counted"
+    assert run(st.load_truth(hass)).get("marks", []) == [], "but the sensor saw two people: no pin"

@@ -3472,22 +3472,23 @@ async def _radar_cycle(hass, layout, now=None):
         return
     specs = _radar_specs(hass, now)
     targets = []
+    # How many targets each radar sees - through the wall too, and before two
+    # radars' views of one person become one: an automatic pin needs a
+    # sensor that sees only them (a thing beside its owner on the other side
+    # of the wall could otherwise claim the one inside).
+    seen_by = {}
     for floor, radar in placed:
         scale = floor.get("scale")
         spec = specs.get(radar["device_id"])
         if spec is None or not isinstance(scale, (int, float)) or scale <= 0:
             continue
         for t in _radar_targets(hass, layout, floor, radar, spec):
+            seen_by[radar.get("radar_id")] = seen_by.get(radar.get("radar_id"), 0) + 1
             if t["outside"]:
                 continue                     # behind a wall: someone else's room
             targets.append({"floor": floor["name"], "radar": radar.get("radar_id"), "radar_name": spec.get("name"),
                             "index": t["index"], "cords": t["cords"], "speed": t["speed"],
                             "height_m": t["height_m"], "posture": t["posture"], "thing": None})
-    # How many targets each radar sees, before two radars' views of one
-    # person become one: an automatic pin needs a sensor that sees only them.
-    seen_by = {}
-    for t in targets:
-        seen_by[t["radar"]] = seen_by.get(t["radar"], 0) + 1
     targets = _merge_radar_targets(layout, targets)
     # Pair per floor, against each thing's Bluetooth fix from the last cycle.
     rows = [r for r in apitricords if isinstance(r, dict) and now - (r.get("updated") or 0) <= RADAR_FRESH_S]
@@ -3522,8 +3523,8 @@ async def _radar_cycle(hass, layout, now=None):
 async def _radar_auto_pins(hass, layout, targets, rows, now, seen_by=None):
     """A location pin wherever a person is the only target of every radar
     that sees them, one thing has claimed them, and both have been still for
-    AUTO_PIN_STILL_S. ``seen_by`` is each radar's target count before merging
-    (targets not merged count themselves)."""
+    AUTO_PIN_STILL_S. ``seen_by`` is each radar's target count, through the
+    wall included and before merging (without it, the targets given count)."""
     if seen_by is None:
         seen_by = {}
         for t in targets:
