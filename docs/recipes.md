@@ -16,7 +16,7 @@ one real house; swap in your own.
 | where a **thing** is | `sensor.<thing>_sextant_location` (or `_room`, `_floor`, `_spot`) | same shape as the person sensors, one per thing |
 | whether a thing is still **heard** | attribute `presence` on any of its sensors | `here` / `quiet` (2–15 min) / `away` |
 | where a **robot vacuum** is | `sensor.vacuum_<name>_sextant_room` | placed from the robot's own map, not Bluetooth; `vacuum_state` rides along on `_location` |
-| how long since it was heard | attribute `last_heard` | an ISO timestamp; see [seconds since](#seconds-since-a-thing-was-heard) |
+| how long since it was heard | attribute `last_heard` on `_location` | an ISO timestamp; see [seconds since](#seconds-since-a-thing-was-heard) |
 
 Trigger on `_room` rather than `_location` when you act on a room: the
 location changes every time a thing moves on or off a spot, the room does
@@ -257,9 +257,9 @@ actions:
 
 ### Seconds since a thing was heard
 
-`last_heard` is a timestamp, good to within a minute (it is written once a
-minute while nothing else about the thing changes). A number for a dashboard
-or a condition:
+`last_heard` is a timestamp on the location sensor, good to within five
+minutes (it is written every five minutes while nothing else about the thing
+changes). A number for a dashboard or a condition:
 
 ```yaml
 template:
@@ -428,6 +428,6 @@ hours_to_show: 12
 - **A restart re-stamps every restored entity as fresh**, so a tracker that
   is frozen looks alive for `gps_stale_secs` after each restart. Put the
   source you trust most first.
-- **`last_heard` is not recorded** (it moves every minute while a thing is
-  heard); `presence` is, so history and the logbook show a thing
+- **`last_heard` is not recorded** (it moves every few minutes while a thing
+  is heard); `presence` is, so history and the logbook show a thing
   going quiet and coming back.

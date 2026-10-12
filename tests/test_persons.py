@@ -1,4 +1,6 @@
 """A person's location from the things they own (sextant.persons)."""
+from datetime import datetime, timezone
+
 import sextant  # noqa: F401
 from sextant import persons
 from sextant import sensor as sensor_mod
@@ -49,7 +51,8 @@ def test_states_give_the_spot_or_the_room_and_say_which_thing():
     assert linked["sextant_person_location"][1]["area_id"] == "great_room"
     assert linked["sextant_person_location"][1]["floor_id"] == "ground"
     assert linked["sextant_person_room"] == ("Great Room", {"area_id": "great_room", "via": "phone"})
-    assert persons.considered([thing("phone", "phone", still_for=600, spot="Couch")], NOW) == [{"thing": "phone", "where": "Couch", "here_for_min": 10}]
+    assert persons.considered([thing("phone", "phone", still_for=600, spot="Couch")], NOW) == [
+        {"thing": "phone", "where": "Couch", "here_since": datetime.fromtimestamp(NOW - 600, timezone.utc).replace(microsecond=0).isoformat()}]
     assert s["sextant_person_room"] == ("Great Room", {"area_id": None, "via": "phone"})
     assert persons.states(None)["sextant_person_location"][0] == "unknown"
 
@@ -157,3 +160,13 @@ def test_a_long_silence_ends_the_stay_but_a_restart_does_not():
     assert persons.settled_since(restart, here) == 0
     # Points without a gap column behave as before.
     assert persons.settled_since([p[:4] for p in gone], here) == 0
+
+
+def test_considered_stays_the_same_while_nobody_moves():
+    # A count of minutes would change every minute and write a recorder row
+    # each time; when they arrived does not.
+    phone = thing("phone", "phone", still_for=600, spot="Couch")
+    assert persons.considered([phone], NOW) == persons.considered([phone], NOW + 3600)
+    # No position to measure a stay from: arrival reads as "now" every cycle.
+    assert persons.considered([{**phone, "arrived": NOW}], NOW)[0]["here_since"] is None
+    assert persons.considered([{**phone, "arrived": None}], NOW)[0]["here_since"] is None

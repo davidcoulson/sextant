@@ -27,7 +27,7 @@ lookup:
 | `floor` | the elected floor |
 | `area_id`, `floor_id` | the linked Home Assistant area and floor, or `None` where unlinked |
 | `presence` | `here` (heard within `stale_after_secs`, 2 min), `quiet` (until `away_after_secs`, 15 min), `away` — on every one of the five sensors |
-| `last_heard` | when the thing was last heard, ISO 8601 UTC, to within a minute: while it is the only thing changing it is written once a minute rather than every cycle, and exactly whenever the state or another attribute changes; not recorded |
+| `last_heard` | on the **location** sensor only: when the thing was last heard, ISO 8601 UTC, to within five minutes. While it is the only thing changing it is written every five minutes rather than every cycle, and exactly whenever the state or another attribute changes. Not recorded. The other four sensors write only when what they say changes |
 
 When the state is a spot, `room` is the room that spot belongs to rather
 than the separately elected room. The two disagree for a cycle or so while
@@ -71,7 +71,7 @@ names the ones that were and why.
 | `source` | `ble`, `held`, `wifi`, `gps` or `none` |
 | `access_point` | with `source: wifi`, the access point the phone or watch is joined to |
 | `presence` | as for things: the most present of the person's things |
-| `via`, `considered` | the thing that placed them, and every thing that was in the running |
+| `via`, `considered` | the thing that placed them, and every thing that was in the running: `thing`, `where`, `here_since` (when it arrived there, UTC) and `on_charger` |
 | `zone`, `latitude`, `longitude`, `gps_accuracy`, `tracker` | the GPS side, carried whichever source is speaking |
 | `distance_m` | from Home Assistant's home location, when there are coordinates |
 | `gps_ignored` | `[{entity, reason}, …]` |

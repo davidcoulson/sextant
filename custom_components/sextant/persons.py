@@ -150,14 +150,25 @@ def pick(things, now: float, stale_after: float):
 
 def considered(things, now):
     """What the choice was between, for the location sensor: each thing that
-    gives its owner's location, where it is and for how many minutes it has
-    stayed there. Shows why the person reads where they do."""
+    gives its owner's location, where it is and since when it has stayed
+    there. Shows why the person reads where they do.
+
+    A time, not a count of minutes: a count ticks every minute and would
+    write a recorder row each time while nobody moves. A thing with no
+    position to measure a stay from (its arrival reads as "now", every
+    cycle) gives None."""
     return [
         {"thing": t["ent"], "where": t.get("sub_zone") if t.get("sub_zone") not in (None, "", "unknown") else t.get("zone"),
-         "here_for_min": round((now - t["arrived"]) / 60) if isinstance(t.get("arrived"), (int, float)) else None,
+         "here_since": _iso(t.get("arrived"), now),
          **({"on_charger": True} if t.get("on_charger") else {})}
         for t in things
     ]
+
+
+def _iso(stamp, now):
+    if not isinstance(stamp, (int, float)) or isinstance(stamp, bool) or not math.isfinite(stamp) or stamp >= now:
+        return None
+    return datetime.fromtimestamp(stamp, timezone.utc).replace(microsecond=0).isoformat()
 
 
 def states(best, why=None):

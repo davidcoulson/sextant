@@ -125,21 +125,41 @@ class _CountingSensor:
         self.writes.append((self._state, dict(self._attrs)))
 
 
-def _write(hass, state, heard, now, presence="here", **extra):
+LOC = "sensor.e_sextant_location"
+ROOM = "sensor.e_sextant_room"
+
+
+def _write(hass, state, heard, now, presence="here", entity=LOC, **extra):
     sextant.update_sextant_sensor_state(
-        hass, "sensor.e_sextant_room", state,
+        hass, entity, state,
         {"presence": presence, "last_heard": heard, **extra}, now=now)
 
 
-def test_a_cycle_that_only_moves_last_heard_writes_once_a_minute():
+def test_a_cycle_that_only_moves_last_heard_writes_once_every_five_minutes():
     hass = make_hass()
     s = _CountingSensor()
-    hass.data["sextant_sensors"] = {"sensor.e_sextant_room": s}
+    hass.data["sextant_sensors"] = {LOC: s}
     t0 = 1_000_000.0
-    for k in range(5):                                   # 0, 15, 30, 45, 60 s
+    for k in range(21):                                  # every 15 s for 5 minutes
         _write(hass, "Kitchen", f"heard+{15 * k}", t0 + 15 * k)
-    assert [w[1]["last_heard"] for w in s.writes] == ["heard+0", "heard+60"]
-    assert s._attrs["last_heard"] == "heard+60"
+    assert [w[1]["last_heard"] for w in s.writes] == ["heard+0", "heard+300"]
+    assert s._attrs["last_heard"] == "heard+300"
+
+
+def test_only_the_location_sensor_carries_last_heard():
+    """On the room, spot, floor and nearest-room sensors it only cost writes:
+    with it gone they write when what they say changes, and not otherwise."""
+    hass = make_hass()
+    room = _CountingSensor()
+    hass.data["sextant_sensors"] = {ROOM: room}
+    t0 = 1_000_000.0
+    for k in range(40):                                  # ten minutes, nothing changing
+        _write(hass, "Kitchen", f"heard+{15 * k}", t0 + 15 * k, entity=ROOM)
+    assert len(room.writes) == 1 and "last_heard" not in room.writes[0][1]
+    assert room.writes[0][1]["presence"] == "here"
+    _write(hass, "Dining", "later", t0 + 700, entity=ROOM)
+    assert [w[0] for w in room.writes] == ["Kitchen", "Dining"]
+    assert "last_heard" not in room._attrs
 
 
 def test_between_writes_the_entity_holds_what_was_written():
@@ -148,7 +168,7 @@ def test_between_writes_the_entity_holds_what_was_written():
     write straight back."""
     hass = make_hass()
     s = _CountingSensor()
-    hass.data["sextant_sensors"] = {"sensor.e_sextant_room": s}
+    hass.data["sextant_sensors"] = {LOC: s}
     t0 = 1_000_000.0
     _write(hass, "Kitchen", "a", t0)
     _write(hass, "Kitchen", "b", t0 + 15)
@@ -159,7 +179,7 @@ def test_between_writes_the_entity_holds_what_was_written():
 def test_anything_else_changing_is_written_at_once_with_the_exact_last_heard():
     hass = make_hass()
     s = _CountingSensor()
-    hass.data["sextant_sensors"] = {"sensor.e_sextant_room": s}
+    hass.data["sextant_sensors"] = {LOC: s}
     t0 = 1_000_000.0
     _write(hass, "Kitchen", "a", t0)
     _write(hass, "Dining", "b", t0 + 15)                       # the room changed
@@ -174,6 +194,6 @@ def test_a_sensor_not_yet_in_home_assistant_keeps_the_value_without_writing():
     hass = make_hass()
     s = _CountingSensor()
     s.hass = None
-    hass.data["sextant_sensors"] = {"sensor.e_sextant_room": s}
+    hass.data["sextant_sensors"] = {LOC: s}
     _write(hass, "Kitchen", "a", 1_000_000.0)
     assert s.writes == [] and s._state == "Kitchen" and s._attrs["last_heard"] == "a"
