@@ -428,3 +428,10 @@ def test_no_pin_when_the_sensor_also_sees_someone_through_the_wall(tmp_path, mon
         _cycle(hass, st.get_layout(hass), t0 + dt)
     assert [t["cords"] for t in sextant._radar_frame["targets"]] == [[500.0, 800.0]], "the one through the wall isn't counted"
     assert run(st.load_truth(hass)).get("marks", []) == [], "but the sensor saw two people: no pin"
+
+
+def test_a_3d_sensor_whose_z_drops_out_keeps_its_positions():
+    wall = {"cords": {"x": 0.0, "y": 0.0}, "heading": 90.0, "height_m": 3.0}
+    assert radars.to_plan(wall, 0.0, 2.0, 100.0, z_m=None, three_d=True) == pytest.approx((200.0, 0.0)), \
+        "the device is 3D: x/y are across the floor whether or not this z came through"
+    assert radars.to_plan(wall, 0.0, 2.0, 100.0)[0] < 200.0, "a 2D sensor's are still a slant"

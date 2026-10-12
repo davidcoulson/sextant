@@ -180,11 +180,13 @@ def mount(radar):
     return "ceiling" if radar.get("mount") == "ceiling" else "wall"
 
 
-def slant_corrected(radar, z_m=None):
+def slant_corrected(radar, three_d=False):
     """Whether the radar's x/y are a slant to correct by the mounting height:
     only a 2D radar on the wall. A 3D radar's x/y are across the floor (its z
-    is the height), and on the ceiling x/y are offsets from the point below."""
-    return mount(radar) == "wall" and z_m is None
+    is the height), and on the ceiling x/y are offsets from the point below.
+    ``three_d`` is the device's (it has z entities), not this reading's: a z
+    that is briefly unavailable must not turn its x/y into a slant."""
+    return mount(radar) == "wall" and not three_d
 
 
 def target_height_m(radar, z_m):
@@ -231,7 +233,7 @@ def floor_reach_m(radar, range_m, fov_deg=FOV_DEG):
     return min(cone, math.sqrt(max(range_m * range_m - dh * dh, 0.0)))
 
 
-def to_plan(radar, x_m, y_m, px_per_m, z_m=None):
+def to_plan(radar, x_m, y_m, px_per_m, z_m=None, three_d=None):
     """A target in the radar's frame, on the plan (pixels).
 
     ``radar`` is the layout's radar: {"cords": {x, y}, "heading": degrees
@@ -240,9 +242,11 @@ def to_plan(radar, x_m, y_m, px_per_m, z_m=None):
     heading unless ``flip`` (sensors disagree on which side is positive x).
     On the ceiling the heading is the way the sensor's y axis points. For a
     2D radar on the wall, the mounting ``height_m`` turns the slant it
-    reports into floor distance (floor_factor).
+    reports into floor distance (floor_factor). ``three_d`` is whether the
+    device reports z at all (unset: whether this reading has one).
     """
-    k = floor_factor(x_m, y_m, radar.get("height_m")) if slant_corrected(radar, z_m) else 1.0
+    three_d = z_m is not None if three_d is None else three_d
+    k = floor_factor(x_m, y_m, radar.get("height_m")) if slant_corrected(radar, three_d) else 1.0
     x_m, y_m = x_m * k, y_m * k
     h = math.radians(float(radar.get("heading") or 0.0))
     fwd = (math.sin(h), -math.cos(h))

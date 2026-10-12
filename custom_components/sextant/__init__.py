@@ -3421,7 +3421,7 @@ def _radar_targets(hass, layout, floor, radar, spec):
     margin = RADAR_ROOM_MARGIN_M * scale
     out = []
     for index, x, y, speed, z in radars_mod.read_targets(spec, hass.states.get):
-        px, py = radars_mod.to_plan(radar, x, y, scale, z)
+        px, py = radars_mod.to_plan(radar, x, y, scale, z, three_d=bool(spec.get("has_z")))
         outside = poly is not None and poly.distance(Point(px, py)) > margin
         height = radars_mod.target_height_m(radar, z)
         out.append({"index": index, "cords": [round(px, 1), round(py, 1)], "x_m": round(x, 2), "y_m": round(y, 2),

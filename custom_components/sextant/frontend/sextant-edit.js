@@ -512,7 +512,7 @@ class SextantEdit extends LitElement {
 
   _calibCancel() { this._calib = null; this._map?.setRadarCalib(null); }
 
-  _renderCalib(item, counted, dev) {
+  _renderCalib(item, live, dev) {
     const c = this._calib;
     if (!item.device_id || !item.cords) return nothing;
     if (!c) {
@@ -521,8 +521,8 @@ class SextantEdit extends LitElement {
     }
     const cancel = uiButton({ label: "Cancel", onClick: () => this._calibCancel() });
     if (c.stage === "freeze") {
-      return html`<div class="calib"><div class="small"><b>1.</b> Stand still a couple of metres out, off to one side of its centre line, and freeze the dot that's you.</div>
-        <div class="row">${counted.length ? counted.map((t) => uiButton({ label: `Freeze ${t.index}`, icon: "mdi:snowflake", onClick: () => this._calibFreeze(t) })) : html`<span class="muted small">No target yet - step into its view.</span>`}
+      return html`<div class="calib"><div class="small"><b>1.</b> Stand still a couple of metres out, off to one side of its centre line, and freeze the dot that's you - hollow or not: while it faces the wrong way, you may be shown outside the room.</div>
+        <div class="row">${live.length ? live.map((t) => uiButton({ label: `Freeze ${t.index}${t.outside ? " (outside the room)" : ""}`, icon: "mdi:snowflake", onClick: () => this._calibFreeze(t) })) : html`<span class="muted small">No target yet - step into its view.</span>`}
         <span class="grow"></span>${cancel}</div></div>`;
     }
     if (c.stage === "place") {
@@ -591,7 +591,7 @@ class SextantEdit extends LitElement {
       <div class="muted small">${ceiling ? html`On the ceiling it sees a circle below it; set the mount height to size it. ` : dev?.has_z ? html`It reports positions across the floor already, so the height only sizes the wedge. ` : html`The height turns what it measures - a straight line down to your chest - into distance across the floor; from 2 m up, someone a metre out otherwise reads 40 % too far. `}It sees through drywall, so targets outside the room are ignored (hollow dots here, and the ${ceiling ? "circle" : "wedge"} is filled only inside the room).</div>
       <div class="muted small">${dev ? html`Sees ${fmtLen(dev.range_m, this.hass)} out, ±${Math.round((dev.fov_deg || 120) / 2)}° either side (the range set on the device).${dev.installation_angle ? html` Its installation angle is set to ${dev.installation_angle}° on the device, which already turns the coordinates it reports: face this marker the way that turned frame points.` : nothing}` : "Pick the device, then turn the marker the way the sensor faces."}</div>
       ${item.device_id ? html`<div class="small"><b>${counted.length}</b> target${counted.length === 1 ? "" : "s"} right now${live.length > counted.length ? html` (and ${live.length - counted.length} outside the room)` : nothing}${live.length ? html` - the pink dots. ${ceiling ? "Walk across below it: the dot should follow you; if it goes the wrong way, turn the marker, and if it mirrors you, flip." : "Walk straight away from it: the dot should move along the wedge's centre line; if it goes off at an angle, turn the marker; if it moves the wrong way sideways, flip."}` : html` - walk in front of it to see yourself as a pink dot.`}</div>` : nothing}
-      ${this._renderCalib(item, counted, dev)}
+      ${this._renderCalib(item, live, dev)}
       <div class="muted small">Save the plan to put it to work: a thing whose Bluetooth fix is near a target is placed on the target, one still target and one still thing make a location pin, and a target nobody's device accounts for counts in sensor.sextant_untracked_people.</div>
       <div class="row"><span class="grow"></span>${uiButton({ label: "Delete", kind: "danger", onClick: () => this._deleteSelection() })}</div>
     </div>`;
