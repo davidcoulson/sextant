@@ -3136,14 +3136,20 @@ def _sensor_is_live(hass, entity_id):
     return sensor is not None and getattr(sensor, "hass", None) is not None
 
 
-# last_heard moves every cycle a thing is heard, and it is on all five of a
-# thing's sensors. Written every time, that was 97 % of Sextant's state changes
-# and a fifth of the whole house's (7.3 a second of 36): a new State, Context
-# and Event each, for a timestamp. When last_heard is ALL that changed, the
-# write waits until the last one is this old. Anything else - the state, the
-# presence, any other attribute - is written at once, with the exact
-# last_heard of that moment.
-LAST_HEARD_WRITE_S = 60.0
+# last_heard moves every cycle a thing is heard. Written every time on all
+# five of a thing's sensors, that was 97 % of Sextant's state changes and a
+# fifth of the whole house's (7.3 a second of 36): a new State, Context and
+# Event each, for a timestamp. And although it is left out of the recorded
+# attributes, every write is still a recorder row - once a minute it was
+# 189k rows a day, nine in ten identical to the one before.
+#
+# So it is carried by one sensor per thing, the location sensor (what the
+# recipes read it from), and when it is ALL that changed the write waits
+# until the last one is this old. Anything else - the state, the presence,
+# any other attribute - is written at once, with the exact last_heard of that
+# moment.
+LAST_HEARD_WRITE_S = 300.0
+LAST_HEARD_SENSOR_SUFFIX = "_sextant_location"
 _NOT_WRITTEN = object()
 
 
@@ -3161,6 +3167,11 @@ def update_sextant_sensor_state(hass, entity_id, state, attributes=None, now=Non
     sensor = sensors_cache.get(entity_id)
     if sensor is None:
         return
+    carries_last_heard = str(entity_id).endswith(LAST_HEARD_SENSOR_SUFFIX)
+    if not carries_last_heard:
+        # Only the location sensor says when the thing was last heard; on the
+        # room, spot, floor and nearest-room sensors it only cost writes.
+        attributes = _without_last_heard(attributes)
     if getattr(sensor, "hass", None) is None:
         # Not added to HA (disabled in the registry, or not yet added). The
         # value is kept on the object so it is current if the entity is
@@ -3173,8 +3184,11 @@ def update_sextant_sensor_state(hass, entity_id, state, attributes=None, now=Non
     steady = _without_last_heard(attributes if attributes is not None else getattr(sensor, "_attrs", None))
     written = getattr(sensor, "_written", _NOT_WRITTEN)
     if (written is not _NOT_WRITTEN and written[0] == state and written[1] == steady
-            and 0 <= now - written[2] < LAST_HEARD_WRITE_S):
-        # Only last_heard moved, and it was written within the minute. The
+            and (not carries_last_heard or 0 <= now - written[2] < LAST_HEARD_WRITE_S)):
+        # Nothing to say: a sensor without last_heard is written only when
+        # what it says changes; the location sensor tops up last_heard once
+        # LAST_HEARD_WRITE_S has passed.
+        # Only last_heard moved, and it was written within LAST_HEARD_WRITE_S. The
         # entity keeps what was written: Home Assistant polls a sensor every
         # 30 s and writes whatever it holds, so holding the newer timestamp
         # here put the write straight back (measured: one every ~30 s).
