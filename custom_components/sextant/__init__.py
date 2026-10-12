@@ -695,9 +695,13 @@ TUNING_SPEC = {
     # Bluetooth fix is within mmwave_pair_m of a radar target is placed on
     # the target. Auto pins: one target and one thing, both still for a
     # minute, is a location pin (at most one per thing per half hour).
+    # Merge: targets of different radars within mmwave_merge_m are one.
     "mmwave_fusion": (True, bool),
     "mmwave_auto_pins": (True, bool),
     "mmwave_pair_m": (1.5, float, 0.3, 5.0),
+    # Two radars' targets within this of each other are one person seen by
+    # both (overlapping sensors), counted and claimed once.
+    "mmwave_merge_m": (0.8, float, 0.2, 2.0),
     # Hours of position history kept per thing: the history scrubber, the
     # timeline and Activity reach back this far. Applied on the next
     # cycle; an explicit top-level history_max_age (seconds) still wins.
@@ -3306,10 +3310,12 @@ def _new_robot_state():
 # --- mmWave radars (radars.py) ---------------------------------------------------
 #
 # A floor's "radars" are placed on the Edit page: {"radar_id", "device_id",
-# "cords", "heading", "flip"}. Each cycle reads every placed radar's targets,
-# puts them on the plan and pairs them with the things whose Bluetooth fix
-# (last cycle's "raw") is nearest. A paired thing is placed on its target;
-# an unpaired target is someone Sextant has no device for.
+# "cords", "heading", "flip", "height_m", "room", "mount", "z_ref"}. Each
+# cycle reads every placed radar's targets, puts them on the plan, merges
+# the ones two radars see of one person, and pairs them with the things
+# whose Bluetooth fix (last cycle's "raw") is nearest. A paired thing is
+# placed on its target; an unpaired target is someone Sextant has no
+# device for.
 
 RADAR_SPECS_TTL_S = 60.0
 RADAR_FRESH_S = 30.0          # a thing's last fix older than this cannot claim a target
@@ -3414,11 +3420,39 @@ def _radar_targets(hass, layout, floor, radar, spec):
     room, poly = _radar_room(hass, layout, floor, radar)
     margin = RADAR_ROOM_MARGIN_M * scale
     out = []
-    for index, x, y, speed in radars_mod.read_targets(spec, hass.states.get):
-        px, py = radars_mod.to_plan(radar, x, y, scale)
+    for index, x, y, speed, z in radars_mod.read_targets(spec, hass.states.get):
+        px, py = radars_mod.to_plan(radar, x, y, scale, z)
         outside = poly is not None and poly.distance(Point(px, py)) > margin
+        height = radars_mod.target_height_m(radar, z)
         out.append({"index": index, "cords": [round(px, 1), round(py, 1)], "x_m": round(x, 2), "y_m": round(y, 2),
+                    "z_m": None if z is None else round(z, 2),
+                    "height_m": None if height is None else round(height, 2), "posture": radars_mod.posture(height),
                     "speed": speed, "outside": outside, "limit": room})
+    return out
+
+
+def _merge_radar_targets(layout, targets):
+    """One target per person: the targets two or more radars on a floor see
+    within mmwave_merge_m of each other become one, at their mean, with every
+    radar that saw it in ``radars`` (and ``radar_names``). Its speed is the
+    fastest of theirs (still only if all agree), its height their mean."""
+    radius_m = _tuning(layout, "mmwave_merge_m")
+    out = []
+    for floor in dict.fromkeys(t["floor"] for t in targets):
+        scale = next((f.get("scale") for f in layout["floor"] if f.get("name") == floor), None) or 1.0
+        mine = [(i, t["radar"], tuple(t["cords"])) for i, t in enumerate(targets) if t["floor"] == floor]
+        for keys in radars_mod.merge(mine, radius_m * scale):
+            group = [targets[i] for i in keys]
+            first = group[0]
+            speeds = [t["speed"] for t in group if t["speed"] is not None]
+            heights = [t["height_m"] for t in group if t.get("height_m") is not None]
+            height = round(sum(heights) / len(heights), 2) if heights else None
+            out.append({**first,
+                        "cords": [round(sum(t["cords"][0] for t in group) / len(group), 1),
+                                  round(sum(t["cords"][1] for t in group) / len(group), 1)],
+                        "speed": max(speeds) if speeds else None,
+                        "height_m": height, "posture": radars_mod.posture(height),
+                        "radars": [t["radar"] for t in group], "radar_names": [t["radar_name"] for t in group]})
     return out
 
 
@@ -3447,7 +3481,14 @@ async def _radar_cycle(hass, layout, now=None):
             if t["outside"]:
                 continue                     # behind a wall: someone else's room
             targets.append({"floor": floor["name"], "radar": radar.get("radar_id"), "radar_name": spec.get("name"),
-                            "index": t["index"], "cords": t["cords"], "speed": t["speed"], "thing": None})
+                            "index": t["index"], "cords": t["cords"], "speed": t["speed"],
+                            "height_m": t["height_m"], "posture": t["posture"], "thing": None})
+    # How many targets each radar sees, before two radars' views of one
+    # person become one: an automatic pin needs a sensor that sees only them.
+    seen_by = {}
+    for t in targets:
+        seen_by[t["radar"]] = seen_by.get(t["radar"], 0) + 1
+    targets = _merge_radar_targets(layout, targets)
     # Pair per floor, against each thing's Bluetooth fix from the last cycle.
     rows = [r for r in apitricords if isinstance(r, dict) and now - (r.get("updated") or 0) <= RADAR_FRESH_S]
     radius_m = _tuning(layout, "mmwave_pair_m")
@@ -3471,25 +3512,31 @@ async def _radar_cycle(hass, layout, now=None):
         rooms.append(room)
     update_sextant_sensor_state(hass, UNTRACKED_ENTITY_ID, len(untracked), {
         "rooms": sorted(set(r for r in rooms if r and r != "unknown")),
-        "targets": [{"room": t.get("room"), "floor": t["floor"], "radar": t["radar_name"]} for t in untracked],
+        "targets": [{"room": t.get("room"), "floor": t["floor"], "radar": ", ".join(t["radar_names"]),
+                     **({"posture": t["posture"]} if t.get("posture") else {})} for t in untracked],
     })
     if _tuning(layout, "mmwave_auto_pins"):
-        await _radar_auto_pins(hass, layout, targets, rows, now)
+        await _radar_auto_pins(hass, layout, targets, rows, now, seen_by)
 
 
-async def _radar_auto_pins(hass, layout, targets, rows, now):
-    """A location pin wherever one radar sees exactly one target, one thing
-    has claimed it, and both have been still for AUTO_PIN_STILL_S."""
-    by_radar = {}
-    for t in targets:
-        by_radar.setdefault(t["radar"], []).append(t)
+async def _radar_auto_pins(hass, layout, targets, rows, now, seen_by=None):
+    """A location pin wherever a person is the only target of every radar
+    that sees them, one thing has claimed them, and both have been still for
+    AUTO_PIN_STILL_S. ``seen_by`` is each radar's target count before merging
+    (targets not merged count themselves)."""
+    if seen_by is None:
+        seen_by = {}
+        for t in targets:
+            for r in t.get("radars") or [t["radar"]]:
+                seen_by[r] = seen_by.get(r, 0) + 1
     still_speed = _tuning(layout, "stationary_speed")
     row_of = {r["ent"]: r for r in rows}
     seen = set()
-    for radar, ts in by_radar.items():
-        if len(ts) != 1 or not ts[0]["thing"] or row_of.get(ts[0]["thing"], {}).get("robot"):
+    for t in targets:
+        members = t.get("radars") or [t["radar"]]
+        if any(seen_by.get(r, 0) != 1 for r in members) or not t["thing"] or row_of.get(t["thing"], {}).get("robot"):
             continue
-        t = ts[0]
+        radar = tuple(sorted(str(r) for r in members))
         ent = t["thing"]
         row = row_of.get(ent) or {}
         scale = next((f.get("scale") for f in layout["floor"] if f.get("name") == t["floor"]), None) or 1.0
@@ -3524,7 +3571,7 @@ async def _add_auto_pin(hass, ent, target, scale, now):
         return False
     mark = {"id": int(store.get("next_id") or 1), "entity": ent, "floor": target["floor"], "x": round(float(x), 2),
             "y": round(float(y), 2), "t": now, "samples": samples,
-            "source": f"{AUTO_PIN_SOURCE}:{target.get('radar_name') or target.get('radar')}"}
+            "source": f"{AUTO_PIN_SOURCE}:{'+'.join(target.get('radar_names') or [target.get('radar_name') or target.get('radar')])}"}
     store["next_id"] = mark["id"] + 1
     marks.append(mark)
     extra = len(mine) + 1 - AUTO_PIN_KEEP
@@ -3533,7 +3580,8 @@ async def _add_auto_pin(hass, ent, target, scale, now):
         store["marks"] = [m for m in marks if id(m) not in drop]
     await save_truth(hass, store)
     _set_truth_marks(store["marks"])
-    _LOGGER.info("mmWave pin for %s on %s at (%.0f, %.0f) from %s", ent, target["floor"], x, y, target.get("radar_name"))
+    _LOGGER.info("mmWave pin for %s on %s at (%.0f, %.0f) from %s", ent, target["floor"], x, y,
+                 ", ".join(target.get("radar_names") or [str(target.get("radar_name"))]))
     return True
 
 

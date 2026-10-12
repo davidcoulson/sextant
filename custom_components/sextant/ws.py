@@ -1989,6 +1989,7 @@ async def ws_radar_devices(hass, connection, msg):
                 angle = None
         out.append({"device_id": device_id, "name": spec.get("name"), "model": spec.get("model"),
                     "area_id": spec.get("area_id"), "targets": len(spec.get("targets") or []),
+                    "has_z": bool(spec.get("has_z")),
                     "range_m": core.radars_mod.radar_range_m(spec, hass.states.get),
                     "installation_angle": angle, "fov_deg": core.radars_mod.FOV_DEG})
     connection.send_result(msg["id"], {"devices": sorted(out, key=lambda d: str(d["name"]))})
@@ -2004,6 +2005,8 @@ async def ws_radar_devices(hass, connection, msg):
     vol.Optional("flip", default=False): bool,
     vol.Optional("height_m"): vol.Any(None, vol.Coerce(float)),
     vol.Optional("room"): vol.Any(None, str),
+    vol.Optional("mount"): vol.Any(None, vol.In(["wall", "ceiling"])),
+    vol.Optional("z_ref"): vol.Any(None, vol.In(["floor", "up", "down"])),
 })
 @websocket_api.async_response
 async def ws_radar_targets(hass, connection, msg):
@@ -2016,7 +2019,8 @@ async def ws_radar_targets(hass, connection, msg):
     if spec is None or floor is None or not isinstance(floor.get("scale"), (int, float)):
         return connection.send_result(msg["id"], {"targets": []})
     radar = {"cords": {"x": msg["x"], "y": msg["y"]}, "heading": msg["heading"], "flip": msg["flip"],
-             "height_m": msg.get("height_m"), "room": msg.get("room")}
+             "height_m": msg.get("height_m"), "room": msg.get("room"), "mount": msg.get("mount"),
+             "z_ref": msg.get("z_ref")}
     out = core._radar_targets(hass, get_layout(hass), floor, radar, spec)
     room, _poly = core._radar_room(hass, get_layout(hass), floor, radar)
     connection.send_result(msg["id"], {"targets": out, "room": room})

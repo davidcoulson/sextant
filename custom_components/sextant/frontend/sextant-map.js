@@ -292,6 +292,47 @@ export const WALL_SNAP_M = 0.25;
 export const WALL_RELEASE_M = 0.6;
 export const WALL_INSET_M = 0.05;
 const PX_PER_M_FALLBACK = 40; // an unscaled floor: 2000 px frame at ~50 m
+
+/** How far across the floor an mmWave sensor covers, in metres
+ * (radars.floor_reach_m): on the wall its range less the slant from its
+ * height down to a chest (1 m up); on the ceiling the circle its ±fov/2
+ * cone makes at chest height, no further than the range reaches. */
+export function radarFloorReach(r, rangeM = 6, fovDeg = 120) {
+  const dh = (Number(r?.height_m) || 0) - 1.0;
+  if (r?.mount === "ceiling") {
+    if (!(dh > 0)) return rangeM;
+    return Math.min(dh * Math.tan((fovDeg / 2) * Math.PI / 180), Math.sqrt(Math.max(rangeM * rangeM - dh * dh, 0)));
+  }
+  return dh > 0 ? Math.sqrt(Math.max(rangeM * rangeM - dh * dh, 0)) : rangeM;
+}
+
+/** Lining an mmWave sensor up from one target: where it put you (`frozen`)
+ * and where you were (`at`), both on the plan, the sensor at `from`.
+ *
+ * The turn between the two lines out from the sensor is how far its facing
+ * is off: turning the marker by it moves every target by the same angle,
+ * flipped or not. The two distances say whether it reads long or short; for
+ * a 2D sensor on the wall that is the mounting height (the slant to a chest
+ * 1 m up), so a height that makes `x_m`/`y_m` reach `at` is suggested.
+ * Returns {tooClose} when either point is too near the sensor to judge, else
+ * {turn, heading, reportedM, actualM, height}. */
+export function radarCalibration({ from, frozen, at, heading = 0, scale, x_m, y_m, mount, has_z }) {
+  const s = scale || PX_PER_M_FALLBACK;
+  const reportedM = Math.hypot(frozen[0] - from[0], frozen[1] - from[1]) / s;
+  const actualM = Math.hypot(at[0] - from[0], at[1] - from[1]) / s;
+  if (reportedM < 0.5 || actualM < 0.5) return { tooClose: true, reportedM, actualM };
+  const raw = (Math.atan2(at[1] - from[1], at[0] - from[0]) - Math.atan2(frozen[1] - from[1], frozen[0] - from[0])) * 180 / Math.PI;
+  const turn = ((raw % 360) + 540) % 360 - 180;
+  let height = null;
+  if (mount !== "ceiling" && !has_z && x_m != null && y_m != null && Math.abs(reportedM / actualM - 1) > 0.05) {
+    const slant = Math.hypot(x_m, y_m);
+    if (actualM < slant) {
+      const h = 1.0 + Math.sqrt(slant * slant - actualM * actualM);
+      if (h <= 4.0) height = Math.round(h * 20) / 20;
+    }
+  }
+  return { turn: Math.round(turn), heading: Math.round((((heading + turn) % 360) + 360) % 360), reportedM, actualM, height };
+}
 // The Edit page floats its toolbar over the top of the canvas, and Live its
 // option chips; a label drawn this close to the top would sit behind them.
 const TOP_OVERLAY_PX = 120;
@@ -691,6 +732,7 @@ export class SextantMap {
     this.radarInfo = {};     // device_id -> {name, range_m, fov_deg}: how far each radar sees
     this.radarTargets = [];  // mmWave targets on this floor: [{cords, thing, room, radar_name}]
     this.radarLive = null;   // the Edit page's selected radar, live: {radar_id, targets: [{index, cords}]}
+    this.radarCalib = null;  // lining a radar up: {from: [x, y] the sensor, frozen: [x, y], at: [x, y] | null}
     this.apInfo = null;      // mac -> {name, clients, online}: the UniFi access points, null until known
     this.focusWifi = null;   // the focused thing's Wi-Fi link: {ent, x, y, name}, or null
     this.wifiHeat = null;    // the Wi-Fi signal map: {cells, mode: "signal"|"ap", names: {mac: name}, colours: {mac: css}}
@@ -869,7 +911,7 @@ export class SextantMap {
     if (this._pointers.size > 2) return;
     // Placing something (a location pin): the tap counts when the finger lifts
     // without moving, so a pan or a pinch never places it by accident.
-    if (this.mode !== "edit" && e.button === 0 && this.host.isPlacing?.()) {
+    if (e.button === 0 && this.host.isPlacing?.()) {
       this._drag = { kind: "pan", start: p, view: { ...this.view }, moved: false, slop: e.pointerType === "touch" ? 10 : 3, place: this.toMap(p) };
       return;
     }
@@ -1654,6 +1696,7 @@ export class SextantMap {
   setRadarInfo(info) { this.radarInfo = info || {}; this.invalidate(); }
   setRadarTargets(list) { this.radarTargets = list || []; this.invalidate(); }
   setRadarLive(live) { this.radarLive = live || null; this.invalidate(); }
+  setRadarCalib(calib) { this.radarCalib = calib || null; this.invalidate(); }
   /** The Wi-Fi signal map to draw, or null to draw none: {cells (heat.py's
    * measured squares), field (field.py's grid, or null), mode: "estimated" |
    * "measured" | "ap", names: {mac: name}, colours: {mac: css}}. */
@@ -1810,19 +1853,21 @@ export class SextantMap {
     radars.forEach((r, index) => {
       if (!r.cords) return;
       const info = this.radarInfo[r.device_id] || {};
-      // The range is a slant from the mounting height to a chest (1 m up):
-      // across the floor it reaches that much less (radars.floor_factor).
-      const slant = info.range_m || 6, dh = (Number(r.height_m) || 0) - 1.0;
-      const range = (dh > 0 ? Math.sqrt(Math.max(slant * slant - dh * dh, 0)) : slant) * scale;
+      // On the wall the range is a slant from the mounting height to a chest
+      // (1 m up): across the floor it reaches that much less. On the ceiling
+      // it covers a circle below it (radars.floor_reach_m).
+      const reach = radarFloorReach(r, info.range_m || 6, info.fov_deg || 120) * scale;
       const room = this._radarRoomZone(r);
       const half = ((info.fov_deg || 120) / 2) * Math.PI / 180;
       const a0 = ((r.heading || 0) * Math.PI) / 180 - Math.PI / 2;   // 0 = up the plan, clockwise
+      const ceiling = r.mount === "ceiling";
       const selected = this.selection?.kind === "radar" && this.selection.index === index;
       const hovered = this.hover?.kind === "radar" && this.hover.index === index;
       const colour = r.device_id ? "#1f9e89" : "#e0a54a";
       ctx.save();
-      ctx.beginPath(); ctx.moveTo(r.cords.x, r.cords.y); ctx.arc(r.cords.x, r.cords.y, range, a0 - half, a0 + half); ctx.closePath();
-      const wedge = new Path2D(); wedge.moveTo(r.cords.x, r.cords.y); wedge.arc(r.cords.x, r.cords.y, range, a0 - half, a0 + half); wedge.closePath();
+      const wedge = new Path2D();
+      if (ceiling) wedge.arc(r.cords.x, r.cords.y, reach, 0, Math.PI * 2);
+      else { wedge.moveTo(r.cords.x, r.cords.y); wedge.arc(r.cords.x, r.cords.y, reach, a0 - half, a0 + half); wedge.closePath(); }
       ctx.fillStyle = colour;
       if (room) {
         // Kept to a room: the part it counts is filled, the rest of what it
@@ -1839,7 +1884,7 @@ export class SextantMap {
         ctx.fill(wedge);
       }
       ctx.globalAlpha = selected ? 0.9 : 0.45;
-      ctx.strokeStyle = colour; ctx.lineWidth = 1.5 / k; ctx.setLineDash([6 / k, 4 / k]); ctx.stroke(); ctx.setLineDash([]);
+      ctx.strokeStyle = colour; ctx.lineWidth = 1.5 / k; ctx.setLineDash([6 / k, 4 / k]); ctx.stroke(wedge); ctx.setLineDash([]);
       ctx.globalAlpha = 1;
       const s = ((selected || hovered) ? RADAR_SIZE * 1.3 : RADAR_SIZE) / k;
       ctx.fillStyle = colour; ctx.strokeStyle = selected ? "#ffd166" : "#ffffff"; ctx.lineWidth = (selected ? 3 : 1.5) / k;
@@ -1869,7 +1914,10 @@ export class SextantMap {
         ctx.fillStyle = t.outside ? "#d63384" : "#ffffff"; ctx.font = `700 ${9 / k}px system-ui, sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
         ctx.fillText(String(t.index), x, y);
         ctx.restore();
+        // A 3D radar knows how high the target is (the host words it, in its units).
+        if (t.heightLabel) this._label(ctx, t.heightLabel, x, y + 15 / k, 9, 0.8, null, LABEL_PRIO.thing);
       }
+      this._drawRadarCalib(ctx);
       return;
     }
     for (const t of this.radarTargets) {
@@ -1885,6 +1933,27 @@ export class SextantMap {
       ctx.restore();
       this._label(ctx, "untracked", x, y + r + 9 / k, 10, 0.8, null, LABEL_PRIO.thing);
     }
+  }
+
+  /** Lining a radar up (Edit): the target frozen where the sensor put it, and,
+   * once clicked, where you were really standing - the turn between the two
+   * lines from the sensor is how far its facing is off. */
+  _drawRadarCalib(ctx) {
+    const c = this.radarCalib;
+    if (!c?.frozen || !c.from) return;
+    const k = this.view.k, [sx, sy] = c.from;
+    ctx.save();
+    ctx.lineWidth = 2 / k; ctx.setLineDash([5 / k, 4 / k]);
+    ctx.strokeStyle = "#f08c00";
+    ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(c.frozen[0], c.frozen[1]); ctx.stroke();
+    if (c.at) { ctx.strokeStyle = "#2b8a3e"; ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(c.at[0], c.at[1]); ctx.stroke(); }
+    ctx.setLineDash([]);
+    ctx.fillStyle = "#f08c00"; ctx.strokeStyle = "#ffffff";
+    ctx.beginPath(); ctx.arc(c.frozen[0], c.frozen[1], 8 / k, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    if (c.at) { ctx.fillStyle = "#2b8a3e"; ctx.beginPath(); ctx.arc(c.at[0], c.at[1], 8 / k, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
+    ctx.restore();
+    this._label(ctx, "where it saw you", c.frozen[0], c.frozen[1] - 16 / k, 10, 0.9, null, LABEL_PRIO.focus);
+    if (c.at) this._label(ctx, "where you were", c.at[0], c.at[1] + 16 / k, 10, 0.9, null, LABEL_PRIO.focus);
   }
 
   /** Notes: a small dot where the click was, the text on a plate beside it.
