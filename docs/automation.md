@@ -71,7 +71,7 @@ names the ones that were and why.
 | `source` | `ble`, `held`, `wifi`, `gps` or `none` |
 | `access_point` | with `source: wifi`, the access point the phone or watch is joined to |
 | `presence` | as for things: the most present of the person's things |
-| `via`, `considered` | the thing that placed them, and every thing that was in the running |
+| `via`, `considered` | the thing that placed them, and every thing that was in the running: `thing`, `where`, `here_since` (when it arrived there, UTC) and `on_charger` |
 | `zone`, `latitude`, `longitude`, `gps_accuracy`, `tracker` | the GPS side, carried whichever source is speaking |
 | `distance_m` | from Home Assistant's home location, when there are coordinates |
 | `gps_ignored` | `[{entity, reason}, …]` |
