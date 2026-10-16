@@ -1180,10 +1180,12 @@ export class SextantMap {
     if (this._drag?.kind === "pinch") { if (this._pointers.size < 2) { this._drag = null; this.lastDragMoved = true; this._dragCancelled = true; } return; }
     const d = this._drag;
     this._drag = null;
-    if (d?.kind === "pan" && d.place && !d.moved && e.type === "pointerup" && this.host.onMapClick) this.host.onMapClick(d.place);
+    const placed = d?.kind === "pan" && d.place && !d.moved && e.type === "pointerup" && this.host.onMapClick;
+    if (placed) this.host.onMapClick(d.place);
     this._snap = null;
     this._pinSnap = null;
-    this.lastDragMoved = !!(d && d.moved) || !!this._dragCancelled;
+    // A placement handled on pointer-up also consumes the browser click.
+    this.lastDragMoved = !!placed || !!(d && d.moved) || !!this._dragCancelled;
     this._dragCancelled = false;
     if (!d) return;
     // A room dropped back home is no change.

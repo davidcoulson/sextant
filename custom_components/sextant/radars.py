@@ -132,8 +132,11 @@ def read_targets(spec, get_state, range_m=None):
             if zs is not None:
                 z = to_metres(zs.state, zs.attributes.get("unit_of_measurement"))
         # All zero is the radar's "none" - but a 3D sensor on the ceiling has
-        # someone right below it at x = y = 0, with a height.
-        if x is None or y is None or (abs(x) < NO_TARGET_M and abs(y) < NO_TARGET_M and (z is None or abs(z) < NO_TARGET_M)):
+        # someone right below it at x = y = 0, with a height. If only z is
+        # unavailable, an explicit active signal still confirms that target.
+        active_unknown_z = t.get("active") and t.get("z") and z is None
+        if x is None or y is None or (abs(x) < NO_TARGET_M and abs(y) < NO_TARGET_M
+                                     and (z is None or abs(z) < NO_TARGET_M) and not active_unknown_z):
             continue
         if math.hypot(x, y) > rng + 0.5:
             continue

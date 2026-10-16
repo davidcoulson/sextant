@@ -50,3 +50,66 @@ test("a ceiling sensor covers a circle; a wall sensor its range less the slant",
   near(radarFloorReach({ height_m: 2 }, 6), Math.sqrt(35));
   near(radarFloorReach({}, 6), 6);
 });
+
+// Load the editor with its browser UI dependencies stubbed; exercise the real
+// editor methods and map pointer handlers without a DOM or Home Assistant.
+const { readFileSync } = await import("node:fs");
+const { runInNewContext } = await import("node:vm");
+const editorSource = readFileSync(new URL("../../custom_components/sextant/frontend/sextant-edit.js", import.meta.url), "utf8");
+const Editor = runInNewContext(editorSource.replace(/^import .*;$/gm, "") + "\nSextantEdit;", {
+  LitElement: class {}, css: () => "", sharedStyles: "", widgetStyles: "", mapOverlayStyles: "",
+  customElements: { get: () => true }, radarCalibration,
+});
+const { SextantMap } = await import("../../custom_components/sextant/frontend/sextant-map.js");
+
+for (const rearm of [false, true]) {
+  test(`calibration consumes pointer-up's click with radar placement ${rearm ? "rearmed" : "initially armed"}`, () => {
+    const ctx = new Proxy({}, { get: () => () => ({ addColorStop() {} }), set: () => true });
+    const canvas = {
+      style: {}, width: 800, height: 800, getContext: () => ctx,
+      addEventListener() {}, removeEventListener() {}, setPointerCapture() {},
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 800 }),
+    };
+    const editor = Object.create(Editor.prototype);
+    const floor = { scale: 100, radars: [{ radar_id: "r1", device_id: "dev1", heading: 90, cords: { x: 0, y: 0 } }] };
+    editor._floorObj = () => floor;
+    editor._selection = { kind: "radar", index: 0 };
+    const selection = editor._selection;
+    editor._locks = {};
+    editor._tool = "radar";
+    editor._snapshot = () => {};
+    editor._pushFloor = () => {};
+    editor._pollRadar = () => {};
+    editor._edit = (key, value) => { floor.radars[editor._selection.index][key] = value; };
+    const map = editor._map = new SextantMap(canvas, {
+      isPlacing: () => editor._calib?.stage === "place",
+      onMapClick: (pt) => editor._calibAt(pt),
+      onSelect: (sel) => { editor._selection = sel; editor._calibCancel(); },
+    });
+    map.floor = floor;
+    map.view = { k: 1, tx: 0, ty: 0 };
+    map.invalidate = () => {};
+    map.setMode("edit");
+    editor._calibStart();
+    assert.equal(editor._tool, "select");
+    assert.equal(map.tool, "select");
+    editor._calibFreeze({ index: 1, cords: [300, 0], x_m: 0, y_m: 3 });
+    if (rearm) editor._setTool("radar");
+    const ev = (type) => ({ type, pointerId: 1, clientX: 0, clientY: 300, button: 0, pointerType: "mouse" });
+    map._down(ev("pointerdown"));
+    map._up(ev("pointerup"));
+    editor._onCanvasClick(ev("click"));
+    assert.equal(floor.radars.length, 1);
+    assert.equal(editor._selection, selection);
+    assert.equal(editor._calib.stage, "done");
+    assert.equal(editor._calib.result.heading, 180);
+    editor._calibApply(false);
+    assert.equal(floor.radars[0].heading, 180);
+    assert.equal(editor._calib, null);
+    // The next ordinary tap can dispatch placement again.
+    map.host.isPlacing = () => false;
+    map._down(ev("pointerdown"));
+    map._up(ev("pointerup"));
+    assert.equal(map.lastDragMoved, false);
+  });
+}
