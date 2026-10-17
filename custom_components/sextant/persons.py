@@ -29,6 +29,8 @@ from __future__ import annotations
 import math
 from datetime import datetime, timezone
 
+from .rooms import PET_CLASSES
+
 # A thing still for longer than this is probably not being carried.
 RECENT_MOVE_SECS = 600.0
 # "Where it is" for arrival purposes: within this many metres of its place.
@@ -70,6 +72,20 @@ def owners(layout) -> dict[str, list[str]]:
         if isinstance(person, str) and person.startswith("person."):
             out.setdefault(person, []).append(thing)
     return out
+
+
+def pet_persons(by_person, classes) -> set[str]:
+    """The persons that are pets: everything they own is a cat, dog or paw tag.
+
+    Home Assistant lets a cat be a person.* entity; Sextant tells them apart by
+    what they carry.
+    """
+    return {p for p, things in by_person.items() if things and all(classes.get(t) in PET_CLASSES for t in things)}
+
+
+def device_model(is_pet) -> str:
+    """The model on a person's (or pet's) Sextant device."""
+    return "Sextant pet (BLE Positioning)" if is_pet else "Sextant person (BLE Positioning)"
 
 
 def locates_owner(layout, ent, cls) -> bool:

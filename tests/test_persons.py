@@ -170,3 +170,10 @@ def test_considered_stays_the_same_while_nobody_moves():
     # No position to measure a stay from: arrival reads as "now" every cycle.
     assert persons.considered([{**phone, "arrived": NOW}], NOW)[0]["here_since"] is None
     assert persons.considered([{**phone, "arrived": None}], NOW)[0]["here_since"] is None
+
+
+def test_a_person_who_owns_only_pet_tags_is_a_pet_and_gets_a_pets_device():
+    by_person = {"person.leela": ["leela_tag"], "person.david": ["david_phone", "leela_spare"], "person.empty": []}
+    classes = {"leela_tag": "cat", "leela_spare": "cat", "david_phone": "phone"}
+    assert persons.pet_persons(by_person, classes) == {"person.leela"}
+    assert "pet" in persons.device_model(True) and "person" in persons.device_model(False)
