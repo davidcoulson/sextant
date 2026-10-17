@@ -298,7 +298,7 @@ class CustomDistanceSensor(SensorEntity):
         self._attrs = dict(attrs) if attrs else {}
         self.entity_id = entity_id
         # Group each tracked device's Sextant sensors under their own device rather
-        # than one shared "BLE Positioning System" bucket. All four sensors for
+        # than one shared bucket. All four sensors for
         # a tracked device share the same identifier, so they land together, and
         # via_device nests that device under its Bermuda thing device.
         if device_key:
@@ -306,7 +306,7 @@ class CustomDistanceSensor(SensorEntity):
                 identifiers={("sextant", device_key)},
                 name=f"{device_name or device_key} (Sextant)",
                 manufacturer="Sextant",
-                model=model or "Sextant (BLE Positioning)",
+                model=model or "Tracked thing",
             )
             if via_device:
                 info["via_device"] = via_device
@@ -352,7 +352,7 @@ class SextantUntrackedSensor(SensorEntity):
             identifiers={("sextant", "sextant_system")},
             name="Sextant",
             manufacturer="Sextant",
-            model="Sextant (BLE Positioning)",
+            model="System",
         )
 
     @property
@@ -384,7 +384,7 @@ class SextantPeopleHomeSensor(SensorEntity):
             identifiers={("sextant", "sextant_system")},
             name="Sextant",
             manufacturer="Sextant",
-            model="Sextant (BLE Positioning)",
+            model="System",
         )
 
     @property
@@ -420,7 +420,7 @@ class SextantAccuracySensor(SensorEntity):
             identifiers={("sextant", "sextant_system")},
             name="Sextant",
             manufacturer="Sextant",
-            model="Sextant (BLE Positioning)",
+            model="System",
         )
 
     @property

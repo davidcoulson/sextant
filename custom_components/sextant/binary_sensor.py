@@ -40,7 +40,7 @@ class SextantRoomOccupancy(BinarySensorEntity):
         self._attr_extra_state_attributes = {"room": key[1], "floor": key[0], "count": 0, "people": [], "pets": [], "things": []}
         self._attr_device_info = DeviceInfo(
             identifiers={("sextant", f"room_{ids['unique_id'][len(UNIQUE_PREFIX):]}")},
-            name=f"{key[1]} (Sextant)", manufacturer="Sextant", model="Sextant (BLE Positioning)",
+            name=f"{key[1]} (Sextant)", manufacturer="Sextant", model="Room",
         )
 
     def set_occupancy(self, is_on, attrs):

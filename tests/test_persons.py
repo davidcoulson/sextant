@@ -176,4 +176,4 @@ def test_a_person_who_owns_only_pet_tags_is_a_pet_and_gets_a_pets_device():
     by_person = {"person.leela": ["leela_tag"], "person.david": ["david_phone", "leela_spare"], "person.empty": []}
     classes = {"leela_tag": "cat", "leela_spare": "cat", "david_phone": "phone"}
     assert persons.pet_persons(by_person, classes) == {"person.leela"}
-    assert "pet" in persons.device_model(True) and "person" in persons.device_model(False)
+    assert persons.device_model(True) == "Pet" and persons.device_model(False) == "Person"

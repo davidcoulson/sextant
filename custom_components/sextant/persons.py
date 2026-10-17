@@ -85,7 +85,7 @@ def pet_persons(by_person, classes) -> set[str]:
 
 def device_model(is_pet) -> str:
     """The model on a person's (or pet's) Sextant device."""
-    return "Sextant pet (BLE Positioning)" if is_pet else "Sextant person (BLE Positioning)"
+    return "Pet" if is_pet else "Person"
 
 
 def locates_owner(layout, ent, cls) -> bool:
