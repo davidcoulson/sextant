@@ -480,7 +480,7 @@ class SextantEdit extends LitElement {
   // whether the mounting height is right. Nothing changes until Apply, and
   // nothing is kept until the plan is saved.
 
-  _calibStart() { this._calib = { stage: "freeze" }; this._map?.setRadarCalib(null); }
+  _calibStart() { this._setTool("select"); this._map?.setTool("select"); this._calib = { stage: "freeze" }; this._map?.setRadarCalib(null); }
 
   _calibFreeze(t) {
     const f = this._floorObj(), item = f?.radars?.[this._selection?.index];

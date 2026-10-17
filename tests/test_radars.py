@@ -462,3 +462,76 @@ def test_adjacent_rooms_two_people_two_targets_one_untracked(tmp_path):
     sextant.apitricords = [_thing("phone", (500, 540))]
     count, _attrs = _written(hass)[sextant.UNTRACKED_ENTITY_ID]
     assert len(sextant._radar_frame["targets"]) == 2 and count == 1
+
+
+@pytest.mark.parametrize("merged", [False, True])
+def test_unnamed_radars_publish_counts_and_take_auto_pins(tmp_path, monkeypatch, merged):
+    hass, _ = _two_radars(tmp_path) if merged else _hass(tmp_path)
+    specs = sextant._radar_specs_cache["specs"]
+    specs["dev1"] = {**specs["dev1"], "name": None}
+    expected = "dev1, Corner Presence" if merged else "dev1"
+    count, attrs = _written(hass)[sextant.UNTRACKED_ENTITY_ID]
+    assert count == 1 and attrs["targets"][0]["radar"] == expected
+    monkeypatch.setattr(sextant._truth_buffer, "samples", lambda ent, since=None, floor=None: [{"t": 0, "floors": {}}] * 5)
+    t0 = time.time()
+    for dt in (0, 61):
+        sextant.apitricords = [_thing("phone", (520, 815), at=t0 + dt)]
+        _written(hass, at=t0 + dt)
+    [mark] = run(st.load_truth(hass))["marks"]
+    assert mark["source"] == "mmwave:" + expected.replace(", ", "+")
+
+
+def test_radar_discovery_names_an_unnamed_device_by_id(tmp_path, monkeypatch):
+    hass = make_hass(tmp_path)
+    entries = [types.SimpleNamespace(device_id="dev1", disabled_by=None, entity_id=e)
+               for e in ("sensor.test_target_1_x", "sensor.test_target_1_y")]
+    monkeypatch.setattr(sextant.er, "async_get", lambda h: types.SimpleNamespace(entities=dict(enumerate(entries))))
+    device = types.SimpleNamespace(name_by_user=None, name=None, model=None, area_id=None)
+    monkeypatch.setattr(sextant.dr, "async_get", lambda h: types.SimpleNamespace(async_get=lambda dev: device))
+    specs = sextant._radar_specs(hass, now=sextant._radar_specs_cache["at"] + sextant.RADAR_SPECS_TTL_S + 1)
+    assert specs["dev1"]["name"] == "dev1"
+
+
+@pytest.mark.parametrize("z_state", [None, "unavailable", "unknown"])
+def test_active_target_below_sensor_survives_unknown_z(z_state):
+    target = {"x": "sensor.x", "y": "sensor.y", "z": "sensor.z", "active": "binary_sensor.active"}
+    spec = {"targets": [target]}
+    states = {"sensor.x": state(0, "m"), "sensor.y": state(0, "m"), "binary_sensor.active": state("on")}
+    if z_state is not None:
+        states["sensor.z"] = state(z_state, "m")
+    assert radars.read_targets(spec, states.get) == [(1, 0.0, 0.0, None, None)]
+    for active in ("off", "unknown", "unavailable"):
+        states["binary_sensor.active"] = state(active)
+        assert radars.read_targets(spec, states.get) == []
+    states["binary_sensor.active"] = state("on")
+    assert radars.read_targets({"targets": [{**target, "active": None}]}, states.get) == []
+    states["sensor.x"] = state("unavailable", "m")
+    assert radars.read_targets(spec, states.get) == []
+    states["sensor.x"] = state(0, "m")
+    states["sensor.z"] = state(0, "m")
+    assert radars.read_targets(spec, states.get) == [], "explicitly active all-zero is still empty"
+    states["sensor.z"] = state(-1.8, "m")
+    assert radars.read_targets(spec, states.get) == [(1, 0.0, 0.0, None, -1.8)]
+
+
+def test_ceiling_target_keeps_count_and_claim_during_z_dropout_and_recovers(tmp_path):
+    hass, states = _hass(tmp_path, target_xy_in=(0, 0))
+    spec = sextant._radar_specs_cache["specs"]["dev1"]
+    spec["targets"] = [{**spec["targets"][0], "z": "sensor.z"}]
+    spec["has_z"] = True
+    layout = st.get_layout(hass)
+    layout["floor"][0]["radars"][0].update(mount="ceiling", height_m=3)
+    run(st.save_layout(hass, layout))
+    for z, height, posture in [(-1.8, 1.2, "standing"), ("unavailable", None, None), (-2.1, 0.9, "sitting")]:
+        states["sensor.z"] = state(z, "m")
+        count, _ = _written(hass)[sextant.UNTRACKED_ENTITY_ID]
+        assert count == 1
+        [target] = sextant._radar_frame["targets"]
+        assert target["cords"] == [500.0, 900.0]
+        assert target["height_m"] == height and target["posture"] == posture
+        sextant.apitricords = [_thing("phone", (500, 900))]
+        count, _ = _written(hass)[sextant.UNTRACKED_ENTITY_ID]
+        assert count == 0 and sextant._radar_frame["claims"]["phone"]["cords"] == [500.0, 900.0]
+        sextant.apitricords = []
+    states["binary_sensor.t1a"] = state("off")
+    assert _written(hass)[sextant.UNTRACKED_ENTITY_ID][0] == 0

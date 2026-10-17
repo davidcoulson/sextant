@@ -3353,7 +3353,7 @@ def _radar_specs(hass, now=None):
         if spec is None:
             continue
         dev = dev_reg.async_get(device_id)
-        spec["name"] = (dev.name_by_user or dev.name) if dev else device_id
+        spec["name"] = (dev.name_by_user or dev.name or device_id) if dev else device_id
         spec["model"] = dev.model if dev else None
         spec["area_id"] = dev.area_id if dev else None
         specs[device_id] = spec
@@ -3431,6 +3431,14 @@ def _radar_targets(hass, layout, floor, radar, spec):
     return out
 
 
+def _radar_names(target):
+    """Display names, with stable IDs for unnamed radar members."""
+    members = target.get("radars") or [target.get("radar")]
+    names = target.get("radar_names") or [target.get("radar_name")]
+    return [str(name or (members[i] if i < len(members) else None) or "radar")
+            for i, name in enumerate(names)]
+
+
 def _merge_radar_targets(layout, targets):
     """One target per person: the targets two or more radars on a floor see
     within mmwave_merge_m of each other become one - unless the radars are
@@ -3453,7 +3461,7 @@ def _merge_radar_targets(layout, targets):
                                   round(sum(t["cords"][1] for t in group) / len(group), 1)],
                         "speed": max(speeds) if speeds else None,
                         "height_m": height, "posture": radars_mod.posture(height),
-                        "radars": [t["radar"] for t in group], "radar_names": [t["radar_name"] for t in group]})
+                        "radars": [t["radar"] for t in group], "radar_names": [_radar_names(t)[0] for t in group]})
     return out
 
 
@@ -3487,7 +3495,7 @@ async def _radar_cycle(hass, layout, now=None):
             seen_by[radar.get("radar_id")] = seen_by.get(radar.get("radar_id"), 0) + 1
             if t["outside"]:
                 continue                     # behind a wall: someone else's room
-            targets.append({"floor": floor["name"], "radar": radar.get("radar_id"), "radar_name": spec.get("name"),
+            targets.append({"floor": floor["name"], "radar": radar.get("radar_id"), "radar_name": spec.get("name") or radar["device_id"],
                             "index": t["index"], "cords": t["cords"], "speed": t["speed"],
                             "height_m": t["height_m"], "posture": t["posture"], "limit": t["limit"], "thing": None})
     targets = _merge_radar_targets(layout, targets)
@@ -3514,7 +3522,7 @@ async def _radar_cycle(hass, layout, now=None):
         rooms.append(room)
     update_sextant_sensor_state(hass, UNTRACKED_ENTITY_ID, len(untracked), {
         "rooms": sorted(set(r for r in rooms if r and r != "unknown")),
-        "targets": [{"room": t.get("room"), "floor": t["floor"], "radar": ", ".join(t["radar_names"]),
+        "targets": [{"room": t.get("room"), "floor": t["floor"], "radar": ", ".join(_radar_names(t)),
                      **({"posture": t["posture"]} if t.get("posture") else {})} for t in untracked],
     })
     if _tuning(layout, "mmwave_auto_pins"):
@@ -3573,7 +3581,7 @@ async def _add_auto_pin(hass, ent, target, scale, now):
         return False
     mark = {"id": int(store.get("next_id") or 1), "entity": ent, "floor": target["floor"], "x": round(float(x), 2),
             "y": round(float(y), 2), "t": now, "samples": samples,
-            "source": f"{AUTO_PIN_SOURCE}:{'+'.join(target.get('radar_names') or [target.get('radar_name') or target.get('radar')])}"}
+            "source": f"{AUTO_PIN_SOURCE}:{'+'.join(_radar_names(target))}"}
     store["next_id"] = mark["id"] + 1
     marks.append(mark)
     extra = len(mine) + 1 - AUTO_PIN_KEEP
@@ -3583,7 +3591,7 @@ async def _add_auto_pin(hass, ent, target, scale, now):
     await save_truth(hass, store)
     _set_truth_marks(store["marks"])
     _LOGGER.info("mmWave pin for %s on %s at (%.0f, %.0f) from %s", ent, target["floor"], x, y,
-                 ", ".join(target.get("radar_names") or [str(target.get("radar_name"))]))
+                 ", ".join(_radar_names(target)))
     return True
 
 
