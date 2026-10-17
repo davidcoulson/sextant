@@ -14,7 +14,7 @@ from homeassistant.core import callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 
-from .persons import owners
+from .persons import device_model, owners, pet_persons
 from .storage import get_layout
 
 _LOGGER = logging.getLogger(__name__)
@@ -27,7 +27,7 @@ class SextantPersonTracker(TrackerEntity):
 
     _attr_should_poll = False
 
-    def __init__(self, name, slug):
+    def __init__(self, name, slug, is_pet=False):
         self._slug = slug
         self._attr_name = f"{name} Sextant"
         self._attr_unique_id = f"{UNIQUE_PREFIX}{slug}"
@@ -35,7 +35,7 @@ class SextantPersonTracker(TrackerEntity):
         self._fix = {"location_name": "not_home", "source_type": "gps", "source": "none", "presence": "away"}
         self._attr_device_info = DeviceInfo(
             identifiers={("sextant", f"person_{slug}")},
-            name=name, manufacturer="Sextant", model="Sextant (BLE Positioning)",
+            name=f"{name} (Sextant)", manufacturer="Sextant", model=device_model(is_pet),
         )
 
         self._apply(self._fix)
@@ -87,8 +87,8 @@ class SextantPersonTracker(TrackerEntity):
 
 
 @callback
-def ensure_person_trackers(hass, people):
-    """Create the tracker of any owner who has none yet."""
+def ensure_person_trackers(hass, people, pets=()):
+    """Create the tracker of any owner who has none yet; ``pets`` are the owners that are pets."""
     cache = hass.data.get("sextant_trackers")
     add_entities = hass.data.get("sextant_tracker_add")
     if cache is None or add_entities is None:
@@ -100,7 +100,7 @@ def ensure_person_trackers(hass, people):
             continue
         state = hass.states.get(person)
         name = (state.attributes.get("friendly_name") if state else None) or slug
-        cache[slug] = SextantPersonTracker(name, slug)
+        cache[slug] = SextantPersonTracker(name, slug, person in pets)
         new.append(cache[slug])
     if new:
         _LOGGER.info("Creating Sextant device trackers for %d person(s)", len(new))
@@ -126,7 +126,9 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     hass.data.setdefault("sextant_trackers", {})
     hass.data["sextant_tracker_add"] = async_add_entities
     layout = get_layout(hass)
-    people = list(owners(layout if isinstance(layout, dict) else {}))
+    layout = layout if isinstance(layout, dict) else {}
+    by_person = owners(layout)
+    people = list(by_person)
     prune_person_trackers(hass, people)
-    ensure_person_trackers(hass, people)
+    ensure_person_trackers(hass, people, pet_persons(by_person, layout.get("thing_classes") or {}))
     return True

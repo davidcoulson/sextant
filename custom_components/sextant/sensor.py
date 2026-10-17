@@ -289,7 +289,7 @@ class CustomDistanceSensor(SensorEntity):
     _unrecorded_attributes = frozenset({"last_heard"})
 
     """A representation of a custom sensor"""
-    def __init__(self, name, unique_id, entity_id, device_key=None, via_device=None, attrs=None):
+    def __init__(self, name, unique_id, entity_id, device_key=None, via_device=None, attrs=None, device_name=None, model=None):
         self._name = name
         self._unique_id = unique_id
         self._attr_name = name
@@ -304,9 +304,9 @@ class CustomDistanceSensor(SensorEntity):
         if device_key:
             info = DeviceInfo(
                 identifiers={("sextant", device_key)},
-                name=f"{device_key} (Sextant)",
+                name=f"{device_name or device_key} (Sextant)",
                 manufacturer="Sextant",
-                model="Sextant (BLE Positioning)",
+                model=model or "Sextant (BLE Positioning)",
             )
             if via_device:
                 info["via_device"] = via_device
@@ -455,14 +455,16 @@ def ensure_sensors_for_things(hass, things):
 
 
 @callback
-def ensure_person_sensors(hass, people):
+def ensure_person_sensors(hass, people, pets=()):
     """Create the location sensors of any owner (a person.* entity) that has none yet.
 
     sensor.<person>_sextant_person_location / _room / _floor, grouped under a
     Sextant device for the person. "_person_" keeps them apart from a thing
     that shares the person's name (Meg the cat is person.meg and her tag meg).
+    The device is named for them ("Meg (Sextant)") and ``pets`` - the person
+    ids that are pets - get a pet's model rather than a person's.
     """
-    from .persons import PERSON_SENSOR_KINDS  # noqa: PLC0415
+    from .persons import PERSON_SENSOR_KINDS, device_model  # noqa: PLC0415
 
     sensors_cache = hass.data.get("sextant_sensors")
     add_entities = hass.data.get("sextant_add_entities")
@@ -477,7 +479,7 @@ def ensure_person_sensors(hass, people):
                 continue
             name = (hass.states.get(person).attributes.get("friendly_name") if hass.states.get(person) else None) or slug
             sensor = CustomDistanceSensor(f"{name} {label}", f"{suffix}_{slug}", entity_id, f"person_{slug}",
-                                          attrs={"via": None})
+                                          attrs={"via": None}, device_name=name, model=device_model(person in pets))
             sensors_cache[entity_id] = sensor
             new_sensors.append(sensor)
     if new_sensors:

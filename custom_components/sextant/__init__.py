@@ -4416,9 +4416,10 @@ def _update_person_sensors(hass):
         del _person_visits[person]
     if not by_person:
         return
-    sensor_mod.ensure_person_sensors(hass, list(by_person))
-    rows = {r.get("ent"): r for r in (hass.data.get(DOMAIN, {}).get("apitricords") or []) if isinstance(r, dict)}
     classes = layout.get("thing_classes") or {}
+    pets = persons_mod.pet_persons(by_person, classes)
+    sensor_mod.ensure_person_sensors(hass, list(by_person), pets)
+    rows = {r.get("ent"): r for r in (hass.data.get(DOMAIN, {}).get("apitricords") or []) if isinstance(r, dict)}
     chargers = layout.get("thing_charging_entity") or {}
     now, stale = time.time(), _tuning(layout, "stale_after_secs")
     home = (getattr(hass.config, "latitude", None), getattr(hass.config, "longitude", None))
@@ -4426,7 +4427,7 @@ def _update_person_sensors(hass):
     trackers = hass.data.get("sextant_trackers") or {}
     try:
         from . import device_tracker as tracker_mod  # noqa: PLC0415 - the platform imports this module
-        tracker_mod.ensure_person_trackers(hass, list(by_person))
+        tracker_mod.ensure_person_trackers(hass, list(by_person), pets)
     except Exception as e:  # noqa: BLE001 - the sensors do not depend on the trackers
         _LOGGER.debug("Person trackers not ensured: %s", e)
     global _wifi_now
