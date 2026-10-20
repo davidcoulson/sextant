@@ -48,7 +48,7 @@ picture, and where they are), which folds their things away with a click. And ea
 `sensor.<person>_sextant_person_location` (the spot, or the room),
 `_sextant_person_room` and `_sextant_person_floor` (and a
 `device_tracker.<person>_sextant`), with `via` naming the
-thing they came from. Automations can then ask where David is rather than
+thing they came from and `via_class` its class (`phone`, `watch`, `cat`...). Automations can then ask where David is rather than
 where his phone is.
 A pet's are named `sensor.<pet>_sextant_pet_location`, `_sextant_pet_room` and
 `_sextant_pet_floor` instead (a pet is one whose things are all cat, dog or

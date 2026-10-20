@@ -4499,6 +4499,8 @@ def _update_person_sensors(hass):
                 same_floor = (ap_floor == ble_floor) if ap_floor else None
             wifi_mod.match_update(_wifi_store, tracker, person, wifi_mod.agreement(c["home"], person_home, same_floor), now)
         for suffix, (state, attrs) in persons_mod.fuse(best, why if best else held_why, presence, held, gps, ignored, home, wifi).items():
+            # What kind of thing speaks for them (phone, watch, cat...), so a card need not guess from its name.
+            attrs["via_class"] = classes.get(attrs["via"]) if attrs.get("via") else None
             update_sextant_sensor_state(hass, persons_mod.sensor_entity_id(slug, suffix, person in pets), state, attrs)
         _person_visits[person] = persons_mod.visit(_person_visits.get(person), persons_mod.home_via(presence, gps, wifi), max(heard) if heard else None, now)
         tracker = trackers.get(slug)
