@@ -83,6 +83,11 @@ def pet_persons(by_person, classes) -> set[str]:
     return {p for p, things in by_person.items() if things and all(classes.get(t) in PET_CLASSES for t in things)}
 
 
+def sensor_entity_id(slug, suffix, is_pet) -> str:
+    """sensor.<slug>_sextant_person_location, or ..._sextant_pet_location for a pet."""
+    return f"sensor.{slug}_" + (suffix.replace("sextant_person_", "sextant_pet_", 1) if is_pet else suffix)
+
+
 def device_model(is_pet) -> str:
     """The model on a person's (or pet's) Sextant device."""
     return "Pet" if is_pet else "Person"

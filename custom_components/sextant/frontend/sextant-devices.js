@@ -923,7 +923,7 @@ class SextantDevices extends LitElement {
       ${people.map((p) => {
         const slug = p.split(".", 1)[1] || p.slice(7);
         const name = this.hass?.states?.[p]?.attributes?.friendly_name || slug;
-        const loc = this.hass?.states?.[`sensor.${slug}_sextant_person_location`];
+        const loc = this.hass?.states?.[`sensor.${slug}_sextant_person_location`] || this.hass?.states?.[`sensor.${slug}_sextant_pet_location`];
         const a = loc?.attributes || {};
         const chosen = Array.isArray(table[p]) ? table[p] : [];
         const ignored = Array.isArray(a.gps_ignored) ? a.gps_ignored : [];

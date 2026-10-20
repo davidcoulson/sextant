@@ -4499,7 +4499,7 @@ def _update_person_sensors(hass):
                 same_floor = (ap_floor == ble_floor) if ap_floor else None
             wifi_mod.match_update(_wifi_store, tracker, person, wifi_mod.agreement(c["home"], person_home, same_floor), now)
         for suffix, (state, attrs) in persons_mod.fuse(best, why if best else held_why, presence, held, gps, ignored, home, wifi).items():
-            update_sextant_sensor_state(hass, f"sensor.{slug}_{suffix}", state, attrs)
+            update_sextant_sensor_state(hass, persons_mod.sensor_entity_id(slug, suffix, person in pets), state, attrs)
         _person_visits[person] = persons_mod.visit(_person_visits.get(person), persons_mod.home_via(presence, gps, wifi), max(heard) if heard else None, now)
         tracker = trackers.get(slug)
         if tracker is not None:
@@ -4551,7 +4551,7 @@ def _update_room_sensors(hass):
     person_rooms, presences, pet_persons, speaking = {}, {}, set(), set()
     for person, things in persons_mod.owners(layout).items():
         slug = person.split(".", 1)[1]
-        st = hass.states.get(f"sensor.{slug}_sextant_person_location")
+        st = hass.states.get(f"sensor.{slug}_sextant_person_location") or hass.states.get(f"sensor.{slug}_sextant_pet_location")
         if st is None:
             continue
         name = (getattr(hass.states.get(person), "attributes", {}) or {}).get("friendly_name") or slug

@@ -50,6 +50,9 @@ picture, and where they are), which folds their things away with a click. And ea
 `device_tracker.<person>_sextant`), with `via` naming the
 thing they came from. Automations can then ask where David is rather than
 where his phone is.
+A pet's are named `sensor.<pet>_sextant_pet_location`, `_sextant_pet_room` and
+`_sextant_pet_floor` instead (a pet is one whose things are all cat, dog or
+paw tags); an existing pet's sensors are renamed on the next start.
 
 Which thing speaks for a person: only things that **give their owner's
 location** count - by default a watch, a phone, or a person's or pet's own

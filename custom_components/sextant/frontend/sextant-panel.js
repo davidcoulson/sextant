@@ -680,7 +680,7 @@ class SextantLive extends LitElement {
     const person = uid ? Object.values(states).find((s) => s.entity_id.startsWith("person.") && s.attributes?.user_id === uid) : null;
     if (!person) return null;
     const slug = person.entity_id.slice(7);
-    const loc = states[`sensor.${slug}_sextant_person_location`];
+    const loc = (states[`sensor.${slug}_sextant_person_location`] || states[`sensor.${slug}_sextant_pet_location`]);
     const room = loc?.attributes?.room, floor = loc?.attributes?.floor;
     if (!room || room === "unknown") return null;
     return { room, floor: floor && floor !== "unknown" ? floor : null };
@@ -1371,7 +1371,7 @@ class SextantLive extends LitElement {
       <span class="gtext"><span class="gname">${title}</span>${extra.where ? html`<span class="gwhere small">${extra.where}</span>` : nothing}</span></li>`;
     return html`${groups.map((g) => {
       const st = this.hass?.states?.[g.person], pic = st?.attributes?.entity_picture;
-      const where = this.hass?.states?.[`sensor.${g.person.slice(7)}_sextant_person_location`]?.state;
+      const where = (this.hass?.states?.[`sensor.${g.person.slice(7)}_sextant_person_location`] || this.hass?.states?.[`sensor.${g.person.slice(7)}_sextant_pet_location`])?.state;
       const avatar = html`<span class="gavatar">${pic ? html`<img src=${pic} alt="">` : g.name.slice(0, 2).toUpperCase()}</span>`;
       return html`${header(g.person, g.name, { avatar, where: where && where !== "unknown" ? where : "",
         away: g.list.every((p) => this._state(p).away) })}
@@ -1425,7 +1425,7 @@ class SextantLive extends LitElement {
     // Only where there is a choice to report: a pet owns its own tag, so its
     // person sensor only ever reads that tag back.
     if (!person || Object.values(owners).filter((o) => o === person).length < 2) return null;
-    const st = this.hass?.states?.[`sensor.${person.split(".")[1]}_sextant_person_location`];
+    const st = this.hass?.states?.[`sensor.${person.split(".")[1]}_sextant_person_location`] || this.hass?.states?.[`sensor.${person.split(".")[1]}_sextant_pet_location`];
     if (st?.attributes?.via !== ent) return null;
     return this.hass?.states?.[person]?.attributes?.friendly_name || person.split(".")[1];
   }

@@ -458,13 +458,14 @@ def ensure_sensors_for_things(hass, things):
 def ensure_person_sensors(hass, people, pets=()):
     """Create the location sensors of any owner (a person.* entity) that has none yet.
 
-    sensor.<person>_sextant_person_location / _room / _floor, grouped under a
+    sensor.<person>_sextant_person_location / _room / _floor (a pet's are
+    sensor.<pet>_sextant_pet_location / _room / _floor), grouped under a
     Sextant device for the person. "_person_" keeps them apart from a thing
     that shares the person's name (Meg the cat is person.meg and her tag meg).
     The device is named for them ("Meg (Sextant)") and ``pets`` - the person
     ids that are pets - get a pet's model rather than a person's.
     """
-    from .persons import PERSON_SENSOR_KINDS, device_model  # noqa: PLC0415
+    from .persons import PERSON_SENSOR_KINDS, device_model, sensor_entity_id  # noqa: PLC0415
 
     sensors_cache = hass.data.get("sextant_sensors")
     add_entities = hass.data.get("sextant_add_entities")
@@ -474,8 +475,18 @@ def ensure_person_sensors(hass, people, pets=()):
     for person in people:
         slug = person.split(".", 1)[1]
         for suffix, label in PERSON_SENSOR_KINDS:
-            entity_id = f"sensor.{slug}_{suffix}"
+            entity_id = sensor_entity_id(slug, suffix, person in pets)
             if entity_id in sensors_cache:
+                continue
+            other = sensor_entity_id(slug, suffix, person not in pets)
+            if other in sensors_cache:
+                # Was a person's, now a pet's (or back): same sensor, new id.
+                sensor = sensors_cache.pop(other)
+                try:
+                    er.async_get(hass).async_update_entity(other, new_entity_id=entity_id)
+                except ValueError:
+                    continue
+                sensors_cache[entity_id] = sensor
                 continue
             name = (hass.states.get(person).attributes.get("friendly_name") if hass.states.get(person) else None) or slug
             sensor = CustomDistanceSensor(f"{name} {label}", f"{suffix}_{slug}", entity_id, f"person_{slug}",
@@ -485,6 +496,8 @@ def ensure_person_sensors(hass, people, pets=()):
     if new_sensors:
         _LOGGER.info("Creating Sextant location sensors for %d person(s)", len(new_sensors) // 3 or 1)
         add_entities(new_sensors, update_before_add=True)
+        # An existing registry entry keeps its old id (sensor.fry_sextant_person_*): move a pet's.
+        normalize_sextant_registry_entity_ids_from_cache(hass)
 
 
 @callback
