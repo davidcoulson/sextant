@@ -83,7 +83,8 @@ export const sharedStyles = css`
   .page { padding: 12px 16px; overflow: auto; }
   .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; align-items: start; }
   code { font-family: ui-monospace, monospace; font-size: 12px; }
-  .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--primary-text-color); color: var(--primary-background-color); padding: 8px 14px; border-radius: 8px; font-size: 13px; z-index: 10; box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
+  .toasts { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 10; display: flex; flex-direction: column; gap: 6px; align-items: center; max-width: calc(100vw - 24px); pointer-events: none; }
+  .toast { background: var(--primary-text-color); color: var(--primary-background-color); padding: 8px 14px; border-radius: 8px; font-size: 13px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
   /* A wide table on a phone: the leading column (almost always the row's
      identity - a proxy, a thing, a device) stays put while the rest
      scrolls under it, and a fading edge says there is more to see. Pure
@@ -109,14 +110,24 @@ export function fmtNum(value, digits = 2) {
   return Number(value).toFixed(digits);
 }
 
-/** A short message at the bottom of the host element's shadow root. */
+/** Short messages at the bottom of the host element's shadow root. They stack
+ * (at most three; the oldest goes first) inside one polite live region. */
 export function toast(host, message, ms = 3500) {
   const root = host.renderRoot || host.shadowRoot || host;
-  let el = root.querySelector(".toast");
-  if (!el) { el = document.createElement("div"); el.className = "toast"; root.appendChild(el); }
+  let box = root.querySelector(".toasts");
+  if (!box) {
+    box = document.createElement("div");
+    box.className = "toasts";
+    box.setAttribute("role", "status");
+    box.setAttribute("aria-live", "polite");
+    root.appendChild(box);
+  }
+  const el = document.createElement("div");
+  el.className = "toast";
   el.textContent = message;
-  clearTimeout(el._timer);
-  el._timer = setTimeout(() => el.remove(), ms);
+  box.appendChild(el);
+  while (box.children.length > 3) box.firstElementChild.remove();
+  setTimeout(() => { el.remove(); if (!box.children.length) box.remove(); }, ms);
 }
 
 /** hass.callWS with the error surfaced as a toast; resolves to null on failure. */
@@ -129,8 +140,59 @@ export async function callWS(host, hass, message) {
   }
 }
 
-export function confirmDialog(text) {
-  return window.confirm(text);
+/** An in-page yes/no dialog. Resolves true on OK, false on Cancel, Escape or a
+ * click outside. Focus goes to the confirm button and returns to where it was. */
+export function confirmAsync(text, { ok = "OK", cancel = "Cancel", danger = false } = {}) {
+  return new Promise((resolve) => {
+    const prev = document.activeElement;
+    const overlay = document.createElement("div");
+    overlay.style.cssText = "position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.5);padding:16px";
+    const box = document.createElement("div");
+    box.setAttribute("role", "alertdialog");
+    box.setAttribute("aria-modal", "true");
+    box.setAttribute("aria-label", "Confirm");
+    box.style.cssText = "background:var(--card-background-color,#fff);color:var(--primary-text-color,#000);border-radius:var(--ha-card-border-radius,12px);padding:16px 18px;max-width:480px;width:100%;max-height:80vh;overflow:auto;box-shadow:0 8px 28px rgba(0,0,0,0.4);font:inherit";
+    const msg = document.createElement("div");
+    msg.style.cssText = "white-space:pre-wrap;font-size:14px;margin-bottom:14px";
+    msg.textContent = text;
+    const row = document.createElement("div");
+    row.style.cssText = "display:flex;gap:8px;justify-content:flex-end";
+    const mk = (label, primary) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = label;
+      const col = danger && primary ? "var(--error-color,#b00020)" : "var(--primary-color,#03a9f4)";
+      b.style.cssText = `font:inherit;padding:6px 14px;border-radius:8px;cursor:pointer;border:1px solid ${primary ? col : "var(--divider-color,#888)"};background:${primary ? col : "transparent"};color:${primary ? "var(--text-primary-color,#fff)" : "var(--primary-text-color,#000)"}`;
+      return b;
+    };
+    const cancelBtn = mk(cancel, false), okBtn = mk(ok, true);
+    row.append(cancelBtn, okBtn);
+    box.append(msg, row);
+    overlay.appendChild(box);
+    let done = false;
+    const finish = (v) => {
+      if (done) return;
+      done = true;
+      document.removeEventListener("keydown", onKey, true);
+      overlay.remove();
+      try { prev?.focus?.(); } catch { /* element gone */ }
+      resolve(v);
+    };
+    function onKey(e) {
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); finish(false); }
+      else if (e.key === "Tab") {
+        // Keep focus inside the two buttons.
+        e.preventDefault();
+        (document.activeElement === okBtn ? cancelBtn : okBtn).focus();
+      }
+    }
+    okBtn.addEventListener("click", () => finish(true));
+    cancelBtn.addEventListener("click", () => finish(false));
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) finish(false); });
+    document.addEventListener("keydown", onKey, true);
+    document.body.appendChild(overlay);
+    okBtn.focus();
+  });
 }
 
 export function slugLabel(slug) {
@@ -501,8 +563,9 @@ export async function loadLayout(host) {
 }
 
 /** Subscribe `host` to the position push; keeps host._unsub and host._subFailedAt. */
-export function subscribePositions(host, onPayload, onError) {
+export function subscribePositions(host, onPayload, onError, { detail = true } = {}) {
   if (!host.hass?.connection || host._unsub) return;
-  host._unsub = host.hass.connection.subscribeMessage(onPayload, { type: "sextant/subscribe" });
+  // detail: false asks for slim rows (no solver circles or fingerprint marks), a few KB a cycle instead of tens.
+  host._unsub = host.hass.connection.subscribeMessage(onPayload, detail ? { type: "sextant/subscribe" } : { type: "sextant/subscribe", detail: false });
   host._unsub.then(() => { host._subFailedAt = 0; }, (e) => { host._unsub = null; host._subFailedAt = Date.now(); onError?.(e); });
 }

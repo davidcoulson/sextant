@@ -179,6 +179,12 @@ file in `config/sextant_maps/`) overrides the floor's plan.
     { type: "sextant/subscribe" },
   );
   ```
+
+  `cords` and `radii` arrive rounded to two decimals. Add `detail: false`
+  to the subscribe message for slim rows (`ent`, `cords`, `zone`,
+  `sub_zone`, `floor`, `conf`, `updated`, `outside`, `presence`, `kind`,
+  `class`, `heading`), enough to draw a map without the solver circles:
+  a few kilobytes a cycle instead of tens.
 - Websocket commands, all request/response: `layout/get`, `layout/save`,
   `receivers`, `scanner_linking`, `beacon_links`, `adjust_zones`,
   `calibration/status`, `calibration/action`, `history/index`,

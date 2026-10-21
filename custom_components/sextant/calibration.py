@@ -1144,7 +1144,7 @@ def refresh_receivers_from_coords(hass, coordinates_json) -> None:
     if not cal or cal.get("state") != "sampling":
         return
     try:
-        coords = json.loads(coordinates_json) if coordinates_json else None
+        coords = (json.loads(coordinates_json) if isinstance(coordinates_json, (str, bytes)) else coordinates_json) or None
         if not isinstance(coords, dict):
             return
         floor = cal.get("floor") if cal.get("mode") == "manual" else None

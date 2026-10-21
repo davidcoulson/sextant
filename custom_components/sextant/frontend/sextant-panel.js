@@ -13,7 +13,7 @@
  */
 import { LitElement, html, css, nothing } from "./lit.js";
 import { signalColour, distanceColour, SextantMap, thingColor, thingHue, staleness, shortAge, heatCells, pointInPolygon, polygonCentroid } from "./sextant-map.js";
-import { sharedStyles, widgetStyles, fmtAge, fmtNum, toast, confirmDialog, ensureHaComponents, uiSelect, uiButton, callWS, sortFloors, thingName, proxyName, fmtLen, fmtSpeed, classIcon, pronounsFor, uiIconButton, uiSegmented, isImperial, mapOverlayStyles, renderScaleBar, signalLegend, mapUrlFor, retryWait, loadLayout, subscribePositions } from "./sextant-ui.js";
+import { sharedStyles, widgetStyles, fmtAge, fmtNum, toast, confirmAsync, ensureHaComponents, uiSelect, uiButton, callWS, sortFloors, thingName, proxyName, fmtLen, fmtSpeed, classIcon, pronounsFor, uiIconButton, uiSegmented, isImperial, mapOverlayStyles, renderScaleBar, signalLegend, mapUrlFor, retryWait, loadLayout, subscribePositions } from "./sextant-ui.js";
 
 // What this page is running: the version of the files it was loaded from
 // (sextant-version.js), not the one in its URL - see that file.
@@ -145,15 +145,15 @@ class SextantPanel extends LitElement {
    * copy of the dialog living here. */
   /** The editor holds an unsaved draft in the page: ask before anything that
    * would replace it (another floor, another page). True to go ahead. */
-  _mayLeaveEdit(what) {
+  async _mayLeaveEdit(what) {
     const editor = this.renderRoot?.querySelector("sextant-edit");
-    return !editor?.unsaved || editor.confirmLeave(what);
+    return !editor?.unsaved || await editor.confirmLeave(what);
   }
 
-  _setMode(target) {
+  async _setMode(target) {
     const { mode: wanted, thing } = typeof target === "string" ? { mode: target } : (target || {});
     const mode = this._modes().some(([id]) => id === wanted) ? wanted : "live";
-    if (this._mode === "edit" && mode !== "edit" && !this._mayLeaveEdit(`Leave the floor plan`)) return;
+    if (this._mode === "edit" && mode !== "edit" && !(await this._mayLeaveEdit(`Leave the floor plan`))) return;
     this._mode = mode;
     this._openThing = mode === "things" ? thing || null : null;
     if (mode !== "edit") this._spots = NO_SPOTS;
@@ -208,7 +208,7 @@ class SextantPanel extends LitElement {
   }
 
   async _restartHa() {
-    if (!confirmDialog("Restart Home Assistant now? Everything is unavailable for a minute or two.")) return;
+    if (!(await confirmAsync("Restart Home Assistant now? Everything is unavailable for a minute or two.", { ok: "Restart" }))) return;
     await this.hass.callService("homeassistant", "restart");
   }
 
@@ -238,10 +238,10 @@ class SextantPanel extends LitElement {
 
   /** One click to another floor. It goes through the same unsaved-draft guard
    * the dropdown did: in Edit a floor switch is an unsaved plan being left. */
-  _pickFloor(name) {
+  async _pickFloor(name) {
     this._property = false;
     if (name === this._floor) return;
-    if (!this._mayLeaveEdit(`Switch to ${name}`)) return;
+    if (!(await this._mayLeaveEdit(`Switch to ${name}`))) return;
     this._floor = name;
   }
 
@@ -314,6 +314,20 @@ class SextantPanel extends LitElement {
     }
   }
 
+  /** Live with nothing to draw: say what Sextant needs and where to start. */
+  _renderFirstRun() {
+    return html`<div class="page"><div class="card firstrun">
+      <h4>Welcome to Sextant: there is no floor plan yet</h4>
+      <div class="muted">Sextant needs a floor image (drawn in Edit), your Bluetooth proxies placed on it, and Bermuda tracking some devices.
+        Add the floor and the proxies first; things appear on the map once they are heard.</div>
+      <div class="row" style="margin-top:10px">
+        ${this._isAdmin() ? uiButton({ label: "Open Edit", kind: "primary", icon: "mdi:pencil-outline", onClick: () => this._setMode("edit") }) : html`<span class="muted small">Ask an administrator to set it up in Edit.</span>`}
+        <a href="https://github.com/davidcoulson/sextant/blob/main/docs/edit.md" target="_blank" rel="noopener">Setting up the plan</a>
+        <a href="https://github.com/davidcoulson/sextant/blob/main/docs/positioning.md" target="_blank" rel="noopener">How positioning works</a>
+      </div>
+    </div></div>`;
+  }
+
   _renderMode() {
     if (!this._data && !this._error) return html`<div class="empty">Loading…</div>`;
     switch (this._mode) {
@@ -339,6 +353,7 @@ class SextantPanel extends LitElement {
           return html`<sextant-property .hass=${this.hass} .data=${this._data} .positions=${this._positions}
                                         @layout-changed=${() => this._onLayoutChanged()}></sextant-property>`;
         }
+        if (!(this._data?.layout?.floor || []).length) return this._renderFirstRun();
         return html`<sextant-live .hass=${this.hass} .data=${this._data} .positions=${this._positions} .floor=${this._floor}
                                   @layout-changed=${() => this._onLayoutChanged()} @floor-changed=${(e) => { this._floor = e.detail; }}
                                   @quick-nav=${(e) => this._setMode(e.detail)}></sextant-live>`;
@@ -551,6 +566,7 @@ class SextantLive extends LitElement {
 
   disconnectedCallback() {
     super.disconnectedCallback();
+    clearTimeout(this._hassTimer); this._hassTimer = null;
     this._map?.destroy();   // kept, not nulled: a late reply may still call it
     clearInterval(this._linksTimer);
     clearInterval(this._wifiHeatTimer);
@@ -595,7 +611,7 @@ class SextantLive extends LitElement {
 
   async _loadMarks(ent) {
     if (!this._isAdmin()) return;
-    const r = await this.hass.callWS({ type: "sextant/truth/list", entity: ent }).catch(() => null);
+    const r = await callWS(this, this.hass, { type: "sextant/truth/list", entity: ent });
     if (r && ent === this._selected && this._isAdmin()) { this._marks = r.marks || []; this._pushMarks(); }
   }
 
@@ -1000,7 +1016,7 @@ class SextantLive extends LitElement {
   }
 
   async _deleteMark(id) {
-    if (!confirmDialog(`Forget pin ${id}?`)) return;
+    if (!(await confirmAsync(`Forget pin ${id}?`, { ok: "Forget", danger: true }))) return;
     const r = await callWS(this, this.hass, { type: "sextant/truth/delete", mark_id: id });
     if (r) { if (this._truth?.mark?.id === id) this._truth = null; this._loadMarks(this._selected); }
   }
@@ -1024,8 +1040,27 @@ class SextantLive extends LitElement {
   }
 
   async _loadLinks() {
-    const r = await this.hass.callWS({ type: "sextant/beacon_links" }).catch(() => null);
+    const r = await callWS(this, this.hass, { type: "sextant/beacon_links" });
     if (r) this._links = r.beacons || [];
+  }
+
+  /** HA replaces `hass` on every state change, many times a second, and Live
+   * draws almost none of it. When `hass` is the only thing that changed, skip
+   * the render unless: the areas moved (room icons), the user's admin flag or
+   * the unit system changed, or a thing is selected (its card shows battery and
+   * robot state from hass.states), and then at most once a second. */
+  shouldUpdate(changed) {
+    if (changed.size !== 1 || !changed.has("hass")) return true;
+    const old = changed.get("hass"), cur = this.hass;
+    if (!old || !cur) return true;
+    if (old.areas !== cur.areas) return true;
+    if (old.user?.is_admin !== cur.user?.is_admin || old.config?.unit_system?.length !== cur.config?.unit_system?.length) return true;
+    if (!this._selected) return false;
+    const now = Date.now(), wait = 1000 - (now - (this._hassRenderAt || 0));
+    if (wait <= 0) { this._hassRenderAt = now; return true; }
+    // Too soon: render once the second is up, so the last change is not lost.
+    if (!this._hassTimer) this._hassTimer = setTimeout(() => { this._hassTimer = null; this._hassRenderAt = Date.now(); this.requestUpdate(); }, wait);
+    return false;
   }
 
   willUpdate(changed) {
@@ -1050,7 +1085,7 @@ class SextantLive extends LitElement {
     if (changed.has("_mapOpen")) this._restoreDetailHeight();
     if (changed.has("data") || changed.has("floor")) this._pushFloor();
     if (changed.has("positions") || changed.has("floor") || changed.has("data") || changed.has("_scrub") || changed.has("_history")) this._pushThings();
-    if (changed.has("hass")) this._map.setAreas(this.hass?.areas);
+    if (changed.has("hass") && changed.get("hass")?.areas !== this.hass?.areas) this._map.setAreas(this.hass?.areas);
     if (changed.has("floor") || changed.has("_marks")) this._pushMarks();
     if (changed.has("floor") || changed.has("_heat") || changed.has("data")) this._pushHeat();
     if (changed.has("_options")) this._map.setOptions(this._options);
@@ -1435,7 +1470,7 @@ class SextantLive extends LitElement {
     const floor = this.floor;
     if (!this._isAdmin()) return;
     const band = this._wifiBand();
-    const r = await this.hass?.callWS({ type: "sextant/wifi/heat", floor, field: true, ...(band ? { band } : {}) }).catch(() => null);
+    const r = await callWS(this, this.hass, { type: "sextant/wifi/heat", floor, field: true, ...(band ? { band } : {}) });
     // Switched off, another floor, or admin gone, while it was on its way.
     if (!this._options.wifi_heat || floor !== this.floor || band !== this._wifiBand() || !this._isAdmin()) return;
     this._wifiHeat = r;
@@ -1823,7 +1858,7 @@ class SextantLive extends LitElement {
    * intact, the next time it is heard. */
   async _forget(ent) {
     const name = this._label(ent), pn = this._pn(ent);
-    if (!confirmDialog(`Forget ${name}?\n\nRemoves where ${pn.subj} ${pn.was} last seen and ${pn.poss} history. If nothing tracks ${pn.obj} any more, ${pn.poss} name, class and other settings go too and ${pn.subj} ${pn.is} gone for good; if ${pn.subj} ${pn.is} only away, ${pn.subj} ${pn.is} back - settings kept - the next time ${pn.subj} ${pn.is} heard.`)) return;
+    if (!(await confirmAsync(`Forget ${name}?\n\nRemoves where ${pn.subj} ${pn.was} last seen and ${pn.poss} history. If nothing tracks ${pn.obj} any more, ${pn.poss} name, class and other settings go too and ${pn.subj} ${pn.is} gone for good; if ${pn.subj} ${pn.is} only away, ${pn.subj} ${pn.is} back - settings kept - the next time ${pn.subj} ${pn.is} heard.`, { ok: "Forget", danger: true }))) return;
     const r = await callWS(this, this.hass, { type: "sextant/thing/forget", entity: ent });
     if (!r) return;
     toast(this, r.tracked ? `${name}: last sighting and history forgotten; ${pn.subj} will be back when heard` : `${name} forgotten${r.settings_dropped?.length ? " - settings removed too" : ""}`, 6000);

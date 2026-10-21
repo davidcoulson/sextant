@@ -18,14 +18,17 @@ import { SextantMap } from "./sextant-map.js";
 import { sortFloors, classIcon, thingName, mapUrlFor, retryWait, loadLayout, subscribePositions } from "./sextant-ui.js";
 
 class SextantMapCard extends LitElement {
-  static properties = { hass: { attribute: false }, _config: { state: true }, _data: { state: true }, _positions: { state: true }, _floor: { state: true } };
+  static properties = { hass: { attribute: false }, _config: { state: true }, _data: { state: true }, _positions: { state: true }, _floor: { state: true }, _error: { state: true } };
 
   static getConfigElement() { return document.createElement("sextant-map-card-editor"); }
   static getStubConfig() { return { height: 360, trails: true }; }
 
   setConfig(config) {
+    const circles = !!this._config?.circles;
     this._config = { height: 360, circles: false, trails: true, labels: true, subzones: true, follow: false, ...config };
     this._floor = this._config.floor || this._floor;
+    // Circles need the full rows; the subscription is slim without them, so a change starts it over.
+    if (this._unsub && !!this._config.circles !== circles) { this._unsub.then((u) => u()).catch(() => {}); this._unsub = null; }
   }
 
   getCardSize() { return Math.ceil((this._config?.height || 360) / 50); }
@@ -60,6 +63,7 @@ class SextantMapCard extends LitElement {
     if (!this.hass) return;
     const data = await loadLayout(this);
     if (!data) return;
+    this._error = null;
     this._data = data;
     if (!this._floor) this._floor = this._config?.floor || data.layout?.floor?.[0]?.name || null;
   }
@@ -71,7 +75,7 @@ class SextantMapCard extends LitElement {
         const first = payload.positions?.find((p) => p.ent === this._config.entities[0]);
         if (first?.floor && first.floor !== this._floor) this._floor = first.floor;
       }
-    });
+    }, undefined, { detail: !!this._config?.circles });
   }
 
   _push() {
@@ -118,12 +122,22 @@ class SextantMapCard extends LitElement {
         <canvas></canvas>
         ${floors.length > 1 && !this._config?.floor ? html`<select class="floor" @change=${(e) => { this._floor = e.target.value; }}>
           ${sortFloors(floors).map((f) => html`<option value=${f.name} ?selected=${f.name === this._floor}>${f.name}</option>`)}</select>` : nothing}
-        ${this._error ? html`<div class="err">${this._error}</div>` : nothing}
+        ${this._error ? html`<div class="err">${this._error}</div>` : this._notice(floors) ? html`<div class="note">${this._notice(floors)}</div>` : nothing}
       </div>
     </ha-card>`;
   }
 
+  /** Why the canvas is empty, once the layout has loaded; "" when it is not. */
+  _notice(floors) {
+    if (!this._data) return "";
+    if (!floors.length) return "No floor plan yet - set one up in the Sextant panel";
+    const want = this._config?.floor;
+    if (want && !floors.some((f) => f.name === want)) return `Floor ${want} not found`;
+    return "";
+  }
+
   static styles = css`
+    .note { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 16px; color: var(--secondary-text-color); font-size: 14px; pointer-events: none; }
     .stage { position: relative; }
     canvas { width: 100%; height: 100%; display: block; --sextant-map-bg: var(--card-background-color, #fff); border-radius: 0 0 var(--ha-card-border-radius, 12px) var(--ha-card-border-radius, 12px); }
     .floor { position: absolute; right: 8px; top: 8px; font: inherit; padding: 4px 6px; border-radius: 6px; }
@@ -148,7 +162,7 @@ class SextantMapCardEditor extends LitElement {
       <label>Floor <select @change=${(e) => this._set("floor", e.target.value)}><option value="">first / follow</option>${(this._floors || []).map((f) => html`<option value=${f} ?selected=${c.floor === f}>${f}</option>`)}</select></label>
       <label>Entities (comma separated, blank = all) <input type="text" .value=${(c.entities || []).join(", ")} @change=${(e) => this._set("entities", e.target.value.split(",").map((s) => s.trim()).filter(Boolean))}></label>
       <label>Height px <input type="number" .value=${c.height || 360} @change=${(e) => this._set("height", Number(e.target.value))}></label>
-      ${[["circles", "Solver circles"], ["trails", "Trails"], ["labels", "Labels"], ["subzones", "Sub-zones"], ["follow", "Follow first entity's floor"]].map(([k, l]) => html`<label class="inline"><input type="checkbox" .checked=${c[k] ?? (k === "trails" || k === "labels" || k === "subzones")} @change=${(e) => this._set(k, e.target.checked)}> ${l}</label>`)}
+      ${[["circles", "Solver circles"], ["trails", "Trails"], ["labels", "Labels"], ["subzones", "Spots"], ["follow", "Follow first entity's floor"]].map(([k, l]) => html`<label class="inline"><input type="checkbox" .checked=${c[k] ?? (k === "trails" || k === "labels" || k === "subzones")} @change=${(e) => this._set(k, e.target.checked)}> ${l}</label>`)}
     </div>`;
   }
   static styles = css`.form { display: grid; gap: 8px; padding: 8px 0; } label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; } label.inline { flex-direction: row; align-items: center; } input, select { font: inherit; padding: 6px; }`;

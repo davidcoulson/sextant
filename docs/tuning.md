@@ -21,9 +21,14 @@ see what that bought, and the two knobs are below it. Save a window as a named
 baseline and compare later windows against it; the deltas turn green where
 the window is better. Every
 [tuning key](tuning.md#tuning-reference) is below it with a plain label, its meaning
-on hover and the key underneath, grouped by estimator, solver, rooms,
+and default written under the field and the key underneath, grouped by estimator, solver, rooms,
 spots, near-field anchor and floors, and applies on the next cycle without
-a restart. Position history retention (off, one hour to seven
+a restart. A key set away from its default is marked *changed* with a
+*reset* link that puts it back (press **Apply** to store that); a filter
+box at the top narrows the list by key, label or meaning. Metre keys show
+the default in feet as well when Home Assistant is set to US units, but
+the value itself is always metres. Apply stores only the values that
+differ from their defaults. Position history retention (off, one hour to seven
 days) and **Clear history** live here too.
 
 ## Tuning reference

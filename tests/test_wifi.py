@@ -233,3 +233,50 @@ def test_a_hyphenated_ap_mac_matches_the_access_point_placed_on_the_plan():
         pass
     aps = core._wifi_access_points(Hass(), _ap_layout(), [c["device_tracker.iphone"]["ap"], "28-70-4E-27-04-ED"])
     assert aps["8c:ed:e1:00:de:ed"]["room"] == "Kitchen" and aps["28:70:4e:27:04:ed"]["placed"] is True
+
+
+def test_wifi_cycle_candidates_match_a_second_pass_with_the_access_points_ruled_out():
+    import types
+
+    import sextant as core
+
+    states = _states() + [("device_tracker.e7_switch", "home", {"source_type": "router", "mac": "8c:ed:e1:00:de:ed", "ap_mac": "28:70:4e:27:04:ed", "friendly_name": "E7"})]
+    st = [types.SimpleNamespace(entity_id=e, state=s, attributes=a) for e, s, a in states]
+
+    class Hass:
+        class states:  # noqa: N801
+            @staticmethod
+            def async_all(domain):
+                return st
+
+            @staticmethod
+            def get(_entity):
+                return None
+    store = core._wifi_store
+    store["clients"] = {}
+    view = core._wifi_cycle(Hass(), _ap_layout(), {})
+    infra = {c["ap"] for c in wifi.candidates(states, known={}).values() if c.get("ap")}
+    assert view["candidates"] == wifi.candidates(states, infra, {})
+    assert "device_tracker.e7_switch" not in view["candidates"] and "device_tracker.iphone" in view["candidates"]
+
+
+def test_wifi_access_points_are_remembered_until_the_layout_version_moves(monkeypatch):
+    import sextant as core
+
+    class Hass:
+        pass
+    calls = []
+    real = core._wifi_access_points_uncached
+    monkeypatch.setattr(core, "_wifi_access_points_uncached", lambda *a: calls.append(1) or real(*a))
+    version = [1]
+    monkeypatch.setattr(core, "get_layout_version", lambda _h: version[0])
+    core._wifi_ap_cache.update(key=None, at=0.0, out=None)
+    macs = ["8c:ed:e1:00:de:ed"]
+    first = core._wifi_access_points(Hass(), _ap_layout(), macs)
+    first["8c:ed:e1:00:de:ed"]["name"] = "mutated"
+    again = core._wifi_access_points(Hass(), _ap_layout(), macs)
+    assert len(calls) == 1 and again["8c:ed:e1:00:de:ed"]["name"] == "Kitchen E7"
+    core._wifi_access_points(Hass(), _ap_layout(), macs + ["28:70:4e:27:04:ed"])
+    version[0] = 2
+    core._wifi_access_points(Hass(), _ap_layout(), macs)
+    assert len(calls) == 3

@@ -13,7 +13,7 @@ import { pointInPolygon, thingColor } from "./sextant-map.js";
 
 // Mirrors persons.LOCATES_BY_DEFAULT: classes whose place is their owner's place.
 const LOCATES_BY_DEFAULT = new Set(["watch", "phone", "person", "man", "woman", "child", "cat", "dog", "paw"]);
-import { sharedStyles, widgetStyles, fmtAge, fmtNum, toast, callWS, confirmDialog, uiField, uiSelect, uiSwitch, uiButton, thingName, fmtLen, lenUnit, toDisplayLen, fromDisplayLen, THING_CLASSES, classIcon, pronounKey } from "./sextant-ui.js";
+import { sharedStyles, widgetStyles, fmtAge, fmtNum, toast, callWS, confirmAsync, uiField, uiSelect, uiSwitch, uiButton, thingName, fmtLen, lenUnit, toDisplayLen, fromDisplayLen, THING_CLASSES, classIcon, pronounKey } from "./sextant-ui.js";
 
 const KIND_FILTERS = [["all", "Everything"], ["tile", "Tiles"], ["ibeacon", "iBeacons"], ["device", "Other devices"]];
 const RECENT_SECS = 60;
@@ -85,6 +85,26 @@ class SextantDevices extends LitElement {
 
   disconnectedCallback() { super.disconnectedCallback(); clearInterval(this._timer); }
 
+  /** Dialog keyboard handling: focus moves in when one opens and goes back to
+   * the control that opened it when it closes. Escape closes (see _dialogKey). */
+  _dialogFocus() {
+    const open = !!(this._wizard || this._addWizard || this._findmyWizard);
+    if (open && !this._dialogWasOpen) {
+      this._dialogOpener = this.renderRoot.activeElement;
+      const d = this.renderRoot.querySelector(".modal .dialog");
+      const first = d?.querySelector("input:not([type=hidden]), select, textarea, ha-textfield, ha-input, button");
+      (first || d)?.focus?.();
+    } else if (!open && this._dialogWasOpen) {
+      try { this._dialogOpener?.focus?.(); } catch { /* gone */ }
+      this._dialogOpener = null;
+    }
+    this._dialogWasOpen = open;
+  }
+
+  _dialogKey(e, close) {
+    if (e.key === "Escape") { e.stopPropagation(); close(); }
+  }
+
   /** Open the dialog for a thing another page sent us to.
    *
    * Waited for rather than done on the way in: the Live page knows the slug
@@ -95,6 +115,7 @@ class SextantDevices extends LitElement {
     // One updated() only: this class had two, and the later definition
     // silently replaced this one, so everything below had never run.
     if (this._wizard?.crop) this._drawCropper();
+    this._dialogFocus();
     // Wait for the Bermuda fetch as well as the layout. The six calls behind
     // _refresh are still in flight when this page mounts, so a request that
     // arrived with the page used to be answered with no address at all - and
@@ -122,18 +143,33 @@ class SextantDevices extends LitElement {
 
   get _hasApi() { return (this.data?.features || []).includes("device_management"); }
 
+  /** A callWS that resolves null on failure and toasts the error text, once
+   * per distinct message every 30 s (a batch of calls shares one backend). */
+  _quietWS() {
+    return (msg) => this.hass.callWS(msg).catch((e) => {
+      const text = e?.message || String(e);
+      const now = Date.now();
+      if (this._lastWsErr?.text !== text || now - this._lastWsErr.at > 30000) {
+        this._lastWsErr = { text, at: now };
+        toast(this, `${msg.type}: ${text}`, 6000);
+      }
+      return null;
+    });
+  }
+
   async _refresh() {
     // No hass yet (connectedCallback can beat the property being set): try
     // again rather than leaving _loaded false forever, which would strand a
     // pending openThing request.
     if (!this.hass) { setTimeout(() => this._refresh(), 100); return; }
+    const ws = this._quietWS();
     const [tracked, candidates, tiles, findmy, options, identities] = await Promise.all([
-      this.hass.callWS({ type: "sextant/bermuda/tracked" }).catch(() => null),
-      this.hass.callWS({ type: "sextant/bermuda/candidates" }).catch(() => null),
-      this.hass.callWS({ type: "sextant/bermuda/tiles" }).catch(() => null),
-      this.hass.callWS({ type: "sextant/bermuda/findmy" }).catch(() => null),
-      this.hass.callWS({ type: "sextant/bermuda/options" }).catch(() => null),
-      this.hass.callWS({ type: "sextant/bermuda/tile_identities" }).catch(() => null),
+      ws({ type: "sextant/bermuda/tracked" }),
+      ws({ type: "sextant/bermuda/candidates" }),
+      ws({ type: "sextant/bermuda/tiles" }),
+      ws({ type: "sextant/bermuda/findmy" }),
+      ws({ type: "sextant/bermuda/options" }),
+      ws({ type: "sextant/bermuda/tile_identities" }),
     ]);
     this._loadRobots();
     this._tracked = tracked?.tracked ?? null;
@@ -148,10 +184,11 @@ class SextantDevices extends LitElement {
 
   async _refreshLight() {
     if (!this.hass) return;
+    const ws = this._quietWS();
     const [candidates, tiles, identities] = await Promise.all([
-      this.hass.callWS({ type: "sextant/bermuda/candidates" }).catch(() => null),
-      this.hass.callWS({ type: "sextant/bermuda/tiles" }).catch(() => null),
-      this.hass.callWS({ type: "sextant/bermuda/tile_identities" }).catch(() => null),
+      ws({ type: "sextant/bermuda/candidates" }),
+      ws({ type: "sextant/bermuda/tiles" }),
+      ws({ type: "sextant/bermuda/tile_identities" }),
     ]);
     if (candidates) this._candidates = candidates.candidates;
     if (tiles) this._tiles = tiles.tiles;
@@ -241,7 +278,7 @@ class SextantDevices extends LitElement {
   }
 
   async _removeFindMy(address, name) {
-    if (!confirmDialog(`Remove FindMy accessory ${name}?`)) return;
+    if (!(await confirmAsync(`Remove FindMy accessory ${name}?`, { ok: "Remove", danger: true }))) return;
     const r = await callWS(this, this.hass, { type: "sextant/bermuda/findmy/remove", address });
     if (r) { toast(this, "Removed"); this._refresh(); }
   }
@@ -414,7 +451,7 @@ class SextantDevices extends LitElement {
     if (!w) return nothing;
     const unit = lenUnit(this.hass);
     return html`<div class="modal" @click=${(e) => { if (e.target === e.currentTarget) this._wizard = null; }}>
-      <div class="dialog card" role="dialog" aria-label="Thing settings">
+      <div class="dialog card" role="dialog" aria-modal="true" tabindex="-1" aria-label="Thing settings" @keydown=${(e) => this._dialogKey(e, () => { this._wizard = null; })}>
         <h3>${w.new ? "Track " : ""}${w.placeholder} <span class="muted small">${w.address}</span></h3>
         ${w.new ? html`<p class="small muted">Nothing is sent to Bermuda until you press Track below; Cancel leaves it untracked.</p>` : nothing}
         <div class="row">
@@ -586,7 +623,7 @@ class SextantDevices extends LitElement {
     const kinds = this._addKinds();
     const close = () => { this._addWizard = null; };
     return html`<div class="modal" @click=${(e) => { if (e.target === e.currentTarget) close(); }}>
-      <div class="dialog card wide" role="dialog" aria-label="Add a thing">
+      <div class="dialog card wide" role="dialog" aria-modal="true" tabindex="-1" aria-label="Add a thing" @keydown=${(e) => this._dialogKey(e, close)}>
         <h3>Add a thing</h3>
         ${!w.kind ? html`
           <p class="small muted">What is it? How a thing is followed depends on whether its Bluetooth address stays put.</p>
@@ -626,7 +663,7 @@ class SextantDevices extends LitElement {
     const w = this._findmyWizard;
     if (!w) return nothing;
     return html`<div class="modal" @click=${(e) => { if (e.target === e.currentTarget) this._findmyWizard = null; }}>
-      <div class="dialog card wide" role="dialog" aria-label="Add FindMy accessories">
+      <div class="dialog card wide" role="dialog" aria-modal="true" tabindex="-1" aria-label="Add FindMy accessories" @keydown=${(e) => this._dialogKey(e, () => { this._findmyWizard = null; })}>
         <h3>Add FindMy accessories</h3>
         <ol class="steps">
           <li><b>Export the keys.</b> An AirTag or FindMy tag changes its address every 15 minutes on a schedule seeded when it was paired, so Bermuda needs the pairing keys rather than an address. Where they come from depends on your Mac: macOS 14 and earlier still keeps them on disk, and <code>tools/findmy_export.py</code> reads them; macOS 15 and later does not, so they have to come out of iCloud first. <a href=${FINDMY_GUIDE} target="_blank" rel="noopener">The walkthrough</a> has the commands for both, and what to expect from AirPods and a Siri Remote.</li>
@@ -742,8 +779,8 @@ class SextantDevices extends LitElement {
               <td class="num">${heights[slug] != null ? fmtLen(heights[slug], this.hass) : html`<span class="muted" title="the default carry height; click the name to give this thing its own">${fmtLen(this._defaultHeight(), this.hass)}</span>`}</td>
               <td class="num">${offsets[slug] != null && offsets[slug] !== 0 ? `${offsets[slug] > 0 ? "+" : ""}${fmtNum(offsets[slug], 1)} dB` : html`<span class="muted">0</span>`}</td>
               <td class="actions">
-                <button class="iconbtn" title="Edit ${name}" @click=${() => this._openWizard(slug, address)}><ha-icon icon="mdi:pencil-outline"></ha-icon></button>
-                <button class="iconbtn danger" title="Stop tracking ${name}" ?disabled=${this._busy} @click=${() => confirmDialog(`Stop tracking ${name}?`) && this._track([], [address])}><ha-icon icon="mdi:trash-can-outline"></ha-icon></button>
+                <button class="iconbtn" title="Edit ${name}" aria-label="Edit ${name}" @click=${() => this._openWizard(slug, address)}><ha-icon icon="mdi:pencil-outline"></ha-icon></button>
+                <button class="iconbtn danger" title="Stop tracking ${name}" aria-label="Stop tracking ${name}" ?disabled=${this._busy} @click=${async () => { if (await confirmAsync(`Stop tracking ${name}?`, { ok: "Stop tracking", danger: true })) this._track([], [address]); }}><ha-icon icon="mdi:trash-can-outline"></ha-icon></button>
               </td>
             </tr>`;
           })}
@@ -809,7 +846,7 @@ class SextantDevices extends LitElement {
             <td><b>${a.name}</b><br><span class="muted small">${a.address}</span></td>
             <td>${a.model || "—"}</td>
             <td>${a.current_source ? html`<span class="pill ok">seen as ${a.current_source}</span> <span class="muted small">${fmtAge(a.last_seen_age)} ago</span>` : a.alignment_index ? html`<span class="pill warn" title="Bermuda knows where this accessory is in its key schedule, so it knows which addresses to look for. No proxy has heard one of them yet - the tag is out of range, or its battery is flat.">not heard yet</span>` : html`<span class="pill" title="No key alignment for this accessory yet, so Bermuda is working through a wide range of addresses it could be using. This narrows the moment a proxy hears it once.">looking for it</span>`}</td>
-            <td><button class="iconbtn danger" title="Remove ${a.name}" @click=${() => this._removeFindMy(a.address, a.name)}><ha-icon icon="mdi:trash-can-outline"></ha-icon></button></td>
+            <td><button class="iconbtn danger" title="Remove ${a.name}" aria-label="Remove ${a.name}" @click=${() => this._removeFindMy(a.address, a.name)}><ha-icon icon="mdi:trash-can-outline"></ha-icon></button></td>
           </tr>`)}
           ${(this._findmy || []).length ? nothing : html`<tr><td colspan="4" class="muted">None configured.</td></tr>`}
         </table></div>
@@ -824,7 +861,7 @@ class SextantDevices extends LitElement {
   }
 
   async _loadRobots() {
-    const r = await this.hass.callWS({ type: "sextant/robot/list" }).catch(() => null);
+    const r = await callWS(this, this.hass, { type: "sextant/robot/list" });
     this._robots = r;
   }
 
@@ -840,7 +877,7 @@ class SextantDevices extends LitElement {
   }
 
   async _removeRobot(vacuum, name) {
-    if (!confirmDialog(`Stop placing ${name} on the plan?`)) return;
+    if (!(await confirmAsync(`Stop placing ${name} on the plan?`, { ok: "Stop placing", danger: true }))) return;
     const r = await callWS(this, this.hass, { type: "sextant/robot/remove", vacuum });
     if (r) { this._loadRobots(); this.dispatchEvent(new CustomEvent("layout-changed", { bubbles: true, composed: true })); }
   }
@@ -862,7 +899,7 @@ class SextantDevices extends LitElement {
           <div class="row"><b>${r.name}</b><span class="muted small">${r.state || "unknown"}${r.map_name ? ` · map "${r.map_name}"` : ""}</span><span class="grow"></span>
             ${uiSelect({ label: "Floor", value: floor, options: floors.map((n) => ({ value: n, label: n })), onChange: (v) => { this._robotFloor = { ...(this._robotFloor || {}), [r.vacuum]: v }; }, style: "width: 180px" })}
             ${uiButton({ label: busy ? "Reading its map…" : f ? "Line up again" : "Line up", kind: "primary", icon: "mdi:vector-link", disabled: busy || !this._robots?.action_available, onClick: () => this._alignRobot(r.vacuum, floor) })}
-            ${r.floor ? html`<button class="iconbtn danger" title="Stop placing ${r.name}" @click=${() => this._removeRobot(r.vacuum, r.name)}><ha-icon icon="mdi:trash-can-outline"></ha-icon></button>` : nothing}
+            ${r.floor ? html`<button class="iconbtn danger" title="Stop placing ${r.name}" aria-label="Stop placing ${r.name}" @click=${() => this._removeRobot(r.vacuum, r.name)}><ha-icon icon="mdi:trash-can-outline"></ha-icon></button>` : nothing}
           </div>
           ${r.floor && !f ? html`<div class="small warn">Fewer than two of its rooms match a room on ${r.floor} by name. Name them alike (in the Roborock app or here), or link the rooms to Home Assistant areas of the same name, and line up again.</div>` : nothing}
           ${f ? html`<div class="small">

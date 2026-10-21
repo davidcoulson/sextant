@@ -1432,6 +1432,25 @@ def test_websocket_subscribe_streams_each_cycle_and_unsubscribes():
     assert len(conn.sent) == 3
 
 
+def test_push_rounds_cords_and_radii_on_a_copy_and_detail_false_sends_slim_rows():
+    row = {"ent": "e", "zone": "K", "sub_zone": None, "floor": "G", "conf": 0.9, "updated": 5.0, "outside": False,
+           "cords": [10.123456, 20.987654], "radii": [[1.11111, 2.22222, 3.33333, 0.123456]], "floors": {"G": 1.0}, "fp": {"x": 1}}
+    hass = make_hass()
+    hass.data[sextant.DOMAIN] = {"apitricords": [row]}
+    sent = sextant._push_payload(hass)["positions"][0]
+    assert sent["cords"] == [10.12, 20.99] and sent["radii"] == [[1.11, 2.22, 3.33, 0.12]]
+    assert row["cords"] == [10.123456, 20.987654] and row["radii"][0][0] == 1.11111   # stored row untouched
+
+    conn = _Conn()
+    run(sextant._ws_subscribe(hass, conn, {"id": 3, "type": "sextant/subscribe", "detail": False}))
+    slim = conn.sent[1]["event"]["positions"][0]
+    assert set(slim) == {"ent", "zone", "sub_zone", "floor", "conf", "updated", "outside", "cords"}
+    assert conn.sent[1]["event"]["offline_receivers"] == []
+    full = _Conn()
+    run(sextant._ws_subscribe(hass, full, {"id": 4, "type": "sextant/subscribe"}))
+    assert "radii" in full.sent[1]["event"]["positions"][0]
+
+
 def test_websocket_command_is_registered_once(monkeypatch):
     hass = make_hass()
     sextant._register_websocket(hass)
@@ -2053,6 +2072,15 @@ def test_close_range_fade_shape():
     assert f(1.7, 0.5, tuned) > 1.4 and f(1.7, 0.7, tuned) == 1.7
     # A far edge set inside the near one cannot divide by zero.
     assert f(1.7, 1.0, {"tuning": {"correction_fade_near_m": 2.0, "correction_fade_far_m": 1.0}}) == 1.0
+
+
+def test_close_range_fade_with_hoisted_parameters_matches_the_per_call_read():
+    for data in ({}, {"tuning": {"correction_close_fade": False}},
+                 {"tuning": {"correction_fade_near_m": 0.2, "correction_fade_far_m": 0.6}}):
+        fade = sextant._close_fade_params(data)
+        for raw in (0.1, 0.5, 1.0, 1.75, 3.0):
+            for corr in (0.8, 1.7):
+                assert sextant._close_range_correction(corr, raw, data, fade) == sextant._close_range_correction(corr, raw, data)
 
 
 def _radii_with_correction(state, correction, tuning=None):

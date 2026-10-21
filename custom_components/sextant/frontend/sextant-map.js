@@ -797,6 +797,8 @@ export class SextantMap {
   setHeat(heat) { this.heat = heat?.cells?.length ? heat : null; this._heatImg = null; this.invalidate(); }
   /** hass.areas ({area_id: {icon}}): a room linked to an area shows that area's icon in its label. */
   setAreas(areas) {
+    if (areas === this._areasRef && areas !== undefined) return;
+    this._areasRef = areas;
     const next = {};
     for (const [id, a] of Object.entries(areas || {})) if (a?.icon) next[id] = a.icon;
     if (JSON.stringify(next) !== JSON.stringify(this.areaIcons)) { this.areaIcons = next; this.invalidate(); }

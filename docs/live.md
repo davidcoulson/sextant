@@ -2,6 +2,12 @@
 
 # Live
 
+Until the plan has a floor, Live shows a short welcome card instead of a
+map: what Sextant needs (a floor image, the proxies placed on it, and
+Bermuda tracking some devices), an **Open Edit** button for an
+administrator, and links to [Edit](edit.md) and
+[positioning](positioning.md).
+
 The floor plan with every tracked thing drawn as an avatar in its own colour, the
 same colour as its row in the list. Click a thing (row or avatar) to
 focus it: everything else fades, it grows a halo, the panel switches to its

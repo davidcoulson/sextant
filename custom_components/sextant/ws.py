@@ -174,7 +174,6 @@ def _tidy_device_name(name: str) -> str:
 async def ws_layout_get(hass, connection, msg):
     core = _core()
     layout = get_layout(hass)
-    layout_json = json.dumps(layout) if layout else ""
     maps_path = maps_dir(hass)
     icons_path = hass.config.path("www/sextant_icons")
     try:
@@ -243,7 +242,7 @@ async def ws_layout_get(hass, connection, msg):
             for addr, info in directory.items()
         },
         "offline_receivers": list(dom.get("rl_offline") or []),
-        "scanner_diagnostics": _safe(lambda: core._scanner_diagnostics(hass, layout_json), {"unmatched_receivers": [], "unplaced_scanners": []}),
+        "scanner_diagnostics": _safe(lambda: core._scanner_diagnostics(hass, layout or ""), {"unmatched_receivers": [], "unplaced_scanners": []}),
         "tuning_spec": _tuning_spec_json(core.TUNING_SPEC),
         "features": sorted(bermuda_source.async_features(hass)),
     })
@@ -340,7 +339,7 @@ async def ws_layout_save(hass, connection, msg):
         except Exception as e:  # noqa: BLE001
             _LOGGER.warning("Could not remove map %s: %s", remove_target.name, e)
     try:
-        core.refresh_receivers_from_coords(hass, json.dumps(layout))
+        core.refresh_receivers_from_coords(hass, layout)
     except Exception as e:  # noqa: BLE001 - calibration bookkeeping must not fail a save
         _LOGGER.debug("refresh_receivers_from_coords: %s", e)
     connection.send_result(
@@ -1025,7 +1024,7 @@ def _proxy_device(hass, slug, address):
 async def ws_scanner_linking(hass, connection, msg):
     core = _core()
     layout = get_layout(hass)
-    connection.send_result(msg["id"], core._scanner_linking(hass, json.dumps(layout) if layout else ""))
+    connection.send_result(msg["id"], core._scanner_linking(hass, layout or ""))
 
 
 @websocket_api.websocket_command({vol.Required("type"): "sextant/beacon_links"})
@@ -1822,7 +1821,7 @@ async def ws_snapshots_restore(hass, connection, msg):
         await save_layout(hass, layout)
     try:
         core = _core()
-        core.refresh_receivers_from_coords(hass, json.dumps(layout))
+        core.refresh_receivers_from_coords(hass, layout)
     except Exception as e:  # noqa: BLE001
         _LOGGER.debug("refresh_receivers_from_coords: %s", e)
     connection.send_result(msg["id"], {"version": get_layout_version(hass)})

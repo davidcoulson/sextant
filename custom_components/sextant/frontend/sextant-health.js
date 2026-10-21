@@ -9,7 +9,7 @@
  */
 import { LitElement, html, css, nothing } from "./lit.js";
 import { pointInPolygon } from "./sextant-map.js";
-import { sharedStyles, widgetStyles, fmtAge, fmtNum, toast, callWS, confirmDialog, uiField, uiSelect, uiSwitch, uiButton, sortFloors, thingName, proxyName, fmtLen } from "./sextant-ui.js";
+import { sharedStyles, widgetStyles, fmtAge, fmtNum, toast, callWS, confirmAsync, uiField, uiSelect, uiSwitch, uiButton, sortFloors, thingName, proxyName, fmtLen, isImperial } from "./sextant-ui.js";
 
 // A far move is a room change to a room on the same floor whose outline is
 // more than 2.5 m from the previous room's. Walked, it passes through
@@ -18,6 +18,24 @@ import { sharedStyles, widgetStyles, fmtAge, fmtNum, toast, callWS, confirmDialo
 // day; a rise after a change is what matters, not the level.
 const FAR_MOVES_HELP = "Moves per day to a room on the same floor that is not a neighbour (outlines more than 2.5 m apart). Walked moves pass through a room in between; these did not, so they are the ones to watch.";
 const QUIET_SECS = 120;   // online, but nothing heard for this long: "quiet"
+
+/** Whether a tuning key matches the filter text (key name, label or help, case-insensitive). */
+function tuningMatches(key, label, help, q) {
+  const needle = String(q || "").trim().toLowerCase();
+  return !needle || `${key} ${label} ${help}`.toLowerCase().includes(needle);
+}
+/** True when a tuning value differs from its default (an unset value is the default). */
+function tuningChanged(value, def) {
+  if (value === "" || value == null) return false;
+  return typeof def === "number" ? Number(value) !== def : value !== def;
+}
+/** Help line for a tuning key: the meaning, an imperial equivalent for metre keys, then the default. */
+function tuningHelpLine(key, help, def, imperial) {
+  const ft = (m) => `${Math.round(m * 3.28084 * 10) / 10} ft`;
+  const metric = key.endsWith("_m") && typeof def === "number";
+  const d = metric && imperial ? `${def} m (${ft(def)})` : String(def);
+  return `${help ? help + " " : ""}Default ${d}.`;
+}
 
 /** Plain labels for the tuning keys, with a one-line meaning; the key itself is shown under the field. */
 const TUNING_LABELS = {
@@ -118,6 +136,7 @@ class SextantHealth extends LitElement {
     floor: { type: String },
     section: { type: String },
     _receivers: { state: true },
+    _tfilter: { state: true },
     _cal: { state: true },
     _selftest: { state: true },
     _advice: { state: true },
@@ -149,6 +168,7 @@ class SextantHealth extends LitElement {
     this._linking = null;
     this._busy = null;
     this._tuning = {};
+    this._tfilter = "";
     this._calDuration = 600;
     this._open = new Set();   // expanded floor/room groups
   }
@@ -156,10 +176,16 @@ class SextantHealth extends LitElement {
   connectedCallback() {
     super.connectedCallback();
     this._refresh();
-    this._timer = setInterval(() => this._poll(), 10000);
+    this._timer = setInterval(() => { if (document.visibilityState === "visible") this._poll(); }, 10000);
+    this._onVisible = () => { if (document.visibilityState === "visible") this._poll(); };
+    document.addEventListener("visibilitychange", this._onVisible);
   }
 
-  disconnectedCallback() { super.disconnectedCallback(); clearInterval(this._timer); }
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    clearInterval(this._timer);
+    document.removeEventListener("visibilitychange", this._onVisible);
+  }
 
   willUpdate(changed) {
     // The signal map is admin only: a user who loses admin while the page is
@@ -192,7 +218,7 @@ class SextantHealth extends LitElement {
   }
 
   async _clearWifiHeat() {
-    if (!confirmDialog("Start the Wi-Fi signal map over? Every sample so far is dropped. Do this after moving or replacing access points.")) return;
+    if (!(await confirmAsync("Start the Wi-Fi signal map over? Every sample so far is dropped. Do this after moving or replacing access points.", { ok: "Start over", danger: true }))) return;
     const r = await callWS(this, this.hass, { type: "sextant/wifi/heat/clear" });
     if (!r) return;   // callWS has said what went wrong; the samples are still there
     toast(this, "Wi-Fi signal map cleared");
@@ -261,7 +287,7 @@ class SextantHealth extends LitElement {
   }
 
   async _deleteBaseline(name) {
-    if (!name || !confirmDialog(`Delete the KPI baseline "${name}"?`)) return;
+    if (!name || !(await confirmAsync(`Delete the KPI baseline "${name}"?`, { ok: "Delete", danger: true }))) return;
     const r = await callWS(this, this.hass, { type: "sextant/kpi/baseline/delete", name });
     if (r) { toast(this, `Deleted baseline "${name}"`); this._baseline = ""; if (this._kpi) this._kpi = { ...this._kpi, baseline: undefined, deltas: undefined }; await this._loadBaselines(); }
   }
@@ -275,8 +301,8 @@ class SextantHealth extends LitElement {
     const spec = this.data?.tuning_spec || {};
     const settings = {};
     for (const [k, v] of Object.entries(this._tuning)) {
-      if (v === "" || v == null) continue;
       const s = spec[k];
+      if (!tuningChanged(v, s?.default)) continue;   // defaults are not stored as overrides
       settings[k] = s?.type === "bool" ? !!v : s?.type === "str" ? String(v) : Number(v);
     }
     const r = await callWS(this, this.hass, { type: "sextant/tuning/set", settings, reset: true });
@@ -284,7 +310,7 @@ class SextantHealth extends LitElement {
   }
 
   async _resetTuning() {
-    if (!confirmDialog("Restore every tuning value to its default?")) return;
+    if (!(await confirmAsync("Restore every tuning value to its default?", { ok: "Restore defaults", danger: true }))) return;
     const r = await callWS(this, this.hass, { type: "sextant/tuning/set", reset: true });
     if (r) { toast(this, "Defaults restored"); this._tuning = {}; this.dispatchEvent(new CustomEvent("layout-changed")); }
   }
@@ -609,8 +635,8 @@ class SextantHealth extends LitElement {
           ${uiButton({ label: "Solve now", disabled: !!this._busy, onClick: () => this._calAction("solve", { floor }) })}
           ${uiButton({ label: worse ? "Apply anyway" : "Apply corrections", kind: worse ? "danger" : "outline", icon: worse ? "mdi:alert" : undefined, disabled: !!this._busy || !cur,
             title: worse ? `This solve made ${floor} worse (×${fmtNum(cur.error_factor_before, 2)} → ×${fmtNum(cur.error_factor_after, 2)}); the corrections are absorbing placement error` : cur ? `Store the ${floor} factors with the layout` : "Solve a floor first",
-            onClick: () => { if (!worse || confirmDialog(`This solve made ${floor} worse: error ×${fmtNum(cur.error_factor_before, 2)} → ×${fmtNum(cur.error_factor_after, 2)}. Corrections that make the fit worse are absorbing placement error, not radio bias. Apply anyway?`)) this._calAction("apply", { floor }); } })}
-          ${uiButton({ label: "Reset", kind: "danger", disabled: !!this._busy, onClick: () => confirmDialog(`Reset corrections on ${floor}?`) && this._calAction("reset", { floor }) })}
+            onClick: async () => { if (!worse || await confirmAsync(`This solve made ${floor} worse: error ×${fmtNum(cur.error_factor_before, 2)} → ×${fmtNum(cur.error_factor_after, 2)}. Corrections that make the fit worse are absorbing placement error, not radio bias. Apply anyway?`, { ok: "Apply anyway", danger: true })) this._calAction("apply", { floor }); } })}
+          ${uiButton({ label: "Reset", kind: "danger", disabled: !!this._busy, onClick: async () => { if (await confirmAsync(`Reset corrections on ${floor}?`, { ok: "Reset", danger: true })) this._calAction("reset", { floor }); } })}
         </div>
         ${Object.entries(results).map(([name, r]) => html`<details ?open=${name === floor}>
           <summary>${name}: ${r.pairs_used} pairs, error ×${fmtNum(r.error_factor_before, 2)} → ×${fmtNum(r.error_factor_after, 2)}${judged(r) ? html` <span class="pill warn">would not help: do not apply</span>` : nothing}${r.low_confidence?.length ? html` <span class="pill warn">${r.low_confidence.length} low confidence</span>` : nothing}${decision(name)}${verdict(r)}</summary>
@@ -705,21 +731,28 @@ class SextantHealth extends LitElement {
       const v = this._tuning[key];
       const set = (value) => { this._tuning = { ...this._tuning, [key]: value }; };
       const [label, help] = TUNING_LABELS[key] || [key, ""];
+      if (!tuningMatches(key, label, help, this._tfilter)) return nothing;
+      const changed = tuningChanged(v, s.default);
       let control;
       if (s.type === "bool") control = html`<span class="chips">${uiSwitch({ label, checked: v == null ? !!s.default : !!v, onChange: set })}</span>`;
       else if (s.type === "str") control = uiSelect({ label, value: v ?? s.default, options: s.choices.map((c) => ({ value: c, label: c })), onChange: set, style: "min-width: 220px" });
       else control = uiField({ label, type: "number", step: s.type === "int" ? 1 : "any", min: s.min, max: s.max, placeholder: String(s.default), value: v == null ? "" : v, onChange: (val) => set(val === "" ? null : Number(val)), style: "width: 220px" });
-      return html`<div class="tfield" title=${help ? `${help} (default ${s.default})` : `default ${s.default}`}>${control}<code class="hint">${key}</code></div>`;
+      const reset = () => { const t = { ...this._tuning }; delete t[key]; this._tuning = t; };
+      return html`<div class="tfield">${control}
+        <code class="hint">${key}${changed ? html` <span class="chg">changed</span> <a class="treset" href="#" @click=${(e) => { e.preventDefault(); reset(); }}>reset</a>` : nothing}</code>
+        <span class="thelp">${tuningHelpLine(key, help, s.default, isImperial(this.hass))}</span></div>`;
     };
+    const shown = (keys) => keys.filter((k) => spec[k] && tuningMatches(k, (TUNING_LABELS[k] || [k, ""])[0], (TUNING_LABELS[k] || [k, ""])[1], this._tfilter));
     return html`<section class="card wide">
       <h3>Tuning <span class="muted small">applies live, no restart · distances here are metres, the solver's own unit</span></h3>
-      ${groups.map(([name, keys]) => html`<h4>${name}</h4><div class="row">${keys.map(field)}</div>`)}
+      <div class="row"><input class="tfilter" type="search" placeholder="Filter by key, label or help" aria-label="Filter tuning keys" .value=${this._tfilter} @input=${(e) => { this._tfilter = e.target.value; }}></div>
+      ${groups.map(([name, keys]) => shown(keys).length ? html`<h4>${name}</h4><div class="row">${keys.map(field)}</div>` : nothing)}
       <div class="row">${uiButton({ label: "Apply", kind: "primary", onClick: () => this._saveTuning() })}${uiButton({ label: "Restore defaults", kind: "text", onClick: () => this._resetTuning() })}</div>
     </section>`;
   }
 
   async _clearHistory(entity) {
-    if (!confirmDialog(entity ? `Forget the recorded positions of ${thingName(this.data, entity)}?` : "Forget every thing's recorded positions?")) return;
+    if (!(await confirmAsync(entity ? `Forget the recorded positions of ${thingName(this.data, entity)}?` : "Forget every thing's recorded positions?", { ok: "Forget", danger: true }))) return;
     const r = await callWS(this, this.hass, { type: "sextant/history/clear", ...(entity ? { entity } : {}) });
     if (r) toast(this, `History cleared (${r.removed} file${r.removed === 1 ? "" : "s"} rewritten)`);
   }
@@ -764,7 +797,12 @@ class SextantHealth extends LitElement {
     .floorplan h4 { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
     .tfield { display: inline-flex; flex-direction: column; gap: 2px; }
     .tfield .hint { font-size: 11px; color: var(--secondary-text-color); padding-left: 2px; }
-    @media (max-width: 720px) { .cols { grid-template-columns: 1fr; } .tfield, .tfield > * { width: 100%; } }
+    .tfilter { box-sizing: border-box; width: 280px; max-width: 100%; padding: 8px 10px; border: 1px solid var(--divider-color); border-radius: 6px; background: var(--card-background-color); color: var(--primary-text-color); font: inherit; }
+    .tfield { max-width: 260px; }
+    .tfield .thelp { font-size: 11px; color: var(--secondary-text-color); padding-left: 2px; overflow-wrap: anywhere; }
+    .tfield .chg { color: var(--warning-color, #f59e0b); font-weight: 600; }
+    .tfield .treset { color: var(--primary-color); }
+    @media (max-width: 720px) { .tfield { max-width: none; } .cols { grid-template-columns: 1fr; } .tfield, .tfield > * { width: 100%; } }
   `];
 }
 

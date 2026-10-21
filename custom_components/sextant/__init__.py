@@ -1031,7 +1031,13 @@ def _solves(receiver):
     return receiver.get("solve") is not False
 
 
-def _close_range_correction(correction, raw_m, data):
+def _close_fade_params(data):
+    """(on, near_m, far_m) for _close_range_correction, read once per call site."""
+    near = _tuning(data, "correction_fade_near_m")
+    return bool(_tuning(data, "correction_close_fade")), near, max(_tuning(data, "correction_fade_far_m"), near + 0.01)
+
+
+def _close_range_correction(correction, raw_m, data, fade=None):
     """The share of a receiver's calibration correction to apply at this range.
 
     A stretching correction (> 1) is geometrically faded from nothing at
@@ -1040,10 +1046,11 @@ def _close_range_correction(correction, raw_m, data):
     watch on a bedside proxy (1.5 m -> 0.7 m) and left the others within a
     few centimetres.
     """
-    if correction <= 1.0 or not _tuning(data, "correction_close_fade"):
+    if correction <= 1.0:
         return correction
-    near = _tuning(data, "correction_fade_near_m")
-    far = max(_tuning(data, "correction_fade_far_m"), near + 0.01)
+    on, near, far = fade if fade is not None else _close_fade_params(data)
+    if not on:
+        return correction
     if raw_m >= far:
         return correction
     if raw_m <= near:
@@ -1548,8 +1555,6 @@ async def update_tracked_entities(hass):
             # superset of a list we already have was the single cost in this
             # loop that grew with the size of the user's Home Assistant rather
             # than with the number of beacons.
-            tracked_entities = _bermuda_distance_sensor_ids(hass)
-
             await prune_stale_positions(hass)
 
             # Which devices to track, and how many usable readings exist.
@@ -1577,6 +1582,7 @@ async def update_tracked_entities(hass):
                     if prefix in tracked_prefixes and reading.get("distance") is not None
                 )
             else:
+                tracked_entities = _bermuda_distance_sensor_ids(hass)
                 num_points = len(tracked_entities)
                 unique_values = list(
                     {item.split("_distance_to_")[0].replace("sensor.", "") for item in tracked_entities}
@@ -1867,6 +1873,8 @@ async def async_resolve_receiver_addresses(hass) -> bool:
 def _placed_receivers(coordinates_json):
     """Placed receivers as (floor_name, entity_id slug, stored scanner_uid, address).
 
+    ``coordinates_json`` is the layout as a dict, or as a JSON string.
+
     Parsed defensively: a malformed or hand-edited bpsdata.txt yields [] rather
     than raising into a caller (a bad layout must never break the diagnostics). Each
     entity_id must be a non-empty string — a non-string slug isn't a real
@@ -1874,7 +1882,7 @@ def _placed_receivers(coordinates_json):
     """
     placed = []
     try:
-        parsed = json.loads(coordinates_json)
+        parsed = json.loads(coordinates_json) if isinstance(coordinates_json, (str, bytes)) else coordinates_json
         floors = parsed.get("floor") if isinstance(parsed, dict) else None
         for fl in floors if isinstance(floors, list) else []:
             if not isinstance(fl, dict):
@@ -2211,7 +2219,9 @@ async def update_receiver_liveness(hass):
     elapsed = max(0.0, time.time() - dom["rl_anchor_wall"]) if dom.get("rl_anchor_wall") else 0.0
 
     receivers, with_reading = _scanner_slugs_and_readings(hass)
-    slug_to_device, device_entities = _build_device_availability(hass)
+    # Built on first use: only a receiver that falls through tiers 1 and 2
+    # needs the registry walk, and then once per call.
+    availability = []
     # Placed receivers by address: the placement's own label is what the
     # panel and card match on, so the offline list stays keyed by it, but
     # the liveness lookup goes through the address when there is one.
@@ -2226,6 +2236,9 @@ async def update_receiver_liveness(hass):
         receivers = set(receivers) | set(placed_address)
 
     def device_online(slug):
+        if not availability:
+            availability.append(_build_device_availability(hass))
+        slug_to_device, device_entities = availability[0]
         device_id = slug_to_device.get(slug)
         if not device_id:
             return None
@@ -2279,6 +2292,7 @@ async def update_receiver_radii(hass, eids):
     use_median = _tuning(eids["data"], "distance_estimator") == "median"
     median_window = _tuning(eids["data"], "median_window_secs")
     median_min = _tuning(eids["data"], "median_min_samples")
+    close_fade = _close_fade_params(eids["data"])
     # Prefer Bermuda's direct API: it serves the same per-scanner readings from
     # memory without any of the distance_to entities existing, which avoids
     # thousands of recorder writes and websocket state_changed fan-outs. None
@@ -2375,7 +2389,7 @@ async def update_receiver_radii(hass, eids):
                 # per-scanner RSSI offset in Bermuda's exponential model.
                 correction = receiver.get("correction")
                 if isinstance(correction, (int, float)) and correction > 0:
-                    distance = distance * _close_range_correction(float(correction), distance, eids["data"])
+                    distance = distance * _close_range_correction(float(correction), distance, eids["data"], close_fade)
                 # Per-THING ref-power trim (issue #92): a tag whose
                 # transmit power differs from Bermuda's configured
                 # ref_power reads consistently long or short from EVERY
@@ -4136,7 +4150,39 @@ def _unifi_access_points(hass):
     return wifi_mod.access_points(raws, registry) if loaded else None
 
 
+_wifi_ap_cache = {"key": None, "at": 0.0, "out": None}
+# A device moved to another HA area changes neither the layout version nor
+# the registry size, so a cached answer is also dropped after this long.
+WIFI_AP_CACHE_S = 60.0
+
+
 def _wifi_access_points(hass, layout, macs):
+    """_wifi_access_points_uncached, remembered while nothing it reads moved:
+    the layout version, the wanted MACs and the device-registry size (plus a
+    short age bound for an area edit). Callers get their own copy."""
+    wanted = frozenset({wifi_mod._mac_key(m) for m in macs if m} - {None})
+    if not wanted:
+        return {}
+    try:
+        from homeassistant.helpers import device_registry as dr  # noqa: PLC0415
+        reg_size = len(dr.async_get(hass).devices)
+    except Exception:  # noqa: BLE001 - tests without registries
+        reg_size = None
+    try:
+        version = get_layout_version(hass)
+    except Exception:  # noqa: BLE001 - no layout bucket: do not cache
+        version = None
+    now = time.monotonic()
+    key = (version, wanted, reg_size)
+    cache = _wifi_ap_cache
+    if version is not None and cache["key"] == key and 0 <= now - cache["at"] < WIFI_AP_CACHE_S:
+        return {m: dict(v) for m, v in cache["out"].items()}
+    out = _wifi_access_points_uncached(hass, layout, macs)
+    cache.update(key=key, at=now, out={m: dict(v) for m, v in out.items()} if version is not None else None)
+    return out
+
+
+def _wifi_access_points_uncached(hass, layout, macs):
     """{ap mac: {"name", "floor", "room", "area_id", "floor_id", "placed"}} for
     the access points in ``macs`` (the ones some client is on).
 
@@ -4395,7 +4441,11 @@ def _wifi_cycle(hass, layout, by_person):
     first = wifi_mod.candidates(states, known=known)
     infra |= {c["ap"] for c in first.values() if c.get("ap")}
     aps = _wifi_access_points(hass, layout, infra)
-    cands = wifi_mod.candidates(states, infra, _wifi_store.setdefault("clients", {}))
+    # The second pass candidates(states, infra, known) is the first minus the
+    # trackers whose MAC is an access point: those share a MAC, so the
+    # duplicate-merge inside candidates() never mixes them with the others.
+    ap_keys = {wifi_mod._mac_key(m) for m in infra if m} - {None}
+    cands = {e: c for e, c in first.items() if not (c["mac"] and c["mac"] in ap_keys)}
     wifi_mod.prune_matches(_wifi_store, time.time())
     _wifi_store["names"] = {e: c["name"] for e, c in cands.items()}
     # A pet is a person to Home Assistant but carries no phone: never a Wi-Fi owner.
@@ -5621,7 +5671,7 @@ class _FloorZones(list):
     call over the floor instead of one Python call per zone.
     """
 
-    __slots__ = ("allowed_ids", "allowed_geoms", "allowed_rings", "allowed_boundaries", "snap")
+    __slots__ = ("allowed_ids", "allowed_geoms", "allowed_rings", "allowed_boundaries", "snap", "snap_own", "snap_nogo_grown")
 
     def __init__(self, tuples):
         super().__init__(tuples)
@@ -5635,6 +5685,10 @@ class _FloorZones(list):
         # boundary works for Polygon and MultiPolygon alike.
         self.allowed_boundaries = _geometry_array([polygon.boundary for polygon in allowed])
         self.snap = _snap_geometry(self)
+        # _preferred_snap_target's per-zone results and the grown no-go union,
+        # filled on first use (most floors never need them).
+        self.snap_own = {}
+        self.snap_nogo_grown = None
 
 
 def _floor_zone_polygons(hass, data, entity, floor_name):
@@ -5798,13 +5852,29 @@ def snap_point_into_zones(zone_polys, point, prefer=None, prefer_margin_px=0.0):
 def _preferred_snap_target(zone_polys, zone_id, nogo_union):
     """The valid part of one allowed zone (its polygon less the grown no-go
     union), or None when the floor has no such allowed zone."""
+    # A cached floor remembers the answer per zone (its nogo_union is its
+    # own snap[1], so the zone id is the whole key).
+    memo = zone_polys.snap_own if isinstance(zone_polys, _FloorZones) else None
+    if memo is not None and zone_id in memo:
+        return memo[zone_id]
     polys = [polygon for zid, polygon, _buffer_size, no_go in zone_polys if zid == zone_id and not no_go]
     if not polys:
-        return None
-    own = unary_union(polys)
-    if nogo_union is not None:
-        own = own.difference(nogo_union.buffer(NO_GO_SNAP_MARGIN_PX))
-    return None if own.is_empty else own
+        own = None
+    else:
+        own = unary_union(polys)
+        if nogo_union is not None:
+            if memo is not None:
+                if zone_polys.snap_nogo_grown is None:
+                    zone_polys.snap_nogo_grown = nogo_union.buffer(NO_GO_SNAP_MARGIN_PX)
+                grown = zone_polys.snap_nogo_grown
+            else:
+                grown = nogo_union.buffer(NO_GO_SNAP_MARGIN_PX)
+            own = own.difference(grown)
+        if own.is_empty:
+            own = None
+    if memo is not None:
+        memo[zone_id] = own
+    return own
 
 
 def find_nearest_zone(hass, data, entity, floor_name, point):
@@ -5945,12 +6015,44 @@ def find_sub_zone_for_point(hass, data, entity, floor_name, point):
 SIGNAL_BPS_UPDATE = "sextant_positions_updated"
 
 
+# The row fields a map-only subscriber (sextant-map-card with circles off)
+# reads; ``sextant/subscribe`` with ``detail: false`` sends only these.
+SLIM_ROW_KEYS = ("ent", "cords", "zone", "sub_zone", "floor", "conf", "updated", "outside", "presence", "kind", "class", "heading")
+
+
+def _round_floats(value, places=2):
+    """A copy of nested lists with every float rounded (other values as they are)."""
+    if isinstance(value, float):
+        return round(value, places)
+    if isinstance(value, (list, tuple)):
+        return [_round_floats(v, places) for v in value]
+    return value
+
+
+def _wire_row(row):
+    """A copy of a stored position row for the websocket: ``cords`` and
+    ``radii`` rounded to 2 decimals. The stored row is left alone."""
+    if not isinstance(row, dict):
+        return row
+    out = dict(row)
+    for key in ("cords", "radii"):
+        if key in out:
+            out[key] = _round_floats(out[key])
+    return out
+
+
+def _slim_payload(payload):
+    """The same push with ``positions`` cut to SLIM_ROW_KEYS."""
+    return {**payload, "positions": [{k: r[k] for k in SLIM_ROW_KEYS if k in r} if isinstance(r, dict) else r
+                                     for r in payload.get("positions") or []]}
+
+
 def _push_payload(hass):
     """What a websocket subscriber gets on subscribe and after each cycle."""
     dom = hass.data.get(DOMAIN, {}) if isinstance(getattr(hass, "data", None), dict) else {}
     return {
         "stamp": time.time(),
-        "positions": list(dom.get("apitricords") or []),
+        "positions": [_wire_row(r) for r in dom.get("apitricords") or []],
         "offline_receivers": list(dom.get("rl_offline") or []),
         # mmWave radar targets on the plan: {floor, cords, radar_name, thing,
         # room}; a target with no thing is someone Sextant has no device for.
@@ -5965,7 +6067,12 @@ def _push_payload(hass):
     }
 
 
-@websocket_api.websocket_command({vol.Required("type"): "sextant/subscribe"})
+@websocket_api.websocket_command({
+    vol.Required("type"): "sextant/subscribe",
+    # False: slim position rows (SLIM_ROW_KEYS), for a map that draws no
+    # circles or fingerprint marks.
+    vol.Optional("detail", default=True): bool,
+})
 @websocket_api.async_response
 async def _ws_subscribe(hass, connection, msg):
     """``sextant/subscribe``: stream positions and receiver health, one event per cycle.
@@ -5975,8 +6082,12 @@ async def _ws_subscribe(hass, connection, msg):
     standard ``unsubscribe_events`` on the subscription id.
     """
 
+    detail = msg.get("detail", True)
+
     @callback
     def _forward(payload):
+        if not detail:
+            payload = _slim_payload(payload)
         connection.send_message(websocket_api.event_message(msg["id"], payload))
 
     connection.subscriptions[msg["id"]] = async_dispatcher_connect(hass, SIGNAL_BPS_UPDATE, _forward)

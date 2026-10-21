@@ -9,7 +9,7 @@
  */
 import { LitElement, html, css, nothing } from "./lit.js";
 import { SextantMap, polygonCentroid, snapToVertex, squareUp, thingHue, radarCalibration } from "./sextant-map.js";
-import { sharedStyles, widgetStyles, toast, callWS, confirmDialog, fmtNum, fmtLen, uiField, uiSelect, uiSwitch, uiButton, uiIconButton, uiMenu, proxyName, lenUnit, toDisplayLen, fromDisplayLen, fmtScale, isImperial, THING_CLASSES, CLASS_FAMILIES, mapOverlayStyles, renderScaleBar, uiColour, mapUrlFor } from "./sextant-ui.js";
+import { sharedStyles, widgetStyles, toast, callWS, confirmAsync, fmtNum, fmtLen, uiField, uiSelect, uiSwitch, uiButton, uiIconButton, uiMenu, proxyName, lenUnit, toDisplayLen, fromDisplayLen, fmtScale, isImperial, THING_CLASSES, CLASS_FAMILIES, mapOverlayStyles, renderScaleBar, uiColour, mapUrlFor } from "./sextant-ui.js";
 import { lostShapes } from "./sextant-shapes.js";
 
 // [id, label under the icon, icon, tooltip]
@@ -290,12 +290,12 @@ class SextantEdit extends LitElement {
 
   /** Ask before something would throw the draft away (another floor, another
    * page). True to go ahead. */
-  confirmLeave(what = "Leave") {
+  async confirmLeave(what = "Leave") {
     if (!this.unsaved) return true;
     const msg = this._dirty
       ? `${what} without saving? The changes to this floor plan will be lost.`
       : `${what}? The shape you are drawing is not finished and will be lost.`;
-    return confirmDialog(msg);
+    return confirmAsync(msg, { ok: "Leave", danger: true });
   }
 
   updated(changed) {
@@ -463,7 +463,7 @@ class SextantEdit extends LitElement {
   }
 
   async _loadRadarDevices() {
-    const r = await this.hass?.callWS({ type: "sextant/radar/devices" }).catch(() => null);
+    const r = this.hass ? await callWS(this, this.hass, { type: "sextant/radar/devices" }) : null;
     this._radarDevices = r?.devices || [];
     this._map?.setRadarInfo(Object.fromEntries(this._radarDevices.map((d) => [d.device_id, { name: d.name, range_m: d.range_m, fov_deg: d.fov_deg }])));
   }
@@ -1013,7 +1013,7 @@ class SextantEdit extends LitElement {
     toast(this, "Spot resized. Drag it into place if needed, then Save");
   }
 
-  _deleteSelection() {
+  async _deleteSelection() {
     const sel = this._selection, f = this._floorObj();
     if (!sel || !f) return;
     const list = this._listFor(sel.kind, f);
@@ -1021,7 +1021,7 @@ class SextantEdit extends LitElement {
     const what = { receiver: "proxy", zone: "room", pin: "anchor", remark: "note", radar: "mmWave sensor", ap: "access point" }[sel.kind] || "spot";
     // An empty note has nothing to name and nothing to lose: no dialog for it.
     const named = sel.kind === "ap" ? this._apName(item) : item.entity_id ?? item.name ?? item.text;
-    if (named && !confirmDialog(`Delete ${what} "${named}"?`)) return;
+    if (named && !(await confirmAsync(`Delete ${what} "${named}"?`, { ok: "Delete", danger: true }))) return;
     this._snapshot();
     list.splice(sel.index, 1);
     if (sel.kind === "pin") this._refreshAlignment();
@@ -1082,7 +1082,7 @@ class SextantEdit extends LitElement {
 
   async _removeFloor() {
     const f = this._floorObj();
-    if (!f || !confirmDialog(`Delete floor "${f.name}" with its ${(f.receivers || []).length} proxies and ${(f.zones || []).length} rooms?`)) return;
+    if (!f || !(await confirmAsync(`Delete floor "${f.name}" with its ${(f.receivers || []).length} proxies and ${(f.zones || []).length} rooms?`, { ok: "Delete", danger: true }))) return;
     const maps = this.data?.maps || [];
     const url = mapUrlFor(f.name, maps);
     const mapFile = url ? decodeURIComponent(url.split("/").pop()) : null;
@@ -1101,7 +1101,7 @@ class SextantEdit extends LitElement {
     // bedside tables that went out as one point each. (Auto-save checked
     // already and holds off rather than asking: see _autosaveTick.)
     const lost = auto ? [] : lostShapes(this.data?.layout, draft);
-    if (lost.length && !confirmDialog(`This save would break ${lost.length === 1 ? "a shape" : `${lost.length} shapes`}:\n\n${lost.join("\n")}\n\nSave anyway? The plan as it is now is kept under History.`)) return null;
+    if (lost.length && !(await confirmAsync(`This save would break ${lost.length === 1 ? "a shape" : `${lost.length} shapes`}:\n\n${lost.join("\n")}\n\nSave anyway? The plan as it is now is kept under History.`))) return null;
     this._busy = true;
     const sent = layoutKey(draft);
     const r = await callWS(this, this.hass, { type: "sextant/layout/save", layout: draft, ...(removeMap ? { remove_map: removeMap } : {}) });
@@ -1131,8 +1131,8 @@ class SextantEdit extends LitElement {
 
   async _restoreSnapshot(snap) {
     const when = new Date(snap.at * 1000).toLocaleString();
-    if (this._dirty && !confirmDialog(`You have unsaved changes; restoring throws them away. Restore the plan from ${when}?`)) return;
-    if (!this._dirty && !confirmDialog(`Restore the plan from ${when}? The plan as it is now is kept, so this can be undone the same way.`)) return;
+    if (this._dirty && !(await confirmAsync(`You have unsaved changes; restoring throws them away. Restore the plan from ${when}?`))) return;
+    if (!this._dirty && !(await confirmAsync(`Restore the plan from ${when}? The plan as it is now is kept, so this can be undone the same way.`))) return;
     this._busy = true;
     const r = await callWS(this, this.hass, { type: "sextant/snapshots/restore", id: snap.id });
     this._busy = false;
@@ -1161,8 +1161,8 @@ class SextantEdit extends LitElement {
     </div>`;
   }
 
-  _discard() {
-    if (this._dirty && !confirmDialog("Discard unsaved changes?")) return;
+  async _discard() {
+    if (this._dirty && !(await confirmAsync("Discard unsaved changes?", { ok: "Discard", danger: true }))) return;
     this._syncDraft(true);
   }
 
