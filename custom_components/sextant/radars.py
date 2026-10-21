@@ -40,7 +40,6 @@ MERGE_RADIUS_M = 0.8
 # of the body, so lying is below half a metre and sitting below about 1.1 m.
 POSTURE_LYING_M = 0.5
 POSTURE_SITTING_M = 1.1
-MOUNTS = ("wall", "ceiling")
 # How a 3D radar's z reads: height above the floor, or up / down from the
 # sensor (firmwares differ; the Edit page shows the heights to check it).
 Z_REFS = ("floor", "up", "down")

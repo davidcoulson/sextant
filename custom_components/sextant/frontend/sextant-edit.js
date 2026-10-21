@@ -9,8 +9,7 @@
  */
 import { LitElement, html, css, nothing } from "./lit.js";
 import { SextantMap, polygonCentroid, snapToVertex, squareUp, thingHue, radarCalibration } from "./sextant-map.js";
-import { sharedStyles, widgetStyles, toast, callWS, confirmDialog, fmtNum, fmtLen, uiField, uiSelect, uiSwitch, uiButton, uiIconButton, uiMenu, proxyName, lenUnit, toDisplayLen, fromDisplayLen, fmtScale, isImperial, THING_CLASSES, CLASS_FAMILIES, mapOverlayStyles, renderScaleBar, uiColour } from "./sextant-ui.js";
-import { mapUrlFor } from "./sextant-panel.js";
+import { sharedStyles, widgetStyles, toast, callWS, confirmDialog, fmtNum, fmtLen, uiField, uiSelect, uiSwitch, uiButton, uiIconButton, uiMenu, proxyName, lenUnit, toDisplayLen, fromDisplayLen, fmtScale, isImperial, THING_CLASSES, CLASS_FAMILIES, mapOverlayStyles, renderScaleBar, uiColour, mapUrlFor } from "./sextant-ui.js";
 import { lostShapes } from "./sextant-shapes.js";
 
 // [id, label under the icon, icon, tooltip]

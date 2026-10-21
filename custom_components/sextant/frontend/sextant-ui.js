@@ -466,3 +466,43 @@ export function uiColour({ host, label = "Colour", value, onChange, auto = null,
       @change=${(e) => onChange(e.target.value)}>` : nothing}
   </span>`;
 }
+
+/** The map file for a floor, matched loosely on its name; null when none. */
+export function mapUrlFor(floorName, maps) {
+  if (!floorName || !maps) return null;
+  const norm = (s) => String(s).toLowerCase().replace(/\.[a-z0-9]+$/, "").replace(/[\s_-]+/g, "");
+  const want = norm(floorName);
+  const hit = maps.find((m) => norm(m) === want) || maps.find((m) => norm(m).startsWith(want));
+  return hit ? `/api/sextant/map/${encodeURIComponent(hit)}` : null;
+}
+
+// A failed layout fetch or subscription is not retried sooner than this: hass
+// changes several times a second, and each change would otherwise try again.
+const RETRY_MS = 30000;
+
+/** True when a failure at `failedAt` (ms, 0 for none) is recent enough to wait. */
+export function retryWait(failedAt, now = Date.now()) { return now - (failedAt || 0) < RETRY_MS; }
+
+/** Fetch the layout for `host` (an element with hass); keeps host._loading,
+ * host._error and host._loadFailedAt. Returns the data, or null on failure. */
+export async function loadLayout(host) {
+  host._loading = true;
+  try {
+    const data = await host.hass.callWS({ type: "sextant/layout/get" });
+    host._loadFailedAt = 0;
+    return data;
+  } catch (e) {
+    host._error = e?.message || String(e);
+    host._loadFailedAt = Date.now();
+    return null;
+  } finally {
+    host._loading = false;
+  }
+}
+
+/** Subscribe `host` to the position push; keeps host._unsub and host._subFailedAt. */
+export function subscribePositions(host, onPayload, onError) {
+  if (!host.hass?.connection || host._unsub) return;
+  host._unsub = host.hass.connection.subscribeMessage(onPayload, { type: "sextant/subscribe" });
+  host._unsub.then(() => { host._subFailedAt = 0; }, (e) => { host._unsub = null; host._subFailedAt = Date.now(); onError?.(e); });
+}

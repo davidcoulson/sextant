@@ -32,7 +32,6 @@ import math
 import os
 import time
 
-DOMAIN = "sextant"
 
 # Sub-directory under config/.storage. NOT under www/: history must never be
 # web-served, the same reasoning that moved the layout out of www in #104.

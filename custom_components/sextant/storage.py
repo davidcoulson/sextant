@@ -12,6 +12,7 @@ file is never truncated), and ``.storage`` is not web-served. This module is
 the single owner of that data and imports nothing from the rest of the package
 (so both ``__init__`` and ``calibration`` can import it without a cycle).
 """
+from .const import DOMAIN
 import asyncio
 import copy
 import json
@@ -27,7 +28,6 @@ from homeassistant.helpers.storage import Store
 
 _LOGGER = logging.getLogger(__name__)
 
-DOMAIN = "sextant"
 STORAGE_VERSION = 1
 STORAGE_KEY_LAYOUT = "sextant"                       # -> config/.storage/sextant
 STORAGE_KEY_CALIB = "sextant_calibration_state"      # -> config/.storage/sextant_calibration_state

@@ -896,11 +896,8 @@ async def ws_calibration_action(hass, connection, msg):
 @websocket_api.websocket_command({vol.Required("type"): "sextant/selftest"})
 @websocket_api.async_response
 async def ws_selftest(hass, connection, msg):
-    from .calibration import get_calibration_state  # noqa: PLC0415
-
     core = _core()
-    samples = {k: list(v) for k, v in get_calibration_state(hass).get("samples", {}).items()}
-    result = await hass.async_add_executor_job(core.run_selftest, hass, samples)
+    result = await core.async_run_selftest(hass)
     state, attrs = core._selftest_summary(result)
     connection.send_result(msg["id"], {"result": result, "state": state, "summary": attrs, "breakdown": core.selftest_breakdown(result)})
 

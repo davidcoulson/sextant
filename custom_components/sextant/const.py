@@ -1,5 +1,15 @@
 DOMAIN = "sextant"
 
+# Config-entry options (config_flow.py edits them, __init__.py reads them).
+OPTION_SHOW_SIDEBAR_PANEL = "show_sidebar_panel"
+OPTION_UPDATE_INTERVAL = "update_interval"
+# Trilateration (numpy least squares, multi-start) is real CPU work. 1s was
+# fine for a handful of things but scales linearly with thing count and
+# adds up fast - profiling showed it as the largest chunk of custom-component
+# CPU time on a live instance. 15s still updates a thing's room/position
+# fast enough for presence automations while cutting recompute volume ~15x.
+DEFAULT_UPDATE_INTERVAL = 15
+
 # Global diagnostic sensor: receiver self-localization accuracy (CEP95, m).
 # Shared by sensor.py (the entity) and __init__.py (the periodic publisher).
 ACCURACY_ENTITY_ID = "sensor.sextant_position_accuracy"

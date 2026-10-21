@@ -261,27 +261,6 @@ def suggest(store: dict, tracker: str, names: dict | None = None) -> tuple:
     return ranked[0][2], round(min(1.0, lead / (2 * MATCH_MIN_LEAD)), 2), "co-location"
 
 
-def assignments(store: dict, trackers, people_names: dict, manual: dict | None = None) -> dict:
-    """{person: {"entity", "how": "manual"|"name"|"co-location", "confidence"}}
-    - the manual table first, then one suggestion per tracker, each person
-    taking at most one tracker (the most confident)."""
-    out = {}
-    for person, entity in (manual or {}).items():
-        if isinstance(entity, str) and entity:
-            out[person] = {"entity": entity, "how": "manual", "confidence": 1.0}
-    taken = {v["entity"] for v in out.values()}
-    for tracker in trackers:
-        if tracker in taken:
-            continue
-        person, conf, why = suggest(store, tracker, people_names)
-        if person is None or person in out:
-            continue
-        cur = out.get(person)
-        if cur is None or conf > cur["confidence"]:
-            out[person] = {"entity": tracker, "how": why, "confidence": conf}
-    return out
-
-
 # --- access points on the plan ------------------------------------------------
 #
 # The Edit page places access points on the floor plan. Nothing positions

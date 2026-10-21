@@ -5,12 +5,9 @@ import voluptuous as vol
 # Import DOMAIN from the lightweight const module, NOT from the package root:
 # `from . import DOMAIN` executes __init__.py (numpy/shapely/watchdog) just
 # to load the config flow, and couples config-flow loading to those heavy deps.
-from .const import DOMAIN
+from .const import DOMAIN, DEFAULT_UPDATE_INTERVAL, OPTION_SHOW_SIDEBAR_PANEL, OPTION_UPDATE_INTERVAL
 
 _LOGGER = logging.getLogger(__name__)
-OPTION_SHOW_SIDEBAR_PANEL = "show_sidebar_panel"
-OPTION_UPDATE_INTERVAL = "update_interval"
-DEFAULT_UPDATE_INTERVAL = 15
 
 class SextantConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Sextant."""

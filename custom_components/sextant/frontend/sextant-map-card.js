@@ -15,19 +15,7 @@
  */
 import { LitElement, html, css, nothing } from "./lit.js";
 import { SextantMap } from "./sextant-map.js";
-import { sortFloors, classIcon, thingName } from "./sextant-ui.js";
-
-// A failed layout fetch or subscription is not retried sooner than this: hass
-// changes several times a second, and each change would otherwise try again.
-const RETRY_MS = 30000;
-
-function mapUrlFor(floorName, maps) {
-  if (!floorName || !maps) return null;
-  const norm = (s) => String(s).toLowerCase().replace(/\.[a-z0-9]+$/, "").replace(/[\s_-]+/g, "");
-  const want = norm(floorName);
-  const hit = maps.find((m) => norm(m) === want) || maps.find((m) => norm(m).startsWith(want));
-  return hit ? `/api/sextant/map/${encodeURIComponent(hit)}` : null;
-}
+import { sortFloors, classIcon, thingName, mapUrlFor, retryWait, loadLayout, subscribePositions } from "./sextant-ui.js";
 
 class SextantMapCard extends LitElement {
   static properties = { hass: { attribute: false }, _config: { state: true }, _data: { state: true }, _positions: { state: true }, _floor: { state: true } };
@@ -53,8 +41,8 @@ class SextantMapCard extends LitElement {
   updated(changed) {
     const now = Date.now();
     if (changed.has("hass") && this.hass) {
-      if (!this._data && !this._loading && !(now - (this._loadFailedAt || 0) < RETRY_MS)) this._load();
-      if (!this._unsub && !(now - (this._subFailedAt || 0) < RETRY_MS)) this._subscribe();
+      if (!this._data && !this._loading && !retryWait(this._loadFailedAt, now)) this._load();
+      if (!this._unsub && !retryWait(this._subFailedAt, now)) this._subscribe();
     }
     let fresh = false;
     if (!this._map) {
@@ -70,25 +58,20 @@ class SextantMapCard extends LitElement {
 
   async _load() {
     if (!this.hass) return;
-    this._loading = true;
-    try {
-      this._data = await this.hass.callWS({ type: "sextant/layout/get" });
-      this._loadFailedAt = 0;
-      if (!this._floor) this._floor = this._config?.floor || this._data.layout?.floor?.[0]?.name || null;
-    } catch (e) { this._error = e?.message || String(e); this._loadFailedAt = Date.now(); }
-    finally { this._loading = false; }
+    const data = await loadLayout(this);
+    if (!data) return;
+    this._data = data;
+    if (!this._floor) this._floor = this._config?.floor || data.layout?.floor?.[0]?.name || null;
   }
 
   _subscribe() {
-    if (!this.hass?.connection || this._unsub) return;
-    this._unsub = this.hass.connection.subscribeMessage((payload) => {
+    subscribePositions(this, (payload) => {
       this._positions = payload;
       if (this._config?.follow && this._config.entities?.length) {
         const first = payload.positions?.find((p) => p.ent === this._config.entities[0]);
         if (first?.floor && first.floor !== this._floor) this._floor = first.floor;
       }
-    }, { type: "sextant/subscribe" });
-    this._unsub.then(() => { this._subFailedAt = 0; }, () => { this._unsub = null; this._subFailedAt = Date.now(); });
+    });
   }
 
   _push() {

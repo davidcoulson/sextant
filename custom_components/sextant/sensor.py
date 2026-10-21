@@ -557,65 +557,41 @@ def cleanup_legacy_sextant_states(hass):
         hass.states.async_remove(entity_id)
 
 
+def _rename_registry_entities(hass, expected_by_uid, what):
+    """Rename every registry entry whose unique_id maps to another entity_id.
+    If the target id is blocked by a stale entry, remove the old one; it is
+    recreated under the right id on the next add."""
+    if not expected_by_uid:
+        return
+    entity_registry = er.async_get(hass)
+    for entry in list(entity_registry.entities.values()):
+        expected_entity_id = expected_by_uid.get(entry.unique_id)
+        if expected_entity_id and entry.entity_id != expected_entity_id:
+            _LOGGER.info("%s of Sextant entity_id from %s to %s", what, entry.entity_id, expected_entity_id)
+            try:
+                entity_registry.async_update_entity(entry.entity_id, new_entity_id=expected_entity_id)
+            except ValueError:
+                _LOGGER.info("Removing conflicting Sextant registry entity: %s", entry.entity_id)
+                entity_registry.async_remove(entry.entity_id)
+
+
 def normalize_sextant_registry_entity_ids(hass, entities):
     """Ensure Sextant registry entries use stable non-legacy entity_id by unique_id."""
-    entity_registry = er.async_get(hass)
     expected_by_uid = {}
     for entity in entities:
         for suffix, _label in SENSOR_KINDS:
             expected_by_uid[f"{suffix}_{entity}"] = f"sensor.{entity}_{suffix}"
-
-    for entry in list(entity_registry.entities.values()):
-        expected_entity_id = expected_by_uid.get(entry.unique_id)
-        if expected_entity_id and entry.entity_id != expected_entity_id:
-            _LOGGER.info(
-                "Migrating Sextant entity_id from %s to %s",
-                entry.entity_id,
-                expected_entity_id,
-            )
-            try:
-                entity_registry.async_update_entity(
-                    entry.entity_id,
-                    new_entity_id=expected_entity_id,
-                )
-            except ValueError:
-                # If the target id is blocked by stale data/entry, remove old entry and recreate.
-                _LOGGER.info("Removing conflicting Sextant registry entity: %s", entry.entity_id)
-                entity_registry.async_remove(entry.entity_id)
+    _rename_registry_entities(hass, expected_by_uid, "Migration")
 
 
 def normalize_sextant_registry_entity_ids_from_cache(hass):
     """Normalize Sextant entity_ids using the in-memory sensor cache unique_ids."""
-    sensors_cache = hass.data.get("sextant_sensors", {})
-    if not sensors_cache:
-        return
-
     expected_by_uid = {}
-    for expected_entity_id, sensor in sensors_cache.items():
+    for expected_entity_id, sensor in hass.data.get("sextant_sensors", {}).items():
         uid = getattr(sensor, "unique_id", None)
         if uid and expected_entity_id.startswith("sensor."):
             expected_by_uid[uid] = expected_entity_id
-
-    if not expected_by_uid:
-        return
-
-    entity_registry = er.async_get(hass)
-    for entry in list(entity_registry.entities.values()):
-        expected_entity_id = expected_by_uid.get(entry.unique_id)
-        if expected_entity_id and entry.entity_id != expected_entity_id:
-            _LOGGER.info(
-                "Post-add migration of Sextant entity_id from %s to %s",
-                entry.entity_id,
-                expected_entity_id,
-            )
-            try:
-                entity_registry.async_update_entity(
-                    entry.entity_id,
-                    new_entity_id=expected_entity_id,
-                )
-            except ValueError:
-                _LOGGER.info("Removing conflicting Sextant registry entity: %s", entry.entity_id)
-                entity_registry.async_remove(entry.entity_id)
+    _rename_registry_entities(hass, expected_by_uid, "Post-add migration")
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
     """Set dynamic sensors based on the filtered entities"""
@@ -781,7 +757,3 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 
     _try_subscribe()
 
-
-async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
-    """If using configuration in configuration.yaml"""
-    await async_setup_entry(hass, config, async_add_entities)

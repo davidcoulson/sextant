@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import math
 
+from .layout_check import _finite
+
 CELL_M = 1.0
 # Samples per cell and access point before the counts are halved, so a cell
 # follows the house as access points and furniture move.
@@ -81,10 +83,6 @@ def new_store() -> dict:
     (every sample, and the proxies' alone, each pair halved at CELL_CAP on its own);
     bias: {client mac: dB}; last: {client mac: when last sampled}."""
     return {"cells": {}, "bias": {}, "last": {}}
-
-
-def _finite(v) -> bool:
-    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
 
 
 def cell_index(x_px, y_px, scale) -> tuple | None:

@@ -192,8 +192,6 @@ def test_subscribe_retries_until_bermuda_is_there(tmp_path, monkeypatch):
     assert hass.data["sextant_bermuda_retry_unsub"] == "unsub"
     scheduled[0][1]()  # the retry lands: subscribed
     assert len(attempts) == 2 and callable(hass.data["sextant_bermuda_listener_unsub"])
-    # platform setup from YAML goes the same way
-    run(sn.async_setup_platform(hass, {}, lambda *a, **k: None))
 
 
 def test_a_never_seen_thing_still_has_usable_location_attributes():

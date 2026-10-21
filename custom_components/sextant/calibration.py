@@ -25,6 +25,7 @@ uniformly rescale every thing distance and shift all positions (learned the
 hard way: zones all went "unknown" the moment the first corrections landed).
 """
 
+from .const import DOMAIN
 import asyncio
 import json
 import logging
@@ -52,7 +53,6 @@ from .storage import (
     save_calib_state,
 )
 
-DOMAIN = "sextant"
 SAMPLE_INTERVAL = 10  # seconds between sample rounds (manual run)
 DEFAULT_DURATION = 600  # seconds of sampling (manual run)
 MIN_DURATION = 60
@@ -133,13 +133,16 @@ def _normalize(value):
     return str(value or "").strip().lower()
 
 
-# Mirrors __init__._scanner_token (calibration cannot import __init__ — it
-# would be circular): the trailing MAC-derived hex group in a scanner slug,
-# a stable hardware identity that survives renames.
 _SCANNER_TOKEN_RE = re.compile(r"^[0-9a-f]{5,12}$")
 
 
 def _scanner_token(slug):
+    """The trailing hardware id Bermuda embeds in a scanner slug: the hex group
+    derived from the device's MAC, e.g. 'master_bedroom_esp32c5_f17464' ->
+    'f17464'. This survives renames of the human-readable prefix, so it is a
+    stable identity for a physical scanner. None when the slug has no hex tail.
+    (__init__ imports it from here.)
+    """
     if not slug:
         return None
     last = str(slug).rsplit("_", 1)[-1].lower()

@@ -7,7 +7,6 @@ from homeassistant.components.http import HomeAssistantView
 from homeassistant.components.frontend import async_remove_panel
 from homeassistant.components import panel_custom
 from homeassistant.helpers.service import async_register_admin_service
-from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.dispatcher import async_dispatcher_connect, async_dispatcher_send
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
@@ -37,9 +36,12 @@ try:
     from shapely.validation import make_valid as shapely_make_valid
 except ImportError:  # very old shapely
     shapely_make_valid = None
-from asyncio import Lock, Queue, wait_for, TimeoutError
+from asyncio import wait_for, TimeoutError
 
+from .const import DOMAIN, DEFAULT_UPDATE_INTERVAL, OPTION_SHOW_SIDEBAR_PANEL, OPTION_UPDATE_INTERVAL
 from .calibration import (
+    DUMP_DEVICES_TIMEOUT_S,
+    _scanner_token,
     apply_corrections,
     async_cancel_calibration,
     async_restore_calibration_state,
@@ -89,27 +91,12 @@ from . import wifi as wifi_mod
 from . import heat as heat_mod
 from . import rooms as rooms_mod
 from . import runtime as runtime_mod
-from .zone_adjust import adjust_zones, adjust_subzones
 
 _LOGGER = logging.getLogger(__name__)
 
-DOMAIN = "sextant"
-OPTION_SHOW_SIDEBAR_PANEL = "show_sidebar_panel"
-OPTION_UPDATE_INTERVAL = "update_interval"
-# Trilateration (scipy least_squares, multi-start) is real CPU work. 1s was
-# fine for a handful of things but scales linearly with thing count and
-# adds up fast - profiling showed it as the largest chunk of custom-component
-# CPU time on a live instance. 15s still updates a thing's room/position
-# fast enough for presence automations while cutting recompute volume ~15x.
-DEFAULT_UPDATE_INTERVAL = 15
 FRONTEND_PATH = Path(__file__).parent / "frontend"
-LEGACY_BPS_ENTITY_PATTERN = re.compile(r"^sensor\.(.+)_\1_sextant_(zone|floor)$")
 
 # Global data (the layout now lives in the Store; see storage.get_layout)
-state_change_lock = Lock()
-state_change_counter = {}
-update_queue = Queue()
-tracked_listeners = {}
 tracked_entities = []
 new_global_data = {}
 secToUpdate = DEFAULT_UPDATE_INTERVAL
@@ -331,9 +318,6 @@ def _admin_only(request):
 # Non-map files that live in www/sextant_maps and must never be deletable via the
 # save_text "remove" field (that field is only meant to drop an old map image).
 _PROTECTED_MAPS_FILES = {"bpsdata.txt", "sextant_calibration_state.json"}
-# Longest to wait on Bermuda's dump_devices before treating it as unavailable,
-# so a hung/slow service can't stall the liveness or calibration loops.
-DUMP_DEVICES_TIMEOUT_S = 10.0
 
 
 def _safe_maps_child(maps_path, raw_name, allowed_exts=None):
@@ -1493,27 +1477,6 @@ def _kf_step(x, P, meas, dt, r_var, a_var_move, a_var_still, moving, move_nis, h
     return xn, Pn, moving, nis
 
 
-def cleanup_legacy_sextant_registry_and_states(hass: HomeAssistant):
-    """Remove legacy duplicated Sextant ids from entity registry and state machine."""
-    entity_registry = er.async_get(hass)
-    legacy_registry_ids = [
-        entry.entity_id
-        for entry in entity_registry.entities.values()
-        if LEGACY_BPS_ENTITY_PATTERN.match(entry.entity_id)
-    ]
-    for entity_id in legacy_registry_ids:
-        _LOGGER.info("Removing legacy Sextant registry entity: %s", entity_id)
-        entity_registry.async_remove(entity_id)
-
-    legacy_state_ids = [
-        state.entity_id
-        for state in hass.states.async_all()
-        if LEGACY_BPS_ENTITY_PATTERN.match(state.entity_id)
-    ]
-    for entity_id in legacy_state_ids:
-        _LOGGER.info("Removing legacy Sextant state: %s", entity_id)
-        hass.states.async_remove(entity_id)
-
 # The last cycle failure and how many times it has repeated, so a persistent
 # one is logged every so often instead of every fifteen seconds.
 _cycle_error_last = None
@@ -1743,21 +1706,6 @@ def _scanner_slugs_and_readings(hass):
         if st.state not in (None, "", "unknown", "unavailable"):
             with_reading.add(eid.split("_distance_to_", 1)[1])
     return slugs, with_reading
-
-
-_SCANNER_TOKEN_RE = re.compile(r"^[0-9a-f]{5,12}$")
-
-
-def _scanner_token(slug):
-    """The trailing hardware id Bermuda embeds in a scanner slug — the hex group
-    derived from the device's MAC, e.g. 'master_bedroom_esp32c5_f17464' ->
-    'f17464'. This survives renames of the human-readable prefix, so it is a
-    stable identity for a physical scanner. None when the slug has no hex tail.
-    """
-    if not slug:
-        return None
-    last = str(slug).rsplit("_", 1)[-1].lower()
-    return last if _SCANNER_TOKEN_RE.match(last) else None
 
 
 def _suggest_scanner(placement_slug, stored_uid, candidates):
@@ -3114,13 +3062,24 @@ def update_or_add_entry(data, new_entry):
     return data
 
 
-def _forget_thing_state(ent):
-    """Drop everything the tracking loop remembers about one thing, including
-    its last sighting - the one thing the stale-position prune keeps, so that
-    the Live page can say "away since". For a thing being forgotten on purpose
-    (see ws_thing_forget) that memory is the point."""
-    for table in (_kf_position_state, _zone_state, _subzone_state, _anchor_state, _floor_probability,
-                  _floor_probability_at, _floor_challenge, _floor_dark_cycles, _floor_since, _arrivals, _last_seen, _presence_published, _outside_state):
+def _forget_thing_state(ent, keep_sighting=False):
+    """Drop what the tracking loop remembers about one thing: the Kalman state
+    (a returning thing re-seeds fresh rather than predicting velocity across
+    the absence), the room, spot, anchor and Outside elections, and the whole
+    floor election - probabilities, pending challenge and the incumbency
+    itself, since it may come back on another floor and an hours-stale
+    incumbent must not enjoy hysteresis against it. Jump-gate radii from
+    before the absence are equally meaningless.
+
+    keep_sighting leaves the last sighting and the published presence, so the
+    stale-position prune can still say "away since". For a thing forgotten on
+    purpose (ws_thing_forget) that memory is the point, and its radar pin,
+    robot and error bookkeeping go too."""
+    tables = [_kf_position_state, _zone_state, _outside_state, _subzone_state, _anchor_state, _floor_probability,
+              _floor_probability_at, _floor_challenge, _floor_dark_cycles, _floor_since, _arrivals]
+    if not keep_sighting:
+        tables += [_last_seen, _presence_published, _radar_still, _radar_last_pin, _robot_state, _thing_error_counts]
+    for table in tables:
         table.pop(ent, None)
     getattr(update_trilateration_and_zone, "last_floor", {}).pop(ent, None)
     getattr(update_trilateration_and_zone, "last_r_values", {}).pop(ent, None)
@@ -3167,27 +3126,7 @@ async def prune_stale_positions(hass):
     except Exception as e:
         _LOGGER.debug("Position history gap mark failed: %s", e)
     for ent in sorted(stale_ents):
-        # Drop the Kalman state too: a returning thing should re-seed fresh
-        # rather than predict velocity across the whole absence. Same for the
-        # whole election state — probabilities, pending challenge, and the
-        # INCUMBENCY itself: it may well come back on another floor, and an
-        # hours-stale incumbent must not enjoy hysteresis against it (with
-        # freshly-reset probabilities the margin could pin the wrong floor
-        # indefinitely). Jump-gate radii from before the absence are equally
-        # meaningless.
-        _kf_position_state.pop(ent, None)
-        _zone_state.pop(ent, None)
-        _outside_state.pop(ent, None)
-        _subzone_state.pop(ent, None)
-        _anchor_state.pop(ent, None)
-        _floor_probability.pop(ent, None)
-        _floor_probability_at.pop(ent, None)
-        _floor_challenge.pop(ent, None)
-        _floor_dark_cycles.pop(ent, None)
-        _floor_since.pop(ent, None)
-        getattr(update_trilateration_and_zone, "last_floor", {}).pop(ent, None)
-        getattr(update_trilateration_and_zone, "last_r_values", {}).pop(ent, None)
-        _arrivals.pop(ent, None)
+        _forget_thing_state(ent, keep_sighting=True)
         _LOGGER.info("Thing %s not seen for %ss; clearing its position", ent, timeout)
         gone = _presence_attrs((_last_seen.get(ent) or {}).get("updated"), now, layout if isinstance(layout, dict) else {})
         _presence_published[ent] = gone["presence"]
@@ -6564,7 +6503,8 @@ async def async_unload_entry(hass: HomeAssistant, entry):
     except Exception as e:
         _LOGGER.debug("Sextant position history flush on unload failed: %s", e)
 
-    cleanup_legacy_sextant_registry_and_states(hass)
+    from . import sensor as sensor_mod  # noqa: PLC0415 - the platform imports this module
+    sensor_mod.cleanup_legacy_sextant_entities(hass)
 
     # The registry entries stay. Unloading the platform below takes the
     # entities out of the state machine, and Home Assistant itself clears a
@@ -6626,7 +6566,7 @@ async def async_setup_entry(hass, entry):
     global _wifi_heat
     _wifi_heat = heat_mod.clean(await load_wifi_heat(hass))
     await _restore_runtime(hass)
-    cleanup_legacy_sextant_registry_and_states(hass)
+    # (the sensor platform removes legacy duplicated-name entities as it sets up)
     await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "binary_sensor", "device_tracker"])
     entry.async_on_unload(entry.add_update_listener(async_update_options))
 
@@ -7423,6 +7363,14 @@ HISTORY_DEFAULT_POINTS = 3000
 HISTORY_MAX_QUERY_POINTS = 20000
 
 
+async def async_run_selftest(hass):
+    """run_selftest on the current calibration samples, off the event loop.
+    The sample deques are snapshotted HERE (on the loop) before handing to
+    the executor, so iterating them off-thread can't race calibration's ingest."""
+    samples = {k: list(v) for k, v in get_calibration_state(hass).get("samples", {}).items()}
+    return await hass.async_add_executor_job(run_selftest, hass, samples)
+
+
 class SextantSelfTestAPI(HomeAssistantView):
     """Read-only receiver leave-one-out self-localization accuracy (see run_selftest)."""
 
@@ -7434,10 +7382,6 @@ class SextantSelfTestAPI(HomeAssistantView):
         self.hass = hass
 
     async def get(self, request):
-        # One scipy solve per receiver; run off the event loop. Snapshot the
-        # calibration sample deques HERE (on the loop) before handing to the
-        # executor, so iterating them off-thread can't race calibration's ingest.
-        samples = {k: list(v) for k, v in get_calibration_state(self.hass).get("samples", {}).items()}
-        data = await self.hass.async_add_executor_job(run_selftest, self.hass, samples)
+        data = await async_run_selftest(self.hass)
         data["breakdown"] = selftest_breakdown(data)
         return web.json_response(data)

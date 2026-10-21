@@ -12,8 +12,8 @@
  *   tuning       stability KPI, live tuning, history retention
  */
 import { LitElement, html, css, nothing } from "./lit.js";
-import { signalColour, distanceColour, SextantMap, thingColor, thingHue, staleness, shortAge, heatCells, pointInPolygon } from "./sextant-map.js";
-import { sharedStyles, widgetStyles, fmtAge, fmtNum, toast, confirmDialog, ensureHaComponents, uiSelect, uiButton, callWS, sortFloors, thingName, proxyName, fmtLen, fmtSpeed, classIcon, pronounsFor, uiIconButton, uiSegmented, isImperial, mapOverlayStyles, renderScaleBar, signalLegend } from "./sextant-ui.js";
+import { signalColour, distanceColour, SextantMap, thingColor, thingHue, staleness, shortAge, heatCells, pointInPolygon, polygonCentroid } from "./sextant-map.js";
+import { sharedStyles, widgetStyles, fmtAge, fmtNum, toast, confirmDialog, ensureHaComponents, uiSelect, uiButton, callWS, sortFloors, thingName, proxyName, fmtLen, fmtSpeed, classIcon, pronounsFor, uiIconButton, uiSegmented, isImperial, mapOverlayStyles, renderScaleBar, signalLegend, mapUrlFor, retryWait, loadLayout, subscribePositions } from "./sextant-ui.js";
 
 // What this page is running: the version of the files it was loaded from
 // (sextant-version.js), not the one in its URL - see that file.
@@ -26,10 +26,6 @@ import "./sextant-property.js";
 // No advised spots: one array for every render, so the editor does not see a
 // new value (and repaint) each time the clock ticks.
 const NO_SPOTS = Object.freeze([]);
-
-// A failed layout fetch or subscription is not retried from updated() sooner
-// than this: hass changes several times a second. Retry still goes at once.
-const RETRY_MS = 30000;
 
 const MODES = [
   ["live", "Live", "mdi:map-marker-radius"],
@@ -49,14 +45,6 @@ const ADMIN_MODES = new Set(["edit", "things", "bermuda", "calibration", "tuning
 // Modes from before the page split (3.7.0) still stored in the browser.
 const MODE_ALIASES = { devices: "things", health: "proxies", trackers: "things" };
 const REPO_URL = "https://github.com/davidcoulson/sextant";
-
-export function mapUrlFor(floorName, maps) {
-  if (!floorName || !maps) return null;
-  const norm = (s) => String(s).toLowerCase().replace(/\.[a-z0-9]+$/, "").replace(/[\s_-]+/g, "");
-  const want = norm(floorName);
-  const hit = maps.find((m) => norm(m) === want) || maps.find((m) => norm(m).startsWith(want));
-  return hit ? `/api/sextant/map/${encodeURIComponent(hit)}` : null;
-}
 
 /** Seconds as "40 min" / "2.5 h". */
 function shortSpan(secs) {
@@ -93,7 +81,6 @@ class SextantPanel extends LitElement {
     this._data = null;
     this._positions = { positions: [], offline_receivers: [], stamp: 0 };
     this._now = Date.now() / 1000;
-    this._cycleSecs = null;       // measured from the gap between cycles
     this._floor = null;
     this._unsub = null;
     this._error = null;
@@ -123,42 +110,29 @@ class SextantPanel extends LitElement {
 
   updated(changed) {
     const now = Date.now();
-    if (changed.has("hass") && this.hass && !this._data && !this._loading && !(now - (this._loadFailedAt || 0) < RETRY_MS)) this._load();
-    if (changed.has("hass") && this.hass && !this._unsub && !(now - (this._subFailedAt || 0) < RETRY_MS)) this._subscribe();
+    if (changed.has("hass") && this.hass && !this._data && !this._loading && !retryWait(this._loadFailedAt, now)) this._load();
+    if (changed.has("hass") && this.hass && !this._unsub && !retryWait(this._subFailedAt, now)) this._subscribe();
   }
 
   async _load() {
     if (!this.hass) return;
-    this._loading = true;
-    try {
-      const data = await this.hass.callWS({ type: "sextant/layout/get" });
-      this._data = data;
-      const floors = data.layout?.floor || [];
-      if (!this._floor || !floors.some((f) => f.name === this._floor)) this._floor = floors[0]?.name || null;
-      this._error = null;
-      this._loadFailedAt = 0;
-    } catch (e) {
-      this._error = e?.message || String(e);
-      this._loadFailedAt = Date.now();
-    } finally {
-      this._loading = false;
-    }
+    const data = await loadLayout(this);
+    if (!data) return;
+    this._data = data;
+    const floors = data.layout?.floor || [];
+    if (!this._floor || !floors.some((f) => f.name === this._floor)) this._floor = floors[0]?.name || null;
+    this._error = null;
   }
 
   _subscribe() {
-    if (!this.hass?.connection || this._unsub) return;
-    this._unsub = this.hass.connection.subscribeMessage(
+    subscribePositions(
+      this,
       (payload) => {
-        // The gap between cycles is what the countdown counts down from:
-        // Bermuda's interval is not ours to read, so it is measured here.
-        const gap = payload?.stamp - this._positions?.stamp;
-        if (gap > 1 && gap < 300) this._cycleSecs = this._cycleSecs ? this._cycleSecs * 0.5 + gap * 0.5 : gap;
         this._positions = payload;
         this._now = Date.now() / 1000;
       },
-      { type: "sextant/subscribe" },
+      (e) => { this._error = `live updates: ${e?.message || e}`; },
     );
-    this._unsub.then(() => { this._subFailedAt = 0; }, (e) => { this._unsub = null; this._subFailedAt = Date.now(); this._error = `live updates: ${e?.message || e}`; });
   }
 
   _isAdmin() { return this.hass?.user?.is_admin !== false; }
@@ -280,14 +254,14 @@ class SextantPanel extends LitElement {
 
   /** Seconds until the next positioning cycle; the age of the last one while
    * a cycle is overdue (a proxy went quiet, the house is asleep). The backend
-   * says what the interval is; an older one did not, and then the gap between
-   * cycles is measured instead. For an admin the countdown is also a menu that
+   * says what the interval is (until the first push arrives there is none, and
+   * no countdown). For an admin the countdown is also a menu that
    * sets a faster (or slower) refresh for a quarter of an hour. */
   _renderStamp() {
     const info = this._positions?.interval;
     const at = info?.last_cycle_at ?? this._positions.stamp;
     const age = at ? this._now - at : null;
-    const every = info?.secs ?? this._cycleSecs;
+    const every = info?.secs;
     const left = every && age != null ? Math.ceil(every - age) : null;
     const counting = left != null && left >= 0;
     const override = !!info?.until;
@@ -438,7 +412,6 @@ class SextantPanel extends LitElement {
     .banner.error { background: var(--error-color, #b00020); color: #fff; padding: 8px 12px; }
     .banner.update { background: var(--warning-color, #c77800); color: #fff; padding: 8px 12px; }
     .banner button { margin-left: 8px; }
-    .sr { position: absolute; left: -9999px; }
     .narrow-only { display: none; }
     .bottombar { align-items: center; justify-content: flex-end; gap: 10px; padding: 6px 10px; background: var(--card-background-color); border-top: 1px solid var(--divider-color); flex: none; padding-bottom: max(6px, env(safe-area-inset-bottom)); }
     .bottombar .stamp { color: var(--secondary-text-color); }
@@ -903,8 +876,7 @@ class SextantLive extends LitElement {
       .filter((r) => (f?.zones || []).some((z) => z.entity_id === r));
     // The spots of the room in view first - that is where the finger is going.
     const roomPoly = (f?.zones || []).find((z) => z.entity_id === focus.room)?.cords;
-    const centre = (pts) => ({ x: pts.reduce((a, q) => a + q.x, 0) / pts.length, y: pts.reduce((a, q) => a + q.y, 0) / pts.length });
-    const inRoom = (sz) => roomPoly?.length >= 3 && pointInPolygon(centre(sz.cords), roomPoly) ? 0 : 1;
+    const inRoom = (sz) => roomPoly?.length >= 3 && pointInPolygon(polygonCentroid(sz.cords), roomPoly) ? 0 : 1;
     const spots = (f?.subzones || []).filter((s) => (s.cords || []).length >= 3)
       .sort((a, b) => inRoom(a) - inRoom(b) || String(a.entity_id).localeCompare(String(b.entity_id))).map((s) => s.entity_id);
     const chip = (label, on, onClick, cls = "") => html`<button class="pinchip ${cls} ${on ? "on" : ""}" aria-pressed=${on} @click=${onClick}>${label}</button>`;
@@ -1991,7 +1963,6 @@ class SextantLive extends LitElement {
     .list li.away { opacity: 0.45; }
     .list li.group.away { opacity: 0.5; }
     .list li.ghost .avatar { filter: grayscale(0.6); outline: 1px dashed var(--secondary-text-color); outline-offset: 1px; }
-    .ghosticon { --mdc-icon-size: 14px; vertical-align: -2px; margin-right: 2px; }
     details.timeline { margin: 8px 0; }
     details.timeline summary { cursor: pointer; font-weight: 500; }
     .band { display: flex; height: 14px; border-radius: 4px; overflow: hidden; margin-top: 8px; background: var(--secondary-background-color); gap: 1px; }
