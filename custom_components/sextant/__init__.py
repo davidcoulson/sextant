@@ -2799,6 +2799,11 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
         # Cats stay in: a cat's fix is only ever snapped into the nearest room.
         if valid is not None and thing_class(layout, entity) != "cat" and isinstance(scale, (int, float)) and scale > 0:
             outside_m = float(valid.distance(test_point)) / scale
+        # The unsmoothed fix's distance too: the filter clips to the floor's
+        # bounds, which can hide how far out a thing really is.
+        outside_raw_m = None
+        if outside_m is not None and ble_fix is not None:
+            outside_raw_m = float(valid.distance(Point(float(ble_fix[0]), float(ble_fix[1])))) / scale
         is_outside = _outside_election(entity, outside_m, _tuning(layout, "outside_margin_m"),
                                        _tuning(layout, "outside_secs"), now)
         snapped = snap_point_into_zones(
@@ -2843,6 +2848,7 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
                 # Beyond every room for long enough: "Outside", not the nearest room.
                 "outside": is_outside,
                 "outside_m": None if outside_m is None else round(outside_m, 2),
+                "outside_raw_m": None if outside_raw_m is None else round(outside_raw_m, 2),
                 "zone_locked": zone_locked,
                 # When this room and this spot were entered: kept across a
                 # restart, where the sensors' own timestamps are not.
@@ -2908,6 +2914,8 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
         if is_outside:
             loc_state, loc_attrs = "Outside", {**loc_attrs, "kind": "outside", "spot": None}
             zone = "Outside"
+        loc_attrs = {**loc_attrs, "outside_m": None if outside_m is None else round(outside_m, 2),
+                     "outside_raw_m": None if outside_raw_m is None else round(outside_raw_m, 2)}
         update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_room", zone,
                                     {"area_id": room_area(layout, lowest_floor_name, zone)[0], **here})
         update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_nearest_room", nearest_zone, dict(here))
