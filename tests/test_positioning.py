@@ -2333,3 +2333,35 @@ def test_outside_needs_distance_and_time(monkeypatch):
     assert s._outside_election("a", 0.5, 2.0, 45.0, 50.0) is True      # back inside, not yet for long
     assert s._outside_election("a", 0.5, 2.0, 45.0, 100.0) is False
     assert s._outside_election("a", 5.0, 0.0, 45.0, 200.0) is False    # margin 0 = off
+
+
+def test_a_dog_heard_faintly_by_few_is_in_the_garden():
+    """Primrose, 2026-10-21: inside 8-19 proxies hear her, the nearest within
+    1.5 m; in the garden 1-6 do, the nearest 2.3-10 m away, while her fix
+    still lands in the Garage polygon."""
+    import custom_components.sextant as s
+    assert s._faint_signal(11, 0.8, 6, 3.0, 1.5) == "in"
+    assert s._faint_signal(4, 4.2, 6, 3.0, 1.5) == "out"
+    assert s._faint_signal(8, 4.2, 6, 3.0, 1.5) == "between"     # far, but too many hear her
+    assert s._faint_signal(3, 2.0, 6, 3.0, 1.5) == "between"     # few, but not far enough
+    assert s._faint_signal(0, None, 6, 3.0, 1.5) == "between"
+
+
+def test_a_faint_dog_reads_outside_with_its_fix_in_a_room_and_comes_back_near_a_proxy():
+    import custom_components.sextant as s
+    s._outside_state.clear()
+    assert s._outside_election("dog", 0.0, 1.0, 45.0, 0.0, "out") is False
+    assert s._outside_election("dog", 0.0, 1.0, 45.0, 46.0, "out") is True
+    assert s._outside_election("dog", 0.0, 1.0, 45.0, 60.0, "between") is True    # held out until a proxy is close
+    assert s._outside_election("dog", 0.0, 1.0, 45.0, 200.0, "between") is True
+    assert s._outside_election("dog", 0.0, 1.0, 45.0, 210.0, "in") is True        # near, not yet for long
+    assert s._outside_election("dog", 0.0, 1.0, 45.0, 260.0, "in") is False
+    assert s._outside_election("dog", 0.0, 1.0, 45.0, 270.0, "between") is False  # between while inside stays inside
+    assert s._outside_election("dog", 0.0, 1.0, 45.0, 400.0, "between") is False
+    # The distance rule still works for a dog, and the faint one with the distance rule off.
+    assert s._outside_election("dog", 5.0, 1.0, 45.0, 500.0, "in") is False
+    assert s._outside_election("dog", 5.0, 1.0, 45.0, 546.0, "in") is True
+    s._outside_state.clear()
+    assert s._outside_election("dog", None, 0.0, 45.0, 600.0, "out") is False
+    assert s._outside_election("dog", None, 0.0, 45.0, 646.0, "out") is True
+    assert s._outside_election("cat", None, 0.0, 45.0, 700.0, None) is False

@@ -482,17 +482,43 @@ _subzone_state = {}
 _outside_state = {}
 
 
-def _outside_election(entity, dist_m, margin_m, secs, now):
+def _faint_signal(n_prox, nearest_m, max_prox, far_m, near_m):
+    """How a dog's fit reads, for _outside_election: ``"out"`` when few
+    proxies hear it and the nearest is far (``n_prox <= max_prox`` and
+    ``nearest_m >= far_m``), ``"in"`` once one is close (``nearest_m <
+    near_m``), ``"between"`` otherwise. Primrose's day: inside, 8-19 proxies
+    and the nearest 0.25-1.5 m; in the garden, 1-6 proxies and the nearest
+    2.3-10 m. A garden fix lands inside the Garage or Kitchen polygon all
+    the same (there is no proxy out there to pull it out), so the distance
+    rule alone never fired for her."""
+    if not isinstance(nearest_m, (int, float)):
+        return "between"
+    if nearest_m >= far_m and (n_prox or 0) <= max_prox:
+        return "out"
+    if nearest_m < near_m:
+        return "in"
+    return "between"
+
+
+def _outside_election(entity, dist_m, margin_m, secs, now, faint=None):
     """Whether a thing reads "outside the house": its smoothed fix has been more
     than ``margin_m`` beyond every room for ``secs`` (and is back inside the
     margin for ``secs`` before it reads inside again). ``dist_m`` is None when
     there is no plan to measure against. Snapping a far-off fix into the
-    nearest room is what said "Kitchen" for a pet in the garden."""
+    nearest room is what said "Kitchen" for a pet in the garden.
+
+    ``faint`` is a dog's second way out (_faint_signal): ``"out"`` counts
+    like a far fix, ``"in"`` like a near one, and ``"between"`` holds an
+    outside dog outside until a proxy is close again. None for everything
+    that is not a dog."""
     st = _outside_state.setdefault(entity, {"out_since": None, "in_since": None, "outside": False})
-    if dist_m is None or margin_m <= 0:
+    far = dist_m is not None and margin_m > 0 and dist_m > margin_m
+    if (dist_m is None or margin_m <= 0) and faint is None:
         st.update(out_since=None, in_since=None, outside=False)
         return False
-    if dist_m > margin_m:
+    if faint == "between" and st["outside"] and not far:
+        return True
+    if far or faint == "out":
         st["in_since"] = None
         if st["out_since"] is None:
             st["out_since"] = now
@@ -579,6 +605,13 @@ TUNING_SPEC = {
     # snapped into the nearest room. 0 metres = never.
     "outside_margin_m": (1.0, float, 0.0, 30.0),
     "outside_secs": (45.0, float, 0.0, 600.0),
+    # A dog's second way out (see _faint_signal): heard by no more than
+    # outside_faint_prox proxies with the nearest outside_faint_m or more
+    # away, for outside_secs, reads "Outside" even when the fix lands in a
+    # room; back inside once a proxy is within outside_near_m. 0 proxies = off.
+    "outside_faint_prox": (6.0, float, 0.0, 50.0),
+    "outside_faint_m": (3.0, float, 0.5, 30.0),
+    "outside_near_m": (1.5, float, 0.1, 10.0),
     "zone_unlock_margin": (1.0, float, 0.0, 20.0),      # m outside the locked zone...
     "zone_unlock_secs": (30.0, float, 0.0, 600.0),      # ...for this long -> unlocked
     # No lock until a thing has been tracked this long since Sextant started
@@ -2810,8 +2843,15 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
         outside_raw_m = None
         if outside_m is not None and ble_fix is not None:
             outside_raw_m = float(valid.distance(Point(float(ble_fix[0]), float(ble_fix[1])))) / scale
+        n_prox = len(weighted)
+        nearest_m = (round(min(pt[2] for pt in weighted) / scale, 2) if weighted and scale else None)
+        # A dog in the garden is heard faintly, by few: its second way out.
+        faint = None
+        if thing_class(layout, entity) == "dog" and _tuning(layout, "outside_faint_prox") > 0:
+            faint = _faint_signal(n_prox, nearest_m, _tuning(layout, "outside_faint_prox"),
+                                  _tuning(layout, "outside_faint_m"), _tuning(layout, "outside_near_m"))
         is_outside = _outside_election(entity, outside_m, _tuning(layout, "outside_margin_m"),
-                                       _tuning(layout, "outside_secs"), now)
+                                       _tuning(layout, "outside_secs"), now, faint)
         snapped = snap_point_into_zones(
             zone_polys, test_point, prefer=incumbent_room,
             prefer_margin_px=NO_GO_SNAP_STICK_M * (scale if isinstance(scale, (int, float)) and scale > 0 else 0.0),
@@ -2855,8 +2895,8 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
                 "outside": is_outside,
                 # What the fit looked like: proxies used, nearest one in metres
                 # (a thing outside is heard faintly, by few).
-                "n_prox": len(weighted),
-                "nearest_m": (round(min(pt[2] for pt in weighted) / scale, 2) if weighted and scale else None),
+                "n_prox": n_prox,
+                "nearest_m": nearest_m,
                 "outside_m": None if outside_m is None else round(outside_m, 2),
                 "outside_raw_m": None if outside_raw_m is None else round(outside_raw_m, 2),
                 "zone_locked": zone_locked,

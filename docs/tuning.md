@@ -57,6 +57,9 @@ distances in metres.
 | `stationary_secs` | 20 | still this long locks the room |
 | `outside_margin_m` | 1.0 | metres beyond every room before a fix reads **Outside** (never for a cat); 0 turns it off |
 | `outside_secs` | 45 | seconds it must hold, either way |
+| `outside_faint_prox` | 6 | a dog heard by no more than this many proxies, with the nearest `outside_faint_m` or more away, for `outside_secs`, reads **Outside** even when its fix lands in a room (there is no proxy in the garden to pull it out); 0 turns it off |
+| `outside_faint_m` | 3.0 | the nearest proxy this far or farther, with few hearing the dog, means the garden |
+| `outside_near_m` | 1.5 | a proxy within this means the dog is back in the house |
 | `zone_unlock_margin` | 1.0 | metres outside the locked room |
 | `zone_unlock_secs` | 30 | for this long to unlock |
 | `zone_lock_warmup_secs` | 120 | no stationary lock until a thing has been tracked this long since a start or floor change |

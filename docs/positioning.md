@@ -20,7 +20,13 @@ once three remain. Beyond eight metres a BLE range is mostly noise.
 pure numpy (`solver_numpy.py`, benchmarked against SciPy on a 48-proxy
 layout), run in the executor. Spiky readings are down-weighted rather
 than dropped. A fix that lands outside every room is snapped to the
-nearest room; a fix in a no-go area is snapped out of it, to the room the
+nearest room, unless it stays more than `outside_margin_m` beyond every room for
+`outside_secs`, when the thing reads **Outside** instead (`kind: outside`, and
+`outside_m` in its fix). A dog has a second way out, since a garden fix lands
+in a room all the same (no proxy out there pulls it out): heard by no more
+than `outside_faint_prox` proxies with the nearest `outside_faint_m` or more
+away, for `outside_secs`, it reads **Outside** too, and comes back in once a
+proxy is within `outside_near_m`. Never for a cat. A fix in a no-go area is snapped out of it, to the room the
 thing is already in while that room's wall is within 1.5 m of the nearest one
 (a fix inside a void is no evidence for either side of it).
 

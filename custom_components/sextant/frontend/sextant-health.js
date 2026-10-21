@@ -45,6 +45,9 @@ const TUNING_LABELS = {
   stationary_secs: ["Stationary after (s)", "still this long locks the room"],
   outside_margin_m: ["Outside beyond (m)", "a fix this far beyond every room reads Outside; 0 turns it off"],
   outside_secs: ["Outside after (s)", "for this long before it reads Outside, and back inside"],
+  outside_faint_prox: ["Dog outside: heard by at most", "a dog heard by no more than this many proxies, with the nearest at least the distance below away, reads Outside even when its fix lands in a room; 0 turns it off"],
+  outside_faint_m: ["Dog outside: nearest at least (m)", "the nearest proxy this far or farther, with few hearing it, is a dog in the garden"],
+  outside_near_m: ["Dog inside: nearest within (m)", "a proxy this close means the dog is back in the house"],
   zone_unlock_margin: ["Unlock outside room by (m)", "the fix must sit this far outside the locked room"],
   zone_unlock_secs: ["Unlock after (s)", "for this long before the lock releases"],
   subzone_switch_secs: ["Spot switch dwell (s)", "a spot change waits this long"],
@@ -684,7 +687,7 @@ class SextantHealth extends LitElement {
     const groups = [
       ["Estimator", ["position_estimator", "fingerprint_weight", "fingerprint_floor_weight", "fingerprint_k", "fingerprint_missing_m", "fingerprint_ref_gain", "fingerprint_auto_gain", "fingerprint_marks", "fingerprint_marks_scope", "distance_estimator", "median_window_secs", "median_min_samples"]],
       ["Solver", ["solver_max_receivers", "solver_max_range", "solver_near_always"]],
-      ["Rooms", ["zone_hysteresis", "zone_prob_smoothing", "zone_switch_margin", "zone_switch_secs", "far_move_margin", "far_move_secs", "stationary_speed", "stationary_secs", "zone_unlock_margin", "zone_unlock_secs", "zone_lock_warmup_secs", "outside_margin_m", "outside_secs"]],
+      ["Rooms", ["zone_hysteresis", "zone_prob_smoothing", "zone_switch_margin", "zone_switch_secs", "far_move_margin", "far_move_secs", "stationary_speed", "stationary_secs", "zone_unlock_margin", "zone_unlock_secs", "zone_lock_warmup_secs", "outside_margin_m", "outside_secs", "outside_faint_prox", "outside_faint_m", "outside_near_m"]],
       ["Spots", ["subzone_switch_secs", "subzone_enter_prob", "subzone_unlock_margin", "subzone_lock_release_m", "spot_proxy_near_m", "spot_proxy_far_m", "spot_proxy_ratio"]],
       ["Near-field anchor", ["anchor_max_m", "anchor_ratio", "anchor_secs", "anchor_release_m"]],
       ["Floors", ["floor_switch_secs", "floor_switch_margin", "floor_tenure_bonus", "floor_tenure_full_secs", "floor_proximity_weight", "floor_proximity_blend", "floor_proximity_k", "wifi_floor_weight"]],
