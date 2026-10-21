@@ -577,7 +577,7 @@ TUNING_SPEC = {
     # Outside the house (see _outside_election): the smoothed fix this far
     # beyond every room for this long reads "Outside" instead of being
     # snapped into the nearest room. 0 metres = never.
-    "outside_margin_m": (2.0, float, 0.0, 30.0),
+    "outside_margin_m": (1.0, float, 0.0, 30.0),
     "outside_secs": (45.0, float, 0.0, 600.0),
     "zone_unlock_margin": (1.0, float, 0.0, 20.0),      # m outside the locked zone...
     "zone_unlock_secs": (30.0, float, 0.0, 600.0),      # ...for this long -> unlocked
@@ -4508,6 +4508,7 @@ def _update_person_sensors(hass):
                 "ent": ent, "cls": classes.get(ent), "updated": row.get("updated"),
                 "arrived": _arrived_at(hass, layout, ent, row, now),
                 "zone": row.get("zone"), "sub_zone": row.get("sub_zone"), "floor": row.get("floor"),
+                "outside": bool(row.get("outside")), "outside_m": row.get("outside_m"), "outside_raw_m": row.get("outside_raw_m"),
                 "area": room_area(layout, row.get("floor"), row.get("zone")),
                 "on_charger": bool(chargers.get(ent)) and persons_mod.on_charger(
                     getattr(hass.states.get(chargers[ent]), "state", None)),

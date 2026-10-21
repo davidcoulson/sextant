@@ -55,7 +55,7 @@ distances in metres.
 | `far_move_secs` | 45 | held that long before a far move; 0 = no longer than any move |
 | `stationary_speed` | 0.3 | m/s; slower is "still" |
 | `stationary_secs` | 20 | still this long locks the room |
-| `outside_margin_m` | 2.0 | metres beyond every room before a fix reads **Outside** (never for a cat); 0 turns it off |
+| `outside_margin_m` | 1.0 | metres beyond every room before a fix reads **Outside** (never for a cat); 0 turns it off |
 | `outside_secs` | 45 | seconds it must hold, either way |
 | `zone_unlock_margin` | 1.0 | metres outside the locked room |
 | `zone_unlock_secs` | 30 | for this long to unlock |
