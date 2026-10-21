@@ -177,3 +177,9 @@ def test_a_person_who_owns_only_pet_tags_is_a_pet_and_gets_a_pets_device():
     classes = {"leela_tag": "cat", "leela_spare": "cat", "david_phone": "phone"}
     assert persons.pet_persons(by_person, classes) == {"person.leela"}
     assert persons.device_model(True) == "Pet" and persons.device_model(False) == "Person"
+
+
+def test_a_thing_beyond_every_room_reads_outside():
+    best = {"ent": "primrose", "zone": "Kitchen", "floor": "Ground Floor", "outside": True}
+    state, attrs = persons.states(best)["sextant_person_location"]
+    assert state == "Outside" and attrs["kind"] == "outside" and attrs["via"] == "primrose"

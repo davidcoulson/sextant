@@ -478,6 +478,33 @@ _kf_position_state = {}
 # on prune, like the Kalman state.
 _zone_state = {}
 _subzone_state = {}
+# thing -> {"out_since", "in_since", "outside"}: the outside-the-house election.
+_outside_state = {}
+
+
+def _outside_election(entity, dist_m, margin_m, secs, now):
+    """Whether a thing reads "outside the house": its smoothed fix has been more
+    than ``margin_m`` beyond every room for ``secs`` (and is back inside the
+    margin for ``secs`` before it reads inside again). ``dist_m`` is None when
+    there is no plan to measure against. Snapping a far-off fix into the
+    nearest room is what said "Kitchen" for a pet in the garden."""
+    st = _outside_state.setdefault(entity, {"out_since": None, "in_since": None, "outside": False})
+    if dist_m is None or margin_m <= 0:
+        st.update(out_since=None, in_since=None, outside=False)
+        return False
+    if dist_m > margin_m:
+        st["in_since"] = None
+        if st["out_since"] is None:
+            st["out_since"] = now
+        if not st["outside"] and now - st["out_since"] >= secs:
+            st["outside"] = True
+    else:
+        st["out_since"] = None
+        if st["in_since"] is None:
+            st["in_since"] = now
+        if st["outside"] and now - st["in_since"] >= secs:
+            st["outside"] = False
+    return st["outside"]
 
 
 def _new_zone_state(floor_name, now):
@@ -547,6 +574,11 @@ TUNING_SPEC = {
     "far_move_secs": (45.0, float, 0.0, 600.0),
     "stationary_speed": (0.3, float, 0.0, 5.0),         # m/s; below this the thing is still
     "stationary_secs": (20.0, float, 0.0, 600.0),       # still this long -> zone locked
+    # Outside the house (see _outside_election): the smoothed fix this far
+    # beyond every room for this long reads "Outside" instead of being
+    # snapped into the nearest room. 0 metres = never.
+    "outside_margin_m": (2.0, float, 0.0, 30.0),
+    "outside_secs": (45.0, float, 0.0, 600.0),
     "zone_unlock_margin": (1.0, float, 0.0, 20.0),      # m outside the locked zone...
     "zone_unlock_secs": (30.0, float, 0.0, 600.0),      # ...for this long -> unlocked
     # No lock until a thing has been tracked this long since Sextant started
@@ -2762,6 +2794,13 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
         # Out of a void, stay on the side the thing is already on.
         zst = _zone_state.get(entity)
         incumbent_room = zst.get("zone") if isinstance(zst, dict) and zst.get("floor") == lowest_floor_name else None
+        outside_m = None
+        valid = zone_polys.snap[0] if isinstance(zone_polys, _FloorZones) else None
+        # Cats stay in: a cat's fix is only ever snapped into the nearest room.
+        if valid is not None and thing_class(layout, entity) != "cat" and isinstance(scale, (int, float)) and scale > 0:
+            outside_m = float(valid.distance(test_point)) / scale
+        is_outside = _outside_election(entity, outside_m, _tuning(layout, "outside_margin_m"),
+                                       _tuning(layout, "outside_secs"), now)
         snapped = snap_point_into_zones(
             zone_polys, test_point, prefer=incumbent_room,
             prefer_margin_px=NO_GO_SNAP_STICK_M * (scale if isinstance(scale, (int, float)) and scale > 0 else 0.0),
@@ -2801,6 +2840,9 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
                 "cords": [avg_x, avg_y],
                 "zone": zone,
                 "zone_raw": instant_zone,
+                # Beyond every room for long enough: "Outside", not the nearest room.
+                "outside": is_outside,
+                "outside_m": None if outside_m is None else round(outside_m, 2),
                 "zone_locked": zone_locked,
                 # When this room and this spot were entered: kept across a
                 # restart, where the sensors' own timestamps are not.
@@ -2863,6 +2905,9 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
         here = _presence_attrs(time.time(), time.time(), layout)
         _presence_published[entity] = "here"
         loc_state, loc_attrs = _location_state(zone, sub_zone, parent_zone, lowest_floor_name, layout)
+        if is_outside:
+            loc_state, loc_attrs = "Outside", {**loc_attrs, "kind": "outside", "spot": None}
+            zone = "Outside"
         update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_room", zone,
                                     {"area_id": room_area(layout, lowest_floor_name, zone)[0], **here})
         update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_nearest_room", nearest_zone, dict(here))
@@ -3018,7 +3063,7 @@ def _forget_thing_state(ent):
     the Live page can say "away since". For a thing being forgotten on purpose
     (see ws_thing_forget) that memory is the point."""
     for table in (_kf_position_state, _zone_state, _subzone_state, _anchor_state, _floor_probability,
-                  _floor_probability_at, _floor_challenge, _floor_dark_cycles, _floor_since, _arrivals, _last_seen, _presence_published):
+                  _floor_probability_at, _floor_challenge, _floor_dark_cycles, _floor_since, _arrivals, _last_seen, _presence_published, _outside_state):
         table.pop(ent, None)
     getattr(update_trilateration_and_zone, "last_floor", {}).pop(ent, None)
     getattr(update_trilateration_and_zone, "last_r_values", {}).pop(ent, None)
@@ -3075,6 +3120,7 @@ async def prune_stale_positions(hass):
         # meaningless.
         _kf_position_state.pop(ent, None)
         _zone_state.pop(ent, None)
+        _outside_state.pop(ent, None)
         _subzone_state.pop(ent, None)
         _anchor_state.pop(ent, None)
         _floor_probability.pop(ent, None)

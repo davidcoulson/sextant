@@ -206,6 +206,14 @@ def states(best, why=None):
     room, floor = best.get("zone"), best.get("floor") or "unknown"
     area_id, floor_id = best.get("area") or (None, None)
     via = {"via": best["ent"]}
+    if best.get("outside"):
+        # Beyond every room: not the nearest room it was snapped into.
+        return {
+            "sextant_person_location": ("Outside", {"kind": "outside", "room": "Outside", "spot": None, "floor": floor,
+                                                    "area_id": None, "floor_id": None, **via, "considered": why or []}),
+            "sextant_person_room": ("Outside", {"area_id": None, **via}),
+            "sextant_person_floor": (floor, via),
+        }
     return {
         "sextant_person_location": (spot or room, {"kind": "spot" if spot else "room", "room": room, "spot": spot,
                                                    "floor": floor, "area_id": area_id, "floor_id": floor_id,

@@ -2323,3 +2323,13 @@ def test_a_proxy_kept_out_of_positioning_gives_no_spot_or_anchor_evidence():
         assert sextant._elect_anchor("w", "F", rxs, lay, now=1000.0 + dt) is None, "never anchors to a proxy that is off"
     sextant._anchor_state.pop("w", None)
     assert sextant._solves({"entity_id": "x"}) and sextant._solves({"solve": True}) and not sextant._solves({"solve": False})
+
+
+def test_outside_needs_distance_and_time(monkeypatch):
+    import custom_components.sextant as s
+    s._outside_state.clear()
+    assert s._outside_election("a", 5.0, 2.0, 45.0, 0.0) is False
+    assert s._outside_election("a", 5.0, 2.0, 45.0, 46.0) is True
+    assert s._outside_election("a", 0.5, 2.0, 45.0, 50.0) is True      # back inside, not yet for long
+    assert s._outside_election("a", 0.5, 2.0, 45.0, 100.0) is False
+    assert s._outside_election("a", 5.0, 0.0, 45.0, 200.0) is False    # margin 0 = off
