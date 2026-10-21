@@ -85,6 +85,7 @@ distances in metres.
 | `subzone_lock_release_m` | 2.5 | how far a still thing's fix must leave its spot before the room lock stops holding it there |
 | `restore_state_secs` | 300 | how long a restart may take and still resume the elections rather than start cold. Five minutes covers a Home Assistant restart; a whole-host reboot (an operating system update) often takes longer, so raise it before one if you would rather keep the durations. Past the window Sextant logs a warning saying by how much, and still keeps each thing's last sighting, so "away since" stays right |
 | `away_after_secs` | 900 | when the Live list stops waiting for a thing and calls it away |
+| `gps_leave_m` | 200 | a person gone quiet is held in their last room until `away_after_secs` runs out, unless a GPS fix made since the last sighting puts them outside the home zone and at least this far from home (past its own accuracy), when they are away now; 0 turns this off |
 | `fingerprint_marks_scope` | `class` | whose location pins place a thing: `own`, `class` (also things of its class) or `all` |
 | `history_hours` | 6 | hours of position history kept (scrubber, timeline, Activity), 1 to 168 |
 | `stale_after_secs` | 120 | unheard this long, a thing is drawn as a ghost on Live (display only) |

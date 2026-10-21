@@ -712,6 +712,12 @@ TUNING_SPEC = {
     # (see persons.judge_source): a Companion app that lost its location
     # permission sat on "home" for six days.
     "gps_stale_secs": (7200.0, float, 60.0, 604800.0),
+    # A person whose things have gone quiet is held in their last room until
+    # away_after_secs runs out - unless a GPS fix made since the last sighting
+    # puts them outside the home zone and at least this far from home (past
+    # its own accuracy), when they are away now (persons.gps_left). Far enough
+    # that a fix wandering about the property line never counts. 0 = off.
+    "gps_leave_m": (200.0, float, 0.0, 100000.0),
     # Keep every floor election (each cycle's per-floor candidates, the odds
     # and the winner, per thing) for this many hours in
     # config/sextant_election_log, for tools/replay_floors.py. 0 = off. About
@@ -4528,6 +4534,13 @@ def _update_person_sensors(hass):
         # a person Sextant can hear has not left the house.
         held, held_why = _person_last.get(person, (None, None)) if best is None and presence in ("here", "quiet") else (None, None)
         gps, ignored = persons_mod.choose_gps(hass.states.get, layout, person, now, gps_stale)
+        last_heard = max(heard) if heard else None
+        # Except when GPS has already seen them leave: a quiet spell with a
+        # fix made since the last sighting, outside the home zone and well
+        # down the road, is a departure, not a pause, and the person is away
+        # now rather than when away_after_secs runs out (persons.gps_left).
+        if best is None and presence == "quiet" and persons_mod.gps_left(gps, last_heard, home, _tuning(layout, "gps_leave_m")):
+            presence, held, held_why = "away", None, None
         wifi = _wifi_for(person, view)
         view["by_person"][person] = wifi
         # Learning, from BLE's word: the access point each of their trackers
@@ -4560,7 +4573,7 @@ def _update_person_sensors(hass):
             # What kind of thing speaks for them (phone, watch, cat...), so a card need not guess from its name.
             attrs["via_class"] = classes.get(attrs["via"]) if attrs.get("via") else None
             update_sextant_sensor_state(hass, persons_mod.sensor_entity_id(slug, suffix, person in pets), state, attrs)
-        _person_visits[person] = persons_mod.visit(_person_visits.get(person), persons_mod.home_via(presence, gps, wifi), max(heard) if heard else None, now)
+        _person_visits[person] = persons_mod.visit(_person_visits.get(person), persons_mod.home_via(presence, gps, wifi), last_heard, now)
         tracker = trackers.get(slug)
         if tracker is not None:
             tracker.set_fix(persons_mod.tracker_fix(presence, gps, _person_visits[person], wifi))

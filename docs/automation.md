@@ -56,8 +56,11 @@ of the same shape — `sensor.<person>_sextant_person_location`, `_room` and
 
 While Sextant hears any of the person's things they are placed by BLE
 (`source: ble`). Not heard for a couple of minutes, the last place they were
-put stands (`source: held`): they have not left the house. Once Sextant has
-lost them (`presence: away`), a phone or watch of theirs still joined to one
+put stands (`source: held`): they have not left the house. Unless GPS has
+already seen them go: a fix made since the last sighting, outside the home
+zone and at least `gps_leave_m` (200 m) from home, ends the hold at once
+and the person is `away` now rather than when `away_after_secs` runs out.
+Once Sextant has lost them (`presence: away`), a phone or watch of theirs still joined to one
 of the house's Wi-Fi access points keeps them home (`source: wifi`): the
 room and floor are what that access point has been learned to mean, the
 attribute `access_point` names it, and `via` is the Wi-Fi tracker. After
@@ -92,7 +95,8 @@ time agree (BLE lost them but GPS still has them in the home zone is still
 home, and no departure). A departure is stamped at the last time any of the
 person's things was heard, not when `away_after_secs` ran out - "left at
 08:12" means 08:12 - and the quiet period is the grace, so someone heard
-again within it never left. Both survive a restart, and they change only on an arrival or
+again within it never left. A departure GPS calls early (`gps_leave_m`) is
+stamped the same way, at the last sighting. Both survive a restart, and they change only on an arrival or
 a departure, so the recorder gets one row per event: trigger on the
 attribute leaving `None` and the time is in the event
 ([recipe](recipes.md#when-someone-left)).

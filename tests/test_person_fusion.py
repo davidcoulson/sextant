@@ -128,6 +128,43 @@ def test_a_quiet_person_with_nothing_held_falls_through_to_gps():
     assert persons.fuse(None, None, "quiet", None, gps, [])["sextant_person_location"][0] == "home"
 
 
+# --- GPS ending the hold early --------------------------------------------------
+
+HOME = (41.30, -81.70)
+
+
+def _fix(zone="not_home", lat=41.34, lon=-81.70, reported=NOW - 30, accuracy=15):
+    return {"entity": "device_tracker.t", "zone": zone, "latitude": lat, "longitude": lon, "accuracy": accuracy, "reported": reported}
+
+
+def test_a_fresh_fix_well_down_the_road_ends_the_hold():
+    """David's drive: the house fell quiet at 12:53, the phone reported 5 km
+    out at 12:55, and the card said Kitchen until 13:09. Not any more."""
+    assert persons.gps_left(_fix(), NOW - 300, HOME)
+
+
+def test_a_fix_from_before_the_last_sighting_says_nothing_about_now():
+    assert not persons.gps_left(_fix(reported=NOW - 400), NOW - 300, HOME)
+    assert not persons.gps_left(_fix(reported=None), NOW - 300, HOME)
+
+
+def test_a_fix_in_the_home_zone_or_near_the_property_line_keeps_the_hold():
+    assert not persons.gps_left(_fix(zone="home"), NOW - 300, HOME)
+    assert not persons.gps_left(_fix(lat=41.3010), NOW - 300, HOME)              # ~110 m: GPS wandering
+    assert not persons.gps_left(_fix(lat=41.3020, accuracy=100), NOW - 300, HOME)  # 220 m less 100 m of accuracy
+
+
+def test_only_a_fix_with_coordinates_counts_and_zero_turns_it_off():
+    assert not persons.gps_left(_fix(lat=None, lon=None), NOW - 300, HOME)
+    assert not persons.gps_left(_fix(), NOW - 300, None)
+    assert not persons.gps_left(_fix(), NOW - 300, HOME, 0)
+    assert not persons.gps_left(None, NOW - 300, HOME)
+
+
+def test_never_heard_still_lets_a_far_fix_speak():
+    assert persons.gps_left(_fix(), None, HOME)
+
+
 # --- the device_tracker's word ------------------------------------------------
 
 def test_the_tracker_is_home_on_ble_and_gps_once_lost():

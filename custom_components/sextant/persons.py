@@ -302,6 +302,32 @@ def _haversine_m(a, b):
     return 2 * 6371000.0 * math.asin(math.sqrt(d))
 
 
+def gps_left(gps, last_heard, home=None, min_distance_m=200.0) -> bool:
+    """Whether a GPS fix ends the quiet hold early: the person's things have
+    gone quiet, and a tracker has reported since the last of them was heard,
+    with a fix outside the home zone and at least min_distance_m from home
+    (past its own accuracy). The hold is for a person who is still in the
+    house but unheard for a few minutes; a phone five kilometres down the
+    road is not that, and waiting out away_after_secs puts the departure a
+    quarter of an hour late.
+
+    Only a fix with coordinates counts: a zone-only tracker reads not_home
+    the moment a phone drops off Wi-Fi, which happens in the house too. And
+    only one made after the last sighting: a fix from before BLE last heard
+    them says nothing about now. min_distance_m of 0 turns this off.
+    """
+    if not gps or min_distance_m <= 0 or str(gps.get("zone") or "").lower() == "home":
+        return False
+    reported, heard = valid_time(gps.get("reported")), valid_time(last_heard)
+    if reported is None or (heard is not None and reported <= heard):
+        return False
+    lat, lon = gps.get("latitude"), gps.get("longitude")
+    if lat is None or lon is None or not home or None in home:
+        return False
+    accuracy = gps.get("accuracy") if isinstance(gps.get("accuracy"), (int, float)) else 0.0
+    return _haversine_m(home, (lat, lon)) - max(0.0, float(accuracy)) >= min_distance_m
+
+
 def fuse(best, why, presence, held, gps, ignored, home=None, wifi=None):
     """(suffix -> (state, attributes)) for a person's sensors, BLE, Wi-Fi and GPS fused.
 
