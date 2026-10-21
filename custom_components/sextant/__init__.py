@@ -2847,6 +2847,10 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
                 "zone_raw": instant_zone,
                 # Beyond every room for long enough: "Outside", not the nearest room.
                 "outside": is_outside,
+                # What the fit looked like: proxies used, nearest one in metres
+                # (a thing outside is heard faintly, by few).
+                "n_prox": len(weighted),
+                "nearest_m": (round(min(pt[2] for pt in weighted) / scale, 2) if weighted and scale else None),
                 "outside_m": None if outside_m is None else round(outside_m, 2),
                 "outside_raw_m": None if outside_raw_m is None else round(outside_raw_m, 2),
                 "zone_locked": zone_locked,
@@ -2914,8 +2918,7 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
         if is_outside:
             loc_state, loc_attrs = "Outside", {**loc_attrs, "kind": "outside", "spot": None}
             zone = "Outside"
-        loc_attrs = {**loc_attrs, "outside_m": None if outside_m is None else round(outside_m, 2),
-                     "outside_raw_m": None if outside_raw_m is None else round(outside_raw_m, 2)}
+        loc_attrs = {**loc_attrs, **{k: row.get(k) for k in persons_mod.FIT_KEYS if row.get(k) is not None}}
         update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_room", zone,
                                     {"area_id": room_area(layout, lowest_floor_name, zone)[0], **here})
         update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_nearest_room", nearest_zone, dict(here))
@@ -4508,7 +4511,7 @@ def _update_person_sensors(hass):
                 "ent": ent, "cls": classes.get(ent), "updated": row.get("updated"),
                 "arrived": _arrived_at(hass, layout, ent, row, now),
                 "zone": row.get("zone"), "sub_zone": row.get("sub_zone"), "floor": row.get("floor"),
-                "outside": bool(row.get("outside")), "outside_m": row.get("outside_m"), "outside_raw_m": row.get("outside_raw_m"),
+                "outside": bool(row.get("outside")), **{k: row.get(k) for k in persons_mod.FIT_KEYS},
                 "area": room_area(layout, row.get("floor"), row.get("zone")),
                 "on_charger": bool(chargers.get(ent)) and persons_mod.on_charger(
                     getattr(hass.states.get(chargers[ent]), "state", None)),

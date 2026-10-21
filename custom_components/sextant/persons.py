@@ -192,6 +192,11 @@ def _iso(stamp, now):
     return datetime.fromtimestamp(stamp, timezone.utc).replace(microsecond=0).isoformat()
 
 
+# How far beyond the rooms a fix is, and what the fit looked like, published so
+# "outside the house" can be told from "by a wall".
+FIT_KEYS = ("outside_m", "outside_raw_m", "rms_m", "conf", "n_prox", "nearest_m")
+
+
 def states(best, why=None):
     """(suffix -> (state, attributes)) for a person's sensors from the chosen thing."""
     if best is None:
@@ -206,7 +211,7 @@ def states(best, why=None):
     room, floor = best.get("zone"), best.get("floor") or "unknown"
     area_id, floor_id = best.get("area") or (None, None)
     via = {"via": best["ent"]}
-    dist = {k: best[k] for k in ("outside_m", "outside_raw_m") if best.get(k) is not None}
+    dist = {k: best[k] for k in FIT_KEYS if best.get(k) is not None}
     if best.get("outside"):
         # Beyond every room: not the nearest room it was snapped into.
         return {
