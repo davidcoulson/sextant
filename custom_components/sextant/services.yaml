@@ -274,3 +274,22 @@ set_floor_bias_field:
       example: "[[1200, 900], [1500, 900], [1500, 1100], [1200, 1100]]"
       selector:
         object:
+
+get_map:
+  name: Get the map
+  description: >-
+    The floor plan and who is where, as data, in metres: every floor's rooms
+    (outline, area, linked Home Assistant area, neighbouring rooms, spots,
+    proxies, who and what is in it), the proxies, access points and mmWave
+    sensors placed on it, and where each person, pet and thing is right now.
+    For an automation, a script or an AI assistant; read the result with
+    response_variable. Coordinates are each floor's own plan coordinates,
+    from its top-left corner; floors are not aligned to one another.
+  fields:
+    floor:
+      name: Floor
+      description: One floor, by its name on the plan. Every floor when left out.
+      required: false
+      example: Ground
+      selector:
+        text:

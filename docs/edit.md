@@ -9,7 +9,8 @@ Assistant floor): pick it on the selected room, or press **Link rooms to
 areas** to link every unlinked room on the floor to the area of the same
 name. A room is a shape on a plan and an area a grouping of devices, so
 they stay separate things, but linked, the room's label and the Live list
-show the area's icon, and the sensors of a thing in that room carry
+show the area's icon (and **Use area name** on the room renames it after
+the area, when the two differ), and the sensors of a thing in that room carry
 `area_id` (and `floor_id`), so an automation can act on the area itself:
 
 ```yaml
@@ -52,7 +53,10 @@ drag, edge midpoints add a vertex, right-click removes one. An edge within
 corner - the preview turns orange when it does - so right angles and cut
 corners come out clean without aiming; a corner between two such edges
 lands where they cross. Hold Alt to place a corner freely; a wall at any
-other angle is never close enough to snap. **Square up** on a selected
+other angle is never close enough to snap. The **Snap** button in the
+toolbar cycles what snaps at all: everything, corners only, walls only
+(proxies onto walls) or nothing, for a plan whose walls really do run at
+odd angles; the choice is remembered. **Square up** on a selected
 room or spot does the same to a shape drawn before. A selected spot also
 takes its real size: measure the furniture, type the width (across the
 plan) and depth (up the plan) in inches or centimetres, pick the corner to
@@ -89,7 +93,12 @@ cat, and Bag also takes a backpack, a purse or luggage — shown outlined in
 the picker so the spot's reach is visible.
 Undo holds fifty steps. **Adjust rooms** squares
 near-rectangles, snaps neighbours to shared walls and removes overlaps
-with a live preview. Nothing is written until Save.
+with a live preview. Nothing is written until Save, unless **Auto** next
+to Discard is on: then the plan is written a couple of seconds after each
+change, once nothing is mid-drag or mid-draw. Every write, by hand or
+automatic, keeps a copy of the plan it replaces under History, and a
+change that would break a shape (a spot squashed to a line, say) is never
+written quietly: auto-save says so and waits for Save, which asks.
 
 ## Colours and scale
 

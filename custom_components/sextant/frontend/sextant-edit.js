@@ -40,6 +40,16 @@ const LOCKS = [
   ["pin", "Anchors", "mdi:crosshairs-gps"],
 ];
 const UNDO_DEPTH = 50;
+// What snaps while you draw and drag: corners square up and land on each
+// other, proxies land on walls. Alt always places freely, whatever the mode.
+const SNAP_MODES = [
+  ["all", "Snap: all", "mdi:magnet", "Corners snap square and onto each other, proxies snap onto walls. Alt places freely"],
+  ["corners", "Snap: corners", "mdi:vector-square", "Corners snap square and onto each other; proxies go where you drop them"],
+  ["walls", "Snap: walls", "mdi:wall", "Proxies snap onto walls; corners go where you put them"],
+  ["off", "Snap: off", "mdi:magnet-off", "Nothing snaps: everything goes exactly where you put it"],
+];
+// Auto-save waits this long after the last change before it writes the plan.
+const AUTOSAVE_DELAY_MS = 2500;
 
 function uid(prefix) { return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`; }
 
@@ -80,6 +90,8 @@ class SextantEdit extends LitElement {
     _radarLive: { state: true },      // the selected radar's targets right now
     _calib: { state: true },          // lining the selected radar up: {stage: "freeze" | "place" | "done", ...}
     _placingAp: { state: true },      // the Wi-Fi tool's access point, waiting for a click
+    _snapMode: { state: true },       // SNAP_MODES key, kept in localStorage
+    _autosave: { state: true },       // save a moment after each change, kept in localStorage
   };
 
   constructor() {
@@ -90,6 +102,12 @@ class SextantEdit extends LitElement {
     this._selection = null;
     this._placing = null; // scanner address chosen for the next receiver click
     this._placingAp = null; // access point MAC chosen for the next Wi-Fi click
+    let snap = "all", autosave = false;
+    try { snap = localStorage.getItem("sextant.edit.snap") || "all"; autosave = localStorage.getItem("sextant.edit.autosave") === "on"; } catch { /* ignore */ }
+    this._snapMode = SNAP_MODES.some(([k]) => k === snap) ? snap : "all";
+    this._autosave = autosave;
+    this._editedAt = 0;     // when the draft last changed (performance.now), for auto-save's pause
+    this._autosaveHeld = null;  // the draft auto-save declined (a shape would break), so it asks once
     this._measure = null; // {a, b} map points
     this._proposal = null;
     this._busy = false;
@@ -114,6 +132,7 @@ class SextantEdit extends LitElement {
 
   _snapshot() {
     if (!this._draft) return;
+    this._editedAt = performance.now();
     this._undo = [...this._undo.slice(-(UNDO_DEPTH - 1)), this._serial()];
     this._redo = [];   // a new change ends the redo history, as everywhere
   }
@@ -221,7 +240,7 @@ class SextantEdit extends LitElement {
       // A press on an item may only select it: its undo step is kept only
       // once the drag has changed something (see _commitDragStep).
       onDragStart: () => { this._dragStep = this._serial(); },
-      onChange: (kind) => { this._commitDragStep(); this._dirty = true; this._tick++; if (kind === "pin") this._refreshAlignment(); this.requestUpdate(); },
+      onChange: (kind) => { this._commitDragStep(); this._dirty = true; this._editedAt = performance.now(); this._tick++; if (kind === "pin") this._refreshAlignment(); this.requestUpdate(); },
       onDrawPoint: () => this.requestUpdate(),
       onDrawClose: () => this._closeDraft(),
       // The scale bar follows the zoom (onView fires every frame).
@@ -230,7 +249,9 @@ class SextantEdit extends LitElement {
     });
     this._map.setMode("edit");
     this._map.setOptions({ labels: true, subzones: true, receivers: true, trails: false });
+    this._applySnap();
     this._map.setLocks(this._locks);
+    this._autosaveTimer = setInterval(() => this._autosaveTick(), 1000);
     this._syncDraft(first);
     // A rebuilt map starts blank: give it what updated() would only push on a
     // change - the tool in hand, and the radars' devices.
@@ -252,6 +273,7 @@ class SextantEdit extends LitElement {
     super.disconnectedCallback();
     clearTimeout(this._alignTimer);
     clearInterval(this._radarTimer);
+    clearInterval(this._autosaveTimer);
     window.removeEventListener("beforeunload", this._warnUnload);
     window.removeEventListener("keydown", this._keys);
     // The corners of a shape being drawn live in the map, which goes now:
@@ -395,7 +417,7 @@ class SextantEdit extends LitElement {
     const f = this._floorObj();
     if (!f || this._map.hover?.kind === "pin") return;   // a click on a pin selects it
     let p = this._mapPoint(e);
-    if (!e.altKey) p = snapToVertex(p, f.zones, 12 / this._map.view.k) || p;
+    if (!this._map._free(e)) p = snapToVertex(p, f.zones, 12 / this._map.view.k) || p;
     this._snapshot();
     f.pins = f.pins || [];
     const name = this._nextPinName(f);
@@ -830,6 +852,7 @@ class SextantEdit extends LitElement {
         ...areas.map((a) => ({ value: a.area_id, label: a.floor_id && floors[a.floor_id] ? `${a.name} (${floors[a.floor_id].name})` : a.name }))],
         onChange: (v) => { this._edit("area_id", v || undefined); this._map.invalidate(); }, style: "flex: 1" })}
       ${area?.icon ? html`<ha-icon icon=${area.icon} title="The area's icon, shown in this room's label"></ha-icon>` : nothing}
+      ${area?.name && area.name !== item.entity_id ? html`<button class="chip" title=${`Rename this room ${area.name}, after the area`} @click=${() => this._edit("entity_id", area.name)}>Use area name</button>` : nothing}
     </div>
     <div class="muted small">A thing in this room reports the area's id (<code>area_id</code> on its room and location sensors), so an automation can act on the area itself.</div>`;
   }
@@ -847,6 +870,46 @@ class SextantEdit extends LitElement {
     this._map.invalidate();
     this.requestUpdate();
     toast(this, `Linked ${todo.length} room${todo.length === 1 ? "" : "s"} to the area of the same name. Save to keep it`);
+  }
+
+  // --- snap mode and auto-save -------------------------------------------------
+
+  /** Tell the map what snaps (SNAP_MODES): walls for proxies, corners for shapes and anchors. */
+  _applySnap() {
+    const m = this._snapMode;
+    this._map?.setOptions({ wallSnap: m === "all" || m === "walls", cornerSnap: m === "all" || m === "corners" });
+  }
+
+  _cycleSnap() {
+    const i = SNAP_MODES.findIndex(([k]) => k === this._snapMode);
+    this._snapMode = SNAP_MODES[(i + 1) % SNAP_MODES.length][0];
+    try { localStorage.setItem("sextant.edit.snap", this._snapMode); } catch { /* ignore */ }
+    this._applySnap();
+  }
+
+  _setAutosave(on) {
+    this._autosave = !!on;
+    try { localStorage.setItem("sextant.edit.autosave", on ? "on" : "off"); } catch { /* ignore */ }
+    if (on && this._dirty) toast(this, "Auto-save is on: unsaved changes go to the store in a moment");
+  }
+
+  /** Auto-save: the plan is written a pause after the last change, once nothing
+   * is mid-drag or mid-draw. A save that would break a shape is never made
+   * quietly: it waits for the Save button, which asks. */
+  _autosaveTick() {
+    if (!this._autosave || !this._dirty || this._busy || this._map?.dragging || this._drawing()) return;
+    if (performance.now() - this._editedAt < AUTOSAVE_DELAY_MS) return;
+    const draft = this._cleanDraft();
+    const key = layoutKey(draft);
+    if (key === this._autosaveHeld) return;
+    const lost = lostShapes(this.data?.layout, draft);
+    if (lost.length) {
+      this._autosaveHeld = key;
+      toast(this, `Not saved automatically: this change would break ${lost.length === 1 ? "a shape" : `${lost.length} shapes`} (${lost[0]}${lost.length > 1 ? " …" : ""}). Save by hand to keep or undo it`, 8000);
+      return;
+    }
+    this._autosaveHeld = null;
+    this._save(null, true);
   }
 
   /** The floors this floor can be compared with, nearest level first (Basement and Second Floor both want Ground). */
@@ -1031,13 +1094,14 @@ class SextantEdit extends LitElement {
     this.dispatchEvent(new CustomEvent("floor-changed", { detail: this._draft.floor[0]?.name || null }));
   }
 
-  async _save(removeMap = null) {
+  async _save(removeMap = null, auto = false) {
     const draft = this._cleanDraft();
     // Asked before anything is sent. The server keeps a copy of the plan it
     // replaces, but a spot that draws as nothing is still a spot you have to
     // notice is missing: this is the question that would have caught the two
-    // bedside tables that went out as one point each.
-    const lost = lostShapes(this.data?.layout, draft);
+    // bedside tables that went out as one point each. (Auto-save checked
+    // already and holds off rather than asking: see _autosaveTick.)
+    const lost = auto ? [] : lostShapes(this.data?.layout, draft);
     if (lost.length && !confirmDialog(`This save would break ${lost.length === 1 ? "a shape" : `${lost.length} shapes`}:\n\n${lost.join("\n")}\n\nSave anyway? The plan as it is now is kept under History.`)) return null;
     this._busy = true;
     const sent = layoutKey(draft);
@@ -1045,7 +1109,7 @@ class SextantEdit extends LitElement {
     this._busy = false;
     if (r) {
       const n = r.confined?.length || 0;
-      toast(this, n ? `Floor plan saved; ${n === 1 ? `${r.confined[0]} was` : `${n} spots were`} fitted inside ${n === 1 ? "its room" : "their rooms"}` : "Floor plan saved");
+      toast(this, n ? `Floor plan saved; ${n === 1 ? `${r.confined[0]} was` : `${n} spots were`} fitted inside ${n === 1 ? "its room" : "their rooms"}` : auto ? "Saved" : "Floor plan saved", auto && !n ? 1200 : undefined);
       // The server's own check, in case a shape went wrong on the way in.
       if (r.lost?.length) toast(this, `Saved, but ${r.lost.length === 1 ? "a shape was" : `${r.lost.length} shapes were`} lost: ${r.lost[0]}${r.lost.length > 1 ? " …" : ""}. Restore the earlier copy from History if that was not meant.`, 10000);
       this._history = null;   // stale now: a copy was just added
@@ -1157,10 +1221,13 @@ class SextantEdit extends LitElement {
           ${LOCKS.map(([kind, label, icon]) => html`<button class="tool lock ${this._locks[kind] ? "locked" : ""}" aria-label=${`${label} ${this._locks[kind] ? "locked" : "unlocked"}`} aria-pressed=${!!this._locks[kind]} title=${this._locks[kind] ? `${label} are locked: click to allow selecting and moving them` : `${label} can be moved: click to lock them`} @click=${() => this._setLock(kind, !this._locks[kind])}>
             <span class="lockicons"><ha-icon icon=${icon}></ha-icon><ha-icon class="badge" icon=${this._locks[kind] ? "mdi:lock" : "mdi:lock-open-variant-outline"}></ha-icon></span><span>${label}</span></button>`)}
           <span class="sep"></span>
+          ${(([, label, icon, tip]) => html`<button class="tool ${this._snapMode === "off" ? "" : "active"}" aria-label=${label} title=${`${label}: ${tip}. Click for the next mode`} @click=${() => this._cycleSnap()}><ha-icon icon=${icon}></ha-icon><span>${label.replace("Snap: ", "")}</span></button>`)(SNAP_MODES.find(([k]) => k === this._snapMode) || SNAP_MODES[0])}
+          <span class="sep"></span>
           <button class="tool" aria-label="Undo" title="Undo the last change (${this._undo.length} step${this._undo.length === 1 ? "" : "s"}) - Ctrl/Cmd+Z" ?disabled=${!this._undo.length && !this._map?.draft?.length} @click=${() => this._undoAction()}><ha-icon icon="mdi:undo"></ha-icon><span>Undo</span></button>
           <button class="tool" aria-label="Redo" title="Redo what was undone (${this._redo.length} step${this._redo.length === 1 ? "" : "s"}) - Ctrl/Cmd+Shift+Z or Ctrl+Y" ?disabled=${!this._redo.length || !!this._map?.draft?.length} @click=${() => this._redoAction()}><ha-icon icon="mdi:redo"></ha-icon><span>Redo</span></button>
           ${uiButton({ label: "Save", kind: "primary", disabled: !this._dirty || this._busy, onClick: () => this._save(), title: "Write the floor plan to the store" })}
           ${uiButton({ label: "Discard", kind: "text", disabled: !this._dirty, onClick: () => this._discard() })}
+          <button class="tool ${this._autosave ? "active" : ""}" aria-label="Auto-save" aria-pressed=${this._autosave} title=${this._autosave ? "Auto-save is on: the plan is written a couple of seconds after each change. Click to turn it off" : "Auto-save is off: changes wait for Save. Click to write the plan a couple of seconds after each change (every write keeps a copy under History)"} @click=${() => this._setAutosave(!this._autosave)}><ha-icon icon=${this._autosave ? "mdi:content-save-check-outline" : "mdi:content-save-off-outline"}></ha-icon><span>Auto</span></button>
         </div>
         ${this._tool === "receiver" ? html`<div class="hint">
           <select @change=${(e) => { this._placing = e.target.value || null; }}>

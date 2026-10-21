@@ -202,6 +202,14 @@ file in `config/sextant_maps/`) overrides the floor's plan.
 | `sextant.set_thing_heights` | `heights` (thing → m) | carry heights |
 | `sextant.set_floor_bias_field` | `floor`, `action` (`flat` / `paint` / `clear`), `value`, `area` or `points`, `mode`, `cell_m` | shape a floor's election bias by place; see [bias fields](positioning.md). Returns the field's shape |
 | `sextant.set_tuning` | `settings`, `reset` | any [tuning key](tuning.md#tuning-reference); an unknown key or out-of-range value is refused with the allowed range |
+| `sextant.get_map` | `floor` (optional) | returns the plan in metres (rooms with outlines, areas, neighbours, spots and proxies; no-go areas; access points; mmWave) and who and what is where now: every person and pet, and every thing with its room, spot, position and confidence. A floor with no scale yet comes back in pixels. For scripts, templates and an LLM that wants the house as data |
+
+```yaml
+action: sextant.get_map
+data: {floor: Ground}
+response_variable: house
+# house.floors[0].rooms[*].occupants, house.things[*].room, ...
+```
 
 ```yaml
 action: sextant.set_tuning

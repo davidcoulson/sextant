@@ -6266,12 +6266,42 @@ def _register_calibration_services(hass) -> None:
         """Change positioning tuning live (TUNING_SPEC), through the store."""
         await async_apply_tuning(hass, call.data.get("settings") or {}, bool(call.data.get("reset")))
 
-    async_register_admin_service(hass, 
+    async_register_admin_service(hass,
         DOMAIN, "set_tuning", _set_tuning,
         schema=vol.Schema({
             vol.Optional("settings", default=dict): dict,
             vol.Optional("reset", default=False): cv.boolean,
         }),
+    )
+
+    async def _get_map(call: ServiceCall) -> ServiceResponse:
+        """The plan and who is where, in metres (export.py)."""
+        from . import export as export_mod  # noqa: PLC0415 - shapely, only wanted here
+        from .ws import _thing_names  # noqa: PLC0415 - ws imports this package lazily
+
+        layout = get_layout(hass)
+        if not isinstance(layout, dict):
+            raise HomeAssistantError("No Sextant layout saved yet; draw a floor first.")
+        rows = [r for r in (hass.data.get(DOMAIN, {}).get("apitricords") or []) if isinstance(r, dict)]
+        now = time.time()
+
+        def presence_of(ent):
+            seen = _last_seen.get(ent)
+            return _presence_of(seen.get("updated") if isinstance(seen, dict) else None, now, layout)
+
+        keys = {r.get("ent") for r in rows if r.get("ent")}
+        names = _thing_names(hass, keys, layout)
+        people = export_mod.people_from_states(hass.states.get, layout)
+        try:
+            return export_mod.build_map(layout, rows, people, names=names, now=now,
+                                        floor=call.data.get("floor"), presence_of=presence_of)
+        except ValueError as err:
+            raise HomeAssistantError(f"sextant.get_map: {err}") from err
+
+    async_register_admin_service(hass,
+        DOMAIN, "get_map", _get_map,
+        schema=vol.Schema({vol.Optional("floor"): cv.string}),
+        supports_response=SupportsResponse.ONLY,
     )
 
 

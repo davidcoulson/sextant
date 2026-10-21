@@ -504,7 +504,7 @@ class SextantLive extends LitElement {
     this._truth = null;     // the last mark's evaluation {mark, rows, current_weight}
     this._marks = [];       // the selected thing's marks
     this._blend = null;     // slider value while it is being dragged (0..100)
-    this._options = { circles: false, fingerprint: false, trails: true, grid: "off", labels: true, subzones: true, receivers: true, access_points: true, links: true, image: true };
+    this._options = { circles: false, fingerprint: false, trails: true, grid: "off", labels: true, subzones: true, receivers: true, access_points: true, links: true, all_links: false, image: true };
     try { Object.assign(this._options, JSON.parse(localStorage.getItem("sextant.live.options") || "{}")); } catch { /* ignore */ }
     this._history = null; // {ent, from, to, points:[{t,x,y,f}] }
     this._timeline = null; // {ent, at, stays:[{start,end,floor,room,spot,unheard?,partial?}], last_heard}
@@ -1602,6 +1602,7 @@ class SextantLive extends LitElement {
       ["access_points", "Wi-Fi", "Draw the Wi-Fi access points placed on the plan. Point at one (or tap it) for its name and how many clients it has", "mdi:wifi"],
       ...(this._isAdmin() ? [["wifi_heat", "Signal", "The Wi-Fi signal map: how strong the signal is in each square metre, or which access point clients are on there, measured from the proxies and the people's phones and watches", "mdi:wifi-strength-3"]] : []),
       ["links", "Signal lines", "With a thing selected: a line to each proxy that heard it, green when close and red by ten metres, thicker for the ones that count most - and for a phone or watch, a dashed line to its Wi-Fi access point", "mdi:transit-connection-variant"],
+      ["all_links", "All lines", "A line from every thing on the floor to the proxy that heard it best, without selecting one: which proxy is carrying what, at a glance", "mdi:vector-polyline"],
       ["circles", "Range circles", "The distance each proxy measured, as a circle: the fix is where they meet", "mdi:radar"],
       ["fingerprint", "Fingerprint fix", "Where the fingerprint estimator alone would put each thing (dashed), next to the published fix", "mdi:fingerprint"],
     ];
@@ -1647,7 +1648,7 @@ class SextantLive extends LitElement {
         ${zoom}
         ${pinning ? nothing : this._renderWifiLegend()}
         ${pinning ? nothing : html`<div class="mapcorner ${this._history ? "lifted" : ""} ${sel ? "besidecard" : ""}">
-          ${sel && this._options.links !== false && sel.radii?.length && sel.floor === this.floor ? signalLegend(isImperial(this.hass)) : nothing}
+          ${(sel && this._options.links !== false && sel.radii?.length && sel.floor === this.floor) || this._options.all_links ? signalLegend(isImperial(this.hass)) : nothing}
           ${renderScaleBar(this._floorObj()?.scale, this._map?.view?.k, isImperial(this.hass),
             this._isAdmin() ? () => this._goto("edit") : null, "No scale on this floor. Set it in Edit with the Scale tool")}
         </div>`}

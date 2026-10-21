@@ -215,6 +215,12 @@ show. The thing's details list the same proxies under **In the solve**: each one
 name, how far it reads the thing, and its share of the weight, the ones that
 count most first, with the line's colour beside it.
 
+**All lines** (off by default) draws one line from every thing on the floor
+to the proxy that heard it best, without selecting anything, in the same
+colours: a glance says which proxy is carrying what, and a proxy with no
+lines to it is one the solver is not leaning on. The selected thing still
+gets its full set.
+
 ## Scale bar
 
 The bottom-left corner of the map has a scale bar, a round length (1, 2 or 5

@@ -145,3 +145,14 @@ def test_every_service_is_an_admin_service(tmp_path):
     layout and calibration, so each must be registered as an admin service."""
     hass, handlers = _hass(tmp_path)
     assert handlers and set(handlers) == hass.data["_admin_services"]
+
+
+def test_get_map_answers_with_the_plan_and_the_rows(tmp_path):
+    hass, h = _hass(tmp_path)
+    hass.states = types.SimpleNamespace(async_all=lambda domain=None: [], get=lambda _eid: None)
+    hass.data["sextant"]["apitricords"] = [{"ent": "phone", "floor": "F", "zone": None, "cords": [10, 20]}]
+    out = run(h["get_map"](_Call()))
+    assert [f["name"] for f in out["floors"]] == ["F"] and out["floors"][0]["proxies"][1]["x_m"] == 3.0
+    assert out["things"][0]["key"] == "phone" and out["things"][0]["presence"] == "away"
+    with pytest.raises(Exception, match="Roof"):
+        run(h["get_map"](_Call(floor="Roof")))

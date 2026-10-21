@@ -804,6 +804,11 @@ export class SextantMap {
   setBiasMap(m) { this.biasMap = m?.cells?.length ? m : null; this._biasImg = null; this.invalidate(); }
   setSuggestions(list) { this.suggestions = list || []; this.invalidate(); }
   setOptions(opts) { Object.assign(this.options, opts); this.invalidate(); }
+  /** Whether a press places a corner freely: Alt held, or corner snapping
+   * switched off (the editor's snap mode, options.cornerSnap). */
+  _free(e) { return !!e?.altKey || this.options.cornerSnap === false; }
+  /** A press that is moving something: the editor holds its auto-save until it ends. */
+  get dragging() { return !!this._drag; }
   setMode(mode) { this.mode = mode; if (mode !== "edit") { this.draft = null; this.tool = "select"; } this.invalidate(); }
   setTool(tool) { this.tool = tool; this.draft = tool === "select" ? null : this.draft; this.invalidate(); }
   setSelection(sel) { this.selection = sel; this.invalidate(); }
@@ -927,7 +932,7 @@ export class SextantMap {
         if (Math.hypot(first.x - p.x, first.y - p.y) < HIT_SLOP * 1.5) { if (this.host.onDrawClose) this.host.onDrawClose(); return; }
       }
       this.draft = this.draft || [];
-      const at = e.altKey ? m : snapCorner(m, this.draft[this.draft.length - 1] || null, this.draft.length >= 2 ? this.draft[0] : null);
+      const at = this._free(e) ? m : snapCorner(m, this.draft[this.draft.length - 1] || null, this.draft.length >= 2 ? this.draft[0] : null);
       this.draft.push({ x: Math.round(at.x * 1000) / 1000, y: Math.round(at.y * 1000) / 1000 });
       this._draftPush = performance.now();
       if (this.host.onDrawPoint) this.host.onDrawPoint(this.draft);
@@ -1081,7 +1086,7 @@ export class SextantMap {
       // The next corner, where a click would put it: snapped, so a right
       // angle is visible before it is committed.
       const m = this.toMap(p);
-      this._drawHover = e.altKey ? m : snapCorner(m, this.draft[this.draft.length - 1], this.draft.length >= 2 ? this.draft[0] : null);
+      this._drawHover = this._free(e) ? m : snapCorner(m, this.draft[this.draft.length - 1], this.draft.length >= 2 ? this.draft[0] : null);
       this.invalidate();
     } else if (this._drawHover) {
       this._drawHover = null;
@@ -1126,7 +1131,7 @@ export class SextantMap {
     } else if (hit.kind === "pin") {
       const raw = { x: d.origin[0].x + dx, y: d.origin[0].y + dy };
       // Onto a room corner when one is near; Alt places it freely.
-      const corner = e.altKey ? null : snapToVertex(raw, f.zones, (HIT_SLOP * 1.5) / this.view.k);
+      const corner = this._free(e) ? null : snapToVertex(raw, f.zones, (HIT_SLOP * 1.5) / this.view.k);
       f.pins[hit.index].cords = corner || raw;
       this._pinSnap = corner;
     } else if (hit.kind === "remark") {
@@ -1147,7 +1152,7 @@ export class SextantMap {
       if (hit.vertex != null) {
         const raw = { x: d.origin[hit.vertex].x + dx, y: d.origin[hit.vertex].y + dy };
         const cnt = item.cords.length;
-        const at = e.altKey ? raw : snapCorner(raw, item.cords[(hit.vertex - 1 + cnt) % cnt], item.cords[(hit.vertex + 1) % cnt]);
+        const at = this._free(e) ? raw : snapCorner(raw, item.cords[(hit.vertex - 1 + cnt) % cnt], item.cords[(hit.vertex + 1) % cnt]);
         item.cords[hit.vertex] = { x: at.x, y: at.y };
       } else if (hit.edge != null) {
         // Dragging an edge midpoint inserts a vertex there, then drags it.
@@ -1531,6 +1536,20 @@ export class SextantMap {
       ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(w.x, w.y); ctx.stroke(); ctx.setLineDash([]);
       if (this.options.labels) this._label(ctx, `Wi-Fi · ${w.name}`, (tx + w.x) / 2, (ty + w.y) / 2 - 10 / k, 9, 0.85, null, LABEL_PRIO.other);
     }
+    ctx.restore();
+  }
+
+  /** With "All lines": one line from a thing to the proxy the solver leaned on
+   * most, in the same red-to-green ramp as the signal lines. Every thing at
+   * once, without selecting one: which proxy is carrying what, at a glance. */
+  _drawBestLink(ctx, t) {
+    const radii = Array.isArray(t.radii) ? t.radii : [];
+    if (!radii.length || !t.cords) return;
+    const best = radii.reduce((a, b) => ((Number(b[3]) || 0) > (Number(a[3]) || 0) ? b : a));
+    const metres = best[2] / (this.floor?.scale || PX_PER_M_FALLBACK);
+    ctx.save();
+    ctx.strokeStyle = distanceColour(metres, 0.7); ctx.lineWidth = 1.5 / this.view.k; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(t.cords[0], t.cords[1]); ctx.lineTo(best[0], best[1]); ctx.stroke();
     ctx.restore();
   }
 
@@ -2218,6 +2237,7 @@ export class SextantMap {
         ctx.strokeStyle = paint(0.5); ctx.lineWidth = 2 / k; ctx.stroke();
       }
       if (focused && this.options.links !== false) this._drawSignalLines(ctx, t);
+      if (!focused && this.options.all_links && !ghost) this._drawBestLink(ctx, t);
       if (this.options.circles && Array.isArray(t.radii)) {
         for (const [x, y, r] of t.radii) {
           ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
