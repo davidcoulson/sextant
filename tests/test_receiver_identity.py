@@ -144,3 +144,13 @@ def test_resolver_handles_bermudas_mac_suffixed_slugs():
     layout = {"floor": [{"name": "F", "receivers": [{"entity_id": "sewing_room_rrn00_4e893c", "cords": {"x": 0, "y": 0}}]}]}
     assert sextant._resolve_receiver_addresses(layout, directory)[0]
     assert layout["floor"][0]["receivers"][0]["address"] == "dc:06:75:4e:89:3e"
+
+
+def test_placed_receivers_takes_a_dict_or_a_json_string():
+    import json
+
+    layout = {"floor": [{"name": "G", "receivers": [{"entity_id": "kitchen", "address": "AA:BB", "scanner_uid": "u"}, {"entity_id": ""}, "x"]}]}
+    want = [("G", "kitchen", "u", "aa:bb")]
+    assert sextant._placed_receivers(layout) == want
+    assert sextant._placed_receivers(json.dumps(layout)) == want
+    assert sextant._placed_receivers("") == [] and sextant._placed_receivers(None) == [] and sextant._placed_receivers("{bad") == []

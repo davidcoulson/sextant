@@ -234,3 +234,16 @@ def test_floor_without_allowed_zones_answers_unknown(tmp_path):
     assert sextant.find_zone_for_point(hass, data, "pet", "Ground Floor", Point(15, 5)) == "unknown"
     assert sextant.find_nearest_zone(hass, data, "pet", "Ground Floor", Point(15, 5)) == "unknown"
     assert sextant._floor_zone_polygons(hass, data, "pet", "Ground Floor").allowed_ids == []
+
+
+def test_preferred_snap_target_is_memoised_on_the_cached_floor(tmp_path):
+    hass = make_hass(tmp_path)
+    data = _new_global_data(_two_room_layout())
+    zones = sextant._floor_zone_polygons(hass, data, "pet", "Ground Floor")
+    nogo = zones.snap[1]
+    a = sextant._preferred_snap_target(zones, "Kitchen", nogo)
+    assert a is not None and sextant._preferred_snap_target(zones, "Kitchen", nogo) is a
+    assert sextant._preferred_snap_target(zones, "Nowhere", nogo) is None and "Nowhere" in zones.snap_own
+    # Same geometry as the unmemoised path on a plain list.
+    plain = sextant._preferred_snap_target(list(zones), "Kitchen", nogo)
+    assert plain.equals(a)
