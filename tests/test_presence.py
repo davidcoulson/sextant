@@ -190,6 +190,38 @@ def test_anything_else_changing_is_written_at_once_with_the_exact_last_heard():
         ("Kitchen", "a"), ("Dining", "b"), ("Dining", "c"), ("Dining", "d")]
 
 
+def test_fit_quality_moving_alone_waits_like_last_heard():
+    """rms, confidence and the nearest proxy wobble with BLE noise every cycle.
+    On their own they are topped up with last_heard every five minutes; with
+    anything else they are written at once, as they were that moment."""
+    hass = make_hass()
+    s = _CountingSensor()
+    hass.data["sextant_sensors"] = {LOC: s}
+    t0 = 1_000_000.0
+    for k in range(21):                                  # every 15 s for 5 minutes
+        _write(hass, "Kitchen", f"heard+{15 * k}", t0 + 15 * k, rms_m=k, conf=0.5, nearest_m=k / 10, n_prox=5 + k % 2)
+    assert [(w[1]["last_heard"], w[1]["rms_m"]) for w in s.writes] == [("heard+0", 0), ("heard+300", 20)]
+    _write(hass, "Dining", "x", t0 + 315, rms_m=99, conf=0.5, nearest_m=1, n_prox=5)   # the room changed
+    assert s.writes[-1][0] == "Dining" and s.writes[-1][1]["rms_m"] == 99 and s.writes[-1][1]["last_heard"] == "x"
+
+
+def test_a_person_sensor_tops_up_its_fit_quality_the_same_way():
+    hass = make_hass()
+    s = _CountingSensor()
+    person = "sensor.david_sextant_person_location"
+    hass.data["sextant_sensors"] = {person: s}
+    t0 = 1_000_000.0
+    for k in range(21):
+        _write(hass, "Kitchen", None, t0 + 15 * k, entity=person, conf=0.3 + k / 100, rms_m=k)
+    assert [w[1]["rms_m"] for w in s.writes] == [0, 20]
+
+
+def test_fit_quality_is_not_recorded():
+    from sextant import sensor as sensor_mod
+    from sextant.const import FIT_ATTRIBUTES
+    assert set(FIT_ATTRIBUTES) <= sensor_mod.CustomDistanceSensor._unrecorded_attributes
+
+
 def test_a_sensor_not_yet_in_home_assistant_keeps_the_value_without_writing():
     hass = make_hass()
     s = _CountingSensor()

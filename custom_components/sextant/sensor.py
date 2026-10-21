@@ -7,7 +7,7 @@ import logging
 
 from homeassistant.helpers.event import async_call_later
 
-from .const import ACCURACY_ENTITY_ID, GLOBAL_ENTITY_IDS, PEOPLE_HOME_ENTITY_ID, UNTRACKED_ENTITY_ID  # single source of truth (shared with __init__)
+from .const import ACCURACY_ENTITY_ID, FIT_ATTRIBUTES, GLOBAL_ENTITY_IDS, PEOPLE_HOME_ENTITY_ID, UNTRACKED_ENTITY_ID  # single source of truth (shared with __init__)
 from . import bermuda_source
 
 _LOGGER = logging.getLogger(__name__)
@@ -282,11 +282,12 @@ class CustomDistanceSensor(SensorEntity):
     # Pushed by the positioning cycle; there is nothing for Home Assistant to poll.
     _attr_should_poll = False
 
-    # last_heard moves every cycle a thing is heard. Left out of the recorder's
-    # attribute rows so a day of it does not fill the database with copies of
-    # attributes that differ only by a timestamp; presence is kept, it is the
-    # one automations and history care about.
-    _unrecorded_attributes = frozenset({"last_heard"})
+    # last_heard and the fit quality (rms, confidence, nearest proxy) move
+    # every cycle a thing is heard. Left out of the recorder's attribute rows
+    # so a day of them does not fill the database with copies of attributes
+    # that differ only by a timestamp or a centimetre; presence is kept, it is
+    # the one automations and history care about.
+    _unrecorded_attributes = frozenset({"last_heard", *FIT_ATTRIBUTES})
 
     """A representation of a custom sensor"""
     def __init__(self, name, unique_id, entity_id, device_key=None, via_device=None, attrs=None, device_name=None, model=None):

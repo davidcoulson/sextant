@@ -29,6 +29,7 @@ from __future__ import annotations
 import math
 from datetime import datetime, timezone
 
+from .const import FIT_ATTRIBUTES
 from .rooms import PET_CLASSES
 
 # A thing still for longer than this is probably not being carried.
@@ -194,7 +195,7 @@ def _iso(stamp, now):
 
 # How far beyond the rooms a fix is, and what the fit looked like, published so
 # "outside the house" can be told from "by a wall".
-FIT_KEYS = ("outside_m", "outside_raw_m", "rms_m", "conf", "n_prox", "nearest_m")
+FIT_KEYS = FIT_ATTRIBUTES
 
 
 def states(best, why=None):

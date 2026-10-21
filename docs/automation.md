@@ -28,6 +28,7 @@ lookup:
 | `area_id`, `floor_id` | the linked Home Assistant area and floor, or `None` where unlinked |
 | `presence` | `here` (heard within `stale_after_secs`, 2 min), `quiet` (until `away_after_secs`, 15 min), `away` — on every one of the five sensors |
 | `last_heard` | on the **location** sensor only: when the thing was last heard, ISO 8601 UTC, to within five minutes. While it is the only thing changing it is written every five minutes rather than every cycle, and exactly whenever the state or another attribute changes. Not recorded. The other four sensors write only when what they say changes |
+| `outside_m`, `rms_m`, `conf`, `n_prox`, `nearest_m` | on the **location** and person sensors: how far beyond the rooms the fix was, the fit's residual and confidence, how many proxies heard it and how near the nearest was. They wobble every cycle, so like `last_heard` they are written at once with any other change and otherwise every five minutes. Not recorded |
 
 When the state is a spot, `room` is the room that spot belongs to rather
 than the separately elected room. The two disagree for a cycle or so while

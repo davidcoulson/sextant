@@ -22,3 +22,8 @@ GLOBAL_ENTITY_IDS = frozenset({ACCURACY_ENTITY_ID, UNTRACKED_ENTITY_ID, PEOPLE_H
 # The iBeacon UUID every calibration probe advertises (README, "make each probe advertise"), lower-case
 # hex without dashes. Bermuda names such a beacon <uuid>_<major>_<minor>; it is never a device to track.
 PROBE_BEACON_UUID = "fde3b1502f6443baaee9867f75ee4a6f"
+# What the fit looked like, published on the location sensors so "outside the
+# house" can be told from "by a wall". They move with BLE noise every cycle a
+# thing is heard, so they are neither recorded (sensor.py) nor on their own a
+# reason to write (update_sextant_sensor_state).
+FIT_ATTRIBUTES = ("outside_m", "outside_raw_m", "rms_m", "conf", "n_prox", "nearest_m")

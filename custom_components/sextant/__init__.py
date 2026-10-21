@@ -38,7 +38,7 @@ except ImportError:  # very old shapely
     shapely_make_valid = None
 from asyncio import wait_for, TimeoutError
 
-from .const import DOMAIN, DEFAULT_UPDATE_INTERVAL, OPTION_SHOW_SIDEBAR_PANEL, OPTION_UPDATE_INTERVAL
+from .const import DOMAIN, DEFAULT_UPDATE_INTERVAL, FIT_ATTRIBUTES, OPTION_SHOW_SIDEBAR_PANEL, OPTION_UPDATE_INTERVAL
 from .calibration import (
     DUMP_DEVICES_TIMEOUT_S,
     _scanner_token,
@@ -3194,8 +3194,16 @@ def _sensor_is_live(hass, entity_id):
 # until the last one is this old. Anything else - the state, the presence,
 # any other attribute - is written at once, with the exact last_heard of that
 # moment.
+#
+# The fit quality (FIT_ATTRIBUTES: rms, confidence, the nearest proxy) is the
+# same kind of thing: a centimetre of BLE noise changes it every cycle. Put
+# on the location sensors in 2026.10.20.6 it undid the saving - 33 sensors
+# rewritten every cycle, 190k recorder rows a day - so it rides with
+# last_heard: written at once when anything else changes, otherwise topped
+# up with it every LAST_HEARD_WRITE_S.
 LAST_HEARD_WRITE_S = 300.0
 LAST_HEARD_SENSOR_SUFFIX = "_sextant_location"
+NOISY_ATTRIBUTES = frozenset({"last_heard", *FIT_ATTRIBUTES})
 _NOT_WRITTEN = object()
 
 
@@ -3203,6 +3211,14 @@ def _without_last_heard(attributes):
     if not isinstance(attributes, dict) or "last_heard" not in attributes:
         return attributes
     return {k: v for k, v in attributes.items() if k != "last_heard"}
+
+
+def _steady(attributes):
+    """The attributes without the ones that move every cycle; the same object
+    when there are none to drop."""
+    if not isinstance(attributes, dict) or NOISY_ATTRIBUTES.isdisjoint(attributes):
+        return attributes
+    return {k: v for k, v in attributes.items() if k not in NOISY_ATTRIBUTES}
 
 
 def update_sextant_sensor_state(hass, entity_id, state, attributes=None, now=None):
@@ -3227,17 +3243,20 @@ def update_sextant_sensor_state(hass, entity_id, state, attributes=None, now=Non
             sensor._attrs = attributes
         return
     now = time.time() if now is None else now
-    steady = _without_last_heard(attributes if attributes is not None else getattr(sensor, "_attrs", None))
+    attrs = attributes if attributes is not None else getattr(sensor, "_attrs", None)
+    steady = _steady(attrs)
+    noisy = steady is not attrs  # it carries last_heard or the fit quality
     written = getattr(sensor, "_written", _NOT_WRITTEN)
     if (written is not _NOT_WRITTEN and written[0] == state and written[1] == steady
-            and (not carries_last_heard or 0 <= now - written[2] < LAST_HEARD_WRITE_S)):
-        # Nothing to say: a sensor without last_heard is written only when
-        # what it says changes; the location sensor tops up last_heard once
-        # LAST_HEARD_WRITE_S has passed.
-        # Only last_heard moved, and it was written within LAST_HEARD_WRITE_S. The
-        # entity keeps what was written: Home Assistant polls a sensor every
-        # 30 s and writes whatever it holds, so holding the newer timestamp
-        # here put the write straight back (measured: one every ~30 s).
+            and (not noisy or 0 <= now - written[2] < LAST_HEARD_WRITE_S)):
+        # Nothing to say: a sensor with nothing noisy is written only when
+        # what it says changes; one carrying last_heard or the fit quality
+        # tops them up once LAST_HEARD_WRITE_S has passed.
+        # Only the noisy attributes moved, and they were written within
+        # LAST_HEARD_WRITE_S. The entity keeps what was written: Home
+        # Assistant polls a sensor every 30 s and writes whatever it holds,
+        # so holding the newer timestamp here put the write straight back
+        # (measured: one every ~30 s).
         return
     sensor._state = state
     if attributes is not None:
