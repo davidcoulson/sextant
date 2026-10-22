@@ -26,10 +26,10 @@ import { sharedStyles, thingName, mapUrlFor } from "./sextant-ui.js";
 const DEG = Math.PI / 180;
 const SLAB_M = 0.18;          // how thick a floor slab is drawn
 const WALL_M = 0.45;          // how high the rooms' walls are drawn
-// The light: from the plan's north-west, so a wall's shadow falls south-east
-// (down and right on the plan) this many times the wall's height long, and a
-// floor's shadow lands on the one below offset this fraction of the drop.
-const SHADOW_DIR = [Math.SQRT1_2, Math.SQRT1_2];
+// The light: from the upper left of the screen, whichever way the house is
+// turned, so a wall's shadow falls down and right on the screen this many
+// times the wall's height long, and a floor's shadow lands on the one below
+// offset this fraction of the drop.
 const SHADOW_K = 0.8;
 const DROP_K = 0.12;
 // Faces lit from the upper left of the screen: how bright a face is from the
@@ -434,12 +434,13 @@ class SextantStack extends LitElement {
       o.shadowOffsetX = 4000 * dpr; o.shadowOffsetY = 0;
       o.translate(-4000, 0);
       o.beginPath();
-      for (const poly of above.polys) poly.forEach(([x, y], i) => { const p = this._project(x + off * SHADOW_DIR[0], y + off * SHADOW_DIR[1], z); i ? o.lineTo(p[0], p[1]) : o.moveTo(p[0], p[1]); });
+      const [ux, uy] = this._shadowDir();
+      for (const poly of above.polys) poly.forEach(([x, y], i) => { const p = this._project(x + off * ux, y + off * uy, z); i ? o.lineTo(p[0], p[1]) : o.moveTo(p[0], p[1]); });
       o.closePath(); o.fillStyle = "#000"; o.fill();
       o.restore();
     }
     if (this._walls()) {
-      const len = WALL_M * SHADOW_K, dx = len * SHADOW_DIR[0], dy = len * SHADOW_DIR[1];
+      const len = WALL_M * SHADOW_K, [ux, uy] = this._shadowDir(), dx = len * ux, dy = len * uy;
       o.beginPath();
       for (const r of f.rooms) for (let i = 0; i < r.points.length; i++) {
         const a = r.points[i], b = r.points[(i + 1) % r.points.length];
@@ -483,6 +484,13 @@ class SextantStack extends LitElement {
     ctx.font = "600 12px system-ui, sans-serif"; ctx.textAlign = "left"; ctx.textBaseline = "top";
     ctx.fillStyle = line + "0.85)";
     ctx.fillText(f.name + (f.registered || lone ? "" : " (not lined up)"), corner[0] + 6, corner[1] + 4);
+  }
+
+  /** Which way, in house metres, a shadow falls on a floor: down and right
+   * on the screen, so it swings round with the house as it is turned. */
+  _shadowDir() {
+    const a = this._view.yaw * DEG, ca = Math.cos(a), sa = Math.sin(a);
+    return [(ca + sa) * Math.SQRT1_2, (ca - sa) * Math.SQRT1_2];
   }
 
   /** How lit a vertical face along the screen segment p-q is, 0..1: faces
