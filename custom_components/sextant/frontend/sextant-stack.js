@@ -51,6 +51,17 @@ const SPREADS = { real: 1, apart: 1.8, exploded: 3 };
 
 const OBJECT_URLS = new Map(); // authenticated image path -> object URL, per page load
 
+/** A polygon's centroid (its area's, so a long L-shaped room is named in its mass). */
+function centroid(pts) {
+  let a = 0, cx = 0, cy = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const [x0, y0] = pts[i], [x1, y1] = pts[(i + 1) % pts.length], c = x0 * y1 - x1 * y0;
+    a += c; cx += (x0 + x1) * c; cy += (y0 + y1) * c;
+  }
+  if (Math.abs(a) < 1e-9) return [pts.reduce((s, p) => s + p[0], 0) / pts.length, pts.reduce((s, p) => s + p[1], 0) / pts.length];
+  return [cx / (3 * a), cy / (3 * a)];
+}
+
 /** The affine transform (as ctx.transform's six numbers) taking the first
  * three of ``from`` to the first three of ``to``, or null if they are in a line. */
 function affine3(from, to) {
@@ -143,12 +154,14 @@ class SextantStack extends LitElement {
   /** The floor's plan image, fetched with the user's session once and kept. */
   _image(floorName) {
     const url = mapUrlFor(floorName, this.data?.maps);
-    if (!url) return null;
+    if (!url) { this._images.delete(floorName); this._planCache?.delete(floorName); return null; }
     let img = this._images.get(floorName);
     if (img && img.url === url) return img.complete && img.naturalWidth ? img : null;
     img = new Image();
     img.url = url;
-    img.onload = () => { this._planCache?.delete(floorName); this._mid = null; this._draw(); };  // a floor with no rooms is as big as its plan
+    // A floor with no rooms is as big as its plan, so the plan's arrival
+    // changes the middle and, when nothing could be fitted yet, the fit.
+    img.onload = () => { this._planCache?.delete(floorName); this._mid = null; if (!this._fitted) this._fit(); this._draw(); };
     this._images.set(floorName, img);
     const cached = OBJECT_URLS.get(url);
     if (cached) { img.src = cached; return null; }
@@ -262,7 +275,7 @@ class SextantStack extends LitElement {
     const cv = this._canvas, dpr = window.devicePixelRatio || 1, rect = cv.getBoundingClientRect();
     const W = rect.width, H = rect.height;
     if (!W || !H) return;
-    if (cv.width !== Math.round(W * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+    if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
     const ctx = cv.getContext("2d");
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const dark = this._dark;
@@ -456,6 +469,17 @@ class SextantStack extends LitElement {
       path(r.points.map(([x, y]) => this._project(x, y, z)));
       if (!img) { o.fillStyle = "rgba(79, 91, 213, 0.14)"; o.fill(); }
       o.strokeStyle = "rgba(79, 91, 213, 0.75)"; o.lineWidth = 1.2; o.stroke();
+    }
+    if (this.options?.labels !== false) {
+      // Each room's name, lying on its floor at its middle.
+      o.font = "500 11px system-ui, sans-serif"; o.textAlign = "center"; o.textBaseline = "middle";
+      o.fillStyle = dark ? "rgba(232,234,237,0.6)" : "rgba(27,31,36,0.6)";
+      for (const r of f.rooms) {
+        if (!r.name || r.points.length < 3) continue;
+        const [cx, cy] = centroid(r.points);
+        const [sx, sy] = this._project(cx, cy, z);
+        o.fillText(r.name, sx, sy);
+      }
     }
     if (this._walls()) {
       // A short wall along every edge, lit from the upper left of the screen,
