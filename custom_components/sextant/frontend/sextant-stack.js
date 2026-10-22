@@ -545,12 +545,13 @@ class SextantStack extends LitElement {
       o.restore();
     }
     ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(off, 0, 0); ctx.restore();
-    // The floor's name on its near corner.
+    // The floor's name on its near corner, when there is more than one
+    // slab to tell apart: on its own, the floor is named in the toolbar.
+    if (lone || this.options?.labels === false) return;
     const corner = polys.flat().map(([x, y]) => this._project(x, y, z)).reduce((a, b) => (b[1] > a[1] ? b : a));
-    if (this.options?.labels === false) return;
     ctx.font = "600 12px system-ui, sans-serif"; ctx.textAlign = "left"; ctx.textBaseline = "top";
     ctx.fillStyle = line + "0.85)";
-    ctx.fillText(f.name + (f.registered || lone ? "" : " (not lined up)"), corner[0] + 6, corner[1] + 4);
+    ctx.fillText(f.name + (f.registered ? "" : " (not lined up)"), corner[0] + 6, corner[1] + 4);
   }
 
   /** Which way, in house metres, a shadow falls on a floor: down and right
