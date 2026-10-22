@@ -22,6 +22,7 @@ import "./sextant-devices.js";
 import "./sextant-health.js";
 import "./sextant-edit.js";
 import "./sextant-property.js";
+import "./sextant-stack.js";
 
 // No advised spots: one array for every render, so the editor does not see a
 // new value (and repaint) each time the clock ticks.
@@ -71,6 +72,7 @@ class SextantPanel extends LitElement {
     _intervalMenu: { state: true }, // the countdown's refresh menu is open
     _floor: { state: true },
     _property: { state: true },   // Live shows the Property view (every floor on a map) instead of one floor
+    _stack: { state: true },      // Live shows the Stack view (every floor in one isometric picture)
     _error: { state: true },
   };
 
@@ -222,7 +224,7 @@ class SextantPanel extends LitElement {
       ${floors.length && FLOOR_MODES.has(this._mode) ? html`
         <div class="floor-tabs" role="tablist" aria-label="Floor">
           ${sortFloors(floors, true).map((f) => {
-            const on = f.name === this._floor && !(this._mode === "live" && this._property);
+            const on = f.name === this._floor && !(this._mode === "live" && (this._property || this._stack));
             const n = this._mode === "live" ? this._thingsOn(f.name) : null;
             return html`<button role="tab" class=${on ? "active" : ""} aria-selected=${on}
               title=${n === null ? f.name : `${f.name}: ${n} thing${n === 1 ? "" : "s"} here now`}
@@ -230,7 +232,10 @@ class SextantPanel extends LitElement {
           })}
           ${this._mode === "live" ? html`<button role="tab" class=${this._property ? "active" : ""} aria-selected=${!!this._property}
             title="The whole property on a street or aerial map: every floor, and everything outdoors"
-            @click=${() => { this._property = true; }}><ha-icon icon="mdi:map-outline" style="--mdc-icon-size:16px"></ha-icon>Property</button>` : nothing}
+            @click=${() => { this._property = true; this._stack = false; }}><ha-icon icon="mdi:map-outline" style="--mdc-icon-size:16px"></ha-icon>Property</button>` : nothing}
+          ${this._mode === "live" ? html`<button role="tab" class=${this._stack ? "active" : ""} aria-selected=${!!this._stack}
+            title="Every floor in one isometric picture, with the things and proxies standing on them"
+            @click=${() => { this._stack = true; this._property = false; }}><ha-icon icon="mdi:layers-triple-outline" style="--mdc-icon-size:16px"></ha-icon>Stack</button>` : nothing}
         </div>` : nothing}
       ${this._renderStamp()}
     `;
@@ -240,6 +245,7 @@ class SextantPanel extends LitElement {
    * the dropdown did: in Edit a floor switch is an unsaved plan being left. */
   async _pickFloor(name) {
     this._property = false;
+    this._stack = false;
     if (name === this._floor) return;
     if (!(await this._mayLeaveEdit(`Switch to ${name}`))) return;
     this._floor = name;
@@ -352,6 +358,9 @@ class SextantPanel extends LitElement {
         if (this._property) {
           return html`<sextant-property .hass=${this.hass} .data=${this._data} .positions=${this._positions}
                                         @layout-changed=${() => this._onLayoutChanged()}></sextant-property>`;
+        }
+        if (this._stack) {
+          return html`<sextant-stack .hass=${this.hass} .data=${this._data} .positions=${this._positions}></sextant-stack>`;
         }
         if (!(this._data?.layout?.floor || []).length) return this._renderFirstRun();
         return html`<sextant-live .hass=${this.hass} .data=${this._data} .positions=${this._positions} .floor=${this._floor}
