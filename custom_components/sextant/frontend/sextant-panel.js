@@ -1091,6 +1091,9 @@ class SextantLive extends LitElement {
     if (changed.has("floor") || changed.has("_marks")) this._pushMarks();
     if (changed.has("floor") || changed.has("_heat") || changed.has("data")) this._pushHeat();
     if (changed.has("_options")) this._map.setOptions(this._options);
+    // Back from the 2.5D picture: the map's canvas was hidden (no size) the
+    // while, so it fits the floor again once it is laid out.
+    if (changed.has("_options") && changed.get("_options")?.view === "3d" && this._options.view !== "3d") requestAnimationFrame(() => this._map?.fit());
     if (changed.has("data")) this._map.setOptions({ staleAfter: this._staleAfter() });
     if (changed.has("_options") || changed.has("floor") || changed.has("data") || changed.has("hass")) {
       // Reloaded only when what it depends on moved: on or off, the floor,
