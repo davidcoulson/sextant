@@ -38,11 +38,31 @@ const LIGHT = [-0.6, -0.8];
 const WALK_M = 1.0;           // a thing with no height set stands at chest height
 const PROXY_M = 1.6;          // a proxy with no mount height set
 const MIN_K = 4, MAX_K = 400; // screen px per house metre
+// A little perspective: the eye is this far (metres) from the middle of what
+// is drawn, so the near side is a touch bigger than the far side. The plan
+// image, which a canvas can only move affinely, is drawn in bands of this
+// depth (metres) that each get their own affine fit, which is seamless at
+// this strength.
+const EYE_M = 70;
+const BAND_M = 1.5;
 // Spread: how far apart the floors sit, as a multiple of their real elevation
 // difference. Real is 1; more pulls them apart so what is under a slab shows.
 const SPREADS = { real: 1, apart: 1.8, exploded: 3 };
 
 const OBJECT_URLS = new Map(); // authenticated image path -> object URL, per page load
+
+/** The affine transform (as ctx.transform's six numbers) taking the first
+ * three of ``from`` to the first three of ``to``, or null if they are in a line. */
+function affine3(from, to) {
+  const [[x0, y0], [x1, y1], [x2, y2]] = from, [[u0, v0], [u1, v1], [u2, v2]] = to;
+  const det = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0);
+  if (Math.abs(det) < 1e-9) return null;
+  const a = ((u1 - u0) * (y2 - y0) - (u2 - u0) * (y1 - y0)) / det;
+  const c = ((u2 - u0) * (x1 - x0) - (u1 - u0) * (x2 - x0)) / det;
+  const b = ((v1 - v0) * (y2 - y0) - (v2 - v0) * (y1 - y0)) / det;
+  const d = ((v2 - v0) * (x1 - x0) - (v1 - v0) * (x2 - x0)) / det;
+  return [a, b, c, d, u0 - a * x0 - c * y0, v0 - b * x0 - d * y0];
+}
 
 class SextantStack extends LitElement {
   static properties = {
@@ -128,7 +148,7 @@ class SextantStack extends LitElement {
     if (img && img.url === url) return img.complete && img.naturalWidth ? img : null;
     img = new Image();
     img.url = url;
-    img.onload = () => { this._planCache?.delete(floorName); this._draw(); };
+    img.onload = () => { this._planCache?.delete(floorName); this._mid = null; this._draw(); };  // a floor with no rooms is as big as its plan
     this._images.set(floorName, img);
     const cached = OBJECT_URLS.get(url);
     if (cached) { img.src = cached; return null; }
@@ -160,24 +180,61 @@ class SextantStack extends LitElement {
   /** The floor's height in the picture: its elevation, spread out. */
   _z(floor) { return (floor.elevation || 0) * SPREADS[this._spread()]; }
 
-  /** A house point (metres, y down the plan, z up) on the screen. */
-  _project(hx, hy, z = 0) {
-    const v = this._view, a = v.yaw * DEG, ca = Math.cos(a), sa = Math.sin(a);
+  /** A house point (metres, y down the plan, z up) in view space: across
+   * the screen, up the screen (already tilted) and towards the eye, all in
+   * metres, before the perspective and the camera's zoom and pan. */
+  _eye(hx, hy, z) {
+    const v = this._view, a = v.yaw * DEG, ca = Math.cos(a), sa = Math.sin(a), cp = Math.cos(v.pitch * DEG), sp = Math.sin(v.pitch * DEG);
     const rx = hx * ca - hy * sa, ry = hx * sa + hy * ca;
-    return [v.ox + rx * v.k, v.oy + (ry * Math.cos(v.pitch * DEG) - z * Math.sin(v.pitch * DEG)) * v.k];
+    return [rx, ry * cp - z * sp, ry * sp + z * cp];
   }
 
-  /** The house point on a floor's plane under a screen point. */
-  _unproject(sx, sy, z = 0) {
-    const v = this._view, a = v.yaw * DEG, ca = Math.cos(a), sa = Math.sin(a);
-    const rx = (sx - v.ox) / v.k, ry = ((sy - v.oy) / v.k + z * Math.sin(v.pitch * DEG)) / Math.cos(v.pitch * DEG);
-    return [rx * ca + ry * sa, -rx * sa + ry * ca];
+  /** A house point on the screen. The middle of what is drawn stays where
+   * the parallel projection put it; everything else is scaled about it by
+   * how much nearer the eye it is. */
+  _project(hx, hy, z = 0) {
+    const v = this._view, [x, y, t] = this._eye(hx, hy, z), m = this._eyeMiddle();
+    const s = EYE_M / Math.max(EYE_M * 0.2, EYE_M - (t - m[2]));
+    return [v.ox + (m[0] + (x - m[0]) * s) * v.k, v.oy + (m[1] + (y - m[1]) * s) * v.k];
+  }
+
+  /** The middle in view space, kept while the view and the scene stand still. */
+  _eyeMiddle() {
+    const v = this._view, key = `${v.yaw}|${v.pitch}|${this._scene}|${this._geo === this._midGeo ? "" : "!"}`;
+    if (this._mid?.key !== key) { this._midGeo = this._geo; this._mid = { key, at: this._eye(...this._middle()) }; }
+    return this._mid.at;
   }
 
   /** Plan pixels of a floor to the house frame, through its registration. */
   _house(frame, px, py) {
     const lx = px / frame.scale, ly = py / frame.scale;
     return [frame.cos * lx - frame.sin * ly + frame.tx, frame.sin * lx + frame.cos * ly + frame.ty];
+  }
+
+  /** The house frame back to a floor's plan pixels. */
+  _plan(frame, hx, hy) {
+    const dx = hx - frame.tx, dy = hy - frame.ty;
+    return [(frame.cos * dx + frame.sin * dy) * frame.scale, (-frame.sin * dx + frame.cos * dy) * frame.scale];
+  }
+
+  /** The footprint cut into bands across the view's depth, as quads in house
+   * metres (the view's across-axis along, its depth-axis in BAND_M steps). */
+  _bands(polys) {
+    const a = this._view.yaw * DEG, ca = Math.cos(a), sa = Math.sin(a);
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const [hx, hy] of polys.flat()) {
+      const rx = hx * ca - hy * sa, ry = hx * sa + hy * ca;
+      x0 = Math.min(x0, rx); x1 = Math.max(x1, rx); y0 = Math.min(y0, ry); y1 = Math.max(y1, ry);
+    }
+    if (!(x1 > x0 && y1 > y0)) return [];
+    const n = Math.min(60, Math.max(1, Math.ceil((y1 - y0) / BAND_M)));
+    const house = (rx, ry) => [rx * ca + ry * sa, -rx * sa + ry * ca];
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const r0 = y0 + ((y1 - y0) * i) / n, r1 = y0 + ((y1 - y0) * (i + 1)) / n;
+      out.push([house(x0, r0), house(x1, r0), house(x1, r1), house(x0, r1)]);
+    }
+    return out;
   }
 
   /** The plan's frame in pixels (what the layout's coordinates are in): the
@@ -340,17 +397,27 @@ class SextantStack extends LitElement {
     const img = this._plans() ? this._image(f.name) : null;
     const size = img ? this._planSize(f.name) : null;
     if (img && size) {
-      // Plan px -> screen is affine on this floor: three points fix it.
+      // Plan px -> screen is affine on this floor but for the perspective,
+      // so the plan goes down in bands across the depth, each fitted to its
+      // own three corners and clipped to its own four.
       o.save();
       union(polys, z); o.clip();
-      const [e, g] = this._project(...this._house(frame, 0, 0), z);
-      const [ax, ay] = this._project(...this._house(frame, 1, 0), z);
-      const [cx, cy] = this._project(...this._house(frame, 0, 1), z);
-      o.transform(ax - e, ay - g, cx - e, cy - g, e, g);
+      const plan = dark ? this._darkPlan(f.name, img) : img;
       // On a dark page the inverted plan is light lines on black: screened
       // onto the grey top, the lines lighten it and the black leaves it be.
       if (dark) { o.globalCompositeOperation = "screen"; o.globalAlpha = 0.8; } else { o.globalAlpha = 0.9; }
-      o.drawImage(dark ? this._darkPlan(f.name, img) : img, 0, 0, size[0], size[1]);
+      for (const band of this._bands(polys)) {
+        // The band's corners in plan px, through the frame backwards.
+        const corners = band.map(([hx, hy]) => this._plan(frame, hx, hy));
+        const screen = band.map(([hx, hy]) => this._project(hx, hy, z));
+        const m = affine3(corners, screen);
+        if (!m) continue;
+        o.save();
+        path(screen); o.clip();
+        o.transform(...m);
+        o.drawImage(plan, 0, 0, size[0], size[1]);
+        o.restore();
+      }
       o.restore();
     }
     // Shadows on this floor: a soft one from the floor above, and, with walls
@@ -484,8 +551,9 @@ class SextantStack extends LitElement {
     const dx = p.x - d.start.x, dy = p.y - d.start.y;
     if (Math.abs(dx) + Math.abs(dy) > 3) d.moved = true;
     if (e.shiftKey || e.buttons === 2) {
-      // Shift-drag (or the right button) turns and tilts instead of panning.
-      this._view = this._about(d.view, { yaw: d.view.yaw + dx * 0.4, pitch: Math.max(10, Math.min(85, d.view.pitch - dy * 0.3)) });
+      // Shift-drag (or the right button) turns and tilts instead of panning:
+      // dragging right swings the near side to the right, as if pushed.
+      this._view = this._about(d.view, { yaw: d.view.yaw - dx * 0.4, pitch: Math.max(10, Math.min(85, d.view.pitch - dy * 0.3)) });
     } else {
       this._view = { ...this._view, ox: d.view.ox + dx, oy: d.view.oy + dy };
     }
@@ -595,8 +663,8 @@ class SextantStack extends LitElement {
           : nothing}
         <div class="hint">Drag to move · shift-drag to turn and tilt · wheel to zoom · click a thing to pick it out</div>
         <div class="zoom">
-          <button title="Turn left" aria-label="Turn left" @click=${() => this._turn(-15)}><ha-icon icon="mdi:rotate-left"></ha-icon></button>
-          <button title="Turn right" aria-label="Turn right" @click=${() => this._turn(15)}><ha-icon icon="mdi:rotate-right"></ha-icon></button>
+          <button title="Turn left: the near side swings to the left" aria-label="Turn left" @click=${() => this._turn(15)}><ha-icon icon="mdi:rotate-left"></ha-icon></button>
+          <button title="Turn right: the near side swings to the right" aria-label="Turn right" @click=${() => this._turn(-15)}><ha-icon icon="mdi:rotate-right"></ha-icon></button>
           <button title="Tilt up (more plan)" aria-label="Tilt up" @click=${() => this._tilt(-10)}><ha-icon icon="mdi:angle-acute"></ha-icon></button>
           <button title="Tilt down (more side)" aria-label="Tilt down" @click=${() => this._tilt(10)}><ha-icon icon="mdi:angle-obtuse"></ha-icon></button>
           <button title=${this._all() ? "Show the whole house" : "Fit the whole floor into view"} aria-label="Fit into view" @click=${() => this._fit()}><ha-icon icon="mdi:fit-to-screen-outline"></ha-icon></button>
