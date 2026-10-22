@@ -1091,9 +1091,6 @@ class SextantLive extends LitElement {
     if (changed.has("floor") || changed.has("_marks")) this._pushMarks();
     if (changed.has("floor") || changed.has("_heat") || changed.has("data")) this._pushHeat();
     if (changed.has("_options")) this._map.setOptions(this._options);
-    // Back from the 2.5D picture: the map's canvas was hidden (no size) the
-    // while, so it fits the floor again once it is laid out.
-    if (changed.has("_options") && changed.get("_options")?.view === "3d" && this._options.view !== "3d") requestAnimationFrame(() => this._map?.fit());
     if (changed.has("data")) this._map.setOptions({ staleAfter: this._staleAfter() });
     if (changed.has("_options") || changed.has("floor") || changed.has("data") || changed.has("hass")) {
       // Reloaded only when what it depends on moved: on or off, the floor,
@@ -1953,7 +1950,10 @@ class SextantLive extends LitElement {
     .narrow-only { display: none; }
     .stage { position: relative; min-width: 0; }
     canvas { width: 100%; height: 100%; display: block; --sextant-map-bg: var(--card-background-color, #fff); }
-    canvas.hidden { display: none; }
+    /* Under the 2.5D picture the map's canvas stays in the layout, only
+       invisible: taken out of it (display: none) the stage's height fell back
+       to the canvas's own backing store, which grew with it on every resize. */
+    canvas.hidden { visibility: hidden; }
     /* The 2.5D picture fills the stage; its buttons sit where the map's zoom
        cluster does, and its note under the toolbar. */
     sextant-stack { position: absolute; inset: 0; --sextant-stack-zoom-right: 320px; --sextant-stack-zoom-bottom: 10px; --sextant-stack-note-top: 60px; }
