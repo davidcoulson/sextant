@@ -44,12 +44,22 @@ const MIN_K = 4, MAX_K = 400; // screen px per house metre
 // depth (metres) that each get their own affine fit, which is seamless at
 // this strength.
 const EYE_M = 70;
+// How far off the canvas a shape is drawn so only its shadow shows: beyond
+// any screen point of a floor at the closest zoom.
+const FAR = 1e5;
 const BAND_M = 1.5;
 // Spread: how far apart the floors sit, as a multiple of their real elevation
 // difference. Real is 1; more pulls them apart so what is under a slab shows.
 const SPREADS = { real: 1, apart: 1.8, exploded: 3 };
 
 const OBJECT_URLS = new Map(); // authenticated image path -> object URL, per page load
+
+/** Twice a ring's signed area: its sign says which way round it is drawn. */
+function signedArea(pts) {
+  let a = 0;
+  for (let i = 0; i < pts.length; i++) { const [x0, y0] = pts[i], [x1, y1] = pts[(i + 1) % pts.length]; a += x0 * y1 - x1 * y0; }
+  return a;
+}
 
 /** A polygon's centroid (its area's, so a long L-shaped room is named in its mass). */
 function centroid(pts) {
@@ -83,6 +93,7 @@ class SextantStack extends LitElement {
     floor: { attribute: false },     // the floor to draw; every floor with options.all_floors
     options: { attribute: false },   // the Live page's switches: image, labels, receivers, access_points, walls, all_floors, spread
     focus: { attribute: false },     // the selected thing's entity, or null
+    staleAfter: { attribute: false },  // seconds unheard before a thing is drawn as a ghost
     _geo: { state: true },
   };
 
@@ -119,7 +130,7 @@ class SextantStack extends LitElement {
     // Another floor, or the stack instead of one floor, is another picture: fit it.
     const scene = `${this._all() ? "*" : this.floor}|${this._spread()}`;
     if (this._geo && scene !== this._scene) { this._scene = scene; this._fit(); }
-    if (themed || ["positions", "data", "floor", "options", "focus", "_geo"].some((k) => changed.has(k))) this._draw();
+    if (themed || ["positions", "data", "floor", "options", "focus", "staleAfter", "_geo"].some((k) => changed.has(k))) this._draw();
   }
 
   // --- the switches ----------------------------------------------------------------
@@ -242,9 +253,12 @@ class SextantStack extends LitElement {
     if (!(x1 > x0 && y1 > y0)) return [];
     const n = Math.min(60, Math.max(1, Math.ceil((y1 - y0) / BAND_M)));
     const house = (rx, ry) => [rx * ca + ry * sa, -rx * sa + ry * ca];
+    // Each band reaches a pixel into the next: two antialiased clip edges
+    // meeting exactly leave a hairline.
+    const lap = 1 / this._view.k;
     const out = [];
     for (let i = 0; i < n; i++) {
-      const r0 = y0 + ((y1 - y0) * i) / n, r1 = y0 + ((y1 - y0) * (i + 1)) / n;
+      const r0 = y0 + ((y1 - y0) * i) / n - lap, r1 = y0 + ((y1 - y0) * (i + 1)) / n + lap;
       out.push([house(x0, r0), house(x1, r0), house(x1, r1), house(x0, r1)]);
     }
     return out;
@@ -328,7 +342,7 @@ class SextantStack extends LitElement {
     }).sort((a, b) => a.sy - b.sy);
     for (const { t, hx, hy, z, h, sx, sy } of placed) {
       const focused = focus && t.ent === focus;
-      const { age, ghost } = staleness(t, 120);
+      const { age, ghost } = staleness(t, this.staleAfter ?? 120);
       ctx.save();
       if (focus && !focused) ctx.globalAlpha = 0.3;
       if (ghost) ctx.globalAlpha *= 0.45;
@@ -384,10 +398,15 @@ class SextantStack extends LitElement {
     o.setTransform(dpr, 0, 0, dpr, 0, 0);
     o.clearRect(0, 0, W, H);
     const path = (pts) => { o.beginPath(); pts.forEach((p, i) => (i ? o.lineTo(p[0], p[1]) : o.moveTo(p[0], p[1]))); o.closePath(); };
+    // One path of every ring, all wound the same way: two rooms drawn in
+    // opposite directions would otherwise cancel where they overlap.
     const union = (polys, zz) => {
       o.beginPath();
-      for (const poly of polys) poly.forEach(([x, y], i) => { const p = this._project(x, y, zz); i ? o.lineTo(p[0], p[1]) : o.moveTo(p[0], p[1]); });
-      o.closePath();
+      for (const poly of polys) {
+        const ring = signedArea(poly) < 0 ? [...poly].reverse() : poly;
+        ring.forEach(([x, y], i) => { const p = this._project(x, y, zz); i ? o.lineTo(p[0], p[1]) : o.moveTo(p[0], p[1]); });
+        o.closePath();
+      }
     };
     // ``paint`` gives a face's fill from how lit it is (0 dark .. 1 bright).
     const sides = (polys, z0, z1, paint, stroke) => {
@@ -416,6 +435,7 @@ class SextantStack extends LitElement {
       o.save();
       union(polys, z); o.clip();
       const plan = dark ? this._darkPlan(f.name, img) : img;
+      const px = img.naturalWidth / size[0];   // image px per plan px
       // On a dark page the inverted plan is light lines on black: screened
       // onto the grey top, the lines lighten it and the black leaves it be.
       if (dark) { o.globalCompositeOperation = "screen"; o.globalAlpha = 0.8; } else { o.globalAlpha = 0.9; }
@@ -425,10 +445,15 @@ class SextantStack extends LitElement {
         const screen = band.map(([hx, hy]) => this._project(hx, hy, z));
         const m = affine3(corners, screen);
         if (!m) continue;
+        // Only the part of the plan under this band, with a little round it.
+        const xs = corners.map((c) => c[0]), ys = corners.map((c) => c[1]);
+        const bx0 = Math.max(0, Math.min(...xs) - 2), by0 = Math.max(0, Math.min(...ys) - 2);
+        const bx1 = Math.min(size[0], Math.max(...xs) + 2), by1 = Math.min(size[1], Math.max(...ys) + 2);
+        if (!(bx1 > bx0 && by1 > by0)) continue;
         o.save();
         path(screen); o.clip();
         o.transform(...m);
-        o.drawImage(plan, 0, 0, size[0], size[1]);
+        o.drawImage(plan, bx0 * px, by0 * px, (bx1 - bx0) * px, (by1 - by0) * px, bx0, by0, bx1 - bx0, by1 - by0);
         o.restore();
       }
       o.restore();
@@ -444,8 +469,8 @@ class SextantStack extends LitElement {
       // shadow of the shape without the shape itself.
       o.save();
       o.shadowColor = dark ? "rgba(0,0,0,0.5)" : "rgba(0,0,0,0.28)"; o.shadowBlur = 18;
-      o.shadowOffsetX = 4000 * dpr; o.shadowOffsetY = 0;
-      o.translate(-4000, 0);
+      o.shadowOffsetX = FAR * dpr; o.shadowOffsetY = 0;
+      o.translate(-FAR, 0);
       o.beginPath();
       const [ux, uy] = this._shadowDir();
       for (const poly of above.polys) poly.forEach(([x, y], i) => { const p = this._project(x + off * ux, y + off * uy, z); i ? o.lineTo(p[0], p[1]) : o.moveTo(p[0], p[1]); });
@@ -561,10 +586,11 @@ class SextantStack extends LitElement {
     if (!pts.length) { this._drag = null; return; }
     if (pts.length >= 2) {
       const [a, b] = pts;
+      this._pinched = true;   // until every finger is up: lifting the last one is not a tap
       this._drag = { pinch: true, view: { ...this._view }, mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, dist: Math.hypot(a.x - b.x, a.y - b.y) };
       return;
     }
-    this._drag = { start: pts[0], view: { ...this._view }, moved: false };
+    this._drag = { start: pts[0], view: { ...this._view }, moved: !!this._pinched };
   }
 
   _move(e) {
@@ -592,10 +618,11 @@ class SextantStack extends LitElement {
     this._draw();
   }
 
-  _up(e) {
+  _up(e, cancelled = false) {
     const d = this._drag;
     this._pointers.delete(e.pointerId);
-    if (d && !d.pinch && !d.moved) this._click(this._local(e));
+    if (!cancelled && d && !d.pinch && !d.moved) this._click(this._local(e));
+    if (!this._pointers.size) this._pinched = false;
     this._startGesture();
   }
 
@@ -660,6 +687,9 @@ class SextantStack extends LitElement {
   fit() { this._fit(); }
   _fit() {
     const geo = this._geo, rect = this._canvas?.getBoundingClientRect();
+    // Nothing to fit yet (no geometry, a hidden stage, a roomless floor whose
+    // plan is still loading): the next resize or plan tries again.
+    this._fitted = false;
     if (!geo || !rect?.width) return;
     const frames = geo.frames || {};
     const pts = [];
@@ -688,7 +718,7 @@ class SextantStack extends LitElement {
     return html`
       <div class="stage">
         <canvas @pointerdown=${(e) => this._down(e)} @pointermove=${(e) => this._move(e)} @pointerup=${(e) => this._up(e)}
-                @pointercancel=${(e) => this._up(e)} @wheel=${(e) => this._wheel(e)} @contextmenu=${(e) => e.preventDefault()}></canvas>
+                @pointercancel=${(e) => this._up(e, true)} @wheel=${(e) => this._wheel(e)} @contextmenu=${(e) => e.preventDefault()}></canvas>
         ${!geo ? html`<div class="note">Loading…</div>`
           : !floors.length ? html`<div class="note">No floors yet: draw one in Edit.</div>`
           : unregistered.length && floors.length > 1 ? html`<div class="note">${unregistered.join(", ")} ${unregistered.length === 1 ? "is" : "are"} not lined up with the other floors (Edit → Anchor), so ${unregistered.length === 1 ? "it is" : "they are"} drawn on ${unregistered.length === 1 ? "its" : "their"} own frame.</div>`

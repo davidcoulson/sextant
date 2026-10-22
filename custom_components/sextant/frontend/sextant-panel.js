@@ -1670,7 +1670,7 @@ class SextantLive extends LitElement {
           ${uiButton({ label: "Calibrate", kind: "outline", icon: "mdi:tune-vertical", onClick: () => this._goto("calibration") })}` : nothing}
       </div>
       <div class="stage ${this._mapOpen || pinning ? "" : "collapsed"}"><canvas class=${deep ? "hidden" : ""}></canvas>
-        ${deep ? html`<sextant-stack .hass=${this.hass} .data=${this.data} .positions=${this.positions} .floor=${this.floor} .options=${this._options} .focus=${this._selected}
+        ${deep ? html`<sextant-stack .hass=${this.hass} .data=${this.data} .positions=${this.positions} .floor=${this.floor} .options=${this._options} .focus=${this._selected} .staleAfter=${this._staleAfter()}
                                      @thing-selected=${(e) => { this._proxy = null; this._select(e.detail); }}></sextant-stack>` : nothing}
         ${pinning ? this._renderPinWhere() : this._renderProxyCard()}
         <div class="overlay" role="toolbar" aria-label="Map">
