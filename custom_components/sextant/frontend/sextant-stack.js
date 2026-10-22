@@ -626,11 +626,12 @@ class SextantStack extends LitElement {
     const dx = p.x - d.start.x, dy = p.y - d.start.y;
     if (Math.abs(dx) + Math.abs(dy) > 3) d.moved = true;
     if (e.shiftKey || e.buttons === 2) {
-      // Shift-drag (or the right button) turns and tilts instead of panning:
-      // dragging right swings the near side to the right, as if pushed.
-      this._view = this._about(d.view, { yaw: d.view.yaw - dx * 0.4, pitch: Math.max(10, Math.min(85, d.view.pitch - dy * 0.3)) });
-    } else {
+      // Shift-drag (or the right button) moves the picture.
       this._view = { ...this._view, ox: d.view.ox + dx, oy: d.view.oy + dy };
+    } else {
+      // A plain drag turns and tilts: dragging right swings the near side
+      // to the right, as if pushed.
+      this._view = this._about(d.view, { yaw: d.view.yaw - dx * 0.4, pitch: Math.max(10, Math.min(85, d.view.pitch - dy * 0.3)) });
     }
     this._draw();
   }
@@ -740,7 +741,7 @@ class SextantStack extends LitElement {
           : !floors.length ? html`<div class="note">No floors yet: draw one in Edit.</div>`
           : unregistered.length && floors.length > 1 ? html`<div class="note">${unregistered.join(", ")} ${unregistered.length === 1 ? "is" : "are"} not lined up with the other floors (Edit → Anchor), so ${unregistered.length === 1 ? "it is" : "they are"} drawn on ${unregistered.length === 1 ? "its" : "their"} own frame.</div>`
           : nothing}
-        <div class="hint">Drag to move · shift-drag to turn and tilt · wheel to zoom · click a thing to pick it out</div>
+        <div class="hint">Drag to turn and tilt · shift-drag to move · wheel to zoom · click a thing to pick it out</div>
         <div class="zoom">
           <button title="Turn left: the near side swings to the left" aria-label="Turn left" @click=${() => this._turn(15)}><ha-icon icon="mdi:rotate-left"></ha-icon></button>
           <button title="Turn right: the near side swings to the right" aria-label="Turn right" @click=${() => this._turn(-15)}><ha-icon icon="mdi:rotate-right"></ha-icon></button>
