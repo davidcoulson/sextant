@@ -32,6 +32,7 @@ def test_every_floor_lands_in_the_house_frame_bottom_first():
     assert [f["name"] for f in v["floors"]] == ["Ground", "Up"]
     ground, up = v["floors"]
     assert ground["rooms"] == [{"name": "Kitchen", "points": [[0, 0], [5, 0], [5, 5], [0, 5]]}]   # no-go areas left out
+    assert ground["no_go"] == [{"name": "Void", "points": [[1, 1], [2, 1], [2, 2], [1, 2]]}]      # ... and sent apart
     # Up's plan is drawn 2 m to the right, its anchors too: in the house frame it sits on top of the ground floor.
     assert up["registered"] and [round(c, 3) for c in up["rooms"][0]["points"][0]] == [0, 0]
     assert v["site"] == {"lat": 41.5, "lon": -81.7, "rotation": 350.0}

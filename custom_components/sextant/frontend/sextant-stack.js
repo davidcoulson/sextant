@@ -19,6 +19,16 @@ import { sharedStyles, thingName, uiButton, uiSegmented, mapUrlFor } from "./sex
 
 const DEG = Math.PI / 180;
 const SLAB_M = 0.18;          // how thick a floor slab is drawn
+const WALL_M = 0.6;           // how high the rooms' walls are drawn
+// The light: from the plan's north-west, so a wall's shadow falls south-east
+// (down and right on the plan) this many times the wall's height long, and a
+// floor's shadow lands on the one below offset this fraction of the drop.
+const SHADOW_DIR = [Math.SQRT1_2, Math.SQRT1_2];
+const SHADOW_K = 0.8;
+const DROP_K = 0.12;
+// Faces lit from the upper left of the screen: how bright a face is from the
+// direction its edge runs on the screen.
+const LIGHT = [-0.6, -0.8];
 const WALK_M = 1.0;           // a thing with no height set stands at chest height
 const PROXY_M = 1.6;          // a proxy with no mount height set
 const MIN_K = 4, MAX_K = 400; // screen px per house metre
@@ -47,8 +57,8 @@ class SextantStack extends LitElement {
     try {
       this._spread = localStorage.getItem("sextant.stack.spread") || "apart";
       this._plans = localStorage.getItem("sextant.stack.plans") !== "off";
-      this._walls = localStorage.getItem("sextant.stack.walls") === "on";
-    } catch { this._spread = "apart"; this._plans = true; this._walls = false; }
+      this._walls = localStorage.getItem("sextant.stack.walls") !== "off";
+    } catch { this._spread = "apart"; this._plans = true; this._walls = true; }
     if (!(this._spread in SPREADS)) this._spread = "apart";
     // The camera: px per metre, where the house origin lands on the screen,
     // the turn about the vertical, and the tilt (0 is a plan, 90 a side view).
@@ -161,15 +171,10 @@ class SextantStack extends LitElement {
     return null;
   }
 
-  /** The floor's outline in house metres: the plan's edge, or the rooms' box. */
+  /** The plan's edge in house metres, or null before the image has loaded. */
   _outline(f, frame) {
     const size = this._planSize(f.name);
-    if (size) return [[0, 0], [size[0], 0], size, [0, size[1]]].map(([x, y]) => this._house(frame, x, y));
-    const pts = f.rooms.flatMap((r) => r.points);
-    if (!pts.length) return null;
-    const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
-    const x0 = Math.min(...xs) - 0.5, x1 = Math.max(...xs) + 0.5, y0 = Math.min(...ys) - 0.5, y1 = Math.max(...ys) + 0.5;
-    return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+    return size ? [[0, 0], [size[0], 0], size, [0, size[1]]].map(([x, y]) => this._house(frame, x, y)) : null;
   }
 
   // --- drawing ----------------------------------------------------------------------
@@ -194,64 +199,13 @@ class SextantStack extends LitElement {
     if (!geo) return;
     const frames = geo.frames || {}, floors = geo.floors || [];
     const line = dark ? "rgba(232,234,237," : "rgba(27,31,36,";
-    const path = (pts) => { ctx.beginPath(); pts.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]))); ctx.closePath(); };
 
     for (const f of floors) {
       const frame = frames[f.name];
       if (!frame) continue;
       const z = this._z(f);
-      const outline = this._outline(f, frame);
-      if (outline) {
-        const top = outline.map(([x, y]) => this._project(x, y, z));
-        const bottom = outline.map(([x, y]) => this._project(x, y, z - SLAB_M));
-        // The slab: its underside, its sides, then its top face.
-        path(bottom); ctx.fillStyle = dark ? "rgba(60,66,76,0.9)" : "rgba(170,176,186,0.9)"; ctx.fill();
-        for (let i = 0; i < 4; i++) {
-          const j = (i + 1) % 4;
-          path([top[i], top[j], bottom[j], bottom[i]]);
-          ctx.fillStyle = dark ? "rgba(70,77,88,0.95)" : "rgba(150,157,168,0.95)"; ctx.fill();
-          ctx.strokeStyle = line + "0.35)"; ctx.lineWidth = 0.8; ctx.stroke();
-        }
-        path(top); ctx.fillStyle = dark ? "rgba(38,43,50,0.96)" : "rgba(255,255,255,0.96)"; ctx.fill();
-        ctx.strokeStyle = line + "0.5)"; ctx.lineWidth = 1; ctx.stroke();
-      }
-      const img = this._plans ? this._image(f.name) : null;
-      const size = img ? this._planSize(f.name) : null;
-      if (img && size) {
-        // Plan px -> screen is affine on this floor: three points fix it.
-        const [e, g] = this._project(...this._house(frame, 0, 0), z);
-        const [ax, ay] = this._project(...this._house(frame, 1, 0), z);
-        const [cx, cy] = this._project(...this._house(frame, 0, 1), z);
-        ctx.save();
-        ctx.transform(ax - e, ay - g, cx - e, cy - g, e, g);
-        ctx.globalAlpha = dark ? 0.8 : 0.9;
-        ctx.drawImage(dark ? this._darkPlan(f.name, img) : img, 0, 0, size[0], size[1]);
-        ctx.restore();
-      }
-      for (const r of f.rooms) {
-        path(r.points.map(([x, y]) => this._project(x, y, z)));
-        if (!img) { ctx.fillStyle = "rgba(79, 91, 213, 0.14)"; ctx.fill(); }
-        ctx.strokeStyle = "rgba(79, 91, 213, 0.75)"; ctx.lineWidth = 1.2; ctx.stroke();
-        if (this._walls) {
-          // A short wall along every edge, so the rooms read as rooms and not
-          // lines on a slab: a quarter-storey, in the room's colour.
-          const h = 0.6;
-          const pts = r.points;
-          for (let i = 0; i < pts.length; i++) {
-            const a = pts[i], b = pts[(i + 1) % pts.length];
-            path([this._project(a[0], a[1], z), this._project(b[0], b[1], z), this._project(b[0], b[1], z + h), this._project(a[0], a[1], z + h)]);
-            ctx.fillStyle = "rgba(79, 91, 213, 0.10)"; ctx.fill();
-            ctx.strokeStyle = "rgba(79, 91, 213, 0.45)"; ctx.lineWidth = 0.8; ctx.stroke();
-          }
-        }
-      }
-      // The floor's name on its near corner.
-      if (outline) {
-        const corner = outline.map(([x, y]) => this._project(x, y, z)).reduce((a, b) => (b[1] > a[1] ? b : a));
-        ctx.font = "600 12px system-ui, sans-serif"; ctx.textAlign = "left"; ctx.textBaseline = "top";
-        ctx.fillStyle = line + "0.85)";
-        ctx.fillText(f.name + (f.registered || floors.length === 1 ? "" : " (not lined up)"), corner[0] + 6, corner[1] + 4);
-      }
+      const above = floors.find((g) => g !== f && frames[g.name] && this._z(g) > z);
+      this._paintFloor(ctx, f, frame, z, W, H, dpr, dark, line, floors.length === 1, above ? { polys: this._footprint(above, frames[above.name]), dz: this._z(above) - z } : null);
       // Proxies and access points stand on the floor, on a stem.
       const heights = this._proxyHeights(f.name);
       for (const p of f.proxies) {
@@ -325,6 +279,131 @@ class SextantStack extends LitElement {
       ctx.fillStyle = dark ? "#e8eaed" : "#1b1f24"; ctx.fillText(text, x, y);
     }
     ctx.globalAlpha = 1;
+  }
+
+  /** One floor: its slab (the rooms' footprint, or the plan's edge when no
+   * room is drawn), the plan image clipped to that footprint, the room
+   * outlines (and walls), with the no-go areas punched out. Drawn on an
+   * offscreen canvas so the punching takes nothing from the floors below. */
+  _paintFloor(ctx, f, frame, z, W, H, dpr, dark, line, lone, above) {
+    const polys = this._footprint(f, frame);
+    if (!polys.length) return;
+    const off = this._off ??= document.createElement("canvas");
+    if (off.width !== Math.round(W * dpr) || off.height !== Math.round(H * dpr)) { off.width = Math.round(W * dpr); off.height = Math.round(H * dpr); }
+    const o = off.getContext("2d");
+    o.setTransform(dpr, 0, 0, dpr, 0, 0);
+    o.clearRect(0, 0, W, H);
+    const path = (pts) => { o.beginPath(); pts.forEach((p, i) => (i ? o.lineTo(p[0], p[1]) : o.moveTo(p[0], p[1]))); o.closePath(); };
+    const union = (polys, zz) => {
+      o.beginPath();
+      for (const poly of polys) poly.forEach(([x, y], i) => { const p = this._project(x, y, zz); i ? o.lineTo(p[0], p[1]) : o.moveTo(p[0], p[1]); });
+      o.closePath();
+    };
+    // ``paint`` gives a face's fill from how lit it is (0 dark .. 1 bright).
+    const sides = (polys, z0, z1, paint, stroke) => {
+      for (const poly of polys) for (let i = 0; i < poly.length; i++) {
+        const a = poly[i], b = poly[(i + 1) % poly.length];
+        const p = this._project(a[0], a[1], z0), q = this._project(b[0], b[1], z0);
+        path([p, q, this._project(b[0], b[1], z1), this._project(a[0], a[1], z1)]);
+        if (paint) { o.fillStyle = paint(this._lit(p, q)); }
+        o.fill();
+        if (stroke) { o.strokeStyle = stroke; o.stroke(); }
+      }
+    };
+    // The slab: its sides, then its top over them (a side between two rooms
+    // is under the nearer room's top, so only the outer edge shows).
+    o.lineWidth = 0.8;
+    sides(polys, z, z - SLAB_M, (lit) => (dark ? `hsl(215, 12%, ${22 + 16 * lit}%)` : `hsl(215, 10%, ${56 + 18 * lit}%)`), line + "0.3)");
+    union(polys, z);
+    o.fillStyle = dark ? "rgba(38,43,50,0.96)" : "rgba(255,255,255,0.96)"; o.fill();
+    const img = this._plans ? this._image(f.name) : null;
+    const size = img ? this._planSize(f.name) : null;
+    if (img && size) {
+      // Plan px -> screen is affine on this floor: three points fix it.
+      o.save();
+      union(polys, z); o.clip();
+      const [e, g] = this._project(...this._house(frame, 0, 0), z);
+      const [ax, ay] = this._project(...this._house(frame, 1, 0), z);
+      const [cx, cy] = this._project(...this._house(frame, 0, 1), z);
+      o.transform(ax - e, ay - g, cx - e, cy - g, e, g);
+      o.globalAlpha = dark ? 0.8 : 0.9;
+      o.drawImage(dark ? this._darkPlan(f.name, img) : img, 0, 0, size[0], size[1]);
+      o.restore();
+    }
+    // Shadows on this floor: a soft one from the floor above, and, with walls
+    // up, a sharp one along every wall. Both stay on the slab (clipped), and
+    // each is one union fill so overlaps do not double up.
+    o.save();
+    union(polys, z); o.clip();
+    if (above?.polys.length) {
+      const off = above.dz * DROP_K;
+      // Drawn far off the canvas with its shadow brought back: a blurred
+      // shadow of the shape without the shape itself.
+      o.save();
+      o.shadowColor = dark ? "rgba(0,0,0,0.5)" : "rgba(0,0,0,0.28)"; o.shadowBlur = 18;
+      o.shadowOffsetX = 4000 * dpr; o.shadowOffsetY = 0;
+      o.translate(-4000, 0);
+      o.beginPath();
+      for (const poly of above.polys) poly.forEach(([x, y], i) => { const p = this._project(x + off * SHADOW_DIR[0], y + off * SHADOW_DIR[1], z); i ? o.lineTo(p[0], p[1]) : o.moveTo(p[0], p[1]); });
+      o.closePath(); o.fillStyle = "#000"; o.fill();
+      o.restore();
+    }
+    if (this._walls) {
+      const len = WALL_M * SHADOW_K, dx = len * SHADOW_DIR[0], dy = len * SHADOW_DIR[1];
+      o.beginPath();
+      for (const r of f.rooms) for (let i = 0; i < r.points.length; i++) {
+        const a = r.points[i], b = r.points[(i + 1) % r.points.length];
+        [this._project(a[0], a[1], z), this._project(b[0], b[1], z), this._project(b[0] + dx, b[1] + dy, z), this._project(a[0] + dx, a[1] + dy, z)]
+          .forEach((p, j) => (j ? o.lineTo(p[0], p[1]) : o.moveTo(p[0], p[1])));
+        o.closePath();
+      }
+      o.fillStyle = dark ? "rgba(0,0,0,0.42)" : "rgba(0,0,0,0.22)"; o.fill();
+    }
+    o.restore();
+    union(polys, z); o.strokeStyle = line + "0.5)"; o.lineWidth = 1; o.stroke();
+    for (const r of f.rooms) {
+      path(r.points.map(([x, y]) => this._project(x, y, z)));
+      if (!img) { o.fillStyle = "rgba(79, 91, 213, 0.14)"; o.fill(); }
+      o.strokeStyle = "rgba(79, 91, 213, 0.75)"; o.lineWidth = 1.2; o.stroke();
+    }
+    if (this._walls) {
+      // A short wall along every edge, lit from the upper left of the screen,
+      // so the rooms read as rooms and not lines on a slab.
+      o.lineWidth = 0.7;
+      sides(f.rooms.map((r) => r.points), z + WALL_M, z, (lit) => (dark ? `hsla(232, 22%, ${30 + 34 * lit}%, 0.9)` : `hsla(232, 30%, ${62 + 30 * lit}%, 0.9)`), "rgba(79, 91, 213, 0.5)");
+    }
+    // The no-go areas (a void over the hall, a stairwell) are cut right
+    // through the slab.
+    const holes = (f.no_go || []).map((n) => n.points);
+    if (holes.length) {
+      o.globalCompositeOperation = "destination-out";
+      o.fillStyle = "#000";
+      sides(holes, z, z - SLAB_M);
+      union(holes, z); o.fill();
+      o.globalCompositeOperation = "source-over";
+      for (const h of holes) { path(h.map(([x, y]) => this._project(x, y, z))); o.strokeStyle = line + "0.3)"; o.lineWidth = 0.8; o.setLineDash([3, 3]); o.stroke(); o.setLineDash([]); }
+    }
+    ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(off, 0, 0); ctx.restore();
+    // The floor's name on its near corner.
+    const corner = polys.flat().map(([x, y]) => this._project(x, y, z)).reduce((a, b) => (b[1] > a[1] ? b : a));
+    ctx.font = "600 12px system-ui, sans-serif"; ctx.textAlign = "left"; ctx.textBaseline = "top";
+    ctx.fillStyle = line + "0.85)";
+    ctx.fillText(f.name + (f.registered || lone ? "" : " (not lined up)"), corner[0] + 6, corner[1] + 4);
+  }
+
+  /** How lit a vertical face along the screen segment p-q is, 0..1: faces
+   * square to the light are bright, those along it dark. */
+  _lit(p, q) {
+    const dx = q[0] - p[0], dy = q[1] - p[1], n = Math.hypot(dx, dy) || 1;
+    return Math.abs((-dy / n) * LIGHT[0] + (dx / n) * LIGHT[1]);
+  }
+
+  /** The floor's footprint in house metres: its rooms, or, with none drawn,
+   * the plan's edge. */
+  _footprint(f, frame) {
+    if (f.rooms.length) return f.rooms.map((r) => r.points);
+    const outline = this._outline(f, frame);
+    return outline ? [outline] : [];
   }
 
   _stem(ctx, x, y, z, h, line) {
@@ -429,7 +508,7 @@ class SextantStack extends LitElement {
       const frame = frames[f.name];
       if (!frame) continue;
       const z = this._z(f);
-      for (const [x, y] of this._outline(f, frame) || []) pts.push([x, y, z - SLAB_M], [x, y, z + 2]);
+      for (const [x, y] of this._footprint(f, frame).flat()) pts.push([x, y, z - SLAB_M], [x, y, z + 2]);
     }
     if (!pts.length) return;
     const v = { ...this._view, k: 1, ox: 0, oy: 0 };

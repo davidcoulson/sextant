@@ -72,7 +72,8 @@ def to_house(frame, x_px, y_px) -> list:
 def view(layout) -> dict:
     """What the Property view draws, all in house metres: {"site", "frames",
     "floors": [{"name", "level", "elevation", "registered", "rooms": [{"name",
-    "points"}], "proxies": [{"slug", "address", "x", "y", "outdoor"}],
+    "points"}], "no_go": [{"name", "points"}] (the no-go areas, kept apart so a
+    view can cut them out), "proxies": [{"slug", "address", "x", "y", "outdoor"}],
     "access_points": [{"mac", "name", "x", "y"}]}]}, floors bottom first."""
     fr = frames(layout)
     floors = []
@@ -81,12 +82,12 @@ def view(layout) -> dict:
         frame = fr.get(name)
         if frame is None:
             continue
-        rooms = []
+        rooms, no_go = [], []
         for z in f.get("zones") or []:
             pts = [to_house(frame, c["x"], c["y"]) for c in z.get("cords") or []
                    if isinstance(c, dict) and _num(c.get("x")) is not None and _num(c.get("y")) is not None]
-            if len(pts) >= 3 and not z.get("no_go"):
-                rooms.append({"name": z.get("entity_id"), "points": pts})
+            if len(pts) >= 3:
+                (no_go if z.get("no_go") else rooms).append({"name": z.get("entity_id"), "points": pts})
         rings = [[(p[0], p[1]) for p in r["points"]] for r in rooms]
         proxies = []
         for r in f.get("receivers") or []:
@@ -102,7 +103,7 @@ def view(layout) -> dict:
                 x, y = to_house(frame, c["x"], c["y"])
                 aps.append({"mac": a["mac"], "name": a.get("name"), "x": x, "y": y})
         floors.append({"name": name, "level": frame["level"], "elevation": frame["elevation"], "registered": frame["registered"],
-                       "rooms": rooms, "proxies": proxies, "access_points": aps})
+                       "rooms": rooms, "no_go": no_go, "proxies": proxies, "access_points": aps})
     floors.sort(key=lambda f: f["elevation"])
     return {"site": clean_site((layout or {}).get("site")), "frames": fr, "floors": floors}
 
