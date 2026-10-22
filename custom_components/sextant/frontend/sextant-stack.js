@@ -327,7 +327,9 @@ class SextantStack extends LitElement {
       const [ax, ay] = this._project(...this._house(frame, 1, 0), z);
       const [cx, cy] = this._project(...this._house(frame, 0, 1), z);
       o.transform(ax - e, ay - g, cx - e, cy - g, e, g);
-      o.globalAlpha = dark ? 0.55 : 0.9;
+      // On a dark page the inverted plan is light lines on black: screened
+      // onto the grey top, the lines lighten it and the black leaves it be.
+      if (dark) { o.globalCompositeOperation = "screen"; o.globalAlpha = 0.8; } else { o.globalAlpha = 0.9; }
       o.drawImage(dark ? this._darkPlan(f.name, img) : img, 0, 0, size[0], size[1]);
       o.restore();
     }
