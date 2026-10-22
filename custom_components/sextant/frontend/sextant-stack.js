@@ -464,7 +464,7 @@ class SextantStack extends LitElement {
     if (Math.abs(dx) + Math.abs(dy) > 3) d.moved = true;
     if (e.shiftKey || e.buttons === 2) {
       // Shift-drag (or the right button) turns and tilts instead of panning.
-      this._view = { ...this._view, yaw: d.view.yaw + dx * 0.4, pitch: Math.max(10, Math.min(85, d.view.pitch - dy * 0.3)) };
+      this._view = this._about(d.view, { yaw: d.view.yaw + dx * 0.4, pitch: Math.max(10, Math.min(85, d.view.pitch - dy * 0.3)) });
     } else {
       this._view = { ...this._view, ox: d.view.ox + dx, oy: d.view.oy + dy };
     }
@@ -501,8 +501,38 @@ class SextantStack extends LitElement {
     this._zoomAt({ x: r.width / 2, y: r.height / 2 }, this._view.k * f);
   }
 
-  _turn(deg) { this._view = { ...this._view, yaw: this._view.yaw + deg }; this._draw(); }
-  _tilt(deg) { this._view = { ...this._view, pitch: Math.max(10, Math.min(85, this._view.pitch + deg)) }; this._draw(); }
+  _turn(deg) { this._view = this._about(this._view, { yaw: this._view.yaw + deg }); this._draw(); }
+  _tilt(deg) { this._view = this._about(this._view, { pitch: Math.max(10, Math.min(85, this._view.pitch + deg)) }); this._draw(); }
+
+  /** ``view`` with ``change`` (a yaw and/or pitch) applied about the middle
+   * of the house: the view turns, then moves so the middle stays where it was
+   * on the screen, rather than swinging about the plan's corner. */
+  _about(view, change) {
+    const [mx, my, mz] = this._middle();
+    const saved = this._view;
+    this._view = view;
+    const [bx, by] = this._project(mx, my, mz);
+    this._view = { ...view, ...change };
+    const [ax, ay] = this._project(mx, my, mz);
+    const out = { ...this._view, ox: this._view.ox + bx - ax, oy: this._view.oy + by - ay };
+    this._view = saved;
+    return out;
+  }
+
+  /** The middle of the house in house metres, halfway up the stack. */
+  _middle() {
+    const geo = this._geo, frames = geo?.frames || {};
+    const pts = [], zs = [];
+    for (const f of geo?.floors || []) {
+      const frame = frames[f.name];
+      if (!frame) continue;
+      zs.push(this._z(f));
+      for (const [x, y] of this._footprint(f, frame).flat()) pts.push([x, y]);
+    }
+    if (!pts.length) return [0, 0, 0];
+    const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+    return [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2, (Math.min(...zs) + Math.max(...zs)) / 2];
+  }
 
   /** The view that shows every floor: the projected corners fill the page. */
   _fit() {
