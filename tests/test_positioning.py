@@ -104,6 +104,15 @@ def test_thing_height_default_and_override():
     assert sextant._thing_height({"thing_height": 99}) == sextant.THING_HEIGHT_M  # out of range
 
 
+def test_thing_height_robot_default():
+    """A thing classed as a robot vacuum sits on the floor unless a height is set."""
+    layout = {"thing_classes": {"robot_x": "robot", "phone": "phone"}, "thing_height": 0.7}
+    assert sextant._thing_height(layout, "robot_x") == sextant.ROBOT_HEIGHT_M
+    assert sextant._thing_height(layout, "phone") == 0.7
+    layout["thing_heights"] = {"robot_x": 0.4}
+    assert sextant._thing_height(layout, "robot_x") == 0.4   # a set height still wins
+
+
 def _run_radii(state, unit="m", height=None, thing_height=None):
     class St:
         def __init__(self):

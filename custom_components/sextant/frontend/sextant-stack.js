@@ -36,6 +36,7 @@ const DROP_K = 0.12;
 // direction its edge runs on the screen.
 const LIGHT = [-0.6, -0.8];
 const WALK_M = 1.0;           // a thing with no height set stands at chest height
+const ROBOT_M = 0.1;          // a robot vacuum with no height set runs along the floor
 const PROXY_M = 1.6;          // a proxy with no mount height set
 const MIN_K = 4, MAX_K = 400; // screen px per house metre
 // A little perspective: the eye is this far (metres) from the middle of what
@@ -337,7 +338,7 @@ class SextantStack extends LitElement {
     // Every thing with a fix, on whichever floor, over all the slabs: a
     // person downstairs is not hidden by the floor above.
     const byName = new Map(floors.map((f) => [f.name, f]));
-    const custom = this.data?.layout?.thing_colors || {}, heights = this.data?.layout?.thing_heights || {};
+    const custom = this.data?.layout?.thing_colors || {}, heights = this.data?.layout?.thing_heights || {}, classes = this.data?.layout?.thing_classes || {};
     const labels = [];
     const focus = this.focus || null;
     const rows = (this.positions?.positions || []).filter((t) => frames[t.floor] && byName.has(t.floor) && Array.isArray(t.cords));
@@ -345,7 +346,7 @@ class SextantStack extends LitElement {
     const placed = rows.map((t) => {
       const f = byName.get(t.floor), fr = frames[t.floor], z = this._z(f);
       const [hx, hy] = this._house(fr, t.cords[0], t.cords[1]);
-      const h = Number.isFinite(heights[t.ent]) ? Math.max(0.1, heights[t.ent]) : WALK_M;
+      const h = Number.isFinite(heights[t.ent]) ? Math.max(0.1, heights[t.ent]) : classes[t.ent] === "robot" ? ROBOT_M : WALK_M;
       const [sx, sy] = this._project(hx, hy, z + h);
       return { t, hx, hy, z, h, sx, sy };
     }).sort((a, b) => a.sy - b.sy);

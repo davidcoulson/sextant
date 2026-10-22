@@ -353,8 +353,10 @@ def _safe_maps_child(maps_path, raw_name, allowed_exts=None):
 # the panel, the vertical leg is removed before trilateration
 # (horizontal = sqrt(slant^2 - dz^2)). Things are assumed to be carried at
 # THING_HEIGHT_M above the floor; override with a top-level
-# "thing_height" (metres) in bpsdata.txt.
+# "thing_height" (metres) in bpsdata.txt. A robot vacuum runs along the
+# floor, so its thing is assumed to be ROBOT_HEIGHT_M up unless set.
 THING_HEIGHT_M = 1.0
+ROBOT_HEIGHT_M = 0.1
 
 # --- Per-thing reference-power trim (issue #92) -----------------------------
 # Bermuda turns RSSI into distance with an exponential path-loss model,
@@ -1144,8 +1146,10 @@ def _thing_height(data, entity=None):
 
     Precedence: the device's own entry in "thing_heights" (set per thing
     in the panel — an ankle beacon at 0.1 m and a phone at 1.0 m need
-    different vertical legs), then the top-level "thing_height" override,
-    then the 1.0 m default. Out-of-range/garbage values fall through.
+    different vertical legs), then the robot default for a thing classed
+    as a robot vacuum (it runs along the floor), then the top-level
+    "thing_height" override, then the 1.0 m default. Out-of-range/garbage
+    values fall through.
     """
     if isinstance(data, dict):
         per_thing = data.get("thing_heights")
@@ -1156,6 +1160,9 @@ def _thing_height(data, entity=None):
             if isinstance(configured, (int, float)) and not isinstance(configured, bool) \
                     and 0 <= configured <= 5:
                 return float(configured)
+        classes = data.get("thing_classes")
+        if entity is not None and isinstance(classes, dict) and classes.get(entity) == "robot":
+            return ROBOT_HEIGHT_M
         configured = data.get("thing_height")
         if isinstance(configured, (int, float)) and not isinstance(configured, bool) \
                 and 0 <= configured <= 5:
