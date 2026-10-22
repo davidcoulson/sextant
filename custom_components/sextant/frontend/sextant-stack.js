@@ -48,6 +48,7 @@ const EYE_M = 70;
 // any screen point of a floor at the closest zoom.
 const FAR = 1e5;
 const BAND_M = 1.5;
+const RETRY_MS = 30000;       // how long after a plan failed to load before it is asked for again
 // Spread: how far apart the floors sit, as a multiple of their real elevation
 // difference. Real is 1; more pulls them apart so what is under a slab shows.
 const SPREADS = { real: 1, apart: 1.8, exploded: 3 };
@@ -167,21 +168,29 @@ class SextantStack extends LitElement {
     const url = mapUrlFor(floorName, this.data?.maps);
     if (!url) { this._images.delete(floorName); this._planCache?.delete(floorName); return null; }
     let img = this._images.get(floorName);
-    if (img && img.url === url) return img.complete && img.naturalWidth ? img : null;
+    // A fetch that failed is tried again, but not on every frame.
+    if (img && img.url === url && !(img.failedAt && Date.now() - img.failedAt > RETRY_MS)) return img.complete && img.naturalWidth ? img : null;
     img = new Image();
     img.url = url;
     // A floor with no rooms is as big as its plan, so the plan's arrival
-    // changes the middle and, when nothing could be fitted yet, the fit.
-    img.onload = () => { this._planCache?.delete(floorName); this._mid = null; if (!this._fitted) this._fit(); this._draw(); };
+    // changes the middle and the fit (when nothing could be fitted yet, or
+    // when this floor had no footprint to fit until now).
+    img.onload = () => {
+      this._planCache?.delete(floorName); this._mid = null;
+      const f = (this._geo?.floors || []).find((x) => x.name === floorName);
+      if (!this._fitted || (f && !f.rooms.length && this._floors().includes(f))) this._fit();
+      this._draw();
+    };
     this._images.set(floorName, img);
     const cached = OBJECT_URLS.get(url);
     if (cached) { img.src = cached; return null; }
+    const failed = () => { img.failedAt = Date.now(); };
     this.hass.fetchWithAuth(url).then(async (r) => {
-      if (!r.ok) return;
+      if (!r.ok) return failed();
       const o = URL.createObjectURL(await r.blob());
       OBJECT_URLS.set(url, o);
       img.src = o;
-    }).catch(() => { /* no plan: the rooms still draw */ });
+    }).catch(failed);   // no plan yet: the rooms still draw
     return null;
   }
 
@@ -307,7 +316,7 @@ class SextantStack extends LitElement {
       if (!frame) continue;
       const z = this._z(f);
       const above = floors.find((g) => g !== f && frames[g.name] && this._z(g) > z);
-      this._paintFloor(ctx, f, frame, z, W, H, dpr, dark, line, floors.length === 1, above ? { polys: this._footprint(above, frames[above.name]), dz: this._z(above) - z } : null);
+      this._paintFloor(ctx, f, frame, z, W, H, dpr, dark, line, floors.length === 1, above ? { polys: this._footprint(above, frames[above.name]), holes: (above.no_go || []).map((n) => n.points), dz: this._z(above) - z } : null);
       // Proxies and access points stand on the floor, on a stem.
       const heights = this._proxyHeights(f.name);
       for (const p of opt.receivers === false ? [] : f.proxies) {
@@ -471,10 +480,18 @@ class SextantStack extends LitElement {
       o.shadowColor = dark ? "rgba(0,0,0,0.5)" : "rgba(0,0,0,0.28)"; o.shadowBlur = 18;
       o.shadowOffsetX = FAR * dpr; o.shadowOffsetY = 0;
       o.translate(-FAR, 0);
+      // The rooms all wound one way and the no-go holes the other, so a
+      // stairwell lets the light through (nonzero winding).
       o.beginPath();
       const [ux, uy] = this._shadowDir();
-      for (const poly of above.polys) poly.forEach(([x, y], i) => { const p = this._project(x + off * ux, y + off * uy, z); i ? o.lineTo(p[0], p[1]) : o.moveTo(p[0], p[1]); });
-      o.closePath(); o.fillStyle = "#000"; o.fill();
+      const ring = (poly, ccw) => {
+        const pts = (signedArea(poly) < 0) === ccw ? [...poly].reverse() : poly;
+        pts.forEach(([x, y], i) => { const p = this._project(x + off * ux, y + off * uy, z); i ? o.lineTo(p[0], p[1]) : o.moveTo(p[0], p[1]); });
+        o.closePath();
+      };
+      for (const poly of above.polys) ring(poly, false);
+      for (const poly of above.holes || []) ring(poly, true);
+      o.fillStyle = "#000"; o.fill();
       o.restore();
     }
     if (this._walls()) {

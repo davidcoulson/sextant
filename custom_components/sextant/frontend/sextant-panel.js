@@ -1603,9 +1603,10 @@ class SextantLive extends LitElement {
     const h = this._history;
     const pinning = this._pin?.step === "where";
     // The 2.5D picture (sextant-stack) takes the place of the flat map; it
-    // keeps the switches it can honour and adds its own. Placing a pin and
-    // marking where a thing really is are done on the flat map.
-    const deep = this._options.view === "3d" && !pinning && !this._marking;
+    // keeps the switches it can honour and adds its own. Placing a pin,
+    // marking where a thing really is, and scrubbing through a thing's
+    // history are done on the flat map (the picture shows live positions).
+    const deep = this._options.view === "3d" && !pinning && !this._marking && !this._history;
     const switches = [
       ["image", "Map image", "Show or hide the floor-plan drawing behind the rooms", "mdi:floor-plan"],
       ["labels", "Labels", "Room and thing names", "mdi:label-outline"],
