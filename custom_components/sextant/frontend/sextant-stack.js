@@ -1,6 +1,12 @@
 /**
- * The Stack view: every floor drawn in one isometric picture, lowest first,
- * each at its elevation, with the things and proxies standing on them.
+ * The 2.5D picture of the Live page: the floor drawn with depth, the rooms'
+ * walls standing up, the things and proxies standing on it on stems - or,
+ * with every floor shown, the whole house as a stack, lowest first, each
+ * floor at its elevation.
+ *
+ * It is driven by the Live page's own switches (``options``): which floor,
+ * or all of them; the plan image, labels, proxies and access points on or
+ * off, the walls, and how far apart the floors sit.
  *
  * The anchors (registration.py) already put every floor in one frame - the
  * house frame, in metres - and each floor has an elevation (set, or storeys
@@ -15,7 +21,7 @@
  */
 import { LitElement, html, css, nothing } from "./lit.js";
 import { MAP_FRAME_WIDTH, thingColor, thingRgba, staleness, shortAge } from "./sextant-map.js";
-import { sharedStyles, thingName, uiButton, uiSegmented, mapUrlFor } from "./sextant-ui.js";
+import { sharedStyles, thingName, mapUrlFor } from "./sextant-ui.js";
 
 const DEG = Math.PI / 180;
 const SLAB_M = 0.18;          // how thick a floor slab is drawn
@@ -43,23 +49,17 @@ class SextantStack extends LitElement {
     hass: { attribute: false },
     data: { attribute: false },
     positions: { attribute: false },
+    floor: { attribute: false },     // the floor to draw; every floor with options.all_floors
+    options: { attribute: false },   // the Live page's switches: image, labels, receivers, access_points, walls, all_floors, spread
+    focus: { attribute: false },     // the selected thing's entity, or null
     _geo: { state: true },
-    _spread: { state: true },
-    _plans: { state: true },     // whether the plan images are drawn
-    _walls: { state: true },     // whether the rooms are extruded a little
-    _focus: { state: true },     // the clicked thing's entity, or null
   };
 
   constructor() {
     super();
     this._geo = null;
-    this._focus = null;
-    try {
-      this._spread = localStorage.getItem("sextant.stack.spread") || "apart";
-      this._plans = localStorage.getItem("sextant.stack.plans") !== "off";
-      this._walls = localStorage.getItem("sextant.stack.walls") !== "off";
-    } catch { this._spread = "apart"; this._plans = true; this._walls = true; }
-    if (!(this._spread in SPREADS)) this._spread = "apart";
+    this.options = {};
+    this.focus = null;
     // The camera: px per metre, where the house origin lands on the screen,
     // the turn about the vertical, and the tilt (0 is a plan, 90 a side view).
     this._view = { k: 40, ox: 0, oy: 0, yaw: 45, pitch: 55 };
@@ -85,7 +85,23 @@ class SextantStack extends LitElement {
     if (changed.has("data") && changed.get("data") && changed.get("data") !== this.data) this._load();
     const dark = !!this.hass?.themes?.darkMode, themed = dark !== this._dark;
     this._dark = dark;
-    if (themed || ["positions", "data", "_geo", "_spread", "_plans", "_walls", "_focus"].some((k) => changed.has(k))) this._draw();
+    // Another floor, or the stack instead of one floor, is another picture: fit it.
+    const scene = `${this._all() ? "*" : this.floor}|${this._spread()}`;
+    if (this._geo && scene !== this._scene) { this._scene = scene; this._fit(); }
+    if (themed || ["positions", "data", "floor", "options", "focus", "_geo"].some((k) => changed.has(k))) this._draw();
+  }
+
+  // --- the switches ----------------------------------------------------------------
+
+  _all() { return !!this.options?.all_floors; }
+  _plans() { return this.options?.image !== false; }
+  _walls() { return this.options?.walls !== false; }
+  _spread() { const s = this.options?.spread; return s in SPREADS ? s : "apart"; }
+
+  /** The floors drawn: the one picked, or all of them. */
+  _floors() {
+    const floors = this._geo?.floors || [];
+    return this._all() || !this.floor ? floors : floors.filter((f) => f.name === this.floor);
   }
 
   firstUpdated() {
@@ -99,6 +115,7 @@ class SextantStack extends LitElement {
     if (!geo) return;
     this._geo = geo;
     for (const f of geo.floors || []) this._image(f.name);
+    this._scene = `${this._all() ? "*" : this.floor}|${this._spread()}`;
     if (!this._fitted) this._fit();
     this._draw();
   }
@@ -141,7 +158,7 @@ class SextantStack extends LitElement {
   // --- projection ------------------------------------------------------------------
 
   /** The floor's height in the picture: its elevation, spread out. */
-  _z(floor) { return (floor.elevation || 0) * SPREADS[this._spread]; }
+  _z(floor) { return (floor.elevation || 0) * SPREADS[this._spread()]; }
 
   /** A house point (metres, y down the plan, z up) on the screen. */
   _project(hx, hy, z = 0) {
@@ -197,8 +214,9 @@ class SextantStack extends LitElement {
     this._hits = [];
     const geo = this._geo;
     if (!geo) return;
-    const frames = geo.frames || {}, floors = geo.floors || [];
+    const frames = geo.frames || {}, floors = this._floors();
     const line = dark ? "rgba(232,234,237," : "rgba(27,31,36,";
+    const opt = this.options || {};
 
     for (const f of floors) {
       const frame = frames[f.name];
@@ -208,7 +226,7 @@ class SextantStack extends LitElement {
       this._paintFloor(ctx, f, frame, z, W, H, dpr, dark, line, floors.length === 1, above ? { polys: this._footprint(above, frames[above.name]), dz: this._z(above) - z } : null);
       // Proxies and access points stand on the floor, on a stem.
       const heights = this._proxyHeights(f.name);
-      for (const p of f.proxies) {
+      for (const p of opt.receivers === false ? [] : f.proxies) {
         const h = heights.get(p.slug) ?? PROXY_M;
         this._stem(ctx, p.x, p.y, z, h, line);
         const [sx, sy] = this._project(p.x, p.y, z + h);
@@ -216,7 +234,7 @@ class SextantStack extends LitElement {
         ctx.fillStyle = p.outdoor ? "#1f7a8c" : "#2a9d8f"; ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.2;
         ctx.fillRect(-4, -4, 8, 8); ctx.strokeRect(-4, -4, 8, 8); ctx.restore();
       }
-      for (const a of f.access_points) {
+      for (const a of opt.access_points === false ? [] : f.access_points) {
         const [sx, sy] = this._project(a.x, a.y, z + 0.05);
         ctx.beginPath(); ctx.arc(sx, sy, 4, 0, Math.PI * 2);
         ctx.fillStyle = "#4f5bd5"; ctx.fill(); ctx.strokeStyle = "#fff"; ctx.lineWidth = 1; ctx.stroke();
@@ -228,6 +246,7 @@ class SextantStack extends LitElement {
     const byName = new Map(floors.map((f) => [f.name, f]));
     const custom = this.data?.layout?.thing_colors || {}, heights = this.data?.layout?.thing_heights || {};
     const labels = [];
+    const focus = this.focus || null;
     const rows = (this.positions?.positions || []).filter((t) => frames[t.floor] && byName.has(t.floor) && Array.isArray(t.cords));
     // Far things first, so a near one is drawn over them.
     const placed = rows.map((t) => {
@@ -238,10 +257,10 @@ class SextantStack extends LitElement {
       return { t, hx, hy, z, h, sx, sy };
     }).sort((a, b) => a.sy - b.sy);
     for (const { t, hx, hy, z, h, sx, sy } of placed) {
-      const focused = this._focus && t.ent === this._focus;
+      const focused = focus && t.ent === focus;
       const { age, ghost } = staleness(t, 120);
       ctx.save();
-      if (this._focus && !focused) ctx.globalAlpha = 0.3;
+      if (focus && !focused) ctx.globalAlpha = 0.3;
       if (ghost) ctx.globalAlpha *= 0.45;
       const color = thingColor(t.ent, custom);
       // The stem and the shadow on the floor say where on the plan it is;
@@ -263,7 +282,8 @@ class SextantStack extends LitElement {
       ctx.setLineDash([]);
       ctx.restore();
       const name = thingName(this.data, t.ent);
-      labels.push([ghost ? `${name} · ${shortAge(age)} ago` : name, sx, sy - r - 9, focused]);
+      // Labels off still names the picked thing: it is the one being looked at.
+      if (opt.labels !== false || focused) labels.push([ghost ? `${name} · ${shortAge(age)} ago` : name, sx, sy - r - 9, focused]);
       this._hits.push({ x: sx, y: sy, r: r + 4, ent: t.ent });
     }
     ctx.font = "600 11px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
@@ -273,7 +293,7 @@ class SextantStack extends LitElement {
       const box = [x - w / 2, y - 8, x + w / 2, y + 8];
       if (!focused && taken.some((b) => box[0] < b[2] && box[2] > b[0] && box[1] < b[3] && box[3] > b[1])) continue;
       taken.push(box);
-      ctx.globalAlpha = this._focus && !focused ? 0.4 : 1;
+      ctx.globalAlpha = focus && !focused ? 0.4 : 1;
       ctx.fillStyle = dark ? "rgba(20,24,30,0.8)" : "rgba(255,255,255,0.85)";
       ctx.fillRect(x - w / 2, y - 8, w, 16);
       ctx.fillStyle = dark ? "#e8eaed" : "#1b1f24"; ctx.fillText(text, x, y);
@@ -317,7 +337,7 @@ class SextantStack extends LitElement {
     union(polys, z);
     // The top is a mid grey on a dark page, not black: a shadow has to show on it.
     o.fillStyle = dark ? "hsl(215, 10%, 34%)" : "rgba(255,255,255,0.96)"; o.fill();
-    const img = this._plans ? this._image(f.name) : null;
+    const img = this._plans() ? this._image(f.name) : null;
     const size = img ? this._planSize(f.name) : null;
     if (img && size) {
       // Plan px -> screen is affine on this floor: three points fix it.
@@ -351,7 +371,7 @@ class SextantStack extends LitElement {
       o.closePath(); o.fillStyle = "#000"; o.fill();
       o.restore();
     }
-    if (this._walls) {
+    if (this._walls()) {
       const len = WALL_M * SHADOW_K, dx = len * SHADOW_DIR[0], dy = len * SHADOW_DIR[1];
       o.beginPath();
       for (const r of f.rooms) for (let i = 0; i < r.points.length; i++) {
@@ -369,7 +389,7 @@ class SextantStack extends LitElement {
       if (!img) { o.fillStyle = "rgba(79, 91, 213, 0.14)"; o.fill(); }
       o.strokeStyle = "rgba(79, 91, 213, 0.75)"; o.lineWidth = 1.2; o.stroke();
     }
-    if (this._walls) {
+    if (this._walls()) {
       // A short wall along every edge, lit from the upper left of the screen,
       // so the rooms read as rooms and not lines on a slab.
       o.lineWidth = 0.7;
@@ -392,6 +412,7 @@ class SextantStack extends LitElement {
     ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(off, 0, 0); ctx.restore();
     // The floor's name on its near corner.
     const corner = polys.flat().map(([x, y]) => this._project(x, y, z)).reduce((a, b) => (b[1] > a[1] ? b : a));
+    if (this.options?.labels === false) return;
     ctx.font = "600 12px system-ui, sans-serif"; ctx.textAlign = "left"; ctx.textBaseline = "top";
     ctx.fillStyle = line + "0.85)";
     ctx.fillText(f.name + (f.registered || lone ? "" : " (not lined up)"), corner[0] + 6, corner[1] + 4);
@@ -481,7 +502,8 @@ class SextantStack extends LitElement {
   _click(p) {
     // The nearest dot under the pointer; the one on top was drawn last.
     const hit = [...this._hits].reverse().find((h) => Math.hypot(h.x - p.x, h.y - p.y) <= h.r);
-    this._focus = hit && hit.ent !== this._focus ? hit.ent : null;
+    this.focus = hit && hit.ent !== this.focus ? hit.ent : null;
+    this.dispatchEvent(new CustomEvent("thing-selected", { detail: this.focus }));
   }
 
   _wheel(e) {
@@ -519,11 +541,11 @@ class SextantStack extends LitElement {
     return out;
   }
 
-  /** The middle of the house in house metres, halfway up the stack. */
+  /** The middle of what is drawn, in house metres, halfway up it. */
   _middle() {
-    const geo = this._geo, frames = geo?.frames || {};
+    const frames = this._geo?.frames || {};
     const pts = [], zs = [];
-    for (const f of geo?.floors || []) {
+    for (const f of this._floors()) {
       const frame = frames[f.name];
       if (!frame) continue;
       zs.push(this._z(f));
@@ -534,13 +556,14 @@ class SextantStack extends LitElement {
     return [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2, (Math.min(...zs) + Math.max(...zs)) / 2];
   }
 
-  /** The view that shows every floor: the projected corners fill the page. */
+  /** The view that shows all that is drawn: the projected corners fill the page. */
+  fit() { this._fit(); }
   _fit() {
     const geo = this._geo, rect = this._canvas?.getBoundingClientRect();
     if (!geo || !rect?.width) return;
     const frames = geo.frames || {};
     const pts = [];
-    for (const f of geo.floors || []) {
+    for (const f of this._floors()) {
       const frame = frames[f.name];
       if (!frame) continue;
       const z = this._z(f);
@@ -559,36 +582,16 @@ class SextantStack extends LitElement {
     this._draw();
   }
 
-  _setSpread(v) {
-    this._spread = v;
-    try { localStorage.setItem("sextant.stack.spread", v); } catch { /* ignore */ }
-    this._fit();
-  }
-
-  _toggle(key) {
-    this[key] = !this[key];
-    try { localStorage.setItem(`sextant.stack.${key.slice(1)}`, this[key] ? "on" : "off"); } catch { /* ignore */ }
-  }
-
   render() {
-    const geo = this._geo;
-    const unregistered = (geo?.floors || []).filter((f) => !f.registered).map((f) => f.name);
+    const geo = this._geo, floors = this._floors();
+    const unregistered = floors.filter((f) => !f.registered).map((f) => f.name);
     return html`
       <div class="stage">
         <canvas @pointerdown=${(e) => this._down(e)} @pointermove=${(e) => this._move(e)} @pointerup=${(e) => this._up(e)}
                 @pointercancel=${(e) => this._up(e)} @wheel=${(e) => this._wheel(e)} @contextmenu=${(e) => e.preventDefault()}></canvas>
-        <div class="bar">
-          ${uiSegmented({ label: "Floors", value: this._spread, options: [
-            { value: "real", label: "Real", title: "Floors at their real elevations" },
-            { value: "apart", label: "Apart", title: "Floors pulled a little apart, so what is under a slab shows" },
-            { value: "exploded", label: "Exploded", title: "Floors well apart" }],
-            onChange: (v) => this._setSpread(v) })}
-          ${uiButton({ label: "Plans", kind: this._plans ? "primary" : "outline", icon: "mdi:floor-plan", onClick: () => this._toggle("_plans") })}
-          ${uiButton({ label: "Walls", kind: this._walls ? "primary" : "outline", icon: "mdi:wall", onClick: () => this._toggle("_walls") })}
-        </div>
         ${!geo ? html`<div class="note">Loading…</div>`
-          : !(geo.floors || []).length ? html`<div class="note">No floors yet: draw one in Edit.</div>`
-          : unregistered.length && (geo.floors || []).length > 1 ? html`<div class="note">${unregistered.join(", ")} ${unregistered.length === 1 ? "is" : "are"} not lined up with the other floors (Edit → Anchor), so ${unregistered.length === 1 ? "it is" : "they are"} drawn on ${unregistered.length === 1 ? "its" : "their"} own frame.</div>`
+          : !floors.length ? html`<div class="note">No floors yet: draw one in Edit.</div>`
+          : unregistered.length && floors.length > 1 ? html`<div class="note">${unregistered.join(", ")} ${unregistered.length === 1 ? "is" : "are"} not lined up with the other floors (Edit → Anchor), so ${unregistered.length === 1 ? "it is" : "they are"} drawn on ${unregistered.length === 1 ? "its" : "their"} own frame.</div>`
           : nothing}
         <div class="hint">Drag to move · shift-drag to turn and tilt · wheel to zoom · click a thing to pick it out</div>
         <div class="zoom">
@@ -596,7 +599,7 @@ class SextantStack extends LitElement {
           <button title="Turn right" aria-label="Turn right" @click=${() => this._turn(15)}><ha-icon icon="mdi:rotate-right"></ha-icon></button>
           <button title="Tilt up (more plan)" aria-label="Tilt up" @click=${() => this._tilt(-10)}><ha-icon icon="mdi:angle-acute"></ha-icon></button>
           <button title="Tilt down (more side)" aria-label="Tilt down" @click=${() => this._tilt(10)}><ha-icon icon="mdi:angle-obtuse"></ha-icon></button>
-          <button title="Show the whole house" aria-label="Show the whole house" @click=${() => this._fit()}><ha-icon icon="mdi:fit-to-page-outline"></ha-icon></button>
+          <button title=${this._all() ? "Show the whole house" : "Fit the whole floor into view"} aria-label="Fit into view" @click=${() => this._fit()}><ha-icon icon="mdi:fit-to-screen-outline"></ha-icon></button>
           <button title="Zoom in" aria-label="Zoom in" @click=${() => this._zoomBy(1.4)}><ha-icon icon="mdi:plus"></ha-icon></button>
           <button title="Zoom out" aria-label="Zoom out" @click=${() => this._zoomBy(1 / 1.4)}><ha-icon icon="mdi:minus"></ha-icon></button>
         </div>
@@ -604,15 +607,15 @@ class SextantStack extends LitElement {
   }
 
   static styles = [sharedStyles, css`
+    /* The host sets where the buttons and the note go, clear of its own
+     * toolbar and its floating list (--sextant-stack-*). */
     :host { display: block; height: 100%; }
-    .stage { position: relative; width: 100%; height: 100%; min-height: 360px; overflow: hidden; }
+    .stage { position: relative; width: 100%; height: 100%; overflow: hidden; }
     canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: grab; }
-    .bar { position: absolute; left: 10px; top: 10px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 4px 6px; border-radius: 12px;
-      background: var(--card-background-color); box-shadow: var(--ha-card-box-shadow, 0 2px 6px rgba(0,0,0,0.25)); }
-    .note { position: absolute; left: 10px; top: 64px; max-width: min(380px, calc(100% - 20px)); padding: 8px 10px; border-radius: 10px;
+    .note { position: absolute; left: 10px; top: var(--sextant-stack-note-top, 10px); max-width: min(380px, calc(100% - 20px)); padding: 8px 10px; border-radius: 10px;
       background: var(--card-background-color); box-shadow: var(--ha-card-box-shadow, 0 2px 6px rgba(0,0,0,0.25)); font-size: 13px; }
     .hint { position: absolute; left: 10px; bottom: 8px; font-size: 11px; color: var(--secondary-text-color); pointer-events: none; }
-    .zoom { position: absolute; right: 10px; bottom: 26px; display: flex; gap: 2px; padding: 4px; border-radius: 12px; background: var(--card-background-color); box-shadow: var(--ha-card-box-shadow, 0 2px 6px rgba(0,0,0,0.25)); }
+    .zoom { position: absolute; right: var(--sextant-stack-zoom-right, 10px); bottom: var(--sextant-stack-zoom-bottom, 10px); display: flex; gap: 2px; padding: 4px; border-radius: 12px; background: var(--card-background-color); box-shadow: var(--ha-card-box-shadow, 0 2px 6px rgba(0,0,0,0.25)); }
     .zoom button { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--primary-text-color); cursor: pointer; }
     @media (max-width: 600px) { .hint { display: none; } }
   `];

@@ -72,7 +72,6 @@ class SextantPanel extends LitElement {
     _intervalMenu: { state: true }, // the countdown's refresh menu is open
     _floor: { state: true },
     _property: { state: true },   // Live shows the Property view (every floor on a map) instead of one floor
-    _stack: { state: true },      // Live shows the Stack view (every floor in one isometric picture)
     _error: { state: true },
   };
 
@@ -224,7 +223,7 @@ class SextantPanel extends LitElement {
       ${floors.length && FLOOR_MODES.has(this._mode) ? html`
         <div class="floor-tabs" role="tablist" aria-label="Floor">
           ${sortFloors(floors, true).map((f) => {
-            const on = f.name === this._floor && !(this._mode === "live" && (this._property || this._stack));
+            const on = f.name === this._floor && !(this._mode === "live" && this._property);
             const n = this._mode === "live" ? this._thingsOn(f.name) : null;
             return html`<button role="tab" class=${on ? "active" : ""} aria-selected=${on}
               title=${n === null ? f.name : `${f.name}: ${n} thing${n === 1 ? "" : "s"} here now`}
@@ -232,10 +231,7 @@ class SextantPanel extends LitElement {
           })}
           ${this._mode === "live" ? html`<button role="tab" class=${this._property ? "active" : ""} aria-selected=${!!this._property}
             title="The whole property on a street or aerial map: every floor, and everything outdoors"
-            @click=${() => { this._property = true; this._stack = false; }}><ha-icon icon="mdi:map-outline" style="--mdc-icon-size:16px"></ha-icon>Property</button>` : nothing}
-          ${this._mode === "live" ? html`<button role="tab" class=${this._stack ? "active" : ""} aria-selected=${!!this._stack}
-            title="Every floor in one isometric picture, with the things and proxies standing on them"
-            @click=${() => { this._stack = true; this._property = false; }}><ha-icon icon="mdi:layers-triple-outline" style="--mdc-icon-size:16px"></ha-icon>Stack</button>` : nothing}
+            @click=${() => { this._property = true; }}><ha-icon icon="mdi:map-outline" style="--mdc-icon-size:16px"></ha-icon>Property</button>` : nothing}
         </div>` : nothing}
       ${this._renderStamp()}
     `;
@@ -245,7 +241,6 @@ class SextantPanel extends LitElement {
    * the dropdown did: in Edit a floor switch is an unsaved plan being left. */
   async _pickFloor(name) {
     this._property = false;
-    this._stack = false;
     if (name === this._floor) return;
     if (!(await this._mayLeaveEdit(`Switch to ${name}`))) return;
     this._floor = name;
@@ -358,9 +353,6 @@ class SextantPanel extends LitElement {
         if (this._property) {
           return html`<sextant-property .hass=${this.hass} .data=${this._data} .positions=${this._positions}
                                         @layout-changed=${() => this._onLayoutChanged()}></sextant-property>`;
-        }
-        if (this._stack) {
-          return html`<sextant-stack .hass=${this.hass} .data=${this._data} .positions=${this._positions}></sextant-stack>`;
         }
         if (!(this._data?.layout?.floor || []).length) return this._renderFirstRun();
         return html`<sextant-live .hass=${this.hass} .data=${this._data} .positions=${this._positions} .floor=${this._floor}
@@ -501,7 +493,8 @@ class SextantLive extends LitElement {
     this._truth = null;     // the last mark's evaluation {mark, rows, current_weight}
     this._marks = [];       // the selected thing's marks
     this._blend = null;     // slider value while it is being dragged (0..100)
-    this._options = { circles: false, fingerprint: false, trails: true, grid: "off", labels: true, subzones: true, receivers: true, access_points: true, links: true, all_links: false, image: true };
+    this._options = { circles: false, fingerprint: false, trails: true, grid: "off", labels: true, subzones: true, receivers: true, access_points: true, links: true, all_links: false, image: true,
+                      view: "2d", walls: true, all_floors: false, spread: "apart" };
     try { Object.assign(this._options, JSON.parse(localStorage.getItem("sextant.live.options") || "{}")); } catch { /* ignore */ }
     this._history = null; // {ent, from, to, points:[{t,x,y,f}] }
     this._timeline = null; // {ent, at, stays:[{start,end,floor,room,spot,unheard?,partial?}], last_heard}
@@ -1609,24 +1602,47 @@ class SextantLive extends LitElement {
     const sel = rows.find((p) => p.ent === this._selected);
     const h = this._history;
     const pinning = this._pin?.step === "where";
+    // The 2.5D picture (sextant-stack) takes the place of the flat map; it
+    // keeps the switches it can honour and adds its own. Placing a pin and
+    // marking where a thing really is are done on the flat map.
+    const deep = this._options.view === "3d" && !pinning && !this._marking;
     const switches = [
       ["image", "Map image", "Show or hide the floor-plan drawing behind the rooms", "mdi:floor-plan"],
       ["labels", "Labels", "Room and thing names", "mdi:label-outline"],
-      ["trails", "Trails", "Each thing's recent path", "mdi:shoe-print"],
-      ["subzones", "Spots", "Draw the spots (a couch, a desk, a bedside table)", "mdi:sofa-outline"],
+      ...(deep ? [
+        ["walls", "Walls", "Stand the rooms' walls up a little, with their shadows", "mdi:wall"],
+        ["all_floors", "All floors", "Every floor in one picture, stacked at their elevations, instead of this floor alone", "mdi:layers-triple-outline"],
+      ] : [
+        ["trails", "Trails", "Each thing's recent path", "mdi:shoe-print"],
+        ["subzones", "Spots", "Draw the spots (a couch, a desk, a bedside table)", "mdi:sofa-outline"],
+      ]),
       ["receivers", "Proxies", "Draw the proxies. Whichever one you point at is named; Labels names the rooms and things", "mdi:access-point"],
       ["access_points", "Wi-Fi", "Draw the Wi-Fi access points placed on the plan. Point at one (or tap it) for its name and how many clients it has", "mdi:wifi"],
-      ...(this._isAdmin() ? [["wifi_heat", "Signal", "The Wi-Fi signal map: how strong the signal is in each square metre, or which access point clients are on there, measured from the proxies and the people's phones and watches", "mdi:wifi-strength-3"]] : []),
-      ["links", "Signal lines", "With a thing selected: a line to each proxy that heard it, green when close and red by ten metres, thicker for the ones that count most - and for a phone or watch, a dashed line to its Wi-Fi access point", "mdi:transit-connection-variant"],
-      ["all_links", "All lines", "A line from every thing on the floor to the proxy that heard it best, without selecting one: which proxy is carrying what, at a glance", "mdi:vector-polyline"],
-      ["circles", "Range circles", "The distance each proxy measured, as a circle: the fix is where they meet", "mdi:radar"],
-      ["fingerprint", "Fingerprint fix", "Where the fingerprint estimator alone would put each thing (dashed), next to the published fix", "mdi:fingerprint"],
+      ...(deep ? [] : [
+        ...(this._isAdmin() ? [["wifi_heat", "Signal", "The Wi-Fi signal map: how strong the signal is in each square metre, or which access point clients are on there, measured from the proxies and the people's phones and watches", "mdi:wifi-strength-3"]] : []),
+        ["links", "Signal lines", "With a thing selected: a line to each proxy that heard it, green when close and red by ten metres, thicker for the ones that count most - and for a phone or watch, a dashed line to its Wi-Fi access point", "mdi:transit-connection-variant"],
+        ["all_links", "All lines", "A line from every thing on the floor to the proxy that heard it best, without selecting one: which proxy is carrying what, at a glance", "mdi:vector-polyline"],
+        ["circles", "Range circles", "The distance each proxy measured, as a circle: the fix is where they meet", "mdi:radar"],
+        ["fingerprint", "Fingerprint fix", "Where the fingerprint estimator alone would put each thing (dashed), next to the published fix", "mdi:fingerprint"],
+      ]),
     ];
     // The map's own switches, as the pressed buttons the Edit tools and a
     // thing's quick actions use: an icon with its word under it.
     const optBtn = ([k, label, tip, icon]) => html`<button class="qa opt ${this._options[k] ? "on" : ""}" title=${`${label}: ${tip}`}
       aria-label=${label} aria-pressed=${!!this._options[k]} @click=${() => this._setOption(k, !this._options[k])}>
       <ha-icon icon=${icon}></ha-icon><span>${label}</span></button>`;
+    // Flat or with depth, first in the toolbar: it decides what the rest means.
+    const deepBtn = html`<button class="qa opt ${this._options.view === "3d" ? "on" : ""}" aria-pressed=${this._options.view === "3d"}
+      title=${this._options.view === "3d" ? "2.5D: the floor drawn with depth, the walls standing up and the things on stems. Drag to move, shift-drag to turn and tilt. Click for the flat map" : "2.5D: draw the floor with depth, the walls standing up and the things standing on it. Click for it"}
+      aria-label="2.5D" @click=${() => this._setOption("view", this._options.view === "3d" ? "2d" : "3d")}>
+      <ha-icon icon="mdi:cube-outline"></ha-icon><span>2.5D</span></button>`;
+    // With every floor shown, how far apart they sit: one button that steps
+    // Apart -> Exploded -> Real, as the grid button does.
+    const SPREADS = [["apart", "Apart", "a little apart, so what is under a slab shows"], ["exploded", "Exploded", "well apart"], ["real", "Real", "at their real elevations"]];
+    const si = Math.max(0, SPREADS.findIndex(([v]) => v === this._options.spread));
+    const [, spreadName] = SPREADS[si], [nextSpread, nextSpreadName, nextSpreadTip] = SPREADS[(si + 1) % SPREADS.length];
+    const spreadBtn = deep && this._options.all_floors ? html`<button class="qa opt" title=${`Floors: ${spreadName}. Click for ${nextSpreadName}: the floors ${nextSpreadTip}`} aria-label=${`Floors: ${spreadName}`}
+      @click=${() => this._setOption("spread", nextSpread)}><ha-icon icon="mdi:arrow-expand-vertical"></ha-icon><b class="unit">${spreadName[0]}</b></button>` : nothing;
     const gridPicker = uiSelect({ label: "Grid", value: this._options.grid, options: [{ value: "off", label: "No grid" }, { value: "m", label: "Metres" }, { value: "ft", label: "Feet" }], onChange: (v) => this._setOption("grid", v), style: "min-width: 120px" });
     // The grid as one button that steps No grid -> Metres -> Feet, so it sits in
     // the icon toolbar with everything else instead of a dropdown in the middle
@@ -1653,17 +1669,21 @@ class SextantLive extends LitElement {
           ${uiButton({ label: "New thing", kind: "outline", icon: "mdi:plus-circle-outline", onClick: () => this._goto("things") })}
           ${uiButton({ label: "Calibrate", kind: "outline", icon: "mdi:tune-vertical", onClick: () => this._goto("calibration") })}` : nothing}
       </div>
-      <div class="stage ${this._mapOpen || pinning ? "" : "collapsed"}"><canvas></canvas>${pinning ? this._renderPinWhere() : this._renderProxyCard()}
+      <div class="stage ${this._mapOpen || pinning ? "" : "collapsed"}"><canvas class=${deep ? "hidden" : ""}></canvas>
+        ${deep ? html`<sextant-stack .hass=${this.hass} .data=${this.data} .positions=${this.positions} .floor=${this.floor} .options=${this._options} .focus=${this._selected}
+                                     @thing-selected=${(e) => { this._proxy = null; this._select(e.detail); }}></sextant-stack>` : nothing}
+        ${pinning ? this._renderPinWhere() : this._renderProxyCard()}
         <div class="overlay" role="toolbar" aria-label="Map">
-          <div class="chips wide-only">${switches.map(optBtn)}</div>
+          <span class="wide-only">${deepBtn}</span>
           <span class="sep wide-only"></span>
-          <span class="wide-only">${gridBtn}</span>
+          <div class="chips wide-only">${switches.map(optBtn)}</div>
+          ${deep ? spreadBtn : html`<span class="sep wide-only"></span><span class="wide-only">${gridBtn}</span>`}
           <button class="iconbtn narrow-only" title="Map options" aria-label="Map options" @click=${() => { this._optionsOpen = !this._optionsOpen; }}><ha-icon icon="mdi:tune-variant"></ha-icon></button>
           <button class="iconbtn narrow-only" title="Hide the map" aria-label="Hide the map" @click=${() => { this._mapOpen = false; }}><ha-icon icon="mdi:map-minus"></ha-icon></button>
         </div>
-        ${zoom}
-        ${pinning ? nothing : this._renderWifiLegend()}
-        ${pinning ? nothing : html`<div class="mapcorner ${this._history ? "lifted" : ""} ${sel ? "besidecard" : ""}">
+        ${deep ? nothing : zoom}
+        ${pinning || deep ? nothing : this._renderWifiLegend()}
+        ${pinning || deep ? nothing : html`<div class="mapcorner ${this._history ? "lifted" : ""} ${sel ? "besidecard" : ""}">
           ${(sel && this._options.links !== false && sel.radii?.length && sel.floor === this.floor) || this._options.all_links ? signalLegend(isImperial(this.hass)) : nothing}
           ${renderScaleBar(this._floorObj()?.scale, this._map?.view?.k, isImperial(this.hass),
             this._isAdmin() ? () => this._goto("edit") : null, "No scale on this floor. Set it in Edit with the Scale tool")}
@@ -1672,8 +1692,8 @@ class SextantLive extends LitElement {
           <div class="opts-backdrop narrow-only" @click=${() => { this._optionsOpen = false; }}></div>
           <div class="opts-sheet narrow-only">
             <h3>Map options</h3>
-            <div class="chips optgrid">${switches.map(optBtn)}</div>
-            ${gridPicker}
+            <div class="chips optgrid">${deepBtn}${switches.map(optBtn)}${spreadBtn}</div>
+            ${deep ? nothing : gridPicker}
             ${uiButton({ label: "Done", kind: "primary", onClick: () => { this._optionsOpen = false; } })}
           </div>` : nothing}
         ${h ? html`
@@ -1930,6 +1950,10 @@ class SextantLive extends LitElement {
     .narrow-only { display: none; }
     .stage { position: relative; min-width: 0; }
     canvas { width: 100%; height: 100%; display: block; --sextant-map-bg: var(--card-background-color, #fff); }
+    canvas.hidden { display: none; }
+    /* The 2.5D picture fills the stage; its buttons sit where the map's zoom
+       cluster does, and its note under the toolbar. */
+    sextant-stack { position: absolute; inset: 0; --sextant-stack-zoom-right: 320px; --sextant-stack-zoom-bottom: 10px; --sextant-stack-note-top: 60px; }
     /* The map's toolbar: one compact floating panel of icon-only buttons, the
        active ones filled. The names are in each button's tooltip and aria
        label; the narrow sheet below keeps its labelled buttons. */
@@ -2169,6 +2193,7 @@ class SextantLive extends LitElement {
       .detail .grip:active span, .detail .grip:focus-visible span { background: var(--primary-color, #03a9f4); }
       .detail .grip:focus-visible { outline: none; }
       .scrub, .zoom, .wifilegend { right: 10px; }
+      sextant-stack { --sextant-stack-zoom-right: 10px; }
       .mapcorner.besidecard { left: 10px; }   /* the card sits under the map here */
       /* Things, and with it Hide map, stays reachable however far the list
          is scrolled - it used to scroll away and leave no way to close a map
