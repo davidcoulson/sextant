@@ -19,7 +19,7 @@ import { sharedStyles, thingName, uiButton, uiSegmented, mapUrlFor } from "./sex
 
 const DEG = Math.PI / 180;
 const SLAB_M = 0.18;          // how thick a floor slab is drawn
-const WALL_M = 0.6;           // how high the rooms' walls are drawn
+const WALL_M = 0.45;          // how high the rooms' walls are drawn
 // The light: from the plan's north-west, so a wall's shadow falls south-east
 // (down and right on the plan) this many times the wall's height long, and a
 // floor's shadow lands on the one below offset this fraction of the drop.
@@ -315,7 +315,8 @@ class SextantStack extends LitElement {
     o.lineWidth = 0.8;
     sides(polys, z, z - SLAB_M, (lit) => (dark ? `hsl(215, 12%, ${22 + 16 * lit}%)` : `hsl(215, 10%, ${56 + 18 * lit}%)`), line + "0.3)");
     union(polys, z);
-    o.fillStyle = dark ? "rgba(38,43,50,0.96)" : "rgba(255,255,255,0.96)"; o.fill();
+    // The top is a mid grey on a dark page, not black: a shadow has to show on it.
+    o.fillStyle = dark ? "hsl(215, 10%, 34%)" : "rgba(255,255,255,0.96)"; o.fill();
     const img = this._plans ? this._image(f.name) : null;
     const size = img ? this._planSize(f.name) : null;
     if (img && size) {
@@ -326,7 +327,7 @@ class SextantStack extends LitElement {
       const [ax, ay] = this._project(...this._house(frame, 1, 0), z);
       const [cx, cy] = this._project(...this._house(frame, 0, 1), z);
       o.transform(ax - e, ay - g, cx - e, cy - g, e, g);
-      o.globalAlpha = dark ? 0.8 : 0.9;
+      o.globalAlpha = dark ? 0.55 : 0.9;
       o.drawImage(dark ? this._darkPlan(f.name, img) : img, 0, 0, size[0], size[1]);
       o.restore();
     }
@@ -370,7 +371,7 @@ class SextantStack extends LitElement {
       // A short wall along every edge, lit from the upper left of the screen,
       // so the rooms read as rooms and not lines on a slab.
       o.lineWidth = 0.7;
-      sides(f.rooms.map((r) => r.points), z + WALL_M, z, (lit) => (dark ? `hsla(232, 22%, ${30 + 34 * lit}%, 0.9)` : `hsla(232, 30%, ${62 + 30 * lit}%, 0.9)`), "rgba(79, 91, 213, 0.5)");
+      sides(f.rooms.map((r) => r.points), z + WALL_M, z, (lit) => (dark ? `hsla(232, 18%, ${26 + 24 * lit}%, 0.75)` : `hsla(232, 25%, ${66 + 26 * lit}%, 0.8)`), "rgba(79, 91, 213, 0.45)");
     }
     // The no-go areas (a void over the hall, a stairwell) are cut right
     // through the slab.
@@ -381,7 +382,10 @@ class SextantStack extends LitElement {
       sides(holes, z, z - SLAB_M);
       union(holes, z); o.fill();
       o.globalCompositeOperation = "source-over";
+      // The hole's edge, where it runs through the slab (a no-go drawn outside every room cuts nothing and shows nothing).
+      o.save(); union(polys, z); o.clip();
       for (const h of holes) { path(h.map(([x, y]) => this._project(x, y, z))); o.strokeStyle = line + "0.3)"; o.lineWidth = 0.8; o.setLineDash([3, 3]); o.stroke(); o.setLineDash([]); }
+      o.restore();
     }
     ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(off, 0, 0); ctx.restore();
     // The floor's name on its near corner.
