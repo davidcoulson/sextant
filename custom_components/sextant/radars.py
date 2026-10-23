@@ -316,3 +316,101 @@ def pair(targets, things, radius):
         by_target[tk] = hk
         used.add(hk)
     return by_target, [tk for tk, _p in targets if tk not in by_target]
+
+
+# --- tracks ---------------------------------------------------------------------
+#
+# A radar reports its targets afresh every reading, by slot, and the slot a
+# person has changes as others come and go. A track is one person followed
+# from reading to reading: matched to the nearest target within reach, its
+# position smoothed, counted once it has been seen a moment (a reflection
+# off a door flickers for a reading and is gone), and kept where the sensor
+# lost it for a while (someone sitting still drops out of a radar's view,
+# and a doorway is crossed between two readings).
+
+VERIFY_S = 2.0          # seen this long before it is counted
+HOLD_S = 10.0           # kept this long after the sensor loses it
+JUMP_M = 1.5            # a target farther than this (plus the speed allows) is someone else
+STEP_STILL_M = 0.25     # a step this short is jitter, smoothed hard
+ALPHA_STILL = 0.3
+ALPHA_WALK = 0.7
+
+
+class Tracker:
+    """Persistent tracks over successive readings of every radar on the plan.
+
+    Pure: ``update`` takes the reading's merged targets and the time, and
+    returns the tracks. The runtime keeps one instance.
+    """
+
+    def __init__(self, verify_s=VERIFY_S, hold_s=HOLD_S, jump_m=JUMP_M):
+        self.verify_s = verify_s
+        self.hold_s = hold_s
+        self.jump_m = jump_m
+        self.tracks = []
+        self._next = 1
+
+    def clear(self):
+        self.tracks = []
+
+    def update(self, targets, now, scales, holds=None):
+        """Follow ``targets`` (this reading's, each {floor, cords, speed, ...}
+        with ``cords`` in plan pixels) into the tracks.
+
+        ``scales`` is {floor: px per m}; ``holds`` {(floor, room): seconds}
+        for rooms with a hold of their own. Returns the tracks, each the
+        target's fields plus ``id``, ``since`` (first seen), ``seen`` (last
+        seen), and ``state``: "new" until seen for verify_s, then "live",
+        or "held" while the sensor has lost it but the hold has not run out.
+        A track lost before it was verified is dropped at once.
+        """
+        holds = holds or {}
+        scale_of = lambda floor: float(scales.get(floor) or 1.0)  # noqa: E731
+        # Nearest first, each track and target at most once; a track may
+        # reach as far as a walker gets in the time since it was last seen.
+        cand = []
+        for i, tr in enumerate(self.tracks):
+            dt = max(0.0, now - tr["seen"])
+            for j, t in enumerate(targets):
+                if t["floor"] != tr["floor"]:
+                    continue
+                d = math.hypot(t["cords"][0] - tr["cords"][0], t["cords"][1] - tr["cords"][1])
+                speed = max(tr.get("speed") or 0.0, t.get("speed") or 0.0)
+                if d <= (self.jump_m + speed * dt) * scale_of(t["floor"]):
+                    cand.append((d, i, j))
+        cand.sort()
+        matched, taken = {}, set()
+        for d, i, j in cand:
+            if i in matched or j in taken:
+                continue
+            matched[i] = (j, d)
+            taken.add(j)
+        kept = []
+        for i, tr in enumerate(self.tracks):
+            if i in matched:
+                j, d = matched[i]
+                t = targets[j]
+                step = d / scale_of(t["floor"])
+                # A track just found again snaps to the target: the smoothing
+                # is for jitter, not for a gap.
+                alpha = 1.0 if tr["state"] == "held" else ALPHA_STILL if step < STEP_STILL_M else ALPHA_WALK
+                cords = [round(tr["cords"][0] + alpha * (t["cords"][0] - tr["cords"][0]), 1),
+                         round(tr["cords"][1] + alpha * (t["cords"][1] - tr["cords"][1]), 1)]
+                tr = {**t, "id": tr["id"], "since": tr["since"], "cords": cords, "seen": now}
+                tr["state"] = "live" if now - tr["since"] >= self.verify_s else "new"
+            elif tr["state"] == "new":
+                continue
+            else:
+                hold = holds.get((tr["floor"], tr.get("room")), self.hold_s)
+                if now - tr["seen"] > hold:
+                    continue
+                tr = {**tr, "state": "held"}
+            kept.append(tr)
+        for j, t in enumerate(targets):
+            if j in taken:
+                continue
+            kept.append({**t, "id": self._next, "since": now, "seen": now, "cords": list(t["cords"]),
+                         "state": "live" if self.verify_s <= 0 else "new"})
+            self._next += 1
+        self.tracks = kept
+        return [dict(tr) for tr in kept]

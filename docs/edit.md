@@ -193,7 +193,19 @@ sensor's targets are always different people, however close, and so are two
 sensors' targets kept to different rooms (two people either side of a
 wall) - placed at the mean of the two, claimed once and counted once.
 
-Saved, a placed sensor does three things every cycle:
+Saved, a placed sensor is read every half second (`mmwave_tick_s`), on
+its own clock between the 15 s cycles, and each target is followed from
+reading to reading as a track: smoothed, so a still person's dot does not
+jitter; counted only once it has been seen for `mmwave_verify_s` (2 s), so
+a reflection off a door that flickers for one reading is never a person;
+and kept where the sensor lost it for `mmwave_hold_s` (10 s), so someone
+who sits still, or crosses a doorway between readings, is not lost and
+found again as somebody new. A room's **Stays occupied for** overrides the
+hold for tracks in that room: give a bedroom minutes, since someone lying
+still drops out of a radar's view. A target in a no-go area is never a
+target: draw one over the stairwell, or the garden a window looks onto.
+
+With its tracks, a placed sensor does four things:
 
 - **Places things.** A thing whose Bluetooth fix is within
   `mmwave_pair_m` (1.5 m) of a target is put on the target, to a few tens of
@@ -211,11 +223,17 @@ Saved, a placed sensor does three things every cycle:
 - **Counts people without a device.** A target no thing claims - a guest, or
   someone whose phone is in another room - shows on Live as a dashed
   marker with a question mark, and in `sensor.sextant_untracked_people`
-  (the count, with the rooms as an attribute). A robot vacuum claims its
-  target like any thing, so it is not counted, but it is not moved by it.
+  (the count, with the rooms as an attribute). One the sensor has lost
+  stays, fainter and marked held, until its hold runs out. A robot vacuum
+  claims its target like any thing, so it is not counted, but it is not
+  moved by it.
+- **Fills the room sensors.** A room with a track in it is occupied
+  (`binary_sensor.<room>_sextant_occupancy`) whether or not the person
+  carries anything, and stays so through the hold: see
+  [Rooms](automation.md#rooms).
 
-`mmwave_fusion` and `mmwave_auto_pins` on the Tuning page turn the first two
-off without removing the sensor.
+`mmwave_fusion`, `mmwave_auto_pins` and `mmwave_rooms` on the Tuning page
+turn the first, the second and the fourth off without removing the sensor.
 
 ## Wi-Fi access points
 

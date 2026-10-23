@@ -45,8 +45,9 @@ self-test result. `sensor.sextant_untracked_people` counts the people the
 placed mmWave sensors see that no tracked thing accounts for, with the rooms
 they are in as `rooms` ([mmWave sensors](edit.md#mmwave-sensors)). Its
 `targets` list each one's room, floor and the sensors that see it, and a 3D
-sensor's `posture` (lying, sitting or standing). Someone two sensors both
-see counts once.
+sensor's `posture` (lying, sitting or standing), and `held` while a sensor
+has lost them but the hold has not run out. Someone two sensors both see
+counts once.
 
 ## People
 
@@ -111,7 +112,11 @@ and each pet's tag; a watch left on the bedside table while its owner's
 phone is in the kitchen is a watch, not a person, and a wallet on the
 counter or luggage in a bedroom is listed but does not make the room
 occupied. A thing nobody owns (a guest's phone) counts by its class. A
-robot vacuum is not counted at all. It answers the question a room automation asks - is
+robot vacuum is not counted at all. A placed [mmWave
+sensor](edit.md#mmwave-sensors) counts too: the room is `on` while the
+radar has a track in it, device or no device, and stays `on` for the hold
+after the radar loses everyone (`mmwave_hold_s`, 10 s, or the room's own
+**Stays occupied for** on the Edit page). It answers the question a room automation asks - is
 anyone in the Kitchen, and who - without a template over every thing's
 sensor:
 
@@ -123,6 +128,8 @@ sensor:
 | `count` | how many people-bearing things and pets |
 | `spots` | the spots they are in (the Couch, a bedside table) |
 | `presence` | `here` while any of them was heard within `stale_after_secs`, `quiet` while all have gone quiet (the sensor stays `on` until they are `away`), `None` when empty |
+| `radar` | how many people the mmWave sensors see in the room, held ones included |
+| `held` | `true` while the room is `on` only because its hold has not run out since the radar lost everyone |
 | `room`, `floor`, `area_id`, `floor_id` | the room, its floor, and the linked Home Assistant area and floor |
 
 The sensor sits on a `<Room> (Sextant)` device that is put in the room's

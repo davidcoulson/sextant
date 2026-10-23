@@ -565,7 +565,16 @@ export async function loadLayout(host) {
 /** Subscribe `host` to the position push; keeps host._unsub and host._subFailedAt. */
 export function subscribePositions(host, onPayload, onError, { detail = true } = {}) {
   if (!host.hass?.connection || host._unsub) return;
+  // The radars push their tracks alone between cycles ({radar: true,
+  // radar_targets}), every half second while someone moves: laid over the
+  // last full payload, so the rows and the countdown stay as they were.
+  let last = null;
+  const onEvent = (payload) => {
+    if (payload?.radar) { if (!last) return; payload = { ...last, radar_targets: payload.radar_targets }; }
+    last = payload;
+    onPayload(payload);
+  };
   // detail: false asks for slim rows (no solver circles or fingerprint marks), a few KB a cycle instead of tens.
-  host._unsub = host.hass.connection.subscribeMessage(onPayload, detail ? { type: "sextant/subscribe" } : { type: "sextant/subscribe", detail: false });
+  host._unsub = host.hass.connection.subscribeMessage(onEvent, detail ? { type: "sextant/subscribe" } : { type: "sextant/subscribe", detail: false });
   host._unsub.then(() => { host._subFailedAt = 0; }, (e) => { host._unsub = null; host._subFailedAt = Date.now(); onError?.(e); });
 }

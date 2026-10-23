@@ -759,6 +759,16 @@ TUNING_SPEC = {
     # Two radars' targets within this of each other are one person seen by
     # both (overlapping sensors), counted and claimed once.
     "mmwave_merge_m": (0.8, float, 0.2, 2.0),
+    # Tracks: the radars are read every mmwave_tick_s on their own clock, and
+    # a target is followed from reading to reading. It is counted once it
+    # has been seen for mmwave_verify_s (a reflection flickers and is gone),
+    # and kept where the sensor lost it for mmwave_hold_s (a room's own Hold
+    # instead, when it has one: someone lying still drops out of view).
+    # Rooms: a room's occupancy sensor is on while a track is in it.
+    "mmwave_tick_s": (0.5, float, 0.2, 15.0),
+    "mmwave_verify_s": (2.0, float, 0.0, 30.0),
+    "mmwave_hold_s": (10.0, float, 0.0, 3600.0),
+    "mmwave_rooms": (True, bool),
     # Hours of position history kept per thing: the history scrubber, the
     # timeline and Activity reach back this far. Applied on the next
     # cycle; an explicit top-level history_max_age (seconds) still wins.
@@ -3330,10 +3340,6 @@ async def process_entities(hass, new_global_data):
     chunk. The cycle takes a little longer end to end and has fifteen seconds
     to do it in.
     """
-    try:
-        await _radar_cycle(hass, get_layout(hass))
-    except Exception as e:  # noqa: BLE001 - a radar must never stop the things'
-        _LOGGER.debug("Radars not read: %s", e)
     for eids in new_global_data:
         ent = eids.get("entity")
         try:
@@ -3392,14 +3398,17 @@ def _new_robot_state():
 # --- mmWave radars (radars.py) ---------------------------------------------------
 #
 # A floor's "radars" are placed on the Edit page: {"radar_id", "device_id",
-# "cords", "heading", "flip", "height_m", "room", "mount", "z_ref"}. Each
-# cycle reads every placed radar's targets, puts them on the plan, merges
-# the ones two radars see of one person, and pairs them with the things
-# whose Bluetooth fix (last cycle's "raw") is nearest. A paired thing is
-# placed on its target; an unpaired target is someone Sextant has no
-# device for.
+# "cords", "heading", "flip", "height_m", "room", "mount", "z_ref"}. On its
+# own clock (_radar_loop, every mmwave_tick_s), Sextant reads every placed
+# radar's targets, puts them on the plan, drops the ones in a no-go area,
+# merges the ones two radars see of one person, follows them as tracks
+# (radars.Tracker: smoothed, verified, held), and pairs them with the
+# things whose Bluetooth fix (last cycle's "raw") is nearest. A paired
+# thing is placed on its track; an unpaired track is someone Sextant has
+# no device for. A room with a track in it is occupied (_publish_rooms).
 
 RADAR_SPECS_TTL_S = 60.0
+RADAR_IDLE_S = 5.0            # between looks for a placed radar when there is none
 RADAR_FRESH_S = 30.0          # a thing's last fix older than this cannot claim a target
 AUTO_PIN_STILL_S = 60.0       # both still this long before a pin is taken
 AUTO_PIN_EVERY_S = 1800.0     # at most one automatic pin per thing per half hour
@@ -3407,8 +3416,10 @@ AUTO_PIN_MIN_GAP_M = 1.0      # nor one within a metre of that thing's last
 AUTO_PIN_KEEP = 30            # automatic pins kept per thing, newest first
 AUTO_PIN_SOURCE = "mmwave"
 _radar_specs_cache = {"at": 0.0, "specs": {}}
-# The last cycle's targets and claims: {"t", "targets": [...], "claims": {thing: target}}
+# The last reading's tracks and claims: {"t", "targets": [...], "claims": {thing: track}}
 _radar_frame = {"t": 0.0, "targets": [], "claims": {}}
+_radar_tracker = radars_mod.Tracker()
+_radar_pushed = None          # what the subscribers were last sent, to send only changes
 # thing -> {"radar", "cords", "since"} while one target and that thing stay still
 _radar_still = {}
 _radar_last_pin = {}
@@ -3547,21 +3558,60 @@ def _merge_radar_targets(layout, targets):
     return out
 
 
+async def _radar_loop(hass):
+    """Read the radars on their own clock, every mmwave_tick_s: a person
+    crossing a room is a different thing to watch than a phone's Bluetooth
+    fix, and the 15 s cycle would show every third step. Idles while no
+    radar is placed."""
+    while True:
+        layout = get_layout(hass)
+        tick = _tuning(layout, "mmwave_tick_s")
+        try:
+            placed = await _radar_cycle(hass, layout)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001 - a radar must never stop the loop
+            _LOGGER.debug("Radars not read: %s", e)
+            placed = True
+        await asyncio.sleep(tick if placed else max(tick, RADAR_IDLE_S))
+
+
+def _radar_push(hass, tracks):
+    """Send the subscribers the tracks alone, when they changed since the
+    last send: the rows go with the cycle, and a walk is a dozen readings
+    between cycles."""
+    global _radar_pushed
+    shape = tuple((t["id"], t["state"], t["cords"][0], t["cords"][1], t.get("thing"), t.get("room")) for t in tracks)
+    if shape == _radar_pushed:
+        return
+    _radar_pushed = shape
+    try:
+        async_dispatcher_send(hass, SIGNAL_BPS_UPDATE, {"stamp": time.time(), "radar": True, "radar_targets": tracks})
+    except Exception as e:  # noqa: BLE001 - the picture is never the point
+        _LOGGER.debug("Radar tracks not pushed: %s", e)
+
+
 async def _radar_cycle(hass, layout, now=None):
-    """Read every placed radar, pair its targets with things, publish the
-    untracked count, and take automatic pins."""
+    """One reading: every placed radar's targets, followed as tracks and
+    paired with things; the untracked count, the rooms and the subscribers
+    told; automatic pins taken. True when a radar is placed."""
     global _radar_frame
     now = time.time() if now is None else now
     if not isinstance(layout, dict):
-        return
+        return False
     placed = [(f, r) for f in layout.get("floor", []) for r in (f.get("radars") or [])
               if isinstance(r, dict) and r.get("device_id") and isinstance(r.get("cords"), dict)]
     if not placed:
-        if _radar_frame["targets"]:
+        if _radar_frame["targets"] or _radar_tracker.tracks:
             _radar_frame = {"t": now, "targets": [], "claims": {}}
+            _radar_tracker.clear()
             update_sextant_sensor_state(hass, UNTRACKED_ENTITY_ID, 0, {"rooms": [], "targets": []})
-        return
+            hass.data["sextant_radar_rooms"] = {}
+            _publish_rooms(hass)
+            _radar_push(hass, [])
+        return False
     specs = _radar_specs(hass, now)
+    plan = [{"entity": "_radar", "data": layout}]
     targets = []
     # How many targets each radar sees - through the wall too, and before two
     # radars' views of one person become one: an automatic pin needs a
@@ -3573,42 +3623,65 @@ async def _radar_cycle(hass, layout, now=None):
         spec = specs.get(radar["device_id"])
         if spec is None or not isinstance(scale, (int, float)) or scale <= 0:
             continue
+        zone_polys = _floor_zone_polygons(hass, plan, "_radar", floor.get("name"))
         for t in _radar_targets(hass, layout, floor, radar, spec):
             seen_by[radar.get("radar_id")] = seen_by.get(radar.get("radar_id"), 0) + 1
             if t["outside"]:
                 continue                     # behind a wall: someone else's room
+            if _point_in_no_go(t["cords"], zone_polys):
+                continue                     # the stairwell, or the garden through the window
             targets.append({"floor": floor["name"], "radar": radar.get("radar_id"), "radar_name": spec.get("name") or radar["device_id"],
                             "index": t["index"], "cords": t["cords"], "speed": t["speed"],
                             "height_m": t["height_m"], "posture": t["posture"], "limit": t["limit"], "thing": None})
     targets = _merge_radar_targets(layout, targets)
+    for t in targets:
+        t["room"] = find_zone_for_point(hass, plan, "_radar", t["floor"], Point(*t["cords"]))
+    # Follow them as tracks; a room's own Hold keeps a lost track longer.
+    _radar_tracker.verify_s = _tuning(layout, "mmwave_verify_s")
+    _radar_tracker.hold_s = _tuning(layout, "mmwave_hold_s")
+    scales = {f.get("name"): f["scale"] for f in layout["floor"] if isinstance(f.get("scale"), (int, float)) and f["scale"] > 0}
+    holds = {(f.get("name"), z.get("entity_id")): float(z["hold_s"]) for f in layout["floor"] for z in (f.get("zones") or [])
+             if isinstance(z, dict) and not z.get("no_go") and isinstance(z.get("hold_s"), (int, float)) and z["hold_s"] >= 0}
+    tracks = _radar_tracker.update(targets, now, scales, holds)
     # Pair per floor, against each thing's Bluetooth fix from the last cycle.
     rows = [r for r in apitricords if isinstance(r, dict) and now - (r.get("updated") or 0) <= RADAR_FRESH_S]
     radius_m = _tuning(layout, "mmwave_pair_m")
-    for floor in {t["floor"] for t in targets}:
-        scale = next((f.get("scale") for f in layout["floor"] if f.get("name") == floor), None)
-        mine = [(i, tuple(t["cords"])) for i, t in enumerate(targets) if t["floor"] == floor]
+    for floor in {t["floor"] for t in tracks}:
+        scale = scales.get(floor) or 1.0
+        mine = [(i, tuple(t["cords"])) for i, t in enumerate(tracks) if t["floor"] == floor]
         things = [(r["ent"], tuple(r.get("raw") or r.get("cords"))) for r in rows
                   if r.get("floor") == floor and (r.get("raw") or r.get("cords"))
                   and (r.get("robot") or thing_class(layout, r["ent"]) in RADAR_CLAIM_CLASSES)]
         pairs, _free = radars_mod.pair(mine, things, radius_m * scale)
         for i, ent in pairs.items():
-            targets[i]["thing"] = ent
+            tracks[i]["thing"] = ent
     robots = {r["ent"] for r in rows if r.get("robot")}
-    claims = {t["thing"]: t for t in targets if t["thing"] and t["thing"] not in robots}
-    _radar_frame = {"t": now, "targets": targets, "claims": claims}
-    untracked = [t for t in targets if not t["thing"]]
-    rooms = []
-    for t in untracked:
-        room = find_zone_for_point(hass, [{"entity": "_radar", "data": layout}], "_radar", t["floor"], Point(*t["cords"]))
-        t["room"] = room
-        rooms.append(room)
+    claims = {t["thing"]: t for t in tracks if t["thing"] and t["thing"] not in robots}
+    _radar_frame = {"t": now, "targets": tracks, "claims": claims}
+    # Counted: the verified tracks, held ones included. A new one may yet be
+    # a reflection, so it is drawn but not counted.
+    counted = [t for t in tracks if t["state"] != "new"]
+    untracked = [t for t in counted if not t["thing"]]
     update_sextant_sensor_state(hass, UNTRACKED_ENTITY_ID, len(untracked), {
-        "rooms": sorted(set(r for r in rooms if r and r != "unknown")),
+        "rooms": sorted(set(t["room"] for t in untracked if t.get("room") and t["room"] != "unknown")),
         "targets": [{"room": t.get("room"), "floor": t["floor"], "radar": ", ".join(_radar_names(t)),
-                     **({"posture": t["posture"]} if t.get("posture") else {})} for t in untracked],
+                     **({"posture": t["posture"]} if t.get("posture") else {}),
+                     **({"held": True} if t["state"] == "held" else {})} for t in untracked],
     })
+    by_room = {}
+    if _tuning(layout, "mmwave_rooms"):
+        for t in counted:
+            if t.get("room") and t["room"] != "unknown":
+                seen = by_room.setdefault((t["floor"], t["room"]), {"count": 0, "held": 0})
+                seen["count"] += 1
+                seen["held"] += t["state"] == "held"
+    if hass.data.get("sextant_radar_rooms") != by_room:
+        hass.data["sextant_radar_rooms"] = by_room
+        _publish_rooms(hass)
+    _radar_push(hass, tracks)
     if _tuning(layout, "mmwave_auto_pins"):
-        await _radar_auto_pins(hass, layout, targets, rows, now, seen_by)
+        await _radar_auto_pins(hass, layout, tracks, rows, now, seen_by)
+    return True
 
 
 async def _radar_auto_pins(hass, layout, targets, rows, now, seen_by=None):
@@ -4696,14 +4769,34 @@ def _update_room_sensors(hass):
             person_rooms[name] = (floor, room)
     names = _thing_names(hass, {r.get("ent") for r in rows if r.get("ent")}, layout)
     counts = rooms_mod.stands_for_someone(owners, speaking, lambda ent: persons_mod.locates_owner(layout, ent, classes.get(ent)))
-    answers = rooms_mod.occupancy(keys, rows, presence_of, classes, names, person_rooms, stands_for_someone=counts)
-    for key, (is_on, attrs) in answers.items():
-        sensor = cache.get(key)
-        if sensor is not None:
-            sensor.set_occupancy(is_on, attrs)
+    hass.data["sextant_room_answers"] = rooms_mod.occupancy(keys, rows, presence_of, classes, names, person_rooms, stands_for_someone=counts)
+    _publish_rooms(hass)
     # Nobody owning anything publishes 0 and empty lists, not the last count.
     count, attrs = rooms_mod.people_home(presences, pet_persons)
     update_sextant_sensor_state(hass, PEOPLE_HOME_ENTITY_ID, count, attrs)
+
+
+def _publish_rooms(hass):
+    """Each room's sensor from two answers: the things' (rooms.occupancy, once
+    a cycle) and the radars' (the tracks in each room, every reading). A
+    room is on while either says someone is there; the sensor writes only
+    on a change, so calling this every reading costs nothing while nobody
+    moves. The radar's say is ``radar`` (tracks in the room, held ones
+    included) and ``held`` (true while the room is on only because its
+    hold has not run out)."""
+    cache = hass.data.get("sextant_room_sensors") or {}
+    answers = hass.data.get("sextant_room_answers") or {}
+    radar = hass.data.get("sextant_radar_rooms") or {}
+    links = {(k["floor"], k["room"]): k for k in hass.data.get("sextant_room_keys") or []}
+    for key, sensor in cache.items():
+        is_on, attrs = answers.get(key) or (False, None)
+        if attrs is None:
+            link = links.get(key) or {}
+            attrs = {"room": key[1], "floor": key[0], "area_id": link.get("area_id"), "floor_id": link.get("floor_id"),
+                     "count": 0, "people": [], "pets": [], "things": [], "spots": [], "presence": None}
+        seen = radar.get(key) or {"count": 0, "held": 0}
+        attrs = {**attrs, "radar": seen["count"], "held": not is_on and seen["count"] > 0 and seen["held"] == seen["count"]}
+        sensor.set_occupancy(bool(is_on) or seen["count"] > 0, attrs)
 
 
 def extract_candidate_floors(new_global_data, tmpentity):
@@ -6093,7 +6186,9 @@ async def _ws_subscribe(hass, connection, msg):
 
     @callback
     def _forward(payload):
-        if not detail:
+        # A radar-only event ({"radar": True, "radar_targets"}) carries no
+        # rows: the client lays it over the last full payload.
+        if not detail and not payload.get("radar"):
             payload = _slim_payload(payload)
         connection.send_message(websocket_api.event_message(msg["id"], payload))
 
@@ -6570,13 +6665,18 @@ async def async_setup(hass, config):
         if old_task:
             old_task.cancel()
         hass.data["sextant_update_task"] = hass.async_create_task(update_tracked_entities(hass))
+        old_task = hass.data.get("sextant_radar_task")
+        if old_task:
+            old_task.cancel()
+        hass.data["sextant_radar_task"] = hass.async_create_task(_radar_loop(hass))
 
         async def handle_homeassistant_stop(event):
             """Stop background work promptly so shutdown cannot drag or leave
             the unload half-done (which strands stale registry entries)."""
-            update_task = hass.data.pop("sextant_update_task", None)
-            if update_task:
-                update_task.cancel()
+            for key in ("sextant_update_task", "sextant_radar_task"):
+                task = hass.data.pop(key, None)
+                if task:
+                    task.cancel()
             try:
                 await flush_position_history(hass)
             except Exception as e:
@@ -6626,9 +6726,10 @@ async def async_unload_entry(hass: HomeAssistant, entry):
     # left it running against half-torn-down state), and write the runtime
     # out: setup restores it, and a reload would otherwise rewind every
     # election to the last periodic save, up to a minute back.
-    update_task = hass.data.pop("sextant_update_task", None)
-    if update_task:
-        update_task.cancel()
+    for key in ("sextant_update_task", "sextant_radar_task"):
+        task = hass.data.pop(key, None)
+        if task:
+            task.cancel()
     await _save_runtime(hass, final=True)
 
     # Get whatever the tracking loop buffered since the last 60 s flush onto

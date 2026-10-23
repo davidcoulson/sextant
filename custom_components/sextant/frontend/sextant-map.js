@@ -1946,15 +1946,20 @@ export class SextantMap {
     for (const t of this.radarTargets) {
       if (t.thing) continue;          // a tracked thing is drawn as itself
       const [x, y] = t.cords;
-      const r = THING_RADIUS / k;
+      // A track the sensor has just found is faint until it has been seen
+      // long enough to count; one the sensor has lost stays, fainter, where
+      // it was until its hold runs out.
+      const fresh = t.state === "new", held = t.state === "held";
+      const r = (fresh ? THING_RADIUS * 0.7 : THING_RADIUS) / k;
       ctx.save();
+      if (fresh || held) ctx.globalAlpha = 0.45;
       ctx.fillStyle = this.dark ? "rgba(40,46,56,0.85)" : "rgba(255,255,255,0.85)";
       ctx.strokeStyle = this.dark ? "#9fb3c8" : "#5b6b7c"; ctx.lineWidth = 2 / k; ctx.setLineDash([4 / k, 3 / k]);
       ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); ctx.setLineDash([]);
       ctx.fillStyle = ctx.strokeStyle; ctx.font = `700 ${13 / k}px system-ui, sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
       ctx.fillText("?", x, y + 0.5 / k);
       ctx.restore();
-      this._label(ctx, "untracked", x, y + r + 9 / k, 10, 0.8, null, LABEL_PRIO.thing);
+      if (!fresh) this._label(ctx, held ? "untracked · held" : "untracked", x, y + r + 9 / k, 10, held ? 0.5 : 0.8, null, LABEL_PRIO.thing);
     }
   }
 

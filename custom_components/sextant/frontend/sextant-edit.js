@@ -1040,7 +1040,7 @@ class SextantEdit extends LitElement {
     this._snapshot();
     if (sel.kind === "pin") this._refreshAlignment();
     if (field === "calibrate" || field === "solve") { if (value === undefined) delete item[field]; else item[field] = value; }
-    else if (field === "height" || field === "correction") item[field] = value === "" || value == null ? undefined : Number(value);
+    else if (field === "height" || field === "correction" || field === "hold_s") item[field] = value === "" || value == null ? undefined : Number(value);
     else if (field === "no_go") item.no_go = !!value;
     else item[field] = value;
     if (item.height === undefined) delete item.height;
@@ -1391,6 +1391,11 @@ class SextantEdit extends LitElement {
       ${sel.kind === "zone" ? uiSwitch({ label: "No-go area (things can never be here)", checked: !!item.no_go, onChange: (v) => this._edit("no_go", v) }) : nothing}
       ${sel.kind === "zone" && !item.no_go ? html`<div class="row">${uiColour({ host: this, value: item.color || null, auto: "Automatic (from the name)", autoSwatch: `hsl(${thingHue(item.entity_id || "")}, 60%, 55%)`, custom: this._customColourFor === item, onCustom: (on) => { this._customColourFor = on ? item : null; this.requestUpdate(); }, onChange: (v) => this._edit("color", v || undefined) })}</div>` : nothing}
       ${sel.kind === "zone" && !item.no_go ? this._renderAreaLink(item) : nothing}
+      ${sel.kind === "zone" && !item.no_go && (this._floorObj()?.radars || []).length ? html`
+        <div class="row">
+          ${uiField({ label: "Stays occupied for (s)", type: "number", step: 1, min: 0, max: 3600, value: item.hold_s ?? "", placeholder: String(this.data?.layout?.tuning?.mmwave_hold_s ?? this.data?.tuning_spec?.mmwave_hold_s?.default ?? 10), onChange: (v) => this._edit("hold_s", v), style: "width: 200px" })}
+        </div>
+        <div class="muted small">After an mmWave sensor loses everyone in this room, how long the room stays occupied and the last person stays on the map. Blank follows <code>mmwave_hold_s</code> on the Tuning page. Give a bedroom or a reading corner minutes: someone lying still drops out of a radar's view.</div>` : nothing}
       ${sel.kind === "subzone" ? html`
         <div class="row">
           ${uiSelect({ label: "Parent room", value: item.parent || "", options: [{ value: "", label: "none" }, ...zones.map((z) => ({ value: z.zone_id, label: z.entity_id }))], onChange: (v) => this._edit("parent", v || null), style: "flex: 1" })}

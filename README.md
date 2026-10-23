@@ -117,7 +117,8 @@ token, in Home Assistant's own theme and unit system. Eight pages:
 - mmWave presence sensors (Everything Presence, Apollo R PRO-1 and other
   LD2450 boards) on the plan: a thing near a target is put on it, a still
   target and a still thing make a pin nobody had to tap, and a target no
-  device accounts for counts as an untracked person.
+  device accounts for counts as an untracked person and keeps the room's
+  occupancy sensor on.
 - Roborock vacuums placed from their own maps, lined up with the plan by
   the rooms both maps name.
 - Bermuda management from the panel: track, untrack, Find My accessories,

@@ -96,7 +96,8 @@ def test_setup_and_unload_round_trip(tmp_path, monkeypatch):
     assert captured["frontend_url_path"] == "sextant" and captured["webcomponent_name"] == "sextant-panel"
     assert captured["module_url"] == "/sextant/v/9.9.9-test/sextant-panel.js"
     assert st.get_layout(hass)["floor"][0]["name"] == "F"
-    assert hass.data["sextant_update_task"] is hass.tasks[-1] and not hass.tasks[-1].cancelled
+    assert hass.data["sextant_update_task"] is hass.tasks[-2] and not hass.tasks[-2].cancelled
+    assert hass.data["sextant_radar_task"] is hass.tasks[-1] and not hass.tasks[-1].cancelled
     assert "homeassistant_stop" in hass.bus.listeners
     assert (tmp_path / "sextant_maps").is_dir() and (tmp_path / "www" / "sextant_icons").is_dir()
 
@@ -106,11 +107,11 @@ def test_setup_and_unload_round_trip(tmp_path, monkeypatch):
 
     assert run(sextant.async_unload_entry(hass, entry)) is True
     assert entry.unloaded == [["sensor", "binary_sensor", "device_tracker"]] and len(entry.on_unload) == 1
-    assert hass.tasks[-1].cancelled
-    for key in ("sextant_initialized", "sextant_sensors", "sextant_add_entities", "sextant_update_task"):
+    assert hass.tasks[-1].cancelled and hass.tasks[-2].cancelled
+    for key in ("sextant_initialized", "sextant_sensors", "sextant_add_entities", "sextant_update_task", "sextant_radar_task"):
         assert key not in hass.data
 
     # And it comes back after an unload (a reload from the options flow).
     assert run(sextant.async_setup(hass, {})) is True
-    assert hass.data["sextant_initialized"] and not hass.tasks[-1].cancelled
-    hass.tasks[-1].cancel()
+    assert hass.data["sextant_initialized"] and not hass.tasks[-1].cancelled and not hass.tasks[-2].cancelled
+    hass.tasks[-1].cancel(); hass.tasks[-2].cancel()

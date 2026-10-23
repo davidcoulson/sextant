@@ -97,13 +97,15 @@ def _hass(tmp_path, target_xy_in=(0.0, 39.37), active="on", speed_mph=0.0):
     layout = {"floor": [{"name": "Office Floor", "scale": 100.0, "receivers": [], "subzones": [],
                          "zones": [{"entity_id": "Office", "poly": True, "cords": [{"x": 0, "y": 0}, {"x": 1000, "y": 0}, {"x": 1000, "y": 1000}, {"x": 0, "y": 1000}]}],
                          "radars": [{"radar_id": "r1", "device_id": "dev1", "cords": {"x": 500.0, "y": 900.0}, "heading": 0.0}]}],
-              "tuning": {}}
+              "tuning": {"mmwave_verify_s": 0.0}}        # counted at once: the delay has tests of its own
     run(st.save_layout(hass, layout))
     states = {"sensor.t1x": state(target_xy_in[0], "in"), "sensor.t1y": state(target_xy_in[1], "in"),
               "sensor.t1s": state(speed_mph, "mph"), "binary_sensor.t1a": state(active)}
     hass.states = types.SimpleNamespace(get=states.get)
     sextant._radar_specs_cache.update(at=time.time(), specs={"dev1": {**SPEC, "range_entity": None, "name": "Office Presence"}})
     sextant._radar_frame.update(t=0.0, targets=[], claims={})
+    sextant._radar_tracker = radars.Tracker()
+    sextant._radar_pushed = None
     sextant._radar_still.clear(); sextant._radar_last_pin.clear()
     sextant.apitricords = []
     return hass, states
@@ -534,4 +536,202 @@ def test_ceiling_target_keeps_count_and_claim_during_z_dropout_and_recovers(tmp_
         assert count == 0 and sextant._radar_frame["claims"]["phone"]["cords"] == [500.0, 900.0]
         sextant.apitricords = []
     states["binary_sensor.t1a"] = state("off")
-    assert _written(hass)[sextant.UNTRACKED_ENTITY_ID][0] == 0
+    count, attrs = _written(hass)[sextant.UNTRACKED_ENTITY_ID]
+    assert count == 1 and attrs["targets"][0]["held"] is True, "lost by the sensor: held where it was"
+    assert _written(hass, at=time.time() + 11.0)[sextant.UNTRACKED_ENTITY_ID][0] == 0, "and gone after mmwave_hold_s"
+
+
+# --- tracks ------------------------------------------------------------------------
+
+SCALES = {"F": 100.0}
+
+
+def _t(x, y, speed=0.0, room="Office"):
+    return {"floor": "F", "cords": [x, y], "speed": speed, "room": room, "thing": None}
+
+
+def test_a_track_is_new_until_seen_for_verify_s_then_live():
+    tr = radars.Tracker(verify_s=2.0, hold_s=10.0)
+    [a] = tr.update([_t(500, 800)], 0.0, SCALES)
+    assert a["id"] == 1 and a["state"] == "new" and a["cords"] == [500, 800]
+    [a] = tr.update([_t(502, 801)], 1.0, SCALES)
+    assert a["state"] == "new"
+    [a] = tr.update([_t(503, 802)], 2.0, SCALES)
+    assert a["id"] == 1 and a["state"] == "live"
+
+
+def test_verify_s_zero_counts_a_target_at_once():
+    [a] = radars.Tracker(verify_s=0.0).update([_t(500, 800)], 0.0, SCALES)
+    assert a["state"] == "live"
+
+
+def test_jitter_is_smoothed_and_a_walk_is_followed():
+    tr = radars.Tracker(verify_s=0.0)
+    tr.update([_t(500, 800)], 0.0, SCALES)
+    [a] = tr.update([_t(510, 800)], 0.5, SCALES)
+    assert a["cords"] == [503.0, 800.0], "a 10 cm step: 30 % of it"
+    [a] = tr.update([_t(603, 800)], 1.0, SCALES)
+    assert a["cords"] == [573.0, 800.0], "a metre's step: 70 % of it"
+
+
+def test_a_target_beyond_reach_is_someone_else():
+    tr = radars.Tracker(verify_s=0.0, hold_s=10.0, jump_m=1.5)
+    tr.update([_t(500, 800)], 0.0, SCALES)
+    got = tr.update([_t(500, 500)], 0.5, SCALES)          # 3 m in half a second
+    assert [(t["id"], t["state"]) for t in got] == [(1, "held"), (2, "live")]
+    got = tr.update([_t(500, 500, speed=1.0)], 1.0, SCALES)
+    assert [t["id"] for t in got] == [1, 2]
+
+
+def test_a_lost_track_is_held_then_dropped_and_resumes_if_found_in_time():
+    tr = radars.Tracker(verify_s=0.0, hold_s=10.0)
+    tr.update([_t(500, 800)], 0.0, SCALES)
+    [a] = tr.update([], 3.0, SCALES)
+    assert a["id"] == 1 and a["state"] == "held" and a["cords"] == [500, 800]
+    [a] = tr.update([_t(540, 790)], 6.0, SCALES)
+    assert a["id"] == 1 and a["state"] == "live" and a["cords"] == [540, 790], "snaps back onto the target"
+    tr.update([], 7.0, SCALES)
+    assert tr.update([], 17.5, SCALES) == []
+
+
+def test_an_unverified_track_that_vanishes_is_dropped_at_once():
+    tr = radars.Tracker(verify_s=2.0, hold_s=10.0)
+    tr.update([_t(500, 800)], 0.0, SCALES)
+    assert tr.update([], 0.5, SCALES) == []
+
+
+def test_a_room_with_its_own_hold_keeps_the_track_longer():
+    tr = radars.Tracker(verify_s=0.0, hold_s=10.0)
+    tr.update([_t(500, 800, room="Bedroom")], 0.0, SCALES)
+    holds = {("F", "Bedroom"): 600.0}
+    [a] = tr.update([], 300.0, SCALES, holds)
+    assert a["state"] == "held" and a["room"] == "Bedroom"
+    assert tr.update([], 601.0, SCALES, holds) == []
+
+
+def test_two_people_keep_their_own_tracks():
+    tr = radars.Tracker(verify_s=0.0)
+    tr.update([_t(500, 800), _t(200, 300)], 0.0, SCALES)
+    got = tr.update([_t(190, 310), _t(520, 790)], 0.5, SCALES)
+    assert sorted((t["id"], t["cords"][0] > 400) for t in got) == [(1, True), (2, False)]
+
+
+def test_a_track_follows_a_slot_change():
+    tr = radars.Tracker(verify_s=0.0)
+    tr.update([{**_t(500, 800), "index": 1}], 0.0, SCALES)
+    [a] = tr.update([{**_t(505, 800), "index": 2}], 0.5, SCALES)
+    assert a["id"] == 1 and a["index"] == 2
+
+
+# --- tracks in the cycle: no-go areas, the rooms, the push ------------------------
+
+class _RoomSensor:
+    def __init__(self):
+        self.calls = []
+
+    def set_occupancy(self, is_on, attrs):
+        self.calls.append((is_on, attrs))
+
+
+def _rooms(hass):
+    """Stub room sensors for every room on the plan, as the platform caches them."""
+    from sextant import rooms as rooms_mod
+    hass.data["sextant_room_keys"] = rooms_mod.room_keys(st.get_layout(hass))
+    hass.data["sextant_room_sensors"] = {(k["floor"], k["room"]): _RoomSensor() for k in hass.data["sextant_room_keys"]}
+    return hass.data["sextant_room_sensors"]
+
+
+def test_a_target_in_a_no_go_area_is_not_a_target(tmp_path):
+    hass, _ = _hass(tmp_path)                                    # the target: (500, 800)
+    layout = st.get_layout(hass)
+    layout["floor"][0]["zones"].append({"entity_id": "Stairwell", "no_go": True, "poly": True,
+                                        "cords": [{"x": 400, "y": 700}, {"x": 600, "y": 700}, {"x": 600, "y": 900}, {"x": 400, "y": 900}]})
+    run(st.save_layout(hass, layout))
+    assert _written(hass)[sextant.UNTRACKED_ENTITY_ID][0] == 0 and sextant._radar_frame["targets"] == []
+
+
+def test_a_room_turns_on_for_a_track_and_off_after_the_hold(tmp_path):
+    hass, states = _hass(tmp_path)
+    office = _rooms(hass)[("Office Floor", "Office")]
+    at = time.time()
+    _written(hass, at=at)
+    is_on, attrs = office.calls[-1]
+    assert is_on is True and attrs["radar"] == 1 and attrs["held"] is False
+    assert attrs["count"] == 0 and attrs["people"] == [] and attrs["room"] == "Office" and attrs["floor"] == "Office Floor"
+    states["binary_sensor.t1a"] = state("off")
+    _written(hass, at=at + 1.0)
+    assert office.calls[-1][0] is True and office.calls[-1][1]["held"] is True, "lost by the sensor: on through the hold"
+    _written(hass, at=at + 11.0)
+    assert office.calls[-1][0] is False and office.calls[-1][1]["radar"] == 0
+
+
+def test_a_rooms_own_hold_outlasts_the_tuning(tmp_path):
+    hass, states = _hass(tmp_path)
+    layout = st.get_layout(hass)
+    layout["floor"][0]["zones"][0]["hold_s"] = 600
+    run(st.save_layout(hass, layout))
+    office = _rooms(hass)[("Office Floor", "Office")]
+    at = time.time()
+    _written(hass, at=at)
+    states["binary_sensor.t1a"] = state("off")
+    _written(hass, at=at + 300.0)
+    assert office.calls[-1][0] is True and office.calls[-1][1]["held"] is True
+    _written(hass, at=at + 601.0)
+    assert office.calls[-1][0] is False
+
+
+def test_rooms_off_leaves_the_radar_out_of_the_rooms(tmp_path):
+    hass, _ = _hass(tmp_path)
+    layout = st.get_layout(hass)
+    layout["tuning"]["mmwave_rooms"] = False
+    run(st.save_layout(hass, layout))
+    office = _rooms(hass)[("Office Floor", "Office")]
+    assert _written(hass)[sextant.UNTRACKED_ENTITY_ID][0] == 1, "still counted"
+    assert all(not is_on for is_on, _a in office.calls)
+
+
+def test_a_new_track_is_drawn_but_not_counted_until_verified(tmp_path):
+    hass, _ = _hass(tmp_path)
+    layout = st.get_layout(hass)
+    layout["tuning"]["mmwave_verify_s"] = 2.0
+    run(st.save_layout(hass, layout))
+    office = _rooms(hass)[("Office Floor", "Office")]
+    at = time.time()
+    assert _written(hass, at=at)[sextant.UNTRACKED_ENTITY_ID][0] == 0
+    assert sextant._radar_frame["targets"][0]["state"] == "new" and not any(is_on for is_on, _a in office.calls)
+    assert _written(hass, at=at + 2.0)[sextant.UNTRACKED_ENTITY_ID][0] == 1
+    assert sextant._radar_frame["targets"][0]["state"] == "live" and office.calls[-1][0] is True
+
+
+def test_the_things_answer_and_the_radars_combine(tmp_path):
+    hass, _ = _hass(tmp_path)
+    office = _rooms(hass)[("Office Floor", "Office")]
+    by_things = {"room": "Office", "floor": "Office Floor", "area_id": None, "floor_id": None, "count": 1,
+                 "people": ["Ada"], "pets": [], "things": ["Ada's phone"], "spots": [], "presence": "here"}
+    hass.data["sextant_room_answers"] = {("Office Floor", "Office"): (True, by_things)}
+    sextant._publish_rooms(hass)
+    assert office.calls[-1] == (True, {**by_things, "radar": 0, "held": False})
+    hass.data["sextant_radar_rooms"] = {("Office Floor", "Office"): {"count": 1, "held": 1}}
+    sextant._publish_rooms(hass)
+    assert office.calls[-1][0] is True and office.calls[-1][1]["held"] is False, "on by the things: the hold is beside the point"
+    hass.data["sextant_room_answers"] = {}
+    sextant._publish_rooms(hass)
+    is_on, attrs = office.calls[-1]
+    assert is_on is True and attrs["held"] is True and attrs["count"] == 0 and attrs["people"] == []
+
+
+def test_tracks_are_pushed_to_subscribers_only_when_they_change(tmp_path):
+    from homeassistant.helpers.dispatcher import async_dispatcher_connect
+    hass, states = _hass(tmp_path)
+    got = []
+    async_dispatcher_connect(hass, sextant.SIGNAL_BPS_UPDATE, got.append)
+    at = time.time()
+    _written(hass, at=at)
+    _written(hass, at=at + 0.5)
+    assert len(got) == 1 and got[0]["radar"] is True and got[0]["radar_targets"][0]["id"] == 1
+    states["sensor.t1y"] = state(78.74, "in")
+    _written(hass, at=at + 1.0)
+    assert len(got) == 2 and got[1]["radar_targets"][0]["id"] == 1 and got[1]["radar_targets"][0]["cords"][1] < 800
+    states["binary_sensor.t1a"] = state("off")
+    _written(hass, at=at + 1.5)
+    assert len(got) == 3 and got[2]["radar_targets"][0]["state"] == "held"
