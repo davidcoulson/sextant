@@ -27,6 +27,7 @@ Pure: the caller hands in each thing's latest published row.
 from __future__ import annotations
 
 import math
+import re
 from datetime import datetime, timezone
 
 from .const import FIT_ATTRIBUTES
@@ -239,6 +240,22 @@ def states(best, why=None):
 
 GPS_STALE_SECS = 7200.0            # a tracker that has not reported for this long is ignored
 _DEAD = (None, "", "unknown", "unavailable")
+STATIONARY_ZONE_PREFIX = "zone.ic3_stationary_"   # iCloud3's zone.ic3_stationary_1, _2, ...
+_STATIONARY_NAME = re.compile(r"StatZon\d*")       # its default friendly name, StatZon#
+
+
+def stationary_zone(zone, attrs=None) -> bool:
+    """Whether a tracker's zone is an iCloud3 Stationary Zone: the 100 m
+    circle iCloud3 draws round a phone that has stopped somewhere away from
+    home, so it can poll it less often. It is a polling device, not a place -
+    nobody wants "StatZon1" as their location - so Sextant reads it as
+    not_home and keeps the coordinates. Known by the zone's entity id in the
+    tracker's ``in_zones`` (whatever it has been renamed to), or by iCloud3's
+    default name when the tracker carries no list."""
+    zones = (attrs or {}).get("in_zones")
+    if isinstance(zones, (list, tuple)) and any(str(z).startswith(STATIONARY_ZONE_PREFIX) for z in zones):
+        return True
+    return bool(_STATIONARY_NAME.fullmatch(str(zone or "")))
 _PRESENCE_RANK = {"here": 0, "quiet": 1, "away": 2}
 
 
@@ -270,8 +287,9 @@ def judge_source(entity_id, state, now, stale_secs=GPS_STALE_SECS):
         return False, f"no report for {(now - reported) / 3600:.1f} h", None
     lat, lon = attrs.get("latitude"), attrs.get("longitude")
     coords = isinstance(lat, (int, float)) and isinstance(lon, (int, float))
+    stationary = stationary_zone(st, attrs)
     return True, None, {
-        "entity": entity_id, "zone": st,
+        "entity": entity_id, "zone": "not_home" if stationary else st, "stationary": stationary,
         "latitude": float(lat) if coords else None, "longitude": float(lon) if coords else None,
         "accuracy": attrs.get("gps_accuracy") if coords else None,
         "reported": reported,
@@ -469,7 +487,10 @@ def tracker_fix(presence, gps, visit=None, wifi=None):
     if wifi and wifi.get("home"):
         return {"location_name": "home", "source_type": "router", "source": "wifi", "presence": presence, "tracker": wifi.get("entity"), **when}
     if gps and gps.get("latitude") is not None:
-        return {"location_name": None, "latitude": gps["latitude"], "longitude": gps["longitude"],
+        # Coordinates decide, except in an iCloud3 Stationary Zone: Home
+        # Assistant would name that zone from the coordinates, so the tracker
+        # says not_home outright and carries the coordinates beside it.
+        return {"location_name": "not_home" if gps.get("stationary") else None, "latitude": gps["latitude"], "longitude": gps["longitude"],
                 "accuracy": gps.get("accuracy"), "source_type": "gps", "source": "gps", "presence": presence, "tracker": gps.get("entity"), **when}
     if gps:
         return {"location_name": gps.get("zone"), "source_type": "gps", "source": "gps", "presence": presence, "tracker": gps.get("entity"), **when}

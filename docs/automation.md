@@ -72,7 +72,11 @@ gives the zone (`source: gps`), or the state is `away` with nothing usable
 the Things page (People card) and lives in the layout as `person_trackers`;
 a tracker that is unknown, unavailable, or has not reported within
 `gps_stale_secs` (two hours by default) is passed over, and `gps_ignored`
-names the ones that were and why.
+names the ones that were and why. An iCloud3 Stationary Zone (`StatZon1`:
+the circle iCloud3 draws round a phone that has stopped somewhere, so it
+can poll it less often) is a polling device, not a place, so a tracker
+sitting in one reads `away` here and `not_home` on the person's tracker,
+with the coordinates kept.
 
 | Attribute (location sensor) | Value |
 |---|---|

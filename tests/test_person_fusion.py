@@ -54,6 +54,25 @@ def test_a_zone_only_tracker_still_gives_its_zone():
     assert ok and info["zone"] == "Kent State Dorm" and info["latitude"] is None
 
 
+def test_an_icloud3_stationary_zone_is_not_home_with_the_coordinates_kept():
+    """David parked 2 km from home for ten minutes: iCloud3 drew StatZon1
+    round the phone and the Companion app, person and Sextant all said so.
+    A polling device is not a place."""
+    attrs = {**GPS, "in_zones": ["zone.ic3_stationary_1"]}
+    ok, _, info = persons.judge_source("device_tracker.t", state("StatZon1", attrs), NOW)
+    assert ok and info["zone"] == "not_home" and info["stationary"] is True
+    assert info["latitude"] == 41.30 and info["accuracy"] == 15
+    # Renamed in iCloud3 ("Parked#"): the zone's entity id still tells.
+    renamed = persons.judge_source("device_tracker.t", state("Parked2", attrs), NOW)[2]
+    assert renamed["zone"] == "not_home" and renamed["stationary"]
+    # No in_zones (an older build): the default name is enough.
+    assert persons.judge_source("device_tracker.t", state("StatZon3", GPS), NOW)[2]["zone"] == "not_home"
+    # A real zone is untouched, whatever else is in the list.
+    real = persons.judge_source("device_tracker.t", state("Kent State", {**GPS, "in_zones": ["zone.kent_state"]}), NOW)[2]
+    assert real["zone"] == "Kent State" and real["stationary"] is False
+    assert not persons.stationary_zone("Station", {})
+
+
 # --- choosing among sources ---------------------------------------------------
 
 def test_the_first_usable_source_wins_and_the_passed_over_are_named():
@@ -175,6 +194,16 @@ def test_the_tracker_is_home_on_ble_and_gps_once_lost():
     assert fix["location_name"] is None and fix["latitude"] == 41.4 and fix["source_type"] == "gps"
     assert persons.tracker_fix("away", {"entity": "device_tracker.t", "zone": "Kent State Dorm", "latitude": None})["location_name"] == "Kent State Dorm"
     assert persons.tracker_fix("away", None)["location_name"] == "not_home"
+
+
+def test_the_tracker_reads_not_home_in_a_stationary_zone_but_keeps_the_fix():
+    """Coordinates alone would let Home Assistant name StatZon1 from them
+    again, so the fix says not_home outright, coordinates beside it for the
+    map card. The location sensor says away."""
+    gps = {"entity": "device_tracker.t", "zone": "not_home", "stationary": True, "latitude": 41.312, "longitude": -81.731, "accuracy": 17}
+    fix = persons.tracker_fix("away", gps)
+    assert fix["location_name"] == "not_home" and fix["latitude"] == 41.312 and fix["source_type"] == "gps"
+    assert persons.fuse(None, [], "away", None, gps, [])["sextant_person_location"][0] == "away"
 
 
 def test_a_visit_starts_at_the_sighting_and_holds_while_home():
