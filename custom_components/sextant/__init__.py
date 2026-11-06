@@ -1588,7 +1588,12 @@ async def update_tracked_entities(hass):
                 # is an orphan and goes. One set comparison per cycle.
                 from .sensor import prune_sensors_for_untracked  # noqa: PLC0415 - sensor imports this package
                 # Robots are Sextant's own things, not Bermuda's: keep theirs.
-                prune_sensors_for_untracked(hass, set(tracked_prefixes) | set(robot_things(get_layout(hass))))
+                full_tracked = set(tracked_prefixes) | set(robot_things(get_layout(hass)))
+                prune_sensors_for_untracked(hass, full_tracked)
+                # And what the sensors' reconcile cannot reach - the settings of
+                # a slug Bermuda has left for good - goes too, once the grace in
+                # sweep_untracked_things has run out.
+                await sweep_untracked_things(hass, full_tracked)
                 unique_values = sorted(tracked_prefixes)
                 readings = bermuda_source.async_get_readings(hass) or {}
                 # Count device<->scanner pairs with a live distance, which is
@@ -3168,6 +3173,102 @@ async def prune_stale_positions(hass):
         update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_nearest_room", "unknown", dict(gone))
         update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_spot", "unknown", {"room": "unknown", **gone})
         update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_location", loc_state, {**loc_attrs, **gone})
+
+# How long a slug Bermuda no longer tracks keeps its settings before the
+# sweep below forgets it: a Bermuda reload or restart, and an untrack undone
+# within the hour (debugging), must cost a thing nothing - but a slug Bermuda
+# has left for good (a rename, an IRK swap, a Tile whose ID rotated) is a
+# ghost after that, and nothing else ever removes it.
+ORPHAN_GRACE_S = 3600.0
+
+
+async def sweep_untracked_things(hass, tracked):
+    """Forget things whose slug is outside Bermuda's tracked set, after a grace.
+
+    The Live page lists every key of the layout's thing_classes, so a device
+    whose slug changed lived on there as an "away" row for ever - pinned to
+    its owner, invisible on the Things page (which lists what Bermuda tracks
+    now) and survived by nothing but its settings. The sensors of such an
+    orphan are already reconciled away (prune_sensors_for_untracked); this
+    sweep finishes what the Forget button does by hand (ws_thing_forget):
+    settings, remembered sighting, history and learned gain all go.
+
+    ``tracked`` must be Bermuda's FULL tracked set plus Sextant's own robot
+    things (the caller unions them, as for prune_sensors_for_untracked). An
+    empty set sweeps nothing (a Bermuda reload reports nothing for a moment),
+    and each orphan is only forgotten once it has been outside the set for
+    ORPHAN_GRACE_S without a break; the stamps live in hass.data, so a restart
+    of Home Assistant restarts the grace, which errs towards keeping a ghost
+    for another hour over losing a live thing's settings. Returns the things
+    forgotten.
+    """
+    if not tracked:
+        return []
+    layout = get_layout(hass)
+    candidates = {ent for ent in _last_seen if ent}
+    if isinstance(layout, dict):
+        for key, table in layout.items():
+            if key.startswith("thing_") and isinstance(table, dict):
+                candidates.update(ent for ent in table if isinstance(ent, str))
+    orphans = {ent for ent in candidates if ent not in tracked}
+    dom = hass.data.setdefault(DOMAIN, {}) if isinstance(getattr(hass, "data", None), dict) else {}
+    since = dict(dom.get("orphan_since") or {})
+    for ent in set(since) - orphans:
+        since.pop(ent, None)   # back in the set: a later departure starts a fresh grace
+    now = time.time()
+    for ent in sorted(orphans):
+        since.setdefault(ent, now)
+    dom["orphan_since"] = since
+    due = sorted(ent for ent in orphans if now - since[ent] >= ORPHAN_GRACE_S)
+    if not due:
+        return []
+    for ent in due:
+        _forget_thing_state(ent)
+    # The learned fingerprint gains go too, saved now rather than at the next
+    # periodic save, exactly as the Forget button does: a thing re-added under
+    # the same name starts from its seed, not from a ghost's learning.
+    popped = [_fingerprint_db.thing_gain.pop(ent, None) for ent in due]
+    if any(g is not None for g in popped):
+        snap = {"learned_gain": round(_fingerprint_db.learned_gain, 4),
+                "thing_gain": {ent: round(g, 4) for ent, g in _fingerprint_db.thing_gain.items()}}
+        _persist_fp_gains.saved = snap
+        try:
+            await save_fp_gains(hass, snap)
+        except Exception as e:  # noqa: BLE001 - the in-memory forget still stands
+            _LOGGER.debug("Fingerprint gains not saved after the orphan sweep: %s", e)
+    dropped = []
+    async with LAYOUT_LOCK:
+        layout = get_layout_for_edit(hass)
+        if isinstance(layout, dict):
+            for ent in due:
+                for key, table in layout.items():
+                    if key.startswith("thing_") and isinstance(table, dict) and ent in table:
+                        del table[ent]
+                        dropped.append(key)
+            if dropped:
+                await save_layout(hass, layout)
+    try:
+        hist = get_position_history(hass)
+        async with _history_lock(hass):
+            for ent in due:
+                hist.forget(ent)
+                await hass.async_add_executor_job(history_mod.drop_entity, history_dir(hass), ent)
+    except Exception as e:  # noqa: BLE001 - the settings are the point; history is a bonus
+        _LOGGER.debug("Position history not dropped after the orphan sweep: %s", e)
+    from .sensor import remove_sensors_for_things  # noqa: PLC0415 - sensor imports this package
+
+    try:
+        remove_sensors_for_things(hass, due, reason="no longer tracked")
+    except Exception as e:  # noqa: BLE001 - the reconcile usually did this already
+        _LOGGER.debug("Sensors not removed after the orphan sweep: %s", e)
+    try:
+        await _save_runtime(hass)   # so a restart does not bring the sightings back
+    except Exception as e:  # noqa: BLE001 - the in-memory forget still stands
+        _LOGGER.debug("Runtime not saved after the orphan sweep: %s", e)
+    _LOGGER.info("Forgot %d thing(s) Bermuda no longer tracks: %s", len(due), ", ".join(due))
+    dom["orphan_since"] = {ent: stamp for ent, stamp in since.items() if ent not in set(due)}
+    return due
+
 
 # How often the state a restart would lose is written out. On a clean stop
 # it is written again anyway; this is for the power cut that is not clean.

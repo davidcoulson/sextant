@@ -14,6 +14,7 @@
 import { LitElement, html, css, nothing } from "./lit.js";
 import { signalColour, distanceColour, SextantMap, thingColor, thingHue, staleness, shortAge, heatCells, pointInPolygon, polygonCentroid } from "./sextant-map.js";
 import { sharedStyles, widgetStyles, fmtAge, fmtNum, toast, confirmAsync, ensureHaComponents, uiSelect, uiButton, callWS, sortFloors, thingName, proxyName, fmtLen, fmtSpeed, classIcon, pronounsFor, uiIconButton, uiSegmented, isImperial, mapOverlayStyles, renderScaleBar, signalLegend, mapUrlFor, retryWait, loadLayout, subscribePositions } from "./sextant-ui.js";
+import { personGroups } from "./sextant-groups.js";
 
 // What this page is running: the version of the files it was loaded from
 // (sextant-version.js), not the one in its URL - see that file.
@@ -1310,13 +1311,17 @@ class SextantLive extends LitElement {
 
   /** Every thing Sextant knows, not only the ones heard this cycle: a phone
    * that left the house still belongs in the list, shown where it was last
-   * seen. The missing ones come from their own sensors. */
+   * seen. The missing ones come from their own sensors. A thing Bermuda no
+   * longer tracks (a slug it has left: a rename, an IRK swap) is not that -
+   * it is a ghost with no device behind it, so it stays off the list; the
+   * backend forgets it after an hour of that (sweep_untracked_things). */
   _allRows() {
     const live = (this.positions?.positions || []).slice();
     const seen = new Set(live.map((p) => p.ent));
+    const tracked = Array.isArray(this.data?.entities) ? new Set(this.data.entities) : null;
     const known = Object.keys(this.data?.layout?.thing_classes || {});
     for (const ent of known) {
-      if (seen.has(ent)) continue;
+      if (seen.has(ent) || (tracked && !tracked.has(ent))) continue;
       const loc = this.hass?.states?.[`sensor.${ent}_sextant_location`];
       const floor = this.hass?.states?.[`sensor.${ent}_sextant_floor`];
       const known_where = loc && !["unknown", "unavailable"].includes(loc.state);
@@ -1350,24 +1355,14 @@ class SextantLive extends LitElement {
   }
 
   _renderGroupedRows(rows) {
-    const owners = this.data?.layout?.thing_owners || {};
-    const byOwner = new Map();
-    for (const p of rows) {
-      const o = owners[p.ent];
-      if (o) byOwner.set(o, [...(byOwner.get(o) || []), p]);
-    }
-    const same = (a, b) => String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
-    const groups = [...byOwner]
-      .map(([person, list]) => ({ person, list, name: this.hass?.states?.[person]?.attributes?.friendly_name || person.slice(7) }))
-      .filter((g) => g.list.length >= 2 || !same(this._label(g.list[0].ent), g.name))
+    // Who gets a heading is decided by the pure helper (tested on its own):
+    // one thing is enough for a person's section; a pet - a person everything
+    // of whose is a cat or dog tag - stays a plain row under Pets.
+    const { groups, pets, rest } = personGroups(rows, this.data?.layout?.thing_owners || {}, this.data?.layout?.thing_classes || {});
+    const named = groups
+      .map((g) => ({ ...g, name: this.hass?.states?.[g.person]?.attributes?.friendly_name || g.person.slice(7) }))
       .sort((a, b) => a.name.localeCompare(b.name));
-    if (!groups.length && !rows.some((p) => ["cat", "dog", "paw"].includes((this.data?.layout?.thing_classes || {})[p.ent]))) return rows.map((p) => this._renderRow(p));
-    const grouped = new Set(groups.flatMap((g) => g.list.map((p) => p.ent)));
-    // Then the pets (by class), then whatever is left.
-    const classes = this.data?.layout?.thing_classes || {};
-    const isPet = (p) => ["cat", "dog", "paw"].includes(classes[p.ent]);
-    const pets = rows.filter((p) => !grouped.has(p.ent) && isPet(p));
-    const rest = rows.filter((p) => !grouped.has(p.ent) && !isPet(p));
+    if (!named.length && !pets.length) return rows.map((p) => this._renderRow(p));
     const folded = this._folded || new Set();
     const fold = (key) => {
       const next = new Set(folded);
@@ -1378,7 +1373,7 @@ class SextantLive extends LitElement {
     const header = (key, title, extra) => html`<li class="group ${extra.away ? "away" : ""}" @click=${() => fold(key)} role="button" aria-expanded=${!folded.has(key)}>
       <ha-icon class="chev" icon=${folded.has(key) ? "mdi:chevron-right" : "mdi:chevron-down"}></ha-icon>${extra.avatar || nothing}
       <span class="gtext"><span class="gname">${title}</span>${extra.where ? html`<span class="gwhere small">${extra.where}</span>` : nothing}</span></li>`;
-    return html`${groups.map((g) => {
+    return html`${named.map((g) => {
       const st = this.hass?.states?.[g.person], pic = st?.attributes?.entity_picture;
       const where = (this.hass?.states?.[`sensor.${g.person.slice(7)}_sextant_person_location`] || this.hass?.states?.[`sensor.${g.person.slice(7)}_sextant_pet_location`])?.state;
       const avatar = html`<span class="gavatar">${pic ? html`<img src=${pic} alt="">` : g.name.slice(0, 2).toUpperCase()}</span>`;

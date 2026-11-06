@@ -122,8 +122,9 @@ it is late, a ghost once it is away.
 When things have owners (**Belongs to** on the Things page), each person
 gets a heading in the list - their picture, their name, and under it where
 their own location sensor puts them - and a click on the heading folds the
-group away. One thing is enough for a section; only a pet whose one thing
-is its own tag stays a plain row. Those rows - the cats and the dog - come
+group away. One thing is enough for a section; only a pet - a person
+everything of whose is a cat or dog tag - stays a plain row. Those rows -
+the cats and the dog - come
 next under **Pets**, and the rest follow under **Everything else**.
 
 ## Quick actions

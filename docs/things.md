@@ -27,6 +27,15 @@ at, a reference-power trim, and its own position estimator. **Untrack** removes 
 removes its five Sextant sensors and its device with it; a device untracked
 while Home Assistant was down is cleaned up on the next cycle.
 
+A thing Bermuda no longer tracks under a slug it once did - a rename, an IRK
+swap, a Tile whose ID rotated - would otherwise live on in the list on the
+[Live](live.md) page as a ghost that is *away* for ever, still pinned to its
+owner. After an hour of Bermuda not naming the slug, Sextant forgets it by
+itself: its settings, its remembered last sighting and its history go (the
+same as selecting it on the Live page and choosing **Forget**). The hour is a
+grace, so a Bermuda reload, a restart, or an untrack undone within it costs a
+thing nothing.
+
 Below is everything Bermuda hears but does not track, with the kind of
 device (iBeacon, Tile, Apple, IRK, plain address), what it appears to be
 (the Bermuda fork names families the Bluetooth SIG's lists cannot — a Govee
