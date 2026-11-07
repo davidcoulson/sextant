@@ -564,6 +564,10 @@ TUNING_SPEC = {
     "distance_estimator": ("bermuda", str, ("bermuda", "median")),
     "median_window_secs": (15.0, float, 3.0, 120.0),    # samples newer than this
     "median_min_samples": (3, int, 1, 20),              # fewer -> fall back
+    # A reading is stale after this many times the gap at which its receiver
+    # usually hears the thing (floor STALE_FLOOR_SECS, cap reading_max_age);
+    # 0 = reading_max_age alone. Needs the median estimator's history.
+    "stale_interval_factor": (5.0, float, 0.0, 30.0),
     # Receivers per solve: everything within solver_near_always metres, plus
     # the nearest solver_max_receivers (0 = unlimited); readings beyond
     # solver_max_range (0 = no cap) are dropped unless needed to reach three
@@ -1080,6 +1084,10 @@ def _layout_for(new_global_data, entity):
 
 # --- Per-pair distance from raw RSSI (distance_estimator = "median") ---------
 MEDIAN_TARGET_SAMPLES = 5  # sample count at which a median's weight saturates
+MEDIAN_SPREAD_REF_DB = 4.0  # robust RSSI spread (dB) above which a median's weight falls
+# A reading goes stale after stale_interval_factor times the gap at which the
+# receiver usually hears the thing, at least this, never more than reading_max_age.
+STALE_FLOOR_SECS = 10.0
 
 
 def _median_distance(reading, window_secs, min_samples):
@@ -1122,7 +1130,33 @@ def _median_distance(reading, window_secs, min_samples):
     rssi_med = float(np.median(samples))
     distance = 10.0 ** ((ref_power - (rssi_med + offset)) / (10.0 * attenuation))
     quality = min(1.0, len(samples) / MEDIAN_TARGET_SAMPLES)
+    # Five jumpy samples deserve less trust than five tight ones. The spread is
+    # the MAD scaled to a standard deviation, so one glitch does not count.
+    spread = 1.4826 * float(np.median(np.abs(np.asarray(samples) - rssi_med)))
+    if spread > MEDIAN_SPREAD_REF_DB:
+        quality *= MEDIAN_SPREAD_REF_DB / spread
     return distance, quality
+
+
+def _stale_limit(reading, max_age, factor):
+    """Seconds after which ``reading`` is stale: ``factor`` times the gap at
+    which this receiver usually hears the thing (median gap of its RSSI
+    history), floored at STALE_FLOOR_SECS and capped at ``max_age``. A phone
+    heard every second that falls silent is gone long before a flat 45 s;
+    a tag heard every 10 s keeps the full allowance. Without history, or with
+    factor 0, it is ``max_age``."""
+    if not max_age or not factor or not isinstance(reading, dict):
+        return max_age
+    stamps = []
+    for item in reading.get("history") or []:
+        try:
+            stamps.append(float(item[1]))
+        except (TypeError, ValueError, IndexError):
+            continue
+    if len(stamps) < 3:
+        return max_age
+    gap = float(np.median(np.abs(np.diff(stamps))))
+    return min(float(max_age), max(STALE_FLOOR_SECS, factor * gap))
 
 
 def _select_receivers(entries, max_receivers, max_range, near_always):
@@ -2309,6 +2343,7 @@ async def update_receiver_radii(hass, eids):
     use_median = _tuning(eids["data"], "distance_estimator") == "median"
     median_window = _tuning(eids["data"], "median_window_secs")
     median_min = _tuning(eids["data"], "median_min_samples")
+    stale_factor = _tuning(eids["data"], "stale_interval_factor")
     close_fade = _close_fade_params(eids["data"])
     # Prefer Bermuda's direct API: it serves the same per-scanner readings from
     # memory without any of the distance_to entities existing, which avoids
@@ -2392,11 +2427,12 @@ async def update_receiver_radii(hass, eids):
             # fix to a receiver that can no longer see the device. Removing
             # "distance" takes this receiver out of the cycle's candidate
             # solve (see extract_candidate_floors).
-            if max_age and age is not None and age > max_age:
+            limit = _stale_limit(reading, max_age, stale_factor)
+            if limit and age is not None and age > limit:
                 receiver.pop("distance", None)
                 _LOGGER.debug(
                     "Ignoring stale distance for %s (%.0fs old, max %.0fs)",
-                    entity_id, age, max_age,
+                    entity_id, age, limit,
                 )
                 continue
             try:

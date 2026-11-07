@@ -818,8 +818,10 @@ async def ws_thing_readings(hass, connection, msg):
     ent = msg["entity"]
     layout = get_layout(hass) or {}
     max_age = core._reading_max_age(layout)
-    by_address = bermuda_source.async_get_readings_by_address(hass) or {}
-    by_slug = bermuda_source.async_get_readings(hass) or {}
+    stale_factor = core._tuning(layout, "stale_interval_factor")
+    use_history = core._tuning(layout, "distance_estimator") == "median"
+    by_address = bermuda_source.async_get_readings_by_address(hass, include_history=use_history) or {}
+    by_slug = bermuda_source.async_get_readings(hass, include_history=use_history) or {}
     rows = []
     for floor in layout.get("floor", []):
         for rx in floor.get("receivers", []):
@@ -828,6 +830,7 @@ async def ws_thing_readings(hass, connection, msg):
             if reading is None:
                 reading, source = by_slug.get((ent, rx.get("entity_id"))), "slug"
             age = None if reading is None else reading.get("age")
+            limit = core._stale_limit(reading, max_age, stale_factor)
             rows.append({
                 "floor": floor.get("name"),
                 "receiver": rx.get("entity_id"),
@@ -835,7 +838,8 @@ async def ws_thing_readings(hass, connection, msg):
                 "source": source if reading is not None else None,
                 "distance": None if reading is None else reading.get("distance"),
                 "age": age,
-                "stale": bool(max_age and age is not None and age > max_age),
+                "stale": bool(limit and age is not None and age > limit),
+                "stale_after": limit,
             })
     stem = ent.rsplit("_", 1)[0]
     prefixes = sorted({p for p, _a in by_address if p == ent or p.startswith(stem)})

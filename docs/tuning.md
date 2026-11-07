@@ -49,6 +49,7 @@ distances in metres.
 | `distance_estimator` | `bermuda` | `bermuda` or `median` |
 | `median_window_secs` | 15 | samples newer than this feed the median |
 | `median_min_samples` | 3 | fewer falls back to Bermuda's distance |
+| `stale_interval_factor` | 5 | a reading is stale after this many times the gap its proxy usually hears the thing at (10 s floor, `reading_max_age` cap; 0 = the cap alone) |
 | `solver_max_receivers` | 8 | nearest proxies per solve (0 = all) |
 | `solver_max_range` | 12 | drop readings beyond this once three remain (0 = never) |
 | `solver_near_always` | 3 | proxies within this always count |
