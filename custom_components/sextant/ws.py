@@ -926,6 +926,10 @@ PROXY_FACTS = (
     ("irks_loaded", "_ble_irks_loaded"),
     ("rpas_dropped", "_ble_rpas_dropped"),
     ("uuid_allowed", "_ble_service_uuid_allowed"),
+    # The two counters every proxy keeps enabled (the totals above are
+    # disabled by default since ble-proxy 2026.11.07.9): per minute, 5 min window.
+    ("probes_forwarded", "_ble_probes_forwarded"),
+    ("other_forwarded", "_ble_other_forwarded"),
 )
 
 

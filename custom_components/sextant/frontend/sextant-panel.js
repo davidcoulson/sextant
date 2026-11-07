@@ -1257,6 +1257,8 @@ class SextantLive extends LitElement {
       ["Adverts forwarded", val("adverts_forwarded")],
       ["Adverts ignored", [val("adverts_dropped"), val("drop_rate") ? `(${val("drop_rate")})` : null].filter(Boolean).join(" ") || null],
       ["IRKs installed", val("irks_loaded")],
+      ["Probes heard /min", val("probes_forwarded")],
+      ["Unclaimed forwarded /min", val("other_forwarded")],
       ["Wi-Fi", [val("wifi_signal"), val("ssid", false), val("channel") ? `ch ${val("channel")}` : null].filter(Boolean).join(" · ") || null],
       ["Chip", [d.chip, val("temperature")].filter(Boolean).join(" · ") || null],
       // What HA records for the node is whichever link it is on: a proxy that
