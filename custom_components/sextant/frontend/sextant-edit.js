@@ -247,7 +247,7 @@ class SextantEdit extends LitElement {
       onDrawPoint: () => this.requestUpdate(),
       onDrawClose: () => this._closeDraft(),
       // The scale bar follows the zoom (onView fires every frame).
-      onView: (v) => { const key = `${v.k}|${this._floorObj()?.scale}`; if (key !== this._scaleKey) { this._scaleKey = key; this.requestUpdate(); } },
+      onView: (v) => { const key = `${v.k}|${this._floorObj()?.scale}|${this._map?.isFit()}`; if (key !== this._scaleKey) { this._scaleKey = key; this.requestUpdate(); } },
       onContextMenu: (hit) => this._context(hit),
     });
     this._map.setMode("edit");
@@ -1214,7 +1214,7 @@ class SextantEdit extends LitElement {
         <div class="mapcorner">${renderScaleBar(this._floorObj()?.scale, this._map?.view?.k, isImperial(this.hass),
           () => this._setTool("measure"), "This floor has no scale yet: click to measure a known distance with the Scale tool")}</div>
         <div class="zoom" role="group" aria-label="Zoom">
-          <button title="Fit the whole floor into view" aria-label="Fit the whole floor" @click=${() => this._map.fit()}><ha-icon icon="mdi:fit-to-screen-outline"></ha-icon></button>
+          <button title="Fit the whole floor into view" aria-label="Fit the whole floor" ?disabled=${!!this._map?.isFit()} @click=${() => this._map.fit()}><ha-icon icon="mdi:fit-to-screen-outline"></ha-icon></button>
           <button title="Zoom in" aria-label="Zoom in" @click=${() => this._map.zoomBy(1.3)}><ha-icon icon="mdi:plus"></ha-icon></button>
           <button title="Zoom out" aria-label="Zoom out" @click=${() => this._map.zoomBy(1 / 1.3)}><ha-icon icon="mdi:minus"></ha-icon></button>
         </div>
@@ -1523,6 +1523,7 @@ class SextantEdit extends LitElement {
     .zoom { position: absolute; right: 10px; bottom: 10px; display: flex; gap: 2px; padding: 4px; border-radius: 12px; background: var(--card-background-color); box-shadow: var(--ha-card-box-shadow, 0 2px 6px rgba(0,0,0,0.25)); z-index: 2; }
     .zoom button { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--primary-text-color); cursor: pointer; }
     .zoom button:hover { background: var(--secondary-background-color, rgba(0,0,0,0.06)); }
+    .zoom button:disabled { opacity: 0.35; cursor: default; background: transparent; }
     .zoom ha-icon { --mdc-icon-size: 20px; }
     .toolbar button.active { background: var(--primary-color); color: var(--text-primary-color, #fff); border-color: var(--primary-color); }
     .toolbar button.lock.locked { background: var(--secondary-background-color); color: var(--secondary-text-color); }

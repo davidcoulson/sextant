@@ -845,14 +845,28 @@ export class SextantMap {
     this.invalidate();
   }
 
-  fit() {
+  /** The view fit() sets, or null while there is nothing to fit. */
+  _fitView() {
     const rect = this.canvas.getBoundingClientRect();
     const size = this._mapSize();
-    if (!size.w || !size.h || !rect.width) return;
+    if (!size.w || !size.h || !rect.width) return null;
     const k = Math.min(rect.width / size.w, rect.height / size.h) * 0.96;
-    this.view = { k, tx: (rect.width - size.w * k) / 2, ty: (rect.height - size.h * k) / 2 };
+    return { k, tx: (rect.width - size.w * k) / 2, ty: (rect.height - size.h * k) / 2 };
+  }
+
+  fit() {
+    const v = this._fitView();
+    if (!v) return;
+    this.view = v;
     this._fitted = true;
     this.invalidate();
+  }
+
+  /** True when the view already is what fit() would show (to a pixel), so a
+   * Fit button can grey out. */
+  isFit() {
+    const f = this._fitView(), v = this.view;
+    return !!f && Math.abs(v.k - f.k) <= f.k * 1e-3 && Math.abs(v.tx - f.tx) < 1 && Math.abs(v.ty - f.ty) < 1;
   }
 
   /** Zoom so these map points fill the view, with a margin: a spot fills a phone screen. */
