@@ -76,6 +76,7 @@ class SextantEdit extends LitElement {
     _nextPin: { state: true },   // the Pin tool's next name: one waiting on another floor, or NEW_PIN
     _selection: { state: true },
     _placing: { state: true },
+    _proxyFilter: { state: true },
     _measure: { state: true },
     _proposal: { state: true },
     _biasView: { state: true },
@@ -100,6 +101,7 @@ class SextantEdit extends LitElement {
     this._tool = "select";
     this._selection = null;
     this._placing = null; // scanner address chosen for the next receiver click
+    this._proxyFilter = "";
     this._placingAp = null; // access point MAC chosen for the next Wi-Fi click
     let snap = "all", autosave = false;
     try { snap = localStorage.getItem("sextant.edit.snap") || "all"; autosave = localStorage.getItem("sextant.edit.autosave") === "on"; } catch { /* ignore */ }
@@ -1229,9 +1231,13 @@ class SextantEdit extends LitElement {
           <button class="tool ${this._autosave ? "active" : ""}" aria-label="Auto-save" aria-pressed=${this._autosave} title=${this._autosave ? "Auto-save is on: the plan is written a couple of seconds after each change. Click to turn it off" : "Auto-save is off: changes wait for Save. Click to write the plan a couple of seconds after each change (every write keeps a copy under History)"} @click=${() => this._setAutosave(!this._autosave)}><ha-icon icon=${this._autosave ? "mdi:content-save-check-outline" : "mdi:content-save-off-outline"}></ha-icon><span>Auto</span></button>
         </div>
         ${this._tool === "receiver" ? html`<div class="hint">
+          <input type="search" placeholder="Search proxies…" aria-label="Search proxies" .value=${this._proxyFilter} @input=${(e) => { this._proxyFilter = e.target.value; }}>
           <select @change=${(e) => { this._placing = e.target.value || null; }}>
-            <option value="">Pick a proxy, then click the map…</option>
-            ${scanners.map(([addr, s]) => html`<option value=${addr} ?disabled=${placedAddr.has(addr)}>${s.name || s.slug}${placedAddr.has(addr) ? " (placed)" : ""}${s.area ? ` · ${s.area}` : ""}</option>`)}
+            <option value="" ?selected=${!this._placing}>Pick a proxy, then click the map…</option>
+            ${scanners
+              .filter(([addr, s]) => addr === this._placing || `${s.name || ""} ${s.slug || ""} ${s.area || ""} ${addr}`.toLowerCase().includes(this._proxyFilter.trim().toLowerCase()))
+              .sort((a, b) => placedAddr.has(a[0]) - placedAddr.has(b[0])) /* unplaced first; stable, so still by name */
+              .map(([addr, s]) => html`<option value=${addr} ?selected=${addr === this._placing} ?disabled=${placedAddr.has(addr)}>${s.name || s.slug}${placedAddr.has(addr) ? " (placed)" : ""}${s.area ? ` · ${s.area}` : ""}</option>`)}
           </select></div>` : nothing}
         ${this._tool === "ap" ? this._renderApPicker() : nothing}
         ${this._tool === "measure" ? html`<div class="hint">
@@ -1519,6 +1525,7 @@ class SextantEdit extends LitElement {
     .sep { width: 1px; height: 24px; background: var(--divider-color); margin: 0 4px; }
     .hint { position: absolute; left: 10px; bottom: 10px; right: 128px; padding: 8px 10px; border-radius: 8px; background: var(--card-background-color); box-shadow: var(--ha-card-box-shadow, 0 1px 4px rgba(0,0,0,0.2)); font-size: 13px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     .hint select { max-width: 100%; }
+    .hint input[type="search"] { width: 200px; max-width: 100%; padding: 4px 6px; font: inherit; }
     .chip { padding: 2px 9px; border-radius: 999px; border: 1px solid var(--divider-color); background: var(--secondary-background-color); color: var(--primary-text-color); font: inherit; font-size: 12px; cursor: pointer; }
     .chip:hover { border-color: var(--primary-color); }
     .warn { color: var(--warning-color, #9a5b00); }
