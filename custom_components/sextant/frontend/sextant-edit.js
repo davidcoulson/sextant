@@ -9,7 +9,7 @@
  */
 import { LitElement, html, css, nothing } from "./lit.js";
 import { SextantMap, polygonCentroid, snapToVertex, squareUp, thingHue, radarCalibration } from "./sextant-map.js";
-import { sharedStyles, widgetStyles, toast, callWS, confirmAsync, fmtNum, fmtLen, uiField, uiSelect, uiSwitch, uiButton, uiIconButton, uiMenu, proxyName, lenUnit, toDisplayLen, fromDisplayLen, fmtScale, isImperial, THING_CLASSES, CLASS_FAMILIES, mapOverlayStyles, renderScaleBar, uiColour, mapUrlFor } from "./sextant-ui.js";
+import { sharedStyles, widgetStyles, toast, callWS, confirmAsync, fmtNum, fmtLen, uiField, uiSelect, uiSwitch, uiButton, uiIconButton, uiMenu, uiSegmented, proxyName, lenUnit, toDisplayLen, fromDisplayLen, fmtScale, isImperial, THING_CLASSES, CLASS_FAMILIES, mapOverlayStyles, renderScaleBar, uiColour, mapUrlFor } from "./sextant-ui.js";
 import { lostShapes } from "./sextant-shapes.js";
 
 // [id, label under the icon, icon, tooltip]
@@ -77,6 +77,7 @@ class SextantEdit extends LitElement {
     _selection: { state: true },
     _placing: { state: true },
     _proxyFilter: { state: true },
+    _proxyShow: { state: true },
     _measure: { state: true },
     _proposal: { state: true },
     _biasView: { state: true },
@@ -102,6 +103,7 @@ class SextantEdit extends LitElement {
     this._selection = null;
     this._placing = null; // scanner address chosen for the next receiver click
     this._proxyFilter = "";
+    this._proxyShow = "todo"; // proxy picker: todo = unplaced and heard lately, unplaced, all
     this._placingAp = null; // access point MAC chosen for the next Wi-Fi click
     let snap = "all", autosave = false;
     try { snap = localStorage.getItem("sextant.edit.snap") || "all"; autosave = localStorage.getItem("sextant.edit.autosave") === "on"; } catch { /* ignore */ }
@@ -1231,10 +1233,17 @@ class SextantEdit extends LitElement {
           <button class="tool ${this._autosave ? "active" : ""}" aria-label="Auto-save" aria-pressed=${this._autosave} title=${this._autosave ? "Auto-save is on: the plan is written a couple of seconds after each change. Click to turn it off" : "Auto-save is off: changes wait for Save. Click to write the plan a couple of seconds after each change (every write keeps a copy under History)"} @click=${() => this._setAutosave(!this._autosave)}><ha-icon icon=${this._autosave ? "mdi:content-save-check-outline" : "mdi:content-save-off-outline"}></ha-icon><span>Auto</span></button>
         </div>
         ${this._tool === "receiver" ? html`<div class="hint">
+          ${uiSegmented({ value: this._proxyShow, onChange: (v) => { this._proxyShow = v; }, options: [
+            { value: "todo", label: "To place", title: "Unplaced proxies heard in the last 15 minutes" },
+            { value: "unplaced", label: "Unplaced", title: "Every unplaced proxy, heard or not" },
+            { value: "all", label: "All", title: "Every proxy, placed ones greyed out" },
+          ] })}
           <input type="search" placeholder="Search proxies…" aria-label="Search proxies" .value=${this._proxyFilter} @input=${(e) => { this._proxyFilter = e.target.value; }}>
           <select @change=${(e) => { this._placing = e.target.value || null; }}>
             <option value="" ?selected=${!this._placing}>Pick a proxy, then click the map…</option>
             ${scanners
+              .filter(([addr, s]) => addr === this._placing || this._proxyShow === "all"
+                || (!placedAddr.has(addr) && (this._proxyShow === "unplaced" || (s.last_seen_age ?? Infinity) < 900)))
               .filter(([addr, s]) => addr === this._placing || `${s.name || ""} ${s.slug || ""} ${s.area || ""} ${addr}`.toLowerCase().includes(this._proxyFilter.trim().toLowerCase()))
               .sort((a, b) => placedAddr.has(a[0]) - placedAddr.has(b[0])) /* unplaced first; stable, so still by name */
               .map(([addr, s]) => html`<option value=${addr} ?selected=${addr === this._placing} ?disabled=${placedAddr.has(addr)}>${s.name || s.slug}${placedAddr.has(addr) ? " (placed)" : ""}${s.area ? ` · ${s.area}` : ""}</option>`)}

@@ -238,7 +238,7 @@ async def ws_layout_get(hass, connection, msg):
         "restart_needed": RUNNING_CODE is not None and await hass.async_add_executor_job(code_signature) != RUNNING_CODE,
         "scanners": {
             addr: {"slug": info.get("slug"), "name": info.get("name"), "area": info.get("area_name"),
-                   "is_remote": info.get("is_remote")}
+                   "is_remote": info.get("is_remote"), "last_seen_age": info.get("last_seen_age")}
             for addr, info in directory.items()
         },
         "offline_receivers": list(dom.get("rl_offline") or []),
