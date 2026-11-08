@@ -103,7 +103,7 @@ class SextantEdit extends LitElement {
     this._selection = null;
     this._placing = null; // scanner address chosen for the next receiver click
     this._proxyFilter = "";
-    this._proxyShow = "todo"; // proxy picker: todo = unplaced and heard lately, unplaced, all
+    this._proxyShow = "unplaced"; // proxy picker: unplaced = not placed and heard in the last 15 min; all
     this._placingAp = null; // access point MAC chosen for the next Wi-Fi click
     let snap = "all", autosave = false;
     try { snap = localStorage.getItem("sextant.edit.snap") || "all"; autosave = localStorage.getItem("sextant.edit.autosave") === "on"; } catch { /* ignore */ }
@@ -1234,8 +1234,7 @@ class SextantEdit extends LitElement {
         </div>
         ${this._tool === "receiver" ? html`<div class="hint">
           ${uiSegmented({ value: this._proxyShow, onChange: (v) => { this._proxyShow = v; }, options: [
-            { value: "todo", label: "To place", title: "Unplaced proxies heard in the last 15 minutes" },
-            { value: "unplaced", label: "Unplaced", title: "Every unplaced proxy, heard or not" },
+            { value: "unplaced", label: "Unplaced", title: "Unplaced proxies heard in the last 15 minutes" },
             { value: "all", label: "All", title: "Every proxy, placed ones greyed out" },
           ] })}
           <input type="search" placeholder="Search proxies…" aria-label="Search proxies" .value=${this._proxyFilter} @input=${(e) => { this._proxyFilter = e.target.value; }}>
@@ -1243,7 +1242,7 @@ class SextantEdit extends LitElement {
             <option value="" ?selected=${!this._placing}>Pick a proxy, then click the map…</option>
             ${scanners
               .filter(([addr, s]) => addr === this._placing || this._proxyShow === "all"
-                || (!placedAddr.has(addr) && (this._proxyShow === "unplaced" || (s.last_seen_age ?? Infinity) < 900)))
+                || (!placedAddr.has(addr) && (s.last_seen_age ?? Infinity) < 900))
               .filter(([addr, s]) => addr === this._placing || `${s.name || ""} ${s.slug || ""} ${s.area || ""} ${addr}`.toLowerCase().includes(this._proxyFilter.trim().toLowerCase()))
               .sort((a, b) => placedAddr.has(a[0]) - placedAddr.has(b[0])) /* unplaced first; stable, so still by name */
               .map(([addr, s]) => html`<option value=${addr} ?selected=${addr === this._placing} ?disabled=${placedAddr.has(addr)}>${s.name || s.slug}${placedAddr.has(addr) ? " (placed)" : ""}${s.area ? ` · ${s.area}` : ""}</option>`)}
