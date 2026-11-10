@@ -356,7 +356,7 @@ def _fp_gain_store(hass) -> Store:
 
 
 async def load_fp_gains(hass) -> dict:
-    """``{"learned_gain": float, "thing_gain": {entity: float}}``; empty when none."""
+    """``{"learned_gain": float, "thing_gain": {entity: float}, "range_scale": {entity: float}}``; empty when none."""
     try:
         data = await _fp_gain_store(hass).async_load()
     except Exception as e:

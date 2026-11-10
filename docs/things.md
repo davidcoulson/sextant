@@ -27,6 +27,14 @@ at, a reference-power trim, and its own position estimator. **Untrack** removes 
 removes its five Sextant sensors and its device with it; a device untracked
 while Home Assistant was down is cleaned up on the next cycle.
 
+Sextant also learns that trim on its own. Every fix compares the ranges the
+fit settled on with the ranges measured, and a radio that reads long or short
+shows up as a ratio that stays off 1; the running value is published with each
+fix as `range_scale` (0.5 to 1.5, below 1 for a thing that reads far). It is
+only applied to the ranges when `range_auto_scale` is switched on in Tuning,
+so the number can be watched first. A hand-set trim still applies; the learned
+scale works on what is left.
+
 Below is everything Bermuda hears but does not track, with the kind of
 device (iBeacon, Tile, Apple, IRK, plain address), what it appears to be
 (the Bermuda fork names families the Bluetooth SIG's lists cannot — a Govee

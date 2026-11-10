@@ -46,6 +46,7 @@ const TUNING_LABELS = {
   fingerprint_missing_m: ["Not heard counts as (m)", "a proxy that does not hear the thing is treated as this far away"],
   fingerprint_ref_gain: ["Reference gain", "probe beacons hotter (<1) or cooler (>1) than the things"],
   fingerprint_auto_gain: ["Learn reference gain from things", "walk the gain in from every match, published per fix as fp.gain"],
+  range_auto_scale: ["Apply learned range scale", "multiply each thing's ranges by the scale learned from its own fits, published per fix as range_scale"],
   fingerprint_marks: ["Location pins as references", "each pin from the Live page is also a fingerprint reference at that point"],
   distance_estimator: ["Distance estimator", "bermuda = Bermuda's smoothed distance; median = the median of the recent raw RSSI samples"],
   median_window_secs: ["Median window (s)", "only samples newer than this feed the median"],
@@ -716,7 +717,7 @@ class SextantHealth extends LitElement {
   _renderTuning() {
     const spec = this.data?.tuning_spec || {};
     const groups = [
-      ["Estimator", ["position_estimator", "fingerprint_weight", "fingerprint_floor_weight", "fingerprint_k", "fingerprint_missing_m", "fingerprint_ref_gain", "fingerprint_auto_gain", "fingerprint_marks", "fingerprint_marks_scope", "distance_estimator", "median_window_secs", "median_min_samples", "stale_interval_factor"]],
+      ["Estimator", ["position_estimator", "fingerprint_weight", "fingerprint_floor_weight", "fingerprint_k", "fingerprint_missing_m", "fingerprint_ref_gain", "fingerprint_auto_gain", "fingerprint_marks", "fingerprint_marks_scope", "distance_estimator", "median_window_secs", "median_min_samples", "stale_interval_factor", "range_auto_scale"]],
       ["Solver", ["solver_max_receivers", "solver_max_range", "solver_near_always"]],
       ["Rooms", ["zone_hysteresis", "zone_prob_smoothing", "zone_switch_margin", "zone_switch_secs", "far_move_margin", "far_move_secs", "stationary_speed", "stationary_secs", "zone_unlock_margin", "zone_unlock_secs", "zone_lock_warmup_secs", "outside_margin_m", "outside_secs", "outside_faint_prox", "outside_faint_m", "outside_near_m"]],
       ["Spots", ["subzone_switch_secs", "subzone_enter_prob", "subzone_unlock_margin", "subzone_lock_release_m", "spot_proxy_near_m", "spot_proxy_far_m", "spot_proxy_ratio"]],

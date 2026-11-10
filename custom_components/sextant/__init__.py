@@ -373,6 +373,67 @@ ROBOT_HEIGHT_M = 0.1
 # different dB scale (this is a relative knob, not a calibrated instrument).
 PATH_LOSS_EXPONENT = 3.0
 THING_REF_OFFSET_MAX_DB = 20.0  # +/- range accepted from the panel/API
+# The same trim, learned: each fix says how its fitted ranges compare with the
+# measured ones, and a thing whose radio reads long or short shows it as a
+# ratio that stays off 1 whichever proxies hear it (ESPresense solves the same
+# per-device scale inside its fit). Learned on every fix and reported as
+# range_scale; applied to the ranges only when range_auto_scale is on.
+RANGE_SCALE_ALPHA = 0.05      # per fix, times the fix's confidence: minutes, not cycles
+RANGE_SCALE_MIN, RANGE_SCALE_MAX = 0.5, 1.5
+RANGE_SCALE_MIN_PROX = 4      # three ranges fit two unknowns too easily to judge a scale
+_range_scale = {}             # entity -> learned multiplier on its distances
+
+
+def _range_ratio(fix, weighted, scale):
+    """Fitted over measured slant range for one fix, as a weighted geometric mean.
+
+    Below 1 means the thing reads farther than where the fit put it. None when
+    fewer than RANGE_SCALE_MIN_PROX readings can say: a reading at the clamp
+    radius is the thing sitting on a proxy, where the height guess decides the
+    ratio. Far readings count for less (1/slant), since those are the ones a
+    wall has stretched.
+    """
+    if fix is None or not scale:
+        return None
+    floor_px = MIN_WEIGHT_RADIUS_M * scale
+    metre_px = max(scale, floor_px)
+    num = den = 0.0
+    n = 0
+    for pt in weighted:
+        if len(pt) < 5:
+            continue
+        x, y, r, w, slant = pt[0], pt[1], pt[2], pt[3], pt[4]
+        if not (w > 0 and slant > floor_px and r > floor_px):
+            continue
+        fitted = math.sqrt((x - fix[0]) ** 2 + (y - fix[1]) ** 2 + max(slant * slant - r * r, 0.0))
+        if fitted <= 0:
+            continue
+        ww = w / max(slant, metre_px)
+        num += ww * math.log(fitted / slant)
+        den += ww
+        n += 1
+    return math.exp(num / den) if n >= RANGE_SCALE_MIN_PROX and den > 0 else None
+
+
+def _learn_range_scale(entity, ratio, conf, applied):
+    """Move this thing's range scale toward ``applied * ratio`` (log-space average).
+
+    ``applied`` is the scale its ranges were already multiplied by this cycle:
+    with the scale in use that makes each fix correct what is left, and with
+    it off the same line averages the whole error, so the published number
+    reads much the same either way (a little nearer 1 when off, because the
+    fit hides part of a uniform error in the position).
+    """
+    if ratio is None or not ratio > 0 or not math.isfinite(ratio):
+        return
+    a = RANGE_SCALE_ALPHA * max(0.0, min(1.0, float(conf or 0.0)))
+    new = _range_scale.get(entity, 1.0) ** (1.0 - a) * (applied * ratio) ** a
+    _range_scale[entity] = min(RANGE_SCALE_MAX, max(RANGE_SCALE_MIN, new))
+
+
+def _applied_range_scale(data, entity):
+    """The learned scale this thing's ranges are multiplied by: 1.0 unless range_auto_scale is on."""
+    return _range_scale.get(entity, 1.0) if _tuning(data, "range_auto_scale") else 1.0
 # Slant->horizontal legitimately produces very short radii (thing nearly
 # under a ceiling probe). The solver's geometric 1/r^2 weight would explode
 # there and let that one receiver dominate the fit, so for WEIGHTING (not for
@@ -698,6 +759,9 @@ TUNING_SPEC = {
     # reference's, and the learned factor (fingerprint.ReferenceDB.learn)
     # multiplies fingerprint_ref_gain. Reported per fix as fp.gain.
     "fingerprint_auto_gain": (True, bool),
+    # Multiply each thing's ranges by the scale learned from its own fits
+    # (see RANGE_SCALE_ALPHA). Off: still learned and reported, not applied.
+    "range_auto_scale": (False, bool),
     # Truth marks ("it is actually here", Live page) double as fingerprint references at
     # the marked point, in the marking thing's own scale: off to use only the proxies.
     "fingerprint_marks": (True, bool),
@@ -948,13 +1012,19 @@ def _all_mark_refs(layout):
     return _mark_ref_cache["refs"] or None
 
 
+def _fp_gain_snapshot():
+    """What the gain store holds: the fingerprint gains and each thing's range scale."""
+    return {"learned_gain": round(_fingerprint_db.learned_gain, 4),
+            "thing_gain": {e: round(g, 4) for e, g in _fingerprint_db.thing_gain.items()},
+            "range_scale": {e: round(s, 4) for e, s in _range_scale.items()}}
+
+
 def _persist_fp_gains(hass, now_ts):
     """Every FP_GAIN_PERSIST_SECS, save the learned gains if they moved (event loop only)."""
     if now_ts - getattr(_persist_fp_gains, "last", 0.0) < FP_GAIN_PERSIST_SECS:
         return
     _persist_fp_gains.last = now_ts
-    snap = {"learned_gain": round(_fingerprint_db.learned_gain, 4),
-            "thing_gain": {e: round(g, 4) for e, g in _fingerprint_db.thing_gain.items()}}
+    snap = _fp_gain_snapshot()
     if snap == getattr(_persist_fp_gains, "saved", None):
         return
     _persist_fp_gains.saved = snap
@@ -974,8 +1044,10 @@ def _restore_fp_gains(saved):
     for entity, tg in (saved.get("thing_gain") or {}).items():
         if isinstance(tg, (int, float)) and not isinstance(tg, bool) and tg > 0 and entity not in _fingerprint_db.thing_gain:
             _fingerprint_db.thing_gain[entity] = min(fingerprint.LEARNED_GAIN_MAX, max(fingerprint.LEARNED_GAIN_MIN, float(tg)))
-    _persist_fp_gains.saved = {"learned_gain": round(_fingerprint_db.learned_gain, 4),
-                               "thing_gain": {e: round(v, 4) for e, v in _fingerprint_db.thing_gain.items()}}
+    for entity, rs in (saved.get("range_scale") or {}).items():
+        if isinstance(rs, (int, float)) and not isinstance(rs, bool) and rs > 0 and entity not in _range_scale:
+            _range_scale[entity] = min(RANGE_SCALE_MAX, max(RANGE_SCALE_MIN, float(rs)))
+    _persist_fp_gains.saved = _fp_gain_snapshot()
 
 
 def _refresh_fingerprint_references(hass, layout, now_ts):
@@ -2338,7 +2410,7 @@ async def update_receiver_liveness(hass):
 async def update_receiver_radii(hass, eids):
     """Update receiver 'r' values (pixels) and raw 'distance' (meters) for an entity"""
     thing_h = _thing_height(eids["data"], eids["entity"])
-    thing_factor = _thing_distance_factor(eids["data"], eids["entity"])
+    thing_factor = _thing_distance_factor(eids["data"], eids["entity"]) * _applied_range_scale(eids["data"], eids["entity"])
     max_age = _reading_max_age(eids["data"])
     use_median = _tuning(eids["data"], "distance_estimator") == "median"
     median_window = _tuning(eids["data"], "median_window_secs")
@@ -2806,6 +2878,9 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
     if fp_tel and fp_tel.get("ratio") and _tuning(layout, "fingerprint_auto_gain"):
         _fingerprint_db.learn(fp_tel["ratio"], fp_tel.get("conf") or 0.0, entity=entity)
     weighted = elected["weighted"]
+    _learn_range_scale(entity, _range_ratio(elected["fix"], weighted, elected["scale"]), elected["conf"],
+                       _applied_range_scale(layout, entity))
+    _persist_fp_gains(hass, now)
     zone_polys = elected["zone_polys"]
     floor_bounds = elected["bounds"]
     scale = elected["scale"]
@@ -2950,6 +3025,8 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
                 "radar": None if radar_claim is None else radar_claim.get("radar_name"),
                 "rms_m": None if elected["rms_m"] is None else round(elected["rms_m"], 3),
                 "conf": round(elected["conf"], 3),
+                # This thing's learned range scale (applied only with range_auto_scale).
+                "range_scale": round(_range_scale.get(entity, 1.0), 3),
                 # Fingerprint fusion telemetry: which estimator ran, the
                 # fingerprint's own fix and confidence, and the reference
                 # receivers it was averaged from (see fingerprint.py).

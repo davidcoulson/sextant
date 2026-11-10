@@ -1611,15 +1611,15 @@ async def ws_thing_forget(hass, connection, msg):
         removed_points = await hass.async_add_executor_job(history_mod.drop_entity, core.history_dir(hass), ent)
     dropped = []
     if not tracked:
-        # Its learned fingerprint gain too (kept in memory and in its own
+        # Its learned fingerprint gain and range scale too (kept in memory and in its own
         # store, which the next periodic save rewrites without it): a thing
         # re-added under the same name starts from its seed, not from a
         # ghost's learning.
-        if core._fingerprint_db.thing_gain.pop(ent, None) is not None:
+        had_gain = core._fingerprint_db.thing_gain.pop(ent, None) is not None
+        if (core._range_scale.pop(ent, None) is not None) or had_gain:
             # Saved now, not at the next periodic save: a reload before then
             # would read the old gain back from its store.
-            snap = {"learned_gain": round(core._fingerprint_db.learned_gain, 4),
-                    "thing_gain": {e: round(g, 4) for e, g in core._fingerprint_db.thing_gain.items()}}
+            snap = core._fp_gain_snapshot()
             core._persist_fp_gains.saved = snap
             try:
                 await core.save_fp_gains(hass, snap)

@@ -45,6 +45,7 @@ distances in metres.
 | `fingerprint_missing_m` | 12 | how far "not heard" counts as |
 | `fingerprint_ref_gain` | 1.0 | probe beacons hotter (<1) or cooler (>1) than things |
 | `fingerprint_auto_gain` | true | learn the rest of that gain from the things |
+| `range_auto_scale` | false | multiply each thing's ranges by the scale learned from its own fits |
 | `fingerprint_marks` | true | location pins double as fingerprint references |
 | `distance_estimator` | `bermuda` | `bermuda` or `median` |
 | `median_window_secs` | 15 | samples newer than this feed the median |
