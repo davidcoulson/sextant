@@ -199,13 +199,16 @@ async def ws_layout_get(hass, connection, msg):
         robot_names[core.robot_thing(vac)] = (st.attributes.get("friendly_name") if st else None) or vac
     names = _safe(lambda: _thing_names(hass, tracked, layout), {})
     names = {**robot_names, **(names if isinstance(names, dict) else {})}
-    tracked = set(tracked) | set(core.robot_things(layout))
+    tracked = set(tracked) | set(robot_names)   # every robot, lined up or not, as the sweep has it
     connection.send_result(msg["id"], {
         "layout": layout if isinstance(layout, dict) else None,
         "version": get_layout_version(hass),
         "maps": sorted(maps),
         "icons": icons,
         "entities": sorted(tracked),
+        # True while "entities" may be missing a thing Bermuda has set up but
+        # not heard yet (the orphan sweep holds then too): Live hides nothing.
+        "entities_partial": core._findmy_not_all_tracked(hass),
         # Display names: what Bermuda calls the device, overridden by the name
         # the user gave the device in Home Assistant (device registry); a
         # robot is called what its vacuum entity is called.

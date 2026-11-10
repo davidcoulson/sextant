@@ -3360,7 +3360,7 @@ async def sweep_untracked_things(hass, tracked):
     for another hour over losing a live thing's settings. Returns the things
     forgotten.
     """
-    if not tracked or _findmy_not_all_tracked(hass):
+    if not tracked:
         return []
     layout = get_layout(hass)
     # Every robot is Sextant's own thing, lined up with a floor yet or not.
@@ -3380,7 +3380,9 @@ async def sweep_untracked_things(hass, tracked):
         since.setdefault(ent, now)
     dom["orphan_since"] = since
     due = sorted(ent for ent in orphans if now - since[ent] >= ORPHAN_GRACE_S)
-    if not due:
+    # The hold comes after the stamps: a thing back in the set during a hold
+    # still gets its fresh grace.
+    if not due or _findmy_not_all_tracked(hass):
         return []
     for ent in due:
         _forget_thing_state(ent)

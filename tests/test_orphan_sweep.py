@@ -152,3 +152,11 @@ def test_the_learned_range_scale_goes_with_the_ghost(tmp_path, monkeypatch):
     assert run(sextant.sweep_untracked_things(hass, {"phone"})) == ["old_irk"]
     assert "old_irk" not in sextant._range_scale
     assert saved and "old_irk" not in saved[-1]["range_scale"]
+
+
+def test_a_thing_back_during_a_hold_still_gets_a_fresh_grace(tmp_path, monkeypatch):
+    hass = _hass(tmp_path, monkeypatch)
+    _stamp(hass, "old_irk", sextant.ORPHAN_GRACE_S * 10)
+    monkeypatch.setattr(bermuda_source, "async_get_findmy_accessories", lambda h: [{"address": "findmy_AB"}])
+    assert run(sextant.sweep_untracked_things(hass, {"old_irk", "phone"})) == []
+    assert "old_irk" not in hass.data[sextant.DOMAIN]["orphan_since"]

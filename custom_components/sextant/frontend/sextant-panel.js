@@ -1316,12 +1316,14 @@ class SextantLive extends LitElement {
    * seen. The missing ones come from their own sensors. A thing Bermuda no
    * longer tracks (a slug it has left: a rename, an IRK swap) is not that -
    * it is a ghost with no device behind it, so it stays off the list; the
-   * backend forgets it after an hour of that (sweep_untracked_things). */
+   * backend forgets it after an hour of that (sweep_untracked_things). While
+   * the backend holds that sweep (entities_partial), nothing is hidden. */
   _allRows() {
     const live = (this.positions?.positions || []).slice();
     const seen = new Set(live.map((p) => p.ent));
     // An empty list is Bermuda not answering yet, not "nothing is tracked".
-    const tracked = this.data?.entities?.length ? new Set(this.data.entities) : null;
+    // Nor is a list Bermuda may not have finished (a FindMy accessory not heard yet).
+    const tracked = this.data?.entities?.length && !this.data.entities_partial ? new Set(this.data.entities) : null;
     const known = Object.keys(this.data?.layout?.thing_classes || {});
     for (const ent of known) {
       if (seen.has(ent) || (tracked && !tracked.has(ent))) continue;
