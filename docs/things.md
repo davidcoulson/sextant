@@ -35,6 +35,18 @@ only applied to the ranges when `range_auto_scale` is switched on in Tuning,
 so the number can be watched first. A hand-set trim still applies; the learned
 scale works on what is left.
 
+A thing Bermuda no longer tracks under a slug it once did - a rename, an IRK
+swap, a Tile whose ID rotated - would otherwise live on in the list on the
+[Live](live.md) page as a ghost that is *away* for ever, still pinned to its
+owner. After an hour of Bermuda not naming the slug, Sextant forgets it by
+itself: its settings, its remembered last sighting and its history go (the
+same as selecting it on the Live page and choosing **Forget**). The hour is a
+grace, so a Bermuda reload, a restart, or an untrack undone within it costs a
+thing nothing. Robots are never forgotten this way, and nothing is while a
+FindMy accessory set up in Bermuda has not been heard since Bermuda started:
+Bermuda does not count it as tracked until then, and an AirTag that is only
+away must not lose its settings.
+
 Below is everything Bermuda hears but does not track, with the kind of
 device (iBeacon, Tile, Apple, IRK, plain address), what it appears to be
 (the Bermuda fork names families the Bluetooth SIG's lists cannot — a Govee

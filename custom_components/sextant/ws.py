@@ -199,13 +199,16 @@ async def ws_layout_get(hass, connection, msg):
         robot_names[core.robot_thing(vac)] = (st.attributes.get("friendly_name") if st else None) or vac
     names = _safe(lambda: _thing_names(hass, tracked, layout), {})
     names = {**robot_names, **(names if isinstance(names, dict) else {})}
-    tracked = set(tracked) | set(core.robot_things(layout))
+    tracked = set(tracked) | set(robot_names)   # every robot, lined up or not, as the sweep has it
     connection.send_result(msg["id"], {
         "layout": layout if isinstance(layout, dict) else None,
         "version": get_layout_version(hass),
         "maps": sorted(maps),
         "icons": icons,
         "entities": sorted(tracked),
+        # True while "entities" may be missing a thing Bermuda has set up but
+        # not heard yet (the orphan sweep holds then too): Live hides nothing.
+        "entities_partial": core._findmy_not_all_tracked(hass),
         # Display names: what Bermuda calls the device, overridden by the name
         # the user gave the device in Home Assistant (device registry); a
         # robot is called what its vacuum entity is called.
@@ -1611,29 +1614,7 @@ async def ws_thing_forget(hass, connection, msg):
         removed_points = await hass.async_add_executor_job(history_mod.drop_entity, core.history_dir(hass), ent)
     dropped = []
     if not tracked:
-        # Its learned fingerprint gain and range scale too (kept in memory and in its own
-        # store, which the next periodic save rewrites without it): a thing
-        # re-added under the same name starts from its seed, not from a
-        # ghost's learning.
-        had_gain = core._fingerprint_db.thing_gain.pop(ent, None) is not None
-        if (core._range_scale.pop(ent, None) is not None) or had_gain:
-            # Saved now, not at the next periodic save: a reload before then
-            # would read the old gain back from its store.
-            snap = core._fp_gain_snapshot()
-            core._persist_fp_gains.saved = snap
-            try:
-                await core.save_fp_gains(hass, snap)
-            except Exception as e:  # noqa: BLE001 - the in-memory forget still stands
-                _LOGGER.debug("Fingerprint gains not saved after forgetting %s: %s", ent, e)
-        async with LAYOUT_LOCK:
-            layout = get_layout_for_edit(hass)
-            if isinstance(layout, dict):
-                for key, table in layout.items():
-                    if key.startswith("thing_") and isinstance(table, dict) and ent in table:
-                        del table[ent]
-                        dropped.append(key)
-                if dropped:
-                    await save_layout(hass, layout)
+        dropped = await core.forget_thing_settings(hass, [ent])
     try:
         await core._save_runtime(hass)   # so a restart does not bring the sighting back
     except Exception as e:  # noqa: BLE001 - the in-memory forget still stands
