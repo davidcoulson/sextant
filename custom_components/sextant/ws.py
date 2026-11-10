@@ -238,7 +238,7 @@ async def ws_layout_get(hass, connection, msg):
         "restart_needed": RUNNING_CODE is not None and await hass.async_add_executor_job(code_signature) != RUNNING_CODE,
         "scanners": {
             addr: {"slug": info.get("slug"), "name": info.get("name"), "area": info.get("area_name"),
-                   "is_remote": info.get("is_remote")}
+                   "is_remote": info.get("is_remote"), "last_seen_age": info.get("last_seen_age")}
             for addr, info in directory.items()
         },
         "offline_receivers": list(dom.get("rl_offline") or []),
@@ -818,8 +818,10 @@ async def ws_thing_readings(hass, connection, msg):
     ent = msg["entity"]
     layout = get_layout(hass) or {}
     max_age = core._reading_max_age(layout)
-    by_address = bermuda_source.async_get_readings_by_address(hass) or {}
-    by_slug = bermuda_source.async_get_readings(hass) or {}
+    stale_factor = core._tuning(layout, "stale_interval_factor")
+    use_history = core._tuning(layout, "distance_estimator") == "median"
+    by_address = bermuda_source.async_get_readings_by_address(hass, include_history=use_history) or {}
+    by_slug = bermuda_source.async_get_readings(hass, include_history=use_history) or {}
     rows = []
     for floor in layout.get("floor", []):
         for rx in floor.get("receivers", []):
@@ -828,6 +830,7 @@ async def ws_thing_readings(hass, connection, msg):
             if reading is None:
                 reading, source = by_slug.get((ent, rx.get("entity_id"))), "slug"
             age = None if reading is None else reading.get("age")
+            limit = core._stale_limit(reading, max_age, stale_factor)
             rows.append({
                 "floor": floor.get("name"),
                 "receiver": rx.get("entity_id"),
@@ -835,7 +838,8 @@ async def ws_thing_readings(hass, connection, msg):
                 "source": source if reading is not None else None,
                 "distance": None if reading is None else reading.get("distance"),
                 "age": age,
-                "stale": bool(max_age and age is not None and age > max_age),
+                "stale": bool(limit and age is not None and age > limit),
+                "stale_after": limit,
             })
     stem = ent.rsplit("_", 1)[0]
     prefixes = sorted({p for p, _a in by_address if p == ent or p.startswith(stem)})
@@ -922,6 +926,10 @@ PROXY_FACTS = (
     ("irks_loaded", "_ble_irks_loaded"),
     ("rpas_dropped", "_ble_rpas_dropped"),
     ("uuid_allowed", "_ble_service_uuid_allowed"),
+    # The two counters every proxy keeps enabled (the totals above are
+    # disabled by default since ble-proxy 2026.11.07.9): per minute, 5 min window.
+    ("probes_forwarded", "_ble_probes_forwarded"),
+    ("other_forwarded", "_ble_other_forwarded"),
 )
 
 
@@ -1603,29 +1611,7 @@ async def ws_thing_forget(hass, connection, msg):
         removed_points = await hass.async_add_executor_job(history_mod.drop_entity, core.history_dir(hass), ent)
     dropped = []
     if not tracked:
-        # Its learned fingerprint gain too (kept in memory and in its own
-        # store, which the next periodic save rewrites without it): a thing
-        # re-added under the same name starts from its seed, not from a
-        # ghost's learning.
-        if core._fingerprint_db.thing_gain.pop(ent, None) is not None:
-            # Saved now, not at the next periodic save: a reload before then
-            # would read the old gain back from its store.
-            snap = {"learned_gain": round(core._fingerprint_db.learned_gain, 4),
-                    "thing_gain": {e: round(g, 4) for e, g in core._fingerprint_db.thing_gain.items()}}
-            core._persist_fp_gains.saved = snap
-            try:
-                await core.save_fp_gains(hass, snap)
-            except Exception as e:  # noqa: BLE001 - the in-memory forget still stands
-                _LOGGER.debug("Fingerprint gains not saved after forgetting %s: %s", ent, e)
-        async with LAYOUT_LOCK:
-            layout = get_layout_for_edit(hass)
-            if isinstance(layout, dict):
-                for key, table in layout.items():
-                    if key.startswith("thing_") and isinstance(table, dict) and ent in table:
-                        del table[ent]
-                        dropped.append(key)
-                if dropped:
-                    await save_layout(hass, layout)
+        dropped = await core.forget_thing_settings(hass, [ent])
     try:
         await core._save_runtime(hass)   # so a restart does not bring the sighting back
     except Exception as e:  # noqa: BLE001 - the in-memory forget still stands

@@ -918,6 +918,26 @@ def test_median_distance_respects_window_and_minimum():
     assert sextant._median_distance({"history": hist, "age": 0}, 15.0, 1) is None  # no parameters
 
 
+def test_median_quality_falls_with_a_jumpy_signal_but_not_one_glitch():
+    tight = [[-65, 100.0], [-67, 99.0], [-63, 98.0], [-90, 97.0], [-65, 96.5]]   # one glitch
+    jumpy = [[-55, 100.0], [-75, 99.0], [-62, 98.0], [-80, 97.0], [-66, 96.5]]
+    assert sextant._median_distance(_reading(tight), 15.0, 3)[1] == 1.0
+    _, q = sextant._median_distance(_reading(jumpy), 15.0, 3)
+    assert 0.2 < q < 0.6
+
+
+def test_stale_limit_follows_how_often_the_proxy_hears_the_thing():
+    every_second = _reading([[-60, 100.0 - i] for i in range(8)])
+    every_ten = _reading([[-60, 100.0 - 10 * i] for i in range(4)])
+    assert sextant._stale_limit(every_second, 45.0, 5.0) == 10.0      # 5 x 1 s, floored
+    assert sextant._stale_limit(every_ten, 45.0, 5.0) == 45.0         # 5 x 10 s, capped
+    assert sextant._stale_limit(_reading([[-60, 100.0 - 3 * i] for i in range(5)]), 45.0, 5.0) == 15.0
+    assert sextant._stale_limit(every_second, 45.0, 0) == 45.0        # off
+    assert sextant._stale_limit(None, 45.0, 5.0) == 45.0              # entity path, no history
+    assert sextant._stale_limit(_reading([[-60, 100.0]]), 45.0, 5.0) == 45.0  # too thin
+    assert sextant._stale_limit(every_second, 0, 5.0) == 0            # max age disabled
+
+
 # ---------------------------------------------------------------------------
 # Zone election: hysteresis, dwell, stationary lock
 # ---------------------------------------------------------------------------

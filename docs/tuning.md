@@ -45,10 +45,12 @@ distances in metres.
 | `fingerprint_missing_m` | 12 | how far "not heard" counts as |
 | `fingerprint_ref_gain` | 1.0 | probe beacons hotter (<1) or cooler (>1) than things |
 | `fingerprint_auto_gain` | true | learn the rest of that gain from the things |
+| `range_auto_scale` | false | multiply each thing's ranges by the scale learned from its own fits |
 | `fingerprint_marks` | true | location pins double as fingerprint references |
 | `distance_estimator` | `bermuda` | `bermuda` or `median` |
 | `median_window_secs` | 15 | samples newer than this feed the median |
 | `median_min_samples` | 3 | fewer falls back to Bermuda's distance |
+| `stale_interval_factor` | 5 | a reading is stale after this many times the gap its proxy usually hears the thing at (10 s floor, `reading_max_age` cap; 0 = the cap alone) |
 | `solver_max_receivers` | 8 | nearest proxies per solve (0 = all) |
 | `solver_max_range` | 12 | drop readings beyond this once three remain (0 = never) |
 | `solver_near_always` | 3 | proxies within this always count |

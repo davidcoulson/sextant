@@ -12,6 +12,7 @@ import asyncio
 import time
 
 import sextant
+from sextant import bermuda_source
 from sextant import storage as st
 from conftest import make_hass
 
@@ -34,6 +35,9 @@ def _hass(tmp_path, monkeypatch):
     async def _noop(h):
         return None
     monkeypatch.setattr(sextant, "_save_runtime", _noop)
+    # Bermuda answers, and has no FindMy accessory waiting to be heard.
+    monkeypatch.setattr(bermuda_source, "async_get_findmy_accessories", lambda h: [])
+    monkeypatch.setattr(bermuda_source, "async_get_tracked_devices", lambda h: {})
     for table, ents in ((sextant._last_seen, ("old_irk", "phone", "vacuum_rocky")),
                         (sextant._zone_state, ("old_irk",))):
         for ent in ents:
@@ -111,3 +115,40 @@ def test_a_tracked_thing_away_from_home_is_never_swept(tmp_path, monkeypatch):
     assert lay["thing_names"]["phone"] == "David"
     assert lay["thing_owners"]["phone"] == "person.david"
     assert "phone" in sextant._last_seen, "even its month-old sighting stays"
+
+
+def test_nothing_is_swept_while_a_findmy_accessory_is_unheard(tmp_path, monkeypatch):
+    # Bermuda tracks a FindMy accessory only once it has heard it: after a
+    # restart an AirTag that is away is configured but outside the tracked
+    # set, exactly like a ghost. Until every accessory is in, hold.
+    hass = _hass(tmp_path, monkeypatch)
+    _stamp(hass, "old_irk", sextant.ORPHAN_GRACE_S + 5)
+    monkeypatch.setattr(bermuda_source, "async_get_findmy_accessories", lambda h: [{"address": "findmy_AB"}])
+    assert run(sextant.sweep_untracked_things(hass, {"phone"})) == []
+    monkeypatch.setattr(bermuda_source, "async_get_findmy_accessories", lambda h: None)   # cannot say
+    assert run(sextant.sweep_untracked_things(hass, {"phone"})) == []
+    assert "old_irk" in st.get_layout(hass)["thing_names"]
+    monkeypatch.setattr(bermuda_source, "async_get_findmy_accessories", lambda h: [{"address": "findmy_AB"}])
+    monkeypatch.setattr(bermuda_source, "async_get_tracked_devices", lambda h: {"findmy_ab": {"slug": "keys"}})
+    assert run(sextant.sweep_untracked_things(hass, {"phone", "keys"})) == ["old_irk"]
+
+
+def test_a_robot_not_lined_up_yet_keeps_its_settings(tmp_path, monkeypatch):
+    hass = _hass(tmp_path, monkeypatch)
+    _stamp(hass, "vacuum_rocky", sextant.ORPHAN_GRACE_S * 10)
+    assert run(sextant.sweep_untracked_things(hass, {"phone"})) == []
+    assert "vacuum_rocky" in sextant._last_seen
+
+
+def test_the_learned_range_scale_goes_with_the_ghost(tmp_path, monkeypatch):
+    hass = _hass(tmp_path, monkeypatch)
+    monkeypatch.setitem(sextant._range_scale, "old_irk", 0.8)
+    saved = []
+
+    async def _save(h, snap):
+        saved.append(snap)
+    monkeypatch.setattr(sextant, "save_fp_gains", _save)
+    _stamp(hass, "old_irk", sextant.ORPHAN_GRACE_S + 5)
+    assert run(sextant.sweep_untracked_things(hass, {"phone"})) == ["old_irk"]
+    assert "old_irk" not in sextant._range_scale
+    assert saved and "old_irk" not in saved[-1]["range_scale"]

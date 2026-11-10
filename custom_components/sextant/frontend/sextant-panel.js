@@ -1258,6 +1258,8 @@ class SextantLive extends LitElement {
       ["Adverts forwarded", val("adverts_forwarded")],
       ["Adverts ignored", [val("adverts_dropped"), val("drop_rate") ? `(${val("drop_rate")})` : null].filter(Boolean).join(" ") || null],
       ["IRKs installed", val("irks_loaded")],
+      ["Probes heard /min", val("probes_forwarded")],
+      ["Unclaimed forwarded /min", val("other_forwarded")],
       ["Wi-Fi", [val("wifi_signal"), val("ssid", false), val("channel") ? `ch ${val("channel")}` : null].filter(Boolean).join(" · ") || null],
       ["Chip", [d.chip, val("temperature")].filter(Boolean).join(" · ") || null],
       // What HA records for the node is whichever link it is on: a proxy that
@@ -1318,7 +1320,8 @@ class SextantLive extends LitElement {
   _allRows() {
     const live = (this.positions?.positions || []).slice();
     const seen = new Set(live.map((p) => p.ent));
-    const tracked = Array.isArray(this.data?.entities) ? new Set(this.data.entities) : null;
+    // An empty list is Bermuda not answering yet, not "nothing is tracked".
+    const tracked = this.data?.entities?.length ? new Set(this.data.entities) : null;
     const known = Object.keys(this.data?.layout?.thing_classes || {});
     for (const ent of known) {
       if (seen.has(ent) || (tracked && !tracked.has(ent))) continue;
@@ -1511,7 +1514,7 @@ class SextantLive extends LitElement {
    * metre changes (onView fires every frame; most frames move nothing). */
   _scaleViewChanged() {
     const k = this._map?.view?.k, scale = this._floorObj()?.scale;
-    const key = `${k}|${scale}`;
+    const key = `${k}|${scale}|${this._map?.isFit()}`; // the Fit button greys out at the fitted view
     if (key !== this._scaleKey) { this._scaleKey = key; this.requestUpdate(); }
   }
 
@@ -1654,7 +1657,7 @@ class SextantLive extends LitElement {
     // Fit, in and out, as their own small cluster in the bottom corner - out of
     // the way of the switches, and where every map puts them.
     const zoom = html`<div class="zoom ${this._history ? "lifted" : ""}" role="group" aria-label="Zoom">
-      <button title="Fit the whole floor into view" aria-label="Fit the whole floor" @click=${() => this._map.fit()}><ha-icon icon="mdi:fit-to-screen-outline"></ha-icon></button>
+      <button title="Fit the whole floor into view" aria-label="Fit the whole floor" ?disabled=${!!this._map?.isFit()} @click=${() => this._map.fit()}><ha-icon icon="mdi:fit-to-screen-outline"></ha-icon></button>
       <button title="Zoom in" aria-label="Zoom in" @click=${() => this._map.zoomBy(1.3)}><ha-icon icon="mdi:plus"></ha-icon></button>
       <button title="Zoom out" aria-label="Zoom out" @click=${() => this._map.zoomBy(1 / 1.3)}><ha-icon icon="mdi:minus"></ha-icon></button>
     </div>`;
@@ -1981,6 +1984,7 @@ class SextantLive extends LitElement {
     .wifilegend .apkeys i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
     .zoom button { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--primary-text-color); cursor: pointer; }
     .zoom button:hover { background: var(--secondary-background-color, rgba(0,0,0,0.06)); }
+    .zoom button:disabled { opacity: 0.35; cursor: default; background: transparent; }
     .zoom button:focus-visible, .overlay .qa.opt:focus-visible { outline: 2px solid var(--primary-color, #03a9f4); outline-offset: 1px; }
     .zoom ha-icon { --mdc-icon-size: 20px; }
     .overlay ha-formfield { --mdc-typography-body2-font-size: 12px; }
