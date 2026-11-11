@@ -65,7 +65,10 @@ and the person is `away` now rather than when `away_after_secs` runs out.
 Once Sextant has lost them (`presence: away`), a phone or watch of theirs still joined to one
 of the house's Wi-Fi access points keeps them home (`source: wifi`): the
 room and floor are what that access point has been learned to mean, the
-attribute `access_point` names it, and `via` is the Wi-Fi tracker. After
+attribute `access_point` names it, and `via` is the Wi-Fi tracker. A router
+holds a client home for minutes after it last saw it, so a GPS fix that far
+from home, made over a minute after the access point last saw the phone
+(UniFi), overrules it. After
 that the first GPS tracker in their list that is neither broken nor stale
 gives the zone (`source: gps`), or the state is `away` with nothing usable
 (`source: none`). [Wi-Fi](things.md#wi-fi) says where the trackers come from. The list is set per person on
@@ -106,6 +109,31 @@ stamped the same way, at the last sighting. Both survive a restart, and they cha
 a departure, so the recorder gets one row per event: trigger on the
 attribute leaving `None` and the time is in the event
 ([recipe](recipes.md#when-someone-left)).
+
+### Events
+
+The same arrivals and departures are on the event bus, for a trigger that
+needs no state to compare:
+
+| Event | Fired when | Data |
+|---|---|---|
+| `sextant_person_arrived` | a person's tracker goes from away to home | `person`, `source` (`ble`, `wifi` or `gps`), `time`, `people_home` |
+| `sextant_person_left` | a person's tracker goes from home to away | `person`, `source` (what last had them home), `time`, `people_home` |
+| `sextant_first_arrived` | an arrival into a house with nobody home | `person`, `source`, `time` |
+| `sextant_everyone_left` | a departure leaves nobody home | `person` (the last to leave), `source`, `time` |
+
+`time` is the tracker's `arrived_at` or `departed_at`, and `people_home` is
+who is home after the change. "Everyone" is whoever was home: someone away
+for the term does not hold `sextant_everyone_left` up. Pets make no events,
+and neither does a restart or a person just added.
+
+```yaml
+triggers:
+  - trigger: event
+    event_type: sextant_person_arrived
+    event_data:
+      person: person.david
+```
 
 ## Rooms
 

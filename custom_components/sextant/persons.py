@@ -347,6 +347,57 @@ def gps_left(gps, last_heard, home=None, min_distance_m=200.0) -> bool:
     return _haversine_m(home, (lat, lon)) - max(0.0, float(accuracy)) >= min_distance_m
 
 
+def wifi_outrun(gps, wifi_seen, home=None, min_distance_m=200.0, margin_secs=60.0) -> bool:
+    """Whether GPS overrules a Wi-Fi tracker that still reads home: the
+    router keeps a client "home" for minutes after it last saw the phone, so
+    a departure read Kitchen on Wi-Fi with the phone 800 m down the road. A
+    fix that would end the hold (gps_left), made over margin_secs after the
+    access point last saw the client, says the Wi-Fi word is the stale one.
+
+    Without a last-seen time (not a UniFi client) Wi-Fi stands: on an
+    arrival the old far-away fix is the stale one, and nothing else tells
+    the two apart.
+    """
+    seen = valid_time(wifi_seen)
+    return seen is not None and gps_left(gps, seen + margin_secs, home, min_distance_m)
+
+
+def visit_events(before, after, pets=()) -> list:
+    """The bus events one cycle's visits make: ``[(event_type, data)]``.
+
+    ``sextant_person_arrived`` / ``sextant_person_left`` when a person's
+    tracker changes side, ``sextant_first_arrived`` when that fills an empty
+    house and ``sextant_everyone_left`` when it empties it. "Everyone" is
+    whoever was home: someone away for the term never holds it up. A person
+    with no visit before (new, or a first start) makes no event, so nothing
+    fires for the state Sextant merely found. Pets never count.
+    """
+    def is_home(v):
+        return isinstance(v, dict) and valid_time(v.get("arrived")) is not None
+
+    people = sorted(p for p in after if p not in pets)
+    home_before = {p for p in before if p not in pets and is_home(before[p])}
+    home_now = [p for p in people if is_home(after[p])]
+    arrived = [p for p in home_now if p in before and p not in home_before]
+    left = [p for p in people if p in home_before and not is_home(after[p])]
+    out = []
+    for p in arrived:
+        out.append(("sextant_person_arrived", {"person": p, "source": after[p].get("via"),
+                                               "time": visit_attrs(after[p])["arrived_at"], "people_home": home_now}))
+    for p in left:
+        out.append(("sextant_person_left", {"person": p, "source": before[p].get("via"),
+                                            "time": visit_attrs(after[p])["departed_at"], "people_home": home_now}))
+    if arrived and not home_before:
+        first = min(arrived, key=lambda p: after[p]["arrived"])
+        out.append(("sextant_first_arrived", {"person": first, "source": after[first].get("via"),
+                                              "time": visit_attrs(after[first])["arrived_at"]}))
+    if left and not home_now:
+        last = max(left, key=lambda p: valid_time(after[p].get("departed")) or 0.0)
+        out.append(("sextant_everyone_left", {"person": last, "source": before[last].get("via"),
+                                              "time": visit_attrs(after[last])["departed_at"]}))
+    return out
+
+
 def fuse(best, why, presence, held, gps, ignored, home=None, wifi=None):
     """(suffix -> (state, attributes)) for a person's sensors, BLE, Wi-Fi and GPS fused.
 

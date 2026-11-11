@@ -4872,6 +4872,11 @@ def _update_person_sensors(hass):
         view = {}
     view["by_person"] = {}
     _wifi_now = view
+    try:
+        wifi_clients = _unifi_clients(hass) or {}
+    except Exception:  # noqa: BLE001 - no last-seen times: Wi-Fi stands as it reads
+        wifi_clients = {}
+    visits_before = dict(_person_visits)
     for person, things in by_person.items():
         candidates, presences, heard = [], [], []
         for ent in things:
@@ -4914,6 +4919,13 @@ def _update_person_sensors(hass):
             presence, held, held_why = "away", None, None
         wifi = _wifi_for(person, view)
         view["by_person"][person] = wifi
+        # A router holds a client "home" for minutes after it last saw it: a
+        # GPS fix down the road, newer than that, is the truer word (persons.wifi_outrun).
+        wifi_home = wifi
+        if wifi and presence == "away":
+            mac = ((view.get("candidates") or {}).get(wifi["entity"]) or {}).get("mac")
+            if persons_mod.wifi_outrun(gps, (wifi_clients.get(mac) or {}).get("last_seen"), home, _tuning(layout, "gps_leave_m")):
+                wifi_home = None
         # Learning, from BLE's word: the access point each of their trackers
         # is on gets this floor and room in its footprint, and every candidate
         # tracker is scored against this person by whether its access point's
@@ -4940,14 +4952,16 @@ def _update_person_sensors(hass):
                 ap_floor, _room = wifi_mod.best_place(_wifi_store, c["ap"], (info.get("floor"), info.get("room")))
                 same_floor = (ap_floor == ble_floor) if ap_floor else None
             wifi_mod.match_update(_wifi_store, tracker, person, wifi_mod.agreement(c["home"], person_home, same_floor), now)
-        for suffix, (state, attrs) in persons_mod.fuse(best, why if best else held_why, presence, held, gps, ignored, home, wifi).items():
+        for suffix, (state, attrs) in persons_mod.fuse(best, why if best else held_why, presence, held, gps, ignored, home, wifi_home).items():
             # What kind of thing speaks for them (phone, watch, cat...), so a card need not guess from its name.
             attrs["via_class"] = classes.get(attrs["via"]) if attrs.get("via") else None
             update_sextant_sensor_state(hass, persons_mod.sensor_entity_id(slug, suffix, person in pets), state, attrs)
-        _person_visits[person] = persons_mod.visit(_person_visits.get(person), persons_mod.home_via(presence, gps, wifi), last_heard, now)
+        _person_visits[person] = persons_mod.visit(_person_visits.get(person), persons_mod.home_via(presence, gps, wifi_home), last_heard, now)
         tracker = trackers.get(slug)
         if tracker is not None:
-            tracker.set_fix(persons_mod.tracker_fix(presence, gps, _person_visits[person], wifi))
+            tracker.set_fix(persons_mod.tracker_fix(presence, gps, _person_visits[person], wifi_home))
+    for event, data in persons_mod.visit_events(visits_before, _person_visits, pets):
+        hass.bus.async_fire(event, data)
     try:
         _wifi_heat_cycle(hass, layout, view, by_person, rows, classes, now)
     except Exception as e:  # noqa: BLE001 - the signal map is a picture, never a stop
