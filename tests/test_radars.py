@@ -735,3 +735,21 @@ def test_tracks_are_pushed_to_subscribers_only_when_they_change(tmp_path):
     states["binary_sensor.t1a"] = state("off")
     _written(hass, at=at + 1.5)
     assert len(got) == 3 and got[2]["radar_targets"][0]["state"] == "held"
+
+
+def test_a_rooms_presence_sensor_fills_it_and_holds_after_it_goes_off():
+    """The theater: the tracking radar loses a still audience, the LD2412 does not."""
+    key, last = ("Basement", "Home Theater"), {}
+    assert radars.presence_rooms({}, {key: True}, last, 100.0) == {key: {"count": 1, "held": 0}}
+    assert radars.presence_rooms({}, {key: False}, last, 105.0, hold_s=10.0) == {key: {"count": 1, "held": 1}}
+    assert radars.presence_rooms({}, {key: False}, last, 400.0, {key: 600.0}, 10.0) == {key: {"count": 1, "held": 1}}  # the room's own hold
+    assert radars.presence_rooms({}, {key: False}, last, 800.0, {key: 600.0}, 10.0) == {} and last == {}
+
+
+def test_a_presence_sensor_never_changes_a_count_the_tracks_made_or_a_room_never_on():
+    key = ("Basement", "Home Theater")
+    two = {key: {"count": 2, "held": 0}}
+    assert radars.presence_rooms(two, {key: True}, {}, 100.0) == two
+    assert radars.presence_rooms({}, {key: False}, {}, 100.0) == {}
+    gone = {key: 95.0}
+    assert radars.presence_rooms({}, {}, gone, 100.0) == {} and gone == {}   # the room no longer has a sensor

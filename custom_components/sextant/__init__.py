@@ -3834,6 +3834,10 @@ def _radar_push(hass, tracks):
         _LOGGER.debug("Radar tracks not pushed: %s", e)
 
 
+# (floor, room) -> when the room's presence sensor last read on (radars.presence_rooms).
+_room_presence_on = {}
+
+
 async def _radar_cycle(hass, layout, now=None):
     """One reading: every placed radar's targets, followed as tracks and
     paired with things; the untracked count, the rooms and the subscribers
@@ -3918,6 +3922,11 @@ async def _radar_cycle(hass, layout, now=None):
                 seen = by_room.setdefault((t["floor"], t["room"]), {"count": 0, "held": 0})
                 seen["count"] += 1
                 seen["held"] += t["state"] == "held"
+        # shortcut: read on the radar's clock, so a room's presence sensor counts only while some radar is placed; give it its own tick if one is wanted without.
+        sensors = {(f.get("name"), z.get("entity_id")): getattr(hass.states.get(z["presence_entity"]), "state", None) == "on"
+                   for f in layout["floor"] for z in (f.get("zones") or [])
+                   if isinstance(z, dict) and not z.get("no_go") and isinstance(z.get("presence_entity"), str) and z["presence_entity"]}
+        by_room = radars_mod.presence_rooms(by_room, sensors, _room_presence_on, now, holds, _radar_tracker.hold_s)
     if hass.data.get("sextant_radar_rooms") != by_room:
         hass.data["sextant_radar_rooms"] = by_room
         _publish_rooms(hass)

@@ -1409,6 +1409,13 @@ class SextantEdit extends LitElement {
         <div class="row">
           ${uiField({ label: "Stays occupied for (s)", type: "number", step: 1, min: 0, max: 3600, value: item.hold_s ?? "", placeholder: String(this.data?.layout?.tuning?.mmwave_hold_s ?? this.data?.tuning_spec?.mmwave_hold_s?.default ?? 10), onChange: (v) => this._edit("hold_s", v), style: "width: 200px" })}
         </div>
+        <div class="row">
+          ${uiSelect({ label: "Presence sensor", value: item.presence_entity || "", options: [{ value: "", label: "none" },
+            ...Object.values(this.hass?.states || {}).filter((s) => s.entity_id.startsWith("binary_sensor.") && ["occupancy", "presence", "motion"].includes(s.attributes?.device_class) && !s.entity_id.endsWith("_sextant_occupancy"))
+              .map((s) => ({ value: s.entity_id, label: s.attributes.friendly_name || s.entity_id })).sort((a, b) => a.label.localeCompare(b.label))],
+            onChange: (v) => this._edit("presence_entity", v || undefined), style: "flex: 1" })}
+        </div>
+        <div class="muted small">An occupancy sensor that says someone is here without saying where (the LD2412 half of an Apollo R PRO-1): the room is occupied while it is on, and for the time above after it goes off. It sees someone sitting still, which a tracking sensor loses.</div>
         <div class="muted small">After an mmWave sensor loses everyone in this room, how long the room stays occupied and the last person stays on the map. Blank follows <code>mmwave_hold_s</code> on the Tuning page. Give a bedroom or a reading corner minutes: someone lying still drops out of a radar's view.</div>` : nothing}
       ${sel.kind === "subzone" ? html`
         <div class="row">

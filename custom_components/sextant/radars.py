@@ -414,3 +414,25 @@ class Tracker:
             self._next += 1
         self.tracks = kept
         return [dict(tr) for tr in kept]
+
+
+def presence_rooms(by_room, sensors, last_on, now, holds=None, hold_s=HOLD_S):
+    """The rooms' radar say with each room's presence sensor added: a plain
+    occupancy sensor (an LD2412, a ceiling mmWave with no coordinates) sees
+    the still audience a tracking radar drops. ``sensors`` is {(floor, room):
+    on?}; ``last_on`` remembers when each last read on, so the room's hold
+    runs from there the way it does for a lost track. A room the tracks
+    already fill is left as it is: the sensor says "someone", not how many.
+    """
+    out = dict(by_room)
+    for key, is_on in sensors.items():
+        if is_on:
+            last_on[key] = now
+        elif now - last_on.get(key, float("-inf")) > (holds or {}).get(key, hold_s):
+            last_on.pop(key, None)
+            continue
+        if not (out.get(key) or {}).get("count"):
+            out[key] = {"count": 1, "held": 0 if is_on else 1}
+    for key in [k for k in last_on if k not in sensors]:
+        del last_on[key]
+    return out
