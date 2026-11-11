@@ -287,3 +287,52 @@ def test_the_command_writes_the_order_and_clears_an_empty_list(tmp_path):
     assert "person_trackers" not in st.get_layout(hass)
     run(ws.ws_person_trackers_set(hass, conn, {"id": 3, "type": "sextant/person/trackers/set", "person": "eilee", "trackers": []}))
     assert conn.errors
+
+
+# --- GPS over a Wi-Fi tracker that still reads home ------------------------------
+
+def test_a_fix_down_the_road_after_the_router_last_saw_the_phone_overrules_wifi():
+    """Michelle's departures: Kitchen on Wi-Fi for up to 8 min with GPS 800 m out."""
+    assert persons.wifi_outrun(_fix(), NOW - 200, HOME)
+
+
+def test_wifi_stands_on_an_arrival_or_without_a_last_seen_time():
+    assert not persons.wifi_outrun(_fix(reported=NOW - 600), NOW - 5, HOME)   # home again: the old fix is the stale one
+    assert not persons.wifi_outrun(_fix(), NOW - 50, HOME)                    # inside the margin
+    assert not persons.wifi_outrun(_fix(), None, HOME)                        # not a UniFi client
+    assert not persons.wifi_outrun(_fix(zone="home"), NOW - 200, HOME)
+
+
+# --- Events ----------------------------------------------------------------------
+
+D, M, J, CAT = "person.david", "person.michelle", "person.jack", "person.meg"
+IN = {"arrived": NOW - 3600, "departed": None, "via": "ble"}
+OUT = {"arrived": None, "departed": NOW - 3600}
+
+
+def _types(events):
+    return [e for e, _ in events]
+
+
+def test_a_departure_fires_left_and_the_last_one_everyone_left():
+    """Jack at the dorm all term never holds up "everyone left"."""
+    gone = {"arrived": None, "departed": NOW - 60}
+    one = persons.visit_events({D: IN, M: IN, J: OUT}, {D: gone, M: IN, J: OUT})
+    assert one == [("sextant_person_left", {"person": D, "source": "ble", "time": persons.visit_attrs(gone)["departed_at"], "people_home": [M]})]
+    both = persons.visit_events({D: gone, M: IN, J: OUT, CAT: IN}, {D: gone, M: gone, J: OUT, CAT: IN}, {CAT})
+    assert _types(both) == ["sextant_person_left", "sextant_everyone_left"]
+    assert both[1][1]["person"] == M
+
+
+def test_an_arrival_fires_arrived_and_first_arrived_into_an_empty_house():
+    back = {"arrived": NOW, "departed": None, "via": "gps"}
+    events = persons.visit_events({D: OUT, M: OUT}, {D: back, M: OUT})
+    assert _types(events) == ["sextant_person_arrived", "sextant_first_arrived"]
+    assert events[0][1]["source"] == "gps" and events[0][1]["people_home"] == [D]
+    assert _types(persons.visit_events({D: IN, M: OUT}, {D: IN, M: back})) == ["sextant_person_arrived"]
+
+
+def test_no_event_for_a_state_merely_found_a_change_of_source_or_a_pet():
+    assert persons.visit_events({}, {D: IN, M: OUT}) == []                    # first start
+    assert persons.visit_events({D: IN}, {D: {**IN, "via": "wifi"}}) == []    # same visit, other source
+    assert persons.visit_events({CAT: IN, D: OUT}, {CAT: OUT, D: OUT}, {CAT}) == []
