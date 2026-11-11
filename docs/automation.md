@@ -125,7 +125,9 @@ needs no state to compare:
 `time` is the tracker's `arrived_at` or `departed_at`, and `people_home` is
 who is home after the change. "Everyone" is whoever was home: someone away
 for the term does not hold `sextant_everyone_left` up. Pets make no events,
-and neither does a restart or a person just added.
+and neither does a person just added. Nothing fires in the first five
+minutes after a restart, while the GPS and Wi-Fi trackers load; a change
+that happened across the restart fires once that has passed.
 
 ```yaml
 triggers:
