@@ -376,7 +376,7 @@ def visit_events(before, after, pets=()) -> list:
         return isinstance(v, dict) and valid_time(v.get("arrived")) is not None
 
     people = sorted(p for p in after if p not in pets)
-    home_before = {p for p in before if p not in pets and is_home(before[p])}
+    home_before = {p for p in people if is_home(before.get(p))}
     home_now = [p for p in people if is_home(after[p])]
     arrived = [p for p in home_now if p in before and p not in home_before]
     left = [p for p in people if p in home_before and not is_home(after[p])]

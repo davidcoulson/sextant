@@ -4124,6 +4124,12 @@ _presence_published = {}
 _person_last = {}
 # Each person's visit (persons.visit): {person: {"arrived", "departed"}}; saved with the runtime.
 _person_visits = {}
+# The visits the events were last told from (persons.visit_events), and when
+# telling starts: a restart's first minutes, with GPS and Wi-Fi not loaded yet,
+# can read someone away who never moved, and that must not run a routine.
+_event_visits = None
+_events_from = 0.0
+EVENTS_SETTLE_S = 300.0
 # What Wi-Fi association has taught (wifi.py): access-point footprints and
 # tracker-to-person scores; saved with the runtime. _wifi_now is this cycle's
 # view: {"candidates", "aps": {mac: {"name", "floor", "room", "area_id", "floor_id"}},
@@ -4792,13 +4798,13 @@ def _wifi_cycle(hass, layout, by_person):
     return {"candidates": cands, "aps": aps, "assigned": assigned, "names": names, "people": set(people)}
 
 
-def _wifi_for(person, view):
+def _wifi_for(person, view, skip=()):
     """The person's Wi-Fi word this cycle: {"entity", "home", "ap", "ap_name",
     "floor", "room", "area_id", "floor_id", "odds"} from the first of their
     trackers that is home (a phone before a watch is just list order), or None."""
     for a in (view.get("assigned") or {}).get(person) or []:
         c = (view.get("candidates") or {}).get(a["entity"])
-        if not c or not c["home"]:
+        if not c or not c["home"] or a["entity"] in skip:
             continue
         ap = c.get("ap")
         info = (view.get("aps") or {}).get(ap) or {}
@@ -4876,7 +4882,9 @@ def _update_person_sensors(hass):
         wifi_clients = _unifi_clients(hass) or {}
     except Exception:  # noqa: BLE001 - no last-seen times: Wi-Fi stands as it reads
         wifi_clients = {}
-    visits_before = dict(_person_visits)
+    global _event_visits, _events_from
+    if _event_visits is None:
+        _event_visits, _events_from = dict(_person_visits), now + EVENTS_SETTLE_S
     for person, things in by_person.items():
         candidates, presences, heard = [], [], []
         for ent in things:
@@ -4923,9 +4931,16 @@ def _update_person_sensors(hass):
         # GPS fix down the road, newer than that, is the truer word (persons.wifi_outrun).
         wifi_home = wifi
         if wifi and presence == "away":
-            mac = ((view.get("candidates") or {}).get(wifi["entity"]) or {}).get("mac")
-            if persons_mod.wifi_outrun(gps, (wifi_clients.get(mac) or {}).get("last_seen"), home, _tuning(layout, "gps_leave_m")):
-                wifi_home = None
+            # Each tracker on its own: the phone gone down the road does not
+            # take a watch the access point saw five seconds ago with it.
+            outrun = {
+                a["entity"] for a in (view.get("assigned") or {}).get(person) or []
+                if persons_mod.wifi_outrun(
+                    gps, (wifi_clients.get(((view.get("candidates") or {}).get(a["entity"]) or {}).get("mac")) or {}).get("last_seen"),
+                    home, _tuning(layout, "gps_leave_m"))
+            }
+            if outrun:
+                wifi_home = _wifi_for(person, view, outrun)
         # Learning, from BLE's word: the access point each of their trackers
         # is on gets this floor and room in its footprint, and every candidate
         # tracker is scored against this person by whether its access point's
@@ -4960,8 +4975,10 @@ def _update_person_sensors(hass):
         tracker = trackers.get(slug)
         if tracker is not None:
             tracker.set_fix(persons_mod.tracker_fix(presence, gps, _person_visits[person], wifi_home))
-    for event, data in persons_mod.visit_events(visits_before, _person_visits, pets):
-        hass.bus.async_fire(event, data)
+    if now >= _events_from:
+        for event, data in persons_mod.visit_events(_event_visits, _person_visits, pets):
+            hass.bus.async_fire(event, data)
+        _event_visits = dict(_person_visits)
     try:
         _wifi_heat_cycle(hass, layout, view, by_person, rows, classes, now)
     except Exception as e:  # noqa: BLE001 - the signal map is a picture, never a stop

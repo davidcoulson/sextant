@@ -336,3 +336,14 @@ def test_no_event_for_a_state_merely_found_a_change_of_source_or_a_pet():
     assert persons.visit_events({}, {D: IN, M: OUT}) == []                    # first start
     assert persons.visit_events({D: IN}, {D: {**IN, "via": "wifi"}}) == []    # same visit, other source
     assert persons.visit_events({CAT: IN, D: OUT}, {CAT: OUT, D: OUT}, {CAT}) == []
+
+
+def test_a_person_no_longer_tracked_does_not_count_as_having_been_home():
+    back = {"arrived": NOW, "departed": None, "via": "ble"}
+    assert _types(persons.visit_events({J: IN, D: OUT}, {D: back})) == ["sextant_person_arrived", "sextant_first_arrived"]
+
+
+def test_a_restart_blip_between_two_tellings_makes_no_event():
+    """Events compare the visits before the settle time with those after it:
+    away and back in between is the same side, whatever the arrival time."""
+    assert persons.visit_events({D: IN}, {D: {"arrived": NOW, "departed": None, "via": "gps"}}) == []
