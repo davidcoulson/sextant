@@ -232,6 +232,13 @@ With its tracks, a placed sensor does four things:
   carries anything, and stays so through the hold: see
   [Rooms](automation.md#rooms).
 
+A room's **Presence sensor** adds a plain occupancy sensor to the last of
+those: one that says someone is there without saying where, such as the
+LD2412 half of an Apollo R PRO-1. The room is occupied while it is on and
+through the room's hold after it goes off. It sees a still audience that a
+tracking sensor drops, counts as one person (`radar: 1`) whoever is there,
+and is read only while at least one mmWave sensor is placed on the plan.
+
 `mmwave_fusion`, `mmwave_auto_pins` and `mmwave_rooms` on the Tuning page
 turn the first, the second and the fourth off without removing the sensor.
 
