@@ -43,12 +43,12 @@ def test_stable_hint_solves_once_instead_of_the_full_battery():
     d = math.hypot(5, 5)
     pts = [(0, 0, d), (10, 0, d), (0, 10, d)]
     calls = []
-    real_least_squares = sextant.least_squares_bounded_soft_l1
+    real_least_squares = sextant.fit_point
     try:
-        sextant.least_squares_bounded_soft_l1 = lambda *a, **kw: calls.append(1) or real_least_squares(*a, **kw)
+        sextant.fit_point = lambda *a, **kw: calls.append(1) or real_least_squares(*a, **kw)
         x, y = sextant.trilaterate(pts, stable_hint=(5.0, 5.0))
     finally:
-        sextant.least_squares_bounded_soft_l1 = real_least_squares
+        sextant.fit_point = real_least_squares
     assert len(calls) == 1
     assert abs(x - 5) < 0.05 and abs(y - 5) < 0.05
 
@@ -59,7 +59,7 @@ def test_stable_hint_falls_back_to_full_battery_when_it_fails():
     were given, not the failed hint solve's own (unreliable) answer."""
     d = math.hypot(5, 5)
     pts = [(0, 0, d), (10, 0, d), (0, 10, d)]
-    real_least_squares = sextant.least_squares_bounded_soft_l1
+    real_least_squares = sextant.fit_point
     calls = []
 
     def fake(*a, **kw):
@@ -70,10 +70,10 @@ def test_stable_hint_falls_back_to_full_battery_when_it_fails():
         return r
 
     try:
-        sextant.least_squares_bounded_soft_l1 = fake
+        sextant.fit_point = fake
         x_hint, y_hint = sextant.trilaterate(pts, stable_hint=(5.0, 5.0))
     finally:
-        sextant.least_squares_bounded_soft_l1 = real_least_squares
+        sextant.fit_point = real_least_squares
 
     assert len(calls) > 1  # fell through to the full battery, not just the hint
     x_plain, y_plain = sextant.trilaterate(pts)
@@ -751,7 +751,7 @@ def test_multistart_never_worse_than_centroid_only_and_sometimes_better():
         # apples to apples, or a solver's own convergence tolerance (scipy's
         # trf polishes ~1e-5 tighter than the numpy LM) masquerades as a
         # multi-start regression.
-        single = sextant.least_squares_bounded_soft_l1(
+        single = sextant.solver_numpy.least_squares_bounded_soft_l1(
             obj, centroid, jac,
             ([bounds[0], bounds[1]], [bounds[2], bounds[3]]),
             f_scale=sextant.SOLVER_ROBUST_F_SCALE,
