@@ -16,7 +16,7 @@ from homeassistant.const import EVENT_HOMEASSISTANT_FINAL_WRITE, EVENT_HOMEASSIS
 from homeassistant.util.unit_conversion import DistanceConverter
 from homeassistant.util import slugify
 import numpy as np
-from .solver_numpy import least_squares_bounded_soft_l1
+from .solver_numpy import fit_point
 import voluptuous as vol
 from homeassistant.core import ServiceCall, ServiceResponse, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
@@ -7393,10 +7393,6 @@ class SextantCordsAPI(HomeAssistantView):
         return web.json_response(apitricords)
 
 # Trilateration function
-# Floor on the distance used in the Jacobian's direction vector. Only guards
-# the 0/0 at a fit sitting exactly on a receiver; far below any real geometry.
-_JAC_MIN_DIST = 1e-9
-
 
 def _finite_xy(pt) -> bool:
     """The first two values of ``pt`` are finite numbers."""
@@ -7479,22 +7475,8 @@ def trilaterate(known_points, bounds=None, min_weight_radius=1e-3, stable_hint=N
     # sqrt(w) * (distance - r), so sqrt() belongs here rather than per call.
     sqrt_w = np.sqrt(rel / np.maximum(wrad, min_weight_radius) ** 2)
 
-    def objective_function(X):
-        return sqrt_w * (np.hypot(px - X[0], py - X[1]) - pr)
-
-    def jacobian(X):
-        """Exact derivative of the residual: d/dX sqrt(w)(|X - p| - r).
-
-        Supplying it saves least_squares the finite-difference pass, which
-        costs one extra objective evaluation per unknown per iteration.
-        The distance is floored before dividing: a fit sitting exactly on a
-        receiver has an undefined direction, and a NaN there would poison the
-        whole step rather than just that row.
-        """
-        dx = X[0] - px
-        dy = X[1] - py
-        d = np.maximum(np.hypot(dx, dy), _JAC_MIN_DIST)
-        return np.column_stack((sqrt_w * dx / d, sqrt_w * dy / d))
+    # Plain lists for the fit: at a dozen receivers floats beat arrays.
+    fit_args = (px.tolist(), py.tolist(), pr.tolist(), sqrt_w.tolist())
 
     # MULTI-START. The soft_l1 objective is multi-modal once gross outliers are
     # present, and a single descent from the centroid can settle in a basin
@@ -7526,9 +7508,7 @@ def trilaterate(known_points, bounds=None, min_weight_radius=1e-3, stable_hint=N
     result = None
     if stable_hint is not None:
         hint = np.clip(np.asarray(stable_hint, dtype=float), lo, hi)
-        r = least_squares_bounded_soft_l1(
-            objective_function, hint, jacobian, (lo, hi), f_scale=SOLVER_ROBUST_F_SCALE,
-        )
+        r = fit_point(*fit_args, hint, (lo, hi), SOLVER_ROBUST_F_SCALE)
         if r.success:
             result = r
 
@@ -7555,9 +7535,9 @@ def trilaterate(known_points, bounds=None, min_weight_radius=1e-3, stable_hint=N
 
     # One call solves every start and keeps the lowest robust cost (the cost
     # is the same objective for every start, so it is directly comparable).
-    result = least_squares_bounded_soft_l1(
-        objective_function, unique_starts[0], jacobian, (lo, hi),
-        f_scale=SOLVER_ROBUST_F_SCALE, extra_starts=unique_starts[1:],
+    result = fit_point(
+        *fit_args, unique_starts[0], (lo, hi), SOLVER_ROBUST_F_SCALE,
+        extra_starts=unique_starts[1:],
     )
 
     if result is None or not result.success:
