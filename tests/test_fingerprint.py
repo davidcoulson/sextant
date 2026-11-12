@@ -153,6 +153,18 @@ def test_full_cycle_fused_mode_publishes_and_places_with_one_receiver(monkeypatc
     hass.data["sextant_sensors"] = {f"sensor.e_sextant_{k}": _Sensor() for k in ("zone", "nearest_zone", "floor", "sub_zone")}
     entry = cycle(0.5, 0.5, only_first=True)
     assert entry["rms_m"] is None and entry["fp"]["refs"][0][0] == layout["floor"][0]["receivers"][0]["entity_id"]
+    # The same lone receiver hearing it from 9 m says only "somewhere within
+    # 9 m": no fix (a phone in the drive read Couch off the garage proxy).
+    _reset_thing_state()
+    sextant.apitricords.clear()
+    data = copy.deepcopy(layout)
+    rx = data["floor"][0]["receivers"][0]
+    rx["distance"], rx["cords"]["r"] = 9.0, 900.0
+    for other in data["floor"][0]["receivers"][1:]:
+        other.pop("distance", None)
+        other["cords"].pop("r", None)
+    run(sextant.update_trilateration_and_zone(hass, [{"entity": "e", "data": data}], "e"))
+    assert not any(i["ent"] == "e" for i in sextant.apitricords)
 
 
 def test_geometric_mode_never_touches_the_reference_db(monkeypatch):

@@ -449,6 +449,10 @@ MIN_WEIGHT_RADIUS_M = 0.5
 # smoothed per-floor probability, and the elected floor only changes when a
 # challenger clearly and persistently outscores the incumbent.
 FLOOR_CANDIDATES = 3         # solve at most this many floors per cycle
+# A floor with fewer than three receivers is placed by its fingerprint alone
+# only when the nearest reads within this (m). The same 3 m as
+# outside_faint_m: inside, a thing's nearest proxy read 0.25-1.5 m.
+FP_ONLY_MAX_NEAREST_M = 3.0
 FLOOR_PROB_SMOOTHING = 0.7   # EMA weight on the previous probability
 FLOOR_SWITCH_MARGIN = 0.05   # probability lead that starts/keeps a challenge
 # Dwell is WALL-CLOCK, not cycles: "three cycles" was 30 s at the default
@@ -2636,10 +2640,14 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
         refs_by_floor = fingerprint.build_references(layout, _fingerprint_db.vectors(), fp_gain, extra=_mark_refs(layout, entity))
         thing_vec = fingerprint.thing_vector(layout)
     # A floor with references can compete on its fingerprint with a single
-    # receiver hearing the thing; trilateration alone needs three.
+    # receiver hearing the thing; trilateration alone needs three. Only with
+    # that receiver close, though: one or two far ones say "within 10 m of
+    # the garage", and the best match for that put a phone still out in the
+    # drive on the Couch.
     solvable = [
         c for c in candidates
-        if len(c["cords"]) >= 3 or (thing_vec and c["name"] in refs_by_floor)
+        if len(c["cords"]) >= 3
+        or (thing_vec and c["name"] in refs_by_floor and c["nearest_m"] <= FP_ONLY_MAX_NEAREST_M)
     ]
     to_solve = solvable[:FLOOR_CANDIDATES]
     if incumbent is not None and not any(c["name"] == incumbent for c in to_solve):
