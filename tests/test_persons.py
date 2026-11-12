@@ -21,6 +21,14 @@ def test_owners_groups_things_by_person():
     assert persons.owners({}) == {}
 
 
+def test_a_person_with_only_gps_owns_nothing_but_is_placed():
+    layout = {"thing_owners": {"watch": "person.david"},
+              "person_trackers": {"person.david": ["device_tracker.d"], "person.sherry": ["device_tracker.s"],
+                                  "person.none": []}}
+    assert persons.owners(layout) == {"person.david": ["watch"], "person.sherry": []}
+    assert persons.pet_persons(persons.owners(layout), {}) == set()
+
+
 def test_the_thing_being_carried_speaks_for_its_owner():
     # Phone on the couch for an hour; the watch walked to the kitchen a minute ago.
     phone = thing("phone", "phone", still_for=3600, spot="Couch")

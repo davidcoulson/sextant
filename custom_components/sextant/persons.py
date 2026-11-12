@@ -67,12 +67,20 @@ PERSON_SENSOR_KINDS = [
 
 
 def owners(layout) -> dict[str, list[str]]:
-    """person entity id -> the things it owns."""
+    """person entity id -> the things it owns.
+
+    A person with GPS trackers but no thing is here too, owning nothing: GPS
+    alone places them (and gives them arrival and departure events).
+    """
     out: dict[str, list[str]] = {}
     raw = layout.get("thing_owners") if isinstance(layout, dict) else None
     for thing, person in (raw or {}).items():
         if isinstance(person, str) and person.startswith("person."):
             out.setdefault(person, []).append(thing)
+    gps = layout.get("person_trackers") if isinstance(layout, dict) else None
+    for person, trackers in (gps or {}).items() if isinstance(gps, dict) else ():
+        if isinstance(person, str) and person.startswith("person.") and trackers:
+            out.setdefault(person, [])
     return out
 
 
