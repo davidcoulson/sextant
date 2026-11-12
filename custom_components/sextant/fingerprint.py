@@ -257,22 +257,38 @@ def similarity(thing, reference, missing_m):
     more: they carry the geometry, far ones mostly carry the noise. None
     when there is nothing to compare.
     """
-    keys = set(thing) | set(reference)
-    if not keys:
-        return None
+    # Hot path (about 13,000 calls a minute): one pass over the reference,
+    # then the receivers only the thing heard. Where one side is missing the
+    # other is the nearer of the two, so the weight needs no min().
+    log = math.log
+    get = thing.get
     num = den = 0.0
-    for rx in keys:
-        dt = thing.get(rx)
-        dr = reference.get(rx)
-        if dt is None and dr is None:
-            continue
+    for rx, dr in reference.items():
+        dt = get(rx)
         if dt is None:
-            dt = max(missing_m, dr)
+            if dr is None:
+                continue
+            w = 1.0 / (1.0 + dr)
+            if dr < missing_m:
+                e = log(missing_m / dr)
+                num += w * e * e
         elif dr is None:
-            dr = max(missing_m, dt)
-        e = math.log(dt / dr)
-        w = 1.0 / (1.0 + min(dt, dr))
-        num += w * e * e
+            w = 1.0 / (1.0 + dt)
+            if dt < missing_m:
+                e = log(dt / missing_m)
+                num += w * e * e
+        else:
+            e = log(dt / dr)
+            w = 1.0 / (1.0 + (dt if dt < dr else dr))
+            num += w * e * e
+        den += w
+    for rx, dt in thing.items():
+        if dt is None or rx in reference:
+            continue
+        w = 1.0 / (1.0 + dt)
+        if dt < missing_m:
+            e = log(dt / missing_m)
+            num += w * e * e
         den += w
     if den <= 0:
         return None
