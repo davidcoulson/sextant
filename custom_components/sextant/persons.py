@@ -113,11 +113,13 @@ def locates_owner(layout, ent, cls) -> bool:
 
 def always_home(layout, ent, cls) -> bool:
     """Whether a day of silence from this thing means something is wrong (the
-    dead-thing repair): its own setting, else its class - a pet's tag never
-    leaves for long, where a phone or a suitcase is away for days."""
-    own = (layout.get("thing_always_home") or {}).get(ent) if isinstance(layout, dict) else None
-    if isinstance(own, bool):
-        return own
+    dead-thing repair): its own setting (thing_always_home), else its class's
+    (class_always_home), else the default - a pet's tag never leaves for
+    long, where a phone or a suitcase is away for days."""
+    layout = layout if isinstance(layout, dict) else {}
+    for own in ((layout.get("thing_always_home") or {}).get(ent), (layout.get("class_always_home") or {}).get(cls)):
+        if isinstance(own, bool):
+            return own
     return cls in PET_CLASSES
 
 

@@ -666,3 +666,18 @@ def test_thing_tune_sets_and_clears_always_home_and_locates_owner(tmp_path):
         assert st.get_layout(hass)[f"thing_{key}"] == {"tile": True}
         run(ws.ws_thing_tune(hass, conn, {"id": 2, "type": "sextant/thing/tune", "entity": "tile", key: None}))
         assert st.get_layout(hass)[f"thing_{key}"] == {}, "None is back to the class"
+
+
+def test_thing_tune_sets_the_class_always_home_and_a_home_tracker(tmp_path):
+    layout = _layout()
+    layout["thing_classes"] = {"model_s": "car"}
+    hass = _hass_with_layout(tmp_path, layout)
+    conn = _Conn()
+    run(ws.ws_thing_tune(hass, conn, {"id": 1, "type": "sextant/thing/tune", "entity": "model_s", "class_always_home": True,
+                                        "home_entity": "device_tracker.model_s_location"}))
+    assert st.get_layout(hass)["class_always_home"] == {"car": True}
+    assert st.get_layout(hass)["thing_home_entity"] == {"model_s": "device_tracker.model_s_location"}
+    run(ws.ws_thing_tune(hass, conn, {"id": 2, "type": "sextant/thing/tune", "entity": "model_s", "home_entity": "sensor.model_s_range"}))
+    assert conn.errors and st.get_layout(hass)["thing_home_entity"] == {"model_s": "device_tracker.model_s_location"}
+    run(ws.ws_thing_tune(hass, conn, {"id": 3, "type": "sextant/thing/tune", "entity": "model_s", "home_entity": None}))
+    assert st.get_layout(hass)["thing_home_entity"] == {}

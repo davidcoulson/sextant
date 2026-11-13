@@ -2,7 +2,7 @@
   "issues": {
     "dead_thing": {
       "title": "{name} has gone quiet",
-      "description": "{name} has not been heard for {age}. It was last heard in {where}.{battery}\n\nIt most likely needs a new battery. This repair clears itself when {name} is heard again."
+      "description": "{name} has not been heard for {age}. It was last heard in {where}.{battery}{home}\n\nThis repair clears itself when {name} is heard again."
     }
   }
 }

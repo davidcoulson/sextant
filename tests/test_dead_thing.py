@@ -6,6 +6,7 @@ and the repair goes as soon as the thing is heard again or forgotten.
 """
 import json
 import time
+from datetime import datetime, timezone
 import types
 from pathlib import Path
 
@@ -34,7 +35,7 @@ def test_raised_once_away_with_a_flat_battery_and_cleared_when_heard():
     _heard(85)
     sextant._update_dead_issues(hass, LAYOUT)
     issue = hass.data["issues"][KEY]
-    assert issue["translation_placeholders"] == {"name": "Primrose", "age": "3 days", "where": "Foyer, Ground Floor", "battery": " Its battery last read 1%."}
+    assert issue["translation_placeholders"] == {"name": "Primrose", "age": "3 days", "where": "Foyer, Ground Floor", "battery": " Its battery last read 1%.", "home": ""}
     sextant._update_dead_issues(hass, LAYOUT)
     assert list(hass.data["issues"]) == [KEY], "the same id every cycle: never a second repair"
     _heard(0)
@@ -63,6 +64,40 @@ def test_always_home_is_the_class_unless_the_thing_says_otherwise():
     _heard(25, "tile")
     sextant._update_dead_issues(hass, {"thing_classes": {"tile": "tag"}, "thing_always_home": {"tile": True}})
     assert list(hass.data["issues"]) == [("sextant", "dead_thing_tile")], "a tag that never leaves the office: switched on"
+
+
+def test_the_class_setting_stands_between_the_thing_and_the_default():
+    hass = _hass("80")
+    _heard(25, "tile")
+    layout = {"thing_classes": {"tile": "tag"}, "class_always_home": {"tag": True, "dog": False}}
+    sextant._update_dead_issues(hass, layout)
+    assert list(hass.data["issues"]) == [("sextant", "dead_thing_tile")], "every tag, by the class's setting"
+    sextant._update_dead_issues(hass, {**layout, "thing_always_home": {"tile": False}})
+    assert not hass.data["issues"], "but not this one"
+    _heard(25)
+    sextant._update_dead_issues(hass, {**layout, "thing_classes": {"primrose": "dog"}})
+    assert not hass.data["issues"], "the default for dogs switched off"
+
+
+def test_home_by_its_own_tracker_but_unheard():
+    """Both cars sat in the garage, home by their own GPS, unheard for six days."""
+    layout = {"thing_home_entity": {"model_s": "device_tracker.model_s_location"}, "tuning": LAYOUT["tuning"]}
+    key = ("sextant", "dead_thing_model_s")
+
+    def run(state, home_for_s, heard_hours_ago=150):
+        hass = make_hass()
+        tracker = types.SimpleNamespace(state=state, attributes={"friendly_name": "Model S Location"},
+                                        last_changed=datetime.fromtimestamp(time.time() - home_for_s, timezone.utc))
+        hass.states = types.SimpleNamespace(get={"device_tracker.model_s_location": tracker}.get)
+        _heard(heard_hours_ago, "model_s")
+        sextant._update_dead_issues(hass, layout)
+        return hass.data.get("issues") or {}
+
+    issues = run("home", 3600)
+    assert issues[key]["translation_placeholders"]["home"] == " Model S Location says it is home."
+    assert not run("not_home", 3600), "away by its own tracker: only away"
+    assert not run("home", 60), "just back: the proxies get their fifteen minutes"
+    assert not run("home", 3600, heard_hours_ago=0), "home and heard"
 
 
 def test_not_raised_for_a_thing_that_is_only_away_or_only_low():
@@ -99,5 +134,5 @@ def test_cleared_when_the_thing_is_forgotten():
 def test_the_repair_has_its_text():
     en = json.loads((Path(sextant.__file__).parent / "translations" / "en.json").read_text())
     text = en["issues"]["dead_thing"]
-    for key in ("name", "age", "where", "battery"):
+    for key in ("name", "age", "where", "battery", "home"):
         assert "{" + key + "}" in text["description"]

@@ -385,6 +385,11 @@ async def ws_tuning_set(hass, connection, msg):
     vol.Optional("locates_owner"): vol.Any(None, bool),
     # Whether a day of silence raises the dead-thing repair; None is "from its class".
     vol.Optional("always_home"): vol.Any(None, bool),
+    # The same for every thing of this thing's class (layout class_always_home).
+    vol.Optional("class_always_home"): bool,
+    # A tracker of the thing's own (a car's or a phone's GPS): home there while
+    # away here raises the dead-thing repair.
+    vol.Optional("home_entity"): vol.Any(None, str),
     # A battery sensor whose "Charging" takes the thing out of its owner's location.
     vol.Optional("charging_entity"): vol.Any(None, str),
     # The thing's own battery level, as a percentage sensor: shown on the Live
@@ -412,6 +417,9 @@ async def ws_thing_tune(hass, connection, msg):
     charging = msg.get("charging_entity")
     if charging and not re.fullmatch(r"(sensor|binary_sensor)\.[a-z0-9_]+", charging):
         return _error(connection, msg, "the on-charger sensor must be a sensor or binary_sensor")
+    home = msg.get("home_entity")
+    if home and not re.fullmatch(r"(device_tracker|person)\.[a-z0-9_]+", home):
+        return _error(connection, msg, "the home tracker must be a device_tracker or person")
     battery = msg.get("battery_entity")
     if battery and not re.fullmatch(r"sensor\.[a-z0-9_]+", battery):
         return _error(connection, msg, "the battery sensor must be a sensor")
@@ -519,26 +527,23 @@ async def ws_thing_tune(hass, connection, msg):
                 values.pop(entity, None)
             data[f"thing_{key}"] = values
             changes[key] = msg[key]
-        if "charging_entity" in msg:
-            values = data.get("thing_charging_entity")
+        cls = (data.get("thing_classes") or {}).get(entity)
+        if "class_always_home" in msg and cls:
+            values = data.get("class_always_home")
+            data["class_always_home"] = {**(values if isinstance(values, dict) else {}), cls: msg["class_always_home"]}
+            changes["class_always_home"] = msg["class_always_home"]
+        for key in ("charging_entity", "battery_entity", "home_entity"):
+            if key not in msg:
+                continue
+            values = data.get(f"thing_{key}")
             if not isinstance(values, dict):
                 values = {}
-            if msg["charging_entity"]:
-                values[entity] = msg["charging_entity"]
+            if msg[key]:
+                values[entity] = msg[key]
             else:
                 values.pop(entity, None)
-            data["thing_charging_entity"] = values
-            changes["charging_entity"] = msg["charging_entity"]
-        if "battery_entity" in msg:
-            values = data.get("thing_battery_entity")
-            if not isinstance(values, dict):
-                values = {}
-            if msg["battery_entity"]:
-                values[entity] = msg["battery_entity"]
-            else:
-                values.pop(entity, None)
-            data["thing_battery_entity"] = values
-            changes["battery_entity"] = msg["battery_entity"]
+            data[f"thing_{key}"] = values
+            changes[key] = msg[key]
         await save_layout(hass, data)
     connection.send_result(msg["id"], {"entity": entity, **changes})
 

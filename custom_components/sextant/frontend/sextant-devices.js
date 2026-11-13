@@ -301,6 +301,20 @@ class SextantDevices extends LitElement {
     return ids.sort();
   }
 
+  /** Trackers to offer for "Home tracker" (a car's or a phone's own GPS, or a
+   * person); the current choice always included, the thing's namesakes first. */
+  _homeTrackers(current, slug) {
+    const ids = Object.keys(this.hass?.states || {}).filter((e) => e.startsWith("device_tracker.") || e.startsWith("person."));
+    if (current && !ids.includes(current)) ids.push(current);
+    const mine = (e) => (slug && e.includes(slug) ? 0 : 1);
+    return ids.sort((a, b) => mine(a) - mine(b) || a.localeCompare(b));
+  }
+
+  /** Whether this class is always home: the dialog's unsaved switch, the layout's setting, else pets. */
+  _classHome(w) {
+    return w.classHome ?? this.data?.layout?.class_always_home?.[w.thing_class] ?? PET_CLASSES.includes(w.thing_class);
+  }
+
   /** Percentage battery sensors to offer for "Battery sensor"; the current choice always included.
    * Ranked by name so a thing's own sensor comes first: a pet's Holy-IoT tag is
    * sensor.great_room_holy_iot_sensors_<pet>_battery. */
@@ -327,6 +341,7 @@ class SextantDevices extends LitElement {
       alwaysHome: typeof layout.thing_always_home?.[slug] === "boolean" ? (layout.thing_always_home[slug] ? "yes" : "no") : "",
       charging: layout.thing_charging_entity?.[slug] || "",
       battery: layout.thing_battery_entity?.[slug] || "",
+      home: layout.thing_home_entity?.[slug] || "",
       height: toDisplayLen(layout.thing_heights?.[slug], this.hass),
       ref: layout.thing_ref_offsets?.[slug] ?? "",
       icon: layout.thing_icons?.[slug] || "",
@@ -428,6 +443,9 @@ class SextantDevices extends LitElement {
       always_home: w.alwaysHome === "yes" ? true : w.alwaysHome === "no" ? false : null,
       charging_entity: w.charging || null,
       battery_entity: w.battery || null,
+      home_entity: w.home || null,
+      // Only when the switch was touched, and only for a thing that has a class.
+      ...(typeof w.classHome === "boolean" && w.thing_class ? { class_always_home: w.classHome } : {}),
       height: w.height === "" || w.height == null ? null : fromDisplayLen(w.height, this.hass),
       ref_offset_db: w.ref === "" || w.ref == null ? null : Number(w.ref),
       icon: w.icon || null,
@@ -504,10 +522,19 @@ class SextantDevices extends LitElement {
           <span class="small muted">Shown on the Live page, with a badge once it drops to 20%. A tag that goes quiet looks exactly like a thing that has left, until the battery says why.</span>
         </div>
         <div class="row">
+          ${uiSelect({ label: "Home tracker", value: w.home || "", options: [
+            { value: "", label: "None" },
+            ...this._homeTrackers(w.home, w.slug).map((e) => ({ value: e, label: `${this.hass?.states?.[e]?.attributes?.friendly_name || e} (${this.hass?.states?.[e]?.state ?? "?"})` })),
+          ], onChange: (v) => { w.home = v; this.requestUpdate(); }, style: "width: 320px" })}
+          <span class="small muted">A tracker of the thing's own: a car's or a phone's GPS. When it says home and Sextant cannot hear the thing, Home Assistant gets a repair.</span>
+        </div>
+        <div class="row">
           ${uiSelect({ label: "Always home", value: w.alwaysHome || "", options: [
-            { value: "", label: `From its class (${PET_CLASSES.includes(w.thing_class) ? "yes" : "no"})` },
+            { value: "", label: `From its class (${this._classHome(w) ? "yes" : "no"})` },
             { value: "yes", label: "Yes" }, { value: "no", label: "No" },
           ], onChange: (v) => { w.alwaysHome = v; this.requestUpdate(); }, style: "width: 220px" })}
+          ${w.thing_class ? uiSwitch({ label: `Every ${THING_CLASSES.find((c) => c[0] === w.thing_class)?.[1] || w.thing_class} is always home`, checked: this._classHome(w),
+            onChange: (v) => { w.classHome = v; this.requestUpdate(); } }) : nothing}
           <span class="small muted">A thing that is always home raises a Home Assistant repair once it has not been heard for a day. A pet's tag is by default; a phone or a bag, away for days, is not. A battery at 10% or less on a thing that has gone quiet raises one either way.</span>
         </div>
         <div class="row colour">
