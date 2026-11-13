@@ -4338,6 +4338,10 @@ def _dead_things(hass, layout, now):
         except AttributeError:  # no such entity, or no time on it
             home = False
         if not flat and not home and not (age >= DEAD_AFTER_S and persons_mod.always_home(layout, ent, classes.get(ent))):
+            # A sensor that cannot be read (Home Assistant starting, its
+            # integration down) is no news: None keeps a repair already raised.
+            if (ent in batteries and level is None) or (ent in homes and getattr(tracker, "state", None) in (None, "unknown", "unavailable")):
+                dead[ent] = None
             continue
         where = ", ".join(str(seen[k]) for k in ("zone", "floor") if seen.get(k) and seen[k] != "unknown")
         dead[ent] = {
@@ -4350,10 +4354,19 @@ def _dead_things(hass, layout, now):
     return dead
 
 
+_dead_issues_from = 0.0
+
+
 def _maintain_dead_issues(hass):
     """The dead-thing repairs after a cycle - or after one with nothing to
     solve, which is exactly what the house looks like once its last tag has
     died. Never lets a repair stop the things."""
+    # The last-heard times restored at start are as old as the restart was
+    # long: nothing is judged until the proxies have had time to report.
+    global _dead_issues_from
+    _dead_issues_from = _dead_issues_from or time.time() + EVENTS_SETTLE_S
+    if time.time() < _dead_issues_from:
+        return
     try:
         layout = get_layout(hass)
         _update_dead_issues(hass, layout if isinstance(layout, dict) else {})
@@ -4366,6 +4379,8 @@ def _update_dead_issues(hass, layout):
     thing is heard or forgotten."""
     dead = _dead_things(hass, layout, time.time())
     for ent, placeholders in dead.items():
+        if placeholders is None:  # unsure: neither raised nor cleared
+            continue
         ir.async_create_issue(
             hass, DOMAIN, DEAD_ISSUE_PREFIX + ent, is_fixable=False, severity=ir.IssueSeverity.WARNING,
             translation_key="dead_thing", translation_placeholders=placeholders,

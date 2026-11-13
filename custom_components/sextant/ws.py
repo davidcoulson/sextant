@@ -418,8 +418,8 @@ async def ws_thing_tune(hass, connection, msg):
     if charging and not re.fullmatch(r"(sensor|binary_sensor)\.[a-z0-9_]+", charging):
         return _error(connection, msg, "the on-charger sensor must be a sensor or binary_sensor")
     home = msg.get("home_entity")
-    if home and not re.fullmatch(r"(device_tracker|person)\.[a-z0-9_]+", home):
-        return _error(connection, msg, "the home tracker must be a device_tracker or person")
+    if home and not re.fullmatch(r"device_tracker\.[a-z0-9_]+", home):
+        return _error(connection, msg, "the home tracker must be a device_tracker")
     battery = msg.get("battery_entity")
     if battery and not re.fullmatch(r"sensor\.[a-z0-9_]+", battery):
         return _error(connection, msg, "the battery sensor must be a sensor")

@@ -304,7 +304,7 @@ class SextantDevices extends LitElement {
   /** Trackers to offer for "Home tracker" (a car's or a phone's own GPS, or a
    * person); the current choice always included, the thing's namesakes first. */
   _homeTrackers(current, slug) {
-    const ids = Object.keys(this.hass?.states || {}).filter((e) => e.startsWith("device_tracker.") || e.startsWith("person."));
+    const ids = Object.keys(this.hass?.states || {}).filter((e) => e.startsWith("device_tracker.") && this.hass.entities?.[e]?.platform !== "sextant");
     if (current && !ids.includes(current)) ids.push(current);
     const mine = (e) => (slug && e.includes(slug) ? 0 : 1);
     return ids.sort((a, b) => mine(a) - mine(b) || a.localeCompare(b));
