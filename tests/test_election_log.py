@@ -102,3 +102,19 @@ def test_clear_removes_our_files_and_nothing_else(tmp_path):
     assert files == 3 and size == 30
     assert not any(p.exists() for p in ours) and other.exists()
     assert run(el.clear(str(tmp_path / "missing"))) == (0, 0)
+
+
+def test_switching_off_deletes_the_files_once_and_then_stops_scanning(tmp_path):
+    d = tmp_path / "log"
+    log = el.ElectionLog(str(d))
+    log.add(_row("a"), NOW)
+    assert run(log.flush(24, now=NOW)) == 1 and (d / el.file_for(NOW)).exists()
+    assert run(log.flush(0, now=NOW)) == 0
+    assert not (d / el.file_for(NOW)).exists(), "off: the files go"
+    (d / el.file_for(NOW)).write_text("x")
+    run(log.flush(0, now=NOW))
+    assert (d / el.file_for(NOW)).exists(), "already swept: no scan while it stays off"
+    log.add(_row("a"), NOW)
+    run(log.flush(24, now=NOW))
+    run(log.flush(0, now=NOW))
+    assert not (d / el.file_for(NOW)).exists(), "switched on and off again: swept again"
