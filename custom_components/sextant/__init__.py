@@ -4442,6 +4442,7 @@ async def _restore_runtime(hass):
         _subzone_state[entity] = {**_new_subzone_state(state.get("floor"), state.get("zone"), now), **state}
     _arrivals.update(back["arrivals"])
     _person_visits.update(back.get("visits") or {})
+    _gps_asked.update(back.get("asked") or {})
     if back.get("wifi"):
         _wifi_store.update(back["wifi"])
     # The floor election, and with it the fact that this thing's floor is not
@@ -4572,7 +4573,7 @@ async def _save_runtime(hass, final=False):
         # a dying tag, was gone entirely after the 15:34 restart.
         rows = _rows_with_last_seen(rows, _last_seen)
         data = runtime_mod.snapshot(time.time(), kf=_kf_position_state, zones=_zone_state,
-                                    spots=_subzone_state, arrivals=_arrivals, rows=rows, visits=_person_visits, wifi=_wifi_store,
+                                    spots=_subzone_state, arrivals=_arrivals, rows=rows, visits=_person_visits, asked=_gps_asked, wifi=_wifi_store,
                                     floors=_floor_elections())
         await save_runtime(hass, data)
     except Exception as e:  # noqa: BLE001
@@ -5024,8 +5025,11 @@ def _wifi_floor_factor(entity, layout, floor_name):
 
 
 def _ask_phones_for_location(hass, layout, person):
-    """Fire a request_location_update push at each of the person's companion-app phones."""
+    """Fire a request_location_update push at each of the person's companion-app
+    phones. False when none was sent (no phone, or its notify service is not
+    up yet), so the caller asks again next cycle."""
     ent_reg = er.async_get(hass)
+    sent = False
     for eid in persons_mod.gps_sources(layout, person):
         try:
             entry = ent_reg.async_get(eid)
@@ -5036,8 +5040,10 @@ def _ask_phones_for_location(hass, layout, person):
             if hass.services.has_service("notify", name):
                 hass.async_create_task(hass.services.async_call(
                     "notify", name, {"message": "request_location_update"}, blocking=False))
+                sent = True
         except Exception:
             _LOGGER.debug("location request for %s failed", eid, exc_info=True)
+    return sent
 
 
 def _update_person_sensors(hass):
@@ -5134,8 +5140,8 @@ def _update_person_sensors(hass):
             presence, held, held_why = "away", None, None
         if _tuning(layout, "gps_leave_m") > 0 and persons_mod.should_ask_gps(
                 presence, best is not None, last_heard, _gps_asked.get(person)):
-            _gps_asked[person] = last_heard
-            _ask_phones_for_location(hass, layout, person)
+            if _ask_phones_for_location(hass, layout, person):
+                _gps_asked[person] = last_heard
         wifi = _wifi_for(person, view)
         view["by_person"][person] = wifi
         # A router holds a client "home" for minutes after it last saw it: a
