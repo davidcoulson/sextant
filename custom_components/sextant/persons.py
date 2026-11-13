@@ -117,7 +117,9 @@ def always_home(layout, ent, cls) -> bool:
     (class_always_home), else the default - a pet's tag never leaves for
     long, where a phone or a suitcase is away for days."""
     layout = layout if isinstance(layout, dict) else {}
-    for own in ((layout.get("thing_always_home") or {}).get(ent), (layout.get("class_always_home") or {}).get(cls)):
+    for key, who in (("thing_always_home", ent), ("class_always_home", cls)):
+        table = layout.get(key)
+        own = table.get(who) if isinstance(table, dict) else None
         if isinstance(own, bool):
             return own
     return cls in PET_CLASSES

@@ -1724,11 +1724,13 @@ async def update_tracked_entities(hass):
             if not unique_values:
                 _LOGGER.info("There are no devices present to track, sleep 10 seconds")
                 _maintain_rooms(hass)
+                _maintain_dead_issues(hass)
                 await asyncio.sleep(10)
                 continue  # Skip and start over
             if num_points < 3:
                 _LOGGER.info("There are not enough things with available data to track, sleep 10 seconds")
                 _maintain_rooms(hass)
+                _maintain_dead_issues(hass)
                 await asyncio.sleep(10)
                 continue  # Skip and start over
             # A thing added to Bermuda since setup has no sensors yet.
@@ -3623,11 +3625,7 @@ async def process_entities(hass, new_global_data):
         _publish_presence(hass, layout if isinstance(layout, dict) else {})
     except Exception as e:  # noqa: BLE001 - an attribute must never stop the things'
         _LOGGER.debug("Presence not published: %s", e)
-    try:
-        layout = get_layout(hass)
-        _update_dead_issues(hass, layout if isinstance(layout, dict) else {})
-    except Exception as e:  # noqa: BLE001 - a repair must never stop the things'
-        _LOGGER.debug("Dead-thing repairs not updated: %s", e)
+    _maintain_dead_issues(hass)
     try:
         layout = get_layout(hass)
         await election_log.get(hass).flush(_tuning(layout, "election_log_hours"))
@@ -4284,6 +4282,17 @@ def _dead_things(hass, layout, now):
             "home": f" {tracker.attributes.get('friendly_name') or homes[ent]} says it is home." if home else "",
         }
     return dead
+
+
+def _maintain_dead_issues(hass):
+    """The dead-thing repairs after a cycle - or after one with nothing to
+    solve, which is exactly what the house looks like once its last tag has
+    died. Never lets a repair stop the things."""
+    try:
+        layout = get_layout(hass)
+        _update_dead_issues(hass, layout if isinstance(layout, dict) else {})
+    except Exception as e:  # noqa: BLE001
+        _LOGGER.warning("Dead-thing repairs not updated: %s", e)
 
 
 def _update_dead_issues(hass, layout):

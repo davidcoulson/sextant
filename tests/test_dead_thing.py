@@ -131,6 +131,20 @@ def test_cleared_when_the_thing_is_forgotten():
     assert not hass.data["issues"]
 
 
+def test_reconciled_on_a_cycle_with_nothing_to_solve_and_a_bad_map_stops_nothing(monkeypatch):
+    """The house's last tag dying leaves no cycle to solve: the repairs are kept from that path too."""
+    import inspect
+    assert inspect.getsource(sextant).count("_maintain_dead_issues(hass)") >= 4, "both idle branches and the cycle"
+    from sextant import layout_check, persons
+    assert layout_check.layout_problem({"floor": [], "class_always_home": True}) is not None
+    assert persons.always_home({"class_always_home": True, "thing_always_home": []}, "primrose", "dog"), "falls to the default"
+    hass = _hass("1.0")
+    _heard(85)
+    monkeypatch.setattr(sextant, "get_layout", lambda h: LAYOUT)
+    sextant._maintain_dead_issues(hass)
+    assert KEY in hass.data["issues"]
+
+
 def test_the_repair_has_its_text():
     en = json.loads((Path(sextant.__file__).parent / "translations" / "en.json").read_text())
     text = en["issues"]["dead_thing"]
