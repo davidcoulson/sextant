@@ -431,8 +431,10 @@ def test_every_write_and_bermuda_command_requires_admin():
             "ws_kpi_baseline_save", "ws_kpi_baseline_delete"} <= admin
     assert not any(name.startswith("ws_bermuda_") for name in open_)
     assert {"ws_history_get", "ws_history_timeline", "ws_history_index", "ws_truth_list"} <= admin
-    assert {"ws_layout_get", "ws_calibration_status", "ws_selftest",
-            "ws_advice", "ws_receivers"} <= open_
+    assert {"ws_layout_get", "ws_thing_readings", "ws_property", "ws_proxy_info", "ws_beacon_links"} <= open_
+    # Heavy jobs and network details: administrators only (the Live page does not call them).
+    assert {"ws_selftest", "ws_advice", "ws_floor_bias_map", "ws_calibration_status", "ws_scanner_linking",
+            "ws_receivers", "ws_robot_list", "ws_radar_devices", "ws_radar_targets"} <= admin
     # Room-transition history from the recorder: admins only, like history.
     assert {"ws_kpi", "ws_kpi_baselines"} <= admin
 

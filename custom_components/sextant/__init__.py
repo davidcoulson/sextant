@@ -8099,6 +8099,8 @@ class SextantSelfTestAPI(HomeAssistantView):
         self.hass = hass
 
     async def get(self, request):
+        if (denied := _admin_only(request)) is not None:
+            return denied
         data = await async_run_selftest(self.hass)
         data["breakdown"] = selftest_breakdown(data)
         return web.json_response(data)

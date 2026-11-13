@@ -802,6 +802,7 @@ async def ws_history_timeline(hass, connection, msg):
     vol.Required("floor"): str,
     vol.Required("other"): str,
 })
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_floor_bias_map(hass, connection, msg):
     """This floor's election prior against another's, per half-metre cell (see floor_bias_map)."""
@@ -882,6 +883,7 @@ async def ws_history_clear(hass, connection, msg):
 
 
 @websocket_api.websocket_command({vol.Required("type"): "sextant/calibration/status"})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_calibration_status(hass, connection, msg):
     from .calibration import _status_payload, get_calibration_state  # noqa: PLC0415
@@ -909,6 +911,7 @@ async def ws_calibration_action(hass, connection, msg):
 
 
 @websocket_api.websocket_command({vol.Required("type"): "sextant/selftest"})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_selftest(hass, connection, msg):
     core = _core()
@@ -1040,6 +1043,7 @@ def _proxy_device(hass, slug, address):
 
 
 @websocket_api.websocket_command({vol.Required("type"): "sextant/scanner_linking"})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_scanner_linking(hass, connection, msg):
     core = _core()
@@ -1056,6 +1060,7 @@ async def ws_beacon_links(hass, connection, msg):
 
 
 @websocket_api.websocket_command({vol.Required("type"): "sextant/receivers"})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_receivers(hass, connection, msg):
     """Every placed receiver with its liveness, plus scanners Bermuda knows
@@ -1574,6 +1579,7 @@ async def ws_scanner_ignore(hass, connection, msg):
 
 
 @websocket_api.websocket_command({vol.Required("type"): "sextant/advice"})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_advice(hass, connection, msg):
     """Which rooms the proxies serve worst and where a proxy would help (sextant.advice)."""
@@ -1859,6 +1865,7 @@ def _robot_public(hass, vac, cfg):
 
 
 @websocket_api.websocket_command({vol.Required("type"): "sextant/robot/list"})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_robot_list(hass, connection, msg):
     """The Roborock vacuums, and how each is lined up with the plan (if it is)."""
@@ -1966,6 +1973,7 @@ async def ws_robot_dock(hass, connection, msg):
 
 
 @websocket_api.websocket_command({vol.Required("type"): "sextant/radar/devices"})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_radar_devices(hass, connection, msg):
     """Every device that reports mmWave target coordinates, for the Edit page:
@@ -2002,6 +2010,7 @@ async def ws_radar_devices(hass, connection, msg):
     vol.Optional("mount"): vol.Any(None, vol.In(["wall", "ceiling"])),
     vol.Optional("z_ref"): vol.Any(None, vol.In(["floor", "up", "down"])),
 })
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_radar_targets(hass, connection, msg):
     """One radar's targets right now, placed as the Edit page has it (which
