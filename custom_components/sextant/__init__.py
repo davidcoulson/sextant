@@ -2397,6 +2397,10 @@ async def update_receiver_liveness(hass):
                 return True
         return False if saw_state else None
 
+    # Offline verdicts that are a guess, good enough for a badge but not for
+    # a repair (_update_receiver_issues): see the two places that add to it.
+    guessed = set()
+
     def is_online(slug):
         address = placed_address.get(slug)
         if address and address in directory:
@@ -2405,6 +2409,8 @@ async def update_receiver_liveness(hass):
                 return age <= RECEIVER_OFFLINE_SECS
         age = ages.get(slug)
         if age is not None:
+            if api_ages is None:
+                guessed.add(slug)  # the dump's ages only grow while dump_devices is failing
             return (age + elapsed) <= RECEIVER_OFFLINE_SECS
         st = hass.states.get(f"binary_sensor.{slug}_status")
         if st and st.attributes.get("device_class") == "connectivity":
@@ -2414,9 +2420,70 @@ async def update_receiver_liveness(hass):
             return resolved
         # tier 4: distance heuristic (last resort). Matches the card: a receiver
         # here is online only while some thing reads a distance through it.
+        # No reading says little: nothing tracked may be near. Unless Bermuda
+        # lists its scanners and has dropped this one, which it does to a
+        # proxy that is down.
+        if not (address and directory and address not in directory):
+            guessed.add(slug)
         return slug in with_reading
 
     dom["rl_offline"] = sorted(s for s in receivers if not is_online(s))
+    dom["rl_offline_guessed"] = sorted(guessed)
+    try:
+        _update_receiver_issues(hass, layout if isinstance(layout, dict) else {}, time.time())
+    except Exception as e:  # noqa: BLE001 - a repair must never stop liveness
+        _LOGGER.debug("Dead-receiver repairs not updated: %s", e)
+
+
+# A placed receiver is called dead - a repair - once the liveness above has
+# had it offline for this long without a break: an hour rides out a firmware
+# update or a reboot. Counted from when Sextant first saw it offline, so a
+# restart of Home Assistant starts the hour again.
+DEAD_RECEIVER_AFTER_S = 3600.0
+DEAD_RECEIVER_ISSUE_PREFIX = "dead_receiver_"
+
+
+def _update_receiver_issues(hass, layout, now):
+    """One repair per placed receiver that has been offline (rl_offline) for
+    DEAD_RECEIVER_AFTER_S; gone again once it is online, ignored
+    (ignored_scanners) or off the plan. Unplaced receivers never get one, nor
+    does one whose offline is only a guess (rl_offline_guessed): a proxy with
+    no tag near it and no device to ask is not known to be down."""
+    from .ws import ignored_scanners  # noqa: PLC0415 - ws imports this module
+
+    dom = hass.data.setdefault(DOMAIN, {})
+    was = dom.get("rl_offline_since") or {}
+    offline = set(dom.get("rl_offline") or []) - set(dom.get("rl_offline_guessed") or [])
+    since = dom["rl_offline_since"] = {slug: was.get(slug, now) for slug in offline}
+    ignored = ignored_scanners(layout)
+    directory = bermuda_source.async_get_scanner_directory(hass) or {}
+    dead = {}
+    for floor in layout.get("floor") or []:
+        for rx in (floor.get("receivers") or []) if isinstance(floor, dict) else []:
+            slug = rx.get("entity_id") if isinstance(rx, dict) else None
+            address = str(rx.get("address") or "").lower() if slug else ""
+            if not isinstance(slug, str) or address in ignored or now - since.get(slug, now) < DEAD_RECEIVER_AFTER_S:
+                continue
+            info = directory.get(address) or {}
+            dead[slug] = {
+                "name": info.get("name") or slug,
+                "where": ", ".join(str(v) for v in (info.get("area_name"), floor.get("name")) if v) or "the plan",
+                "age": _ago(now - since[slug]),
+            }
+    for slug, placeholders in dead.items():
+        ir.async_create_issue(
+            hass, DOMAIN, DEAD_RECEIVER_ISSUE_PREFIX + slug, is_fixable=False, severity=ir.IssueSeverity.WARNING,
+            translation_key="dead_receiver", translation_placeholders=placeholders,
+        )
+    for domain, issue_id in list(ir.async_get(hass).issues):
+        if domain == DOMAIN and issue_id.startswith(DEAD_RECEIVER_ISSUE_PREFIX) and issue_id[len(DEAD_RECEIVER_ISSUE_PREFIX):] not in dead:
+            ir.async_delete_issue(hass, DOMAIN, issue_id)
+
+
+def _ago(age):
+    """"3 days", "2 hours" or "under an hour", for a repair's text: coarse, so it is rewritten hourly at most."""
+    n, unit = (int(age // 86400), "day") if age >= 86400 else (int(age // 3600), "hour")
+    return f"{n} {unit}{'' if n == 1 else 's'}" if n else "under an hour"
 
 
 async def update_receiver_radii(hass, eids):
@@ -4276,11 +4343,10 @@ def _dead_things(hass, layout, now):
             if (ent in batteries and level is None) or (ent in homes and getattr(tracker, "state", None) in (None, "unknown", "unavailable")):
                 dead[ent] = None
             continue
-        n, unit = (int(age // 86400), "day") if age >= 86400 else (int(age // 3600), "hour")
         where = ", ".join(str(seen[k]) for k in ("zone", "floor") if seen.get(k) and seen[k] != "unknown")
         dead[ent] = {
             "name": _thing_names(hass, [ent], layout).get(ent) or ent,
-            "age": f"{n} {unit}{'' if n == 1 else 's'}" if n else "under an hour",
+            "age": _ago(age),
             "where": where or "an unknown room",
             "battery": "" if level is None else f" Its battery last read {level:.0f}%.",
             "home": f" {tracker.attributes.get('friendly_name') or homes[ent]} says it is home." if home else "",
