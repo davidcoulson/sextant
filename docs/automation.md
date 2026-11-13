@@ -62,6 +62,9 @@ put stands (`source: held`): they have not left the house. Unless GPS has
 already seen them go: a fix made since the last sighting, outside the home
 zone and at least `gps_leave_m` (200 m) from home, ends the hold at once
 and the person is `away` now rather than when `away_after_secs` runs out.
+So the phone reports promptly, the moment a person goes quiet (`stale_after_secs`,
+two minutes) Sextant asks their Home Assistant companion app (`notify.mobile_app_<device>`) for a fresh
+location, once per quiet spell. It is skipped when `gps_leave_m` is 0.
 Once Sextant has lost them (`presence: away`), a phone or watch of theirs still joined to one
 of the house's Wi-Fi access points keeps them home (`source: wifi`): the
 room and floor are what that access point has been learned to mean, the

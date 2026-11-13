@@ -4218,6 +4218,8 @@ _last_seen = {}
 _presence_published = {}
 # person -> (thing, considered) that last placed them, held through a quiet spell.
 _person_last = {}
+# person -> the last_heard a location request was sent for (persons.should_ask_gps).
+_gps_asked = {}
 # Each person's visit (persons.visit): {person: {"arrived", "departed"}}; saved with the runtime.
 _person_visits = {}
 # The visits the events were last told from (persons.visit_events), and when
@@ -5021,6 +5023,23 @@ def _wifi_floor_factor(entity, layout, floor_name):
     return wifi_mod.floor_factor(wifi["odds"], floor_name, weight)
 
 
+def _ask_phones_for_location(hass, layout, person):
+    """Fire a request_location_update push at each of the person's companion-app phones."""
+    ent_reg = er.async_get(hass)
+    for eid in persons_mod.gps_sources(layout, person):
+        try:
+            entry = ent_reg.async_get(eid)
+            if not entry or entry.platform != "mobile_app" or not entry.config_entry_id:
+                continue
+            cfg = hass.config_entries.async_get_entry(entry.config_entry_id)
+            name = "mobile_app_" + slugify(str((cfg.data if cfg else {}).get("device_name") or ""))
+            if hass.services.has_service("notify", name):
+                hass.async_create_task(hass.services.async_call(
+                    "notify", name, {"message": "request_location_update"}, blocking=False))
+        except Exception:
+            _LOGGER.debug("location request for %s failed", eid, exc_info=True)
+
+
 def _update_person_sensors(hass):
     """Each owner's location from the thing that speaks for them (persons.py)."""
     layout = get_layout(hass)
@@ -5113,6 +5132,10 @@ def _update_person_sensors(hass):
         # now rather than when away_after_secs runs out (persons.gps_left).
         if best is None and presence == "quiet" and persons_mod.gps_left(gps, last_heard, home, _tuning(layout, "gps_leave_m")):
             presence, held, held_why = "away", None, None
+        if _tuning(layout, "gps_leave_m") > 0 and persons_mod.should_ask_gps(
+                presence, best is not None, last_heard, _gps_asked.get(person)):
+            _gps_asked[person] = last_heard
+            _ask_phones_for_location(hass, layout, person)
         wifi = _wifi_for(person, view)
         view["by_person"][person] = wifi
         # A router holds a client "home" for minutes after it last saw it: a
