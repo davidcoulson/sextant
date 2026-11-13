@@ -5133,7 +5133,7 @@ def _update_person_sensors(hass):
         if best is None and presence == "quiet" and persons_mod.gps_left(gps, last_heard, home, _tuning(layout, "gps_leave_m")):
             presence, held, held_why = "away", None, None
         if _tuning(layout, "gps_leave_m") > 0 and persons_mod.should_ask_gps(
-                presence, best is not None, last_heard, now, _gps_asked.get(person)):
+                presence, best is not None, last_heard, _gps_asked.get(person)):
             _gps_asked[person] = last_heard
             _ask_phones_for_location(hass, layout, person)
         wifi = _wifi_for(person, view)

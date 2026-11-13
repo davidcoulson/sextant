@@ -260,7 +260,6 @@ def states(best, why=None):
 # the best answer for a few minutes), the first GPS source that is neither
 # broken nor stale once BLE has lost them.
 
-ASK_GPS_AFTER_SECS = 60.0          # quiet this long, then ask their phone for a fresh fix
 GPS_STALE_SECS = 7200.0            # a tracker that has not reported for this long is ignored
 _DEAD = (None, "", "unknown", "unavailable")
 STATIONARY_ZONE_PREFIX = "zone.ic3_stationary_"   # iCloud3's zone.ic3_stationary_1, _2, ...
@@ -370,18 +369,18 @@ def gps_left(gps, last_heard, home=None, min_distance_m=200.0) -> bool:
     return _haversine_m(home, (lat, lon)) - max(0.0, float(accuracy)) >= min_distance_m
 
 
-def should_ask_gps(presence, placed, last_heard, now, asked_for, after_secs=ASK_GPS_AFTER_SECS) -> bool:
-    """Whether to ask the person's phone for a location update now: they are
-    quiet (not placed, presence "quiet"), have been for after_secs since they
-    were last heard, and have not been asked for this quiet spell.
+def should_ask_gps(presence, placed, last_heard, asked_for) -> bool:
+    """Whether to ask the person's phone for a location update now: they
+    have just gone quiet (not placed, presence "quiet", which is already
+    stale_after_secs since they were last heard) and have not been asked
+    for this quiet spell.
 
     asked_for is the last_heard value of the last ask; a new last_heard means
     they were heard again and went quiet again, a new spell. Never twice in
     one: iOS throttles these silent pushes.
     """
-    heard = valid_time(last_heard)
-    return (not placed and presence == "quiet" and heard is not None
-            and now - heard >= after_secs and asked_for != last_heard)
+    return (not placed and presence == "quiet" and valid_time(last_heard) is not None
+            and asked_for != last_heard)
 
 
 def wifi_outrun(gps, wifi_seen, home=None, min_distance_m=200.0, margin_secs=60.0) -> bool:
