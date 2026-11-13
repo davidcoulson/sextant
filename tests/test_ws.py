@@ -680,4 +680,9 @@ def test_thing_tune_sets_the_class_always_home_and_a_home_tracker(tmp_path):
     run(ws.ws_thing_tune(hass, conn, {"id": 2, "type": "sextant/thing/tune", "entity": "model_s", "home_entity": "sensor.model_s_range"}))
     assert conn.errors and st.get_layout(hass)["thing_home_entity"] == {"model_s": "device_tracker.model_s_location"}
     run(ws.ws_thing_tune(hass, conn, {"id": 3, "type": "sextant/thing/tune", "entity": "model_s", "home_entity": None}))
+    run(ws.ws_thing_tune(hass, conn, {"id": 4, "type": "sextant/thing/tune", "entity": "model_s", "home_entity": "person.david"}))
+    assert len(conn.errors) == 2, "a person is kept home by their other things"
+    run(ws.ws_thing_tune(hass, conn, {"id": 5, "type": "sextant/thing/tune", "entity": "model_s", "thing_class": "luggage",
+                                        "class_always_home": False}))
+    assert st.get_layout(hass)["class_always_home"] == {"car": True, "luggage": False}, "the class it was just given"
     assert st.get_layout(hass)["thing_home_entity"] == {}

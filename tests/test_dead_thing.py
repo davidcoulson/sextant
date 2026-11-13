@@ -141,8 +141,30 @@ def test_reconciled_on_a_cycle_with_nothing_to_solve_and_a_bad_map_stops_nothing
     hass = _hass("1.0")
     _heard(85)
     monkeypatch.setattr(sextant, "get_layout", lambda h: LAYOUT)
+    monkeypatch.setattr(sextant, "_dead_issues_from", 0.0)
+    sextant._maintain_dead_issues(hass)
+    assert not hass.data.get("issues"), "just started: the restored times are not judged yet"
+    monkeypatch.setattr(sextant, "_dead_issues_from", 1.0)
     sextant._maintain_dead_issues(hass)
     assert KEY in hass.data["issues"]
+
+
+def test_an_unreadable_sensor_keeps_the_repair_it_raised():
+    """Home Assistant restarting leaves the battery sensor unavailable for a while: no news, not good news."""
+    hass = _hass("1.0")
+    _heard(5)
+    sextant._update_dead_issues(hass, LAYOUT)
+    assert KEY in hass.data["issues"]
+    hass.states = types.SimpleNamespace(get={"sensor.primrose_battery": types.SimpleNamespace(state="unavailable")}.get)
+    sextant._update_dead_issues(hass, LAYOUT)
+    assert KEY in hass.data["issues"], "kept"
+    fresh = make_hass()
+    fresh.states = hass.states
+    sextant._update_dead_issues(fresh, LAYOUT)
+    assert not fresh.data.get("issues"), "but never raised on no reading"
+    _heard(0)
+    sextant._update_dead_issues(hass, LAYOUT)
+    assert KEY not in hass.data["issues"], "heard again clears it all the same"
 
 
 def test_the_repair_has_its_text():
