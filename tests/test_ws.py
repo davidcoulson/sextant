@@ -656,3 +656,33 @@ def test_a_layout_with_the_single_thing_height_saves(tmp_path):
     run(ws.ws_layout_save(hass, conn, {"id": 1, "type": "sextant/layout/save", "layout": dict(layout)}))
     assert conn.results and not conn.errors, conn.errors
     assert st.get_layout(hass)["thing_height"] == 0.7
+
+
+def test_thing_tune_sets_and_clears_always_home_and_locates_owner(tmp_path):
+    hass = _hass_with_layout(tmp_path, _layout())
+    conn = _Conn()
+    for key in ("always_home", "locates_owner"):
+        run(ws.ws_thing_tune(hass, conn, {"id": 1, "type": "sextant/thing/tune", "entity": "tile", key: True}))
+        assert st.get_layout(hass)[f"thing_{key}"] == {"tile": True}
+        run(ws.ws_thing_tune(hass, conn, {"id": 2, "type": "sextant/thing/tune", "entity": "tile", key: None}))
+        assert st.get_layout(hass)[f"thing_{key}"] == {}, "None is back to the class"
+
+
+def test_thing_tune_sets_the_class_always_home_and_a_home_tracker(tmp_path):
+    layout = _layout()
+    layout["thing_classes"] = {"model_s": "car"}
+    hass = _hass_with_layout(tmp_path, layout)
+    conn = _Conn()
+    run(ws.ws_thing_tune(hass, conn, {"id": 1, "type": "sextant/thing/tune", "entity": "model_s", "class_always_home": True,
+                                        "home_entity": "device_tracker.model_s_location"}))
+    assert st.get_layout(hass)["class_always_home"] == {"car": True}
+    assert st.get_layout(hass)["thing_home_entity"] == {"model_s": "device_tracker.model_s_location"}
+    run(ws.ws_thing_tune(hass, conn, {"id": 2, "type": "sextant/thing/tune", "entity": "model_s", "home_entity": "sensor.model_s_range"}))
+    assert conn.errors and st.get_layout(hass)["thing_home_entity"] == {"model_s": "device_tracker.model_s_location"}
+    run(ws.ws_thing_tune(hass, conn, {"id": 3, "type": "sextant/thing/tune", "entity": "model_s", "home_entity": None}))
+    run(ws.ws_thing_tune(hass, conn, {"id": 4, "type": "sextant/thing/tune", "entity": "model_s", "home_entity": "person.david"}))
+    assert len(conn.errors) == 2, "a person is kept home by their other things"
+    run(ws.ws_thing_tune(hass, conn, {"id": 5, "type": "sextant/thing/tune", "entity": "model_s", "thing_class": "luggage",
+                                        "class_always_home": False}))
+    assert st.get_layout(hass)["class_always_home"] == {"car": True, "luggage": False}, "the class it was just given"
+    assert st.get_layout(hass)["thing_home_entity"] == {}

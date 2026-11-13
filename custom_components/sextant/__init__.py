@@ -12,6 +12,7 @@ from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.const import EVENT_HOMEASSISTANT_FINAL_WRITE, EVENT_HOMEASSISTANT_STOP, UnitOfLength
 from homeassistant.util.unit_conversion import DistanceConverter
 from homeassistant.util import slugify
@@ -1723,11 +1724,13 @@ async def update_tracked_entities(hass):
             if not unique_values:
                 _LOGGER.info("There are no devices present to track, sleep 10 seconds")
                 _maintain_rooms(hass)
+                _maintain_dead_issues(hass)
                 await asyncio.sleep(10)
                 continue  # Skip and start over
             if num_points < 3:
                 _LOGGER.info("There are not enough things with available data to track, sleep 10 seconds")
                 _maintain_rooms(hass)
+                _maintain_dead_issues(hass)
                 await asyncio.sleep(10)
                 continue  # Skip and start over
             # A thing added to Bermuda since setup has no sensors yet.
@@ -3622,6 +3625,7 @@ async def process_entities(hass, new_global_data):
         _publish_presence(hass, layout if isinstance(layout, dict) else {})
     except Exception as e:  # noqa: BLE001 - an attribute must never stop the things'
         _LOGGER.debug("Presence not published: %s", e)
+    _maintain_dead_issues(hass)
     try:
         layout = get_layout(hass)
         await election_log.get(hass).flush(_tuning(layout, "election_log_hours"))
@@ -4225,6 +4229,99 @@ def _patch_sensor_attrs(hass, entity_id, attrs):
     if sensor is None:
         return
     update_sextant_sensor_state(hass, entity_id, sensor._state, {**(sensor._attrs or {}), **attrs})
+
+
+# A thing is called dead - a repair, not a badge on a card nobody opened - in
+# two cases. Its battery sensor reads this low (the Live page's
+# BATTERY_CRITICAL) and it has gone away. Or its own home tracker
+# (thing_home_entity: a car's or a phone's GPS) has said home for as long as
+# it has been away to Sextant. Or it is always home (persons.always_home: a
+# pet's tag by default) and has not been heard for a day. Silence alone says
+# nothing for the rest: a phone, a car or a suitcase is away for days.
+DEAD_AFTER_S = 86400.0
+DEAD_BATTERY_PCT = 10.0
+DEAD_ISSUE_PREFIX = "dead_thing_"
+
+
+def _dead_things(hass, layout, now):
+    """{thing: the repair's placeholders} for every thing that looks dead, on
+    the same last-heard clock the presence uses (_last_seen). A thing never
+    heard, or forgotten, has no sighting and is never dead."""
+    from .ws import _thing_names  # noqa: PLC0415 - ws imports this module
+
+    batteries = layout.get("thing_battery_entity") or {}
+    classes = layout.get("thing_classes") or {}
+    homes = layout.get("thing_home_entity") or {}
+    dead = {}
+    for ent, seen in _last_seen.items():
+        updated = seen.get("updated") if isinstance(seen, dict) else None
+        if not isinstance(updated, (int, float)) or _presence_of(updated, now, layout) != "away":
+            continue
+        try:
+            level = float(hass.states.get(batteries[ent]).state)
+        except (KeyError, AttributeError, TypeError, ValueError):  # no sensor, or nothing to say
+            level = None
+        age = now - updated
+        flat = level is not None and level <= DEAD_BATTERY_PCT
+        # Home for as long as away_after_secs, not just now: a phone back from
+        # a trip is home by GPS a minute before the first proxy hears it.
+        tracker = hass.states.get(homes[ent]) if ent in homes else None
+        try:
+            home = tracker.state == "home" and now - tracker.last_changed.timestamp() >= _tuning(layout, "away_after_secs")
+        except AttributeError:  # no such entity, or no time on it
+            home = False
+        if not flat and not home and not (age >= DEAD_AFTER_S and persons_mod.always_home(layout, ent, classes.get(ent))):
+            # A sensor that cannot be read (Home Assistant starting, its
+            # integration down) is no news: None keeps a repair already raised.
+            if (ent in batteries and level is None) or (ent in homes and getattr(tracker, "state", None) in (None, "unknown", "unavailable")):
+                dead[ent] = None
+            continue
+        n, unit = (int(age // 86400), "day") if age >= 86400 else (int(age // 3600), "hour")
+        where = ", ".join(str(seen[k]) for k in ("zone", "floor") if seen.get(k) and seen[k] != "unknown")
+        dead[ent] = {
+            "name": _thing_names(hass, [ent], layout).get(ent) or ent,
+            "age": f"{n} {unit}{'' if n == 1 else 's'}" if n else "under an hour",
+            "where": where or "an unknown room",
+            "battery": "" if level is None else f" Its battery last read {level:.0f}%.",
+            "home": f" {tracker.attributes.get('friendly_name') or homes[ent]} says it is home." if home else "",
+        }
+    return dead
+
+
+_dead_issues_from = 0.0
+
+
+def _maintain_dead_issues(hass):
+    """The dead-thing repairs after a cycle - or after one with nothing to
+    solve, which is exactly what the house looks like once its last tag has
+    died. Never lets a repair stop the things."""
+    # The last-heard times restored at start are as old as the restart was
+    # long: nothing is judged until the proxies have had time to report.
+    global _dead_issues_from
+    _dead_issues_from = _dead_issues_from or time.time() + EVENTS_SETTLE_S
+    if time.time() < _dead_issues_from:
+        return
+    try:
+        layout = get_layout(hass)
+        _update_dead_issues(hass, layout if isinstance(layout, dict) else {})
+    except Exception as e:  # noqa: BLE001
+        _LOGGER.warning("Dead-thing repairs not updated: %s", e)
+
+
+def _update_dead_issues(hass, layout):
+    """One repair per dead thing, under a stable id; gone again as soon as the
+    thing is heard or forgotten."""
+    dead = _dead_things(hass, layout, time.time())
+    for ent, placeholders in dead.items():
+        if placeholders is None:  # unsure: neither raised nor cleared
+            continue
+        ir.async_create_issue(
+            hass, DOMAIN, DEAD_ISSUE_PREFIX + ent, is_fixable=False, severity=ir.IssueSeverity.WARNING,
+            translation_key="dead_thing", translation_placeholders=placeholders,
+        )
+    for domain, issue_id in list(ir.async_get(hass).issues):
+        if domain == DOMAIN and issue_id.startswith(DEAD_ISSUE_PREFIX) and issue_id[len(DEAD_ISSUE_PREFIX):] not in dead:
+            ir.async_delete_issue(hass, DOMAIN, issue_id)
 
 
 async def _restore_runtime(hass):

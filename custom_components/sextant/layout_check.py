@@ -22,7 +22,8 @@ FLOOR_LISTS = ("receivers", "zones", "subzones", "pins", "remarks", "radars", "a
 MAP_KEYS = (
     "thing_names", "thing_classes", "thing_colors", "thing_icons", "thing_heights", "thing_estimators",
     "thing_fp_weights", "thing_fp_gains", "thing_ref_offsets", "thing_owners", "thing_pronouns",
-    "thing_locates_owner", "thing_battery_entity", "thing_charging_entity",
+    "thing_locates_owner", "thing_always_home", "thing_home_entity", "thing_battery_entity", "thing_charging_entity",
+    "class_always_home",
 )
 # Upper bounds that keep a single save from stalling the loop (see the shapes
 # and the spot confinement, which walk every vertex).
