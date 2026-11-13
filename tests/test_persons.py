@@ -191,3 +191,15 @@ def test_a_thing_beyond_every_room_reads_outside():
     best = {"ent": "primrose", "zone": "Kitchen", "floor": "Ground Floor", "outside": True}
     state, attrs = persons.states(best)["sextant_person_location"]
     assert state == "Outside" and attrs["kind"] == "outside" and attrs["via"] == "primrose"
+
+
+def test_should_ask_gps_once_per_quiet_spell_after_a_minute():
+    ask = persons.should_ask_gps
+    assert ask("quiet", False, NOW - 61, NOW, None)
+    assert not ask("quiet", False, NOW - 59, NOW, None)
+    assert not ask("quiet", False, NOW - 61, NOW, NOW - 61)  # already asked this spell
+    assert ask("quiet", False, NOW - 61, NOW, NOW - 500)  # heard again since, quiet again
+    assert not ask("here", False, NOW - 61, NOW, None)
+    assert not ask("away", False, NOW - 61, NOW, None)
+    assert not ask("quiet", True, NOW - 61, NOW, None)
+    assert not ask("quiet", False, None, NOW, None)
