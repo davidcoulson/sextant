@@ -4235,9 +4235,10 @@ def _patch_sensor_attrs(hass, entity_id, attrs):
 
 # A thing is called dead - a repair, not a badge on a card nobody opened - in
 # two cases. Its battery sensor reads this low (the Live page's
-# BATTERY_CRITICAL) and it has gone away. Or it is a pet's tag, which never
-# leaves for long, and has not been heard for a day. Silence alone says
-# nothing for the rest: a phone, a car or a suitcase is away for days.
+# BATTERY_CRITICAL) and it has gone away. Or it is always home
+# (persons.always_home: a pet's tag by default, any thing by its own setting)
+# and has not been heard for a day. Silence alone says nothing for the rest:
+# a phone, a car or a suitcase is away for days.
 DEAD_AFTER_S = 86400.0
 DEAD_BATTERY_PCT = 10.0
 DEAD_ISSUE_PREFIX = "dead_thing_"
@@ -4262,7 +4263,7 @@ def _dead_things(hass, layout, now):
             level = None
         age = now - updated
         flat = level is not None and level <= DEAD_BATTERY_PCT
-        if not flat and not (classes.get(ent) in rooms_mod.PET_CLASSES and age >= DEAD_AFTER_S):
+        if not flat and not (age >= DEAD_AFTER_S and persons_mod.always_home(layout, ent, classes.get(ent))):
             continue
         n, unit = (int(age // 86400), "day") if age >= 86400 else (int(age // 3600), "hour")
         where = ", ".join(str(seen[k]) for k in ("zone", "floor") if seen.get(k) and seen[k] != "unknown")

@@ -383,6 +383,8 @@ async def ws_tuning_set(hass, connection, msg):
     vol.Optional("owner"): vol.Any(None, str),
     # Whether this thing's place may stand for its owner's (None: its class decides).
     vol.Optional("locates_owner"): vol.Any(None, bool),
+    # Whether a day of silence raises the dead-thing repair; None is "from its class".
+    vol.Optional("always_home"): vol.Any(None, bool),
     # A battery sensor whose "Charging" takes the thing out of its owner's location.
     vol.Optional("charging_entity"): vol.Any(None, str),
     # The thing's own battery level, as a percentage sensor: shown on the Live
@@ -505,16 +507,18 @@ async def ws_thing_tune(hass, connection, msg):
                     values.pop(entity, None)
                 data[store] = values
                 changes[key] = value or None
-        if "locates_owner" in msg:
-            values = data.get("thing_locates_owner")
+        for key in ("locates_owner", "always_home"):
+            if key not in msg:
+                continue
+            values = data.get(f"thing_{key}")
             if not isinstance(values, dict):
                 values = {}
-            if isinstance(msg["locates_owner"], bool):
-                values[entity] = msg["locates_owner"]
+            if isinstance(msg[key], bool):
+                values[entity] = msg[key]
             else:
                 values.pop(entity, None)
-            data["thing_locates_owner"] = values
-            changes["locates_owner"] = msg["locates_owner"]
+            data[f"thing_{key}"] = values
+            changes[key] = msg[key]
         if "charging_entity" in msg:
             values = data.get("thing_charging_entity")
             if not isinstance(values, dict):

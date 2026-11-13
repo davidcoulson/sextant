@@ -656,3 +656,13 @@ def test_a_layout_with_the_single_thing_height_saves(tmp_path):
     run(ws.ws_layout_save(hass, conn, {"id": 1, "type": "sextant/layout/save", "layout": dict(layout)}))
     assert conn.results and not conn.errors, conn.errors
     assert st.get_layout(hass)["thing_height"] == 0.7
+
+
+def test_thing_tune_sets_and_clears_always_home_and_locates_owner(tmp_path):
+    hass = _hass_with_layout(tmp_path, _layout())
+    conn = _Conn()
+    for key in ("always_home", "locates_owner"):
+        run(ws.ws_thing_tune(hass, conn, {"id": 1, "type": "sextant/thing/tune", "entity": "tile", key: True}))
+        assert st.get_layout(hass)[f"thing_{key}"] == {"tile": True}
+        run(ws.ws_thing_tune(hass, conn, {"id": 2, "type": "sextant/thing/tune", "entity": "tile", key: None}))
+        assert st.get_layout(hass)[f"thing_{key}"] == {}, "None is back to the class"

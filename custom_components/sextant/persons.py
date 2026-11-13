@@ -111,6 +111,16 @@ def locates_owner(layout, ent, cls) -> bool:
     return cls in LOCATES_BY_DEFAULT
 
 
+def always_home(layout, ent, cls) -> bool:
+    """Whether a day of silence from this thing means something is wrong (the
+    dead-thing repair): its own setting, else its class - a pet's tag never
+    leaves for long, where a phone or a suitcase is away for days."""
+    own = (layout.get("thing_always_home") or {}).get(ent) if isinstance(layout, dict) else None
+    if isinstance(own, bool):
+        return own
+    return cls in PET_CLASSES
+
+
 # What a battery sensor says when its device is on a charger: iCloud3 reports
 # Charging / Charged / Full, Apple's Find My "Charged" at 100 %, the companion
 # app Charging / Full. "Not Charging" and "NotCharging" are off the charger.

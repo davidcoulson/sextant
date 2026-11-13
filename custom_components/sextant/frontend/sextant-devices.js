@@ -10,6 +10,7 @@
  */
 import { LitElement, html, css, nothing } from "./lit.js";
 import { pointInPolygon, thingColor } from "./sextant-map.js";
+import { PET_CLASSES } from "./sextant-groups.js";
 
 // Mirrors persons.LOCATES_BY_DEFAULT: classes whose place is their owner's place.
 const LOCATES_BY_DEFAULT = new Set(["watch", "phone", "person", "man", "woman", "child", "cat", "dog", "paw"]);
@@ -323,6 +324,7 @@ class SextantDevices extends LitElement {
       pronouns: layout.thing_pronouns?.[slug] || "",
       owner: layout.thing_owners?.[slug] || "",
       locates: typeof layout.thing_locates_owner?.[slug] === "boolean" ? (layout.thing_locates_owner[slug] ? "yes" : "no") : "",
+      alwaysHome: typeof layout.thing_always_home?.[slug] === "boolean" ? (layout.thing_always_home[slug] ? "yes" : "no") : "",
       charging: layout.thing_charging_entity?.[slug] || "",
       battery: layout.thing_battery_entity?.[slug] || "",
       height: toDisplayLen(layout.thing_heights?.[slug], this.hass),
@@ -423,6 +425,7 @@ class SextantDevices extends LitElement {
       pronouns: w.pronouns || null,
       owner: w.owner || null,
       locates_owner: w.locates === "yes" ? true : w.locates === "no" ? false : null,
+      always_home: w.alwaysHome === "yes" ? true : w.alwaysHome === "no" ? false : null,
       charging_entity: w.charging || null,
       battery_entity: w.battery || null,
       height: w.height === "" || w.height == null ? null : fromDisplayLen(w.height, this.hass),
@@ -499,6 +502,13 @@ class SextantDevices extends LitElement {
             ...this._levelSensors(w.battery, w.slug).map((e) => ({ value: e, label: `${this.hass?.states?.[e]?.attributes?.friendly_name || e} (${this.hass?.states?.[e]?.state ?? "?"}%)` })),
           ], onChange: (v) => { w.battery = v; this.requestUpdate(); }, style: "width: 320px" })}
           <span class="small muted">Shown on the Live page, with a badge once it drops to 20%. A tag that goes quiet looks exactly like a thing that has left, until the battery says why.</span>
+        </div>
+        <div class="row">
+          ${uiSelect({ label: "Always home", value: w.alwaysHome || "", options: [
+            { value: "", label: `From its class (${PET_CLASSES.includes(w.thing_class) ? "yes" : "no"})` },
+            { value: "yes", label: "Yes" }, { value: "no", label: "No" },
+          ], onChange: (v) => { w.alwaysHome = v; this.requestUpdate(); }, style: "width: 220px" })}
+          <span class="small muted">A thing that is always home raises a Home Assistant repair once it has not been heard for a day. A pet's tag is by default; a phone or a bag, away for days, is not. A battery at 10% or less on a thing that has gone quiet raises one either way.</span>
         </div>
         <div class="row colour">
           <span class="avatar-preview" style="background: ${thingColor(w.slug, w.color || null)}" title="how this thing will look">${w.preview || w.icon ? html`<img src=${w.preview || w.icon} alt="">` : classIcon(w.thing_class) ? html`<ha-icon icon=${classIcon(w.thing_class)}></ha-icon>` : html`<span class="initials">${(w.name || w.placeholder || "?").slice(0, 2).toUpperCase()}</span>`}</span>

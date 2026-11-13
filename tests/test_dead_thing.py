@@ -55,6 +55,16 @@ def test_a_pets_tag_is_dead_after_a_day_of_silence_whatever_its_battery():
     assert hass.data["issues"][KEY]["translation_placeholders"]["battery"] == "", "no level to quote"
 
 
+def test_always_home_is_the_class_unless_the_thing_says_otherwise():
+    hass = _hass("80")
+    _heard(25)
+    sextant._update_dead_issues(hass, {**LAYOUT, "thing_classes": {"primrose": "dog"}, "thing_always_home": {"primrose": False}})
+    assert not hass.data.get("issues"), "a dog that boards for days: switched off for her"
+    _heard(25, "tile")
+    sextant._update_dead_issues(hass, {"thing_classes": {"tile": "tag"}, "thing_always_home": {"tile": True}})
+    assert list(hass.data["issues"]) == [("sextant", "dead_thing_tile")], "a tag that never leaves the office: switched on"
+
+
 def test_not_raised_for_a_thing_that_is_only_away_or_only_low():
     # Not a pet's: away for days with a good battery, or low but still heard.
     for battery, hours in (("80", 85), ("unavailable", 85), ("1.0", 0.1)):
