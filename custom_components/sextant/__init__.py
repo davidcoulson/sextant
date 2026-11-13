@@ -4233,11 +4233,11 @@ def _patch_sensor_attrs(hass, entity_id, attrs):
     update_sextant_sensor_state(hass, entity_id, sensor._state, {**(sensor._attrs or {}), **attrs})
 
 
-# A thing is called dead - a repair, not a badge on a card nobody opened -
-# once it has been silent this long with its battery sensor last reading at or
-# under this level (the Live page's BATTERY_CRITICAL). Silence alone is not
-# enough: a phone, a car or a suitcase is away for days, and a tag at the
-# kennel with a good battery is only away.
+# A thing is called dead - a repair, not a badge on a card nobody opened - in
+# two cases. Its battery sensor reads this low (the Live page's
+# BATTERY_CRITICAL) and it has gone away. Or it is a pet's tag, which never
+# leaves for long, and has not been heard for a day. Silence alone says
+# nothing for the rest: a phone, a car or a suitcase is away for days.
 DEAD_AFTER_S = 86400.0
 DEAD_BATTERY_PCT = 10.0
 DEAD_ISSUE_PREFIX = "dead_thing_"
@@ -4249,32 +4249,35 @@ def _dead_things(hass, layout, now):
     heard, or forgotten, has no sighting and is never dead."""
     from .ws import _thing_names  # noqa: PLC0415 - ws imports this module
 
+    batteries = layout.get("thing_battery_entity") or {}
+    classes = layout.get("thing_classes") or {}
     dead = {}
-    for ent, sensor in (layout.get("thing_battery_entity") or {}).items():
-        seen = _last_seen.get(ent)
+    for ent, seen in _last_seen.items():
         updated = seen.get("updated") if isinstance(seen, dict) else None
-        if not isinstance(updated, (int, float)) or now - updated < DEAD_AFTER_S:
+        if not isinstance(updated, (int, float)) or _presence_of(updated, now, layout) != "away":
             continue
         try:
-            level = float(hass.states.get(sensor).state)
-        except (AttributeError, TypeError, ValueError):  # no sensor, or nothing to say
+            level = float(hass.states.get(batteries[ent]).state)
+        except (KeyError, AttributeError, TypeError, ValueError):  # no sensor, or nothing to say
+            level = None
+        age = now - updated
+        flat = level is not None and level <= DEAD_BATTERY_PCT
+        if not flat and not (classes.get(ent) in rooms_mod.PET_CLASSES and age >= DEAD_AFTER_S):
             continue
-        if level > DEAD_BATTERY_PCT:
-            continue
-        days = int((now - updated) // 86400)
+        n, unit = (int(age // 86400), "day") if age >= 86400 else (int(age // 3600), "hour")
         where = ", ".join(str(seen[k]) for k in ("zone", "floor") if seen.get(k) and seen[k] != "unknown")
         dead[ent] = {
             "name": _thing_names(hass, [ent], layout).get(ent) or ent,
-            "age": f"{days} day{'' if days == 1 else 's'}",
+            "age": f"{n} {unit}{'' if n == 1 else 's'}" if n else "under an hour",
             "where": where or "an unknown room",
-            "battery": f"{level:.0f}",
+            "battery": "" if level is None else f" Its battery last read {level:.0f}%.",
         }
     return dead
 
 
 def _update_dead_issues(hass, layout):
     """One repair per dead thing, under a stable id; gone again as soon as the
-    thing is heard, forgotten or loses its battery sensor."""
+    thing is heard or forgotten."""
     dead = _dead_things(hass, layout, time.time())
     for ent, placeholders in dead.items():
         ir.async_create_issue(
