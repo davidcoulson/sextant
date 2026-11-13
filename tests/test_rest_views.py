@@ -32,8 +32,9 @@ def test_cords_is_404_until_the_loop_has_published_and_then_the_payload(tmp_path
 def test_selftest_answers_even_with_nothing_to_solve(tmp_path):
     hass = _hass(tmp_path)
     run(st.save_layout(hass, {"floor": [{"name": "F", "scale": 100.0, "receivers": [], "zones": [], "subzones": []}], "tuning": {}}))
-    response = run(sextant.SextantSelfTestAPI(hass).get(None))
+    response = run(sextant.SextantSelfTestAPI(hass).get(_Request(hass, {})))
     assert response.status == 200 and isinstance(response.json_body, dict)
+    assert run(sextant.SextantSelfTestAPI(hass).get(_Request(hass, {}, admin=False))).status == 403
 
 
 class _Request(dict):

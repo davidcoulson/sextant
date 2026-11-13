@@ -6,7 +6,7 @@ import sextant  # noqa: F401
 from sextant import heat
 
 SCALE = 100.0   # px per metre: a cell is 100 px across
-KITCHEN, GARAGE = "8c:ed:e1:00:de:ed", "28:70:4e:27:04:ed"
+KITCHEN, GARAGE = "aa:bb:cc:00:01:01", "aa:bb:cc:00:01:02"
 
 
 def test_cells_are_a_metre_square_on_the_floors_scale():
@@ -101,9 +101,9 @@ def test_clean_keeps_only_well_formed_parts():
 
 
 def test_a_proxys_wifi_mac_is_its_bluetooth_address_minus_two():
-    clients = {"d0:cf:13:e1:73:78", "3c:dc:75:8e:31:a6"}
-    assert heat.wifi_mac_for_proxy("D0:CF:13:E1:73:7A", clients) == "d0:cf:13:e1:73:78"
-    assert heat.wifi_mac_for_proxy("3c:dc:75:8e:31:a6", clients) == "3c:dc:75:8e:31:a6"   # reports its Wi-Fi MAC
+    clients = {"aa:bb:cc:00:02:78", "aa:bb:cc:00:03:a6"}
+    assert heat.wifi_mac_for_proxy("AA:BB:CC:00:02:7A", clients) == "aa:bb:cc:00:02:78"
+    assert heat.wifi_mac_for_proxy("aa:bb:cc:00:03:a6", clients) == "aa:bb:cc:00:03:a6"   # reports its Wi-Fi MAC
     assert heat.wifi_mac_for_proxy("aa:bb:cc:dd:ee:ff", clients) is None                  # Ethernet, or not on Wi-Fi
     assert heat.wifi_mac_for_proxy("00:00:00:00:00:01", {"00:00:00:00:00:01"}) == "00:00:00:00:00:01"
     assert heat.wifi_mac_for_proxy(None, clients) is None and heat.wifi_mac_for_proxy("zz", clients) is None
@@ -128,20 +128,20 @@ def test_the_collector_samples_placed_proxies_and_each_persons_phone(monkeypatch
     monkeypatch.setattr(core, "_wifi_heat", heat.new_store())
     monkeypatch.setattr(core, "_wifi_heat_tick", 0.0)
     clients = [
-        {"mac": "d0:cf:13:e1:73:78", "ap_mac": KITCHEN, "signal": -48, "last_seen": now - 5},        # the proxy
-        {"mac": "3a:26:7a:09:23:91", "ap_mac": KITCHEN, "signal": -61, "last_seen": now - 5},        # David's phone
-        {"mac": "02:db:11:5b:db:b4", "ap_mac": KITCHEN, "signal": -70, "last_seen": now - 5},        # his watch: two watches, no sample
+        {"mac": "aa:bb:cc:00:02:78", "ap_mac": KITCHEN, "signal": -48, "last_seen": now - 5},        # the proxy
+        {"mac": "aa:bb:cc:00:04:91", "ap_mac": KITCHEN, "signal": -61, "last_seen": now - 5},        # Alex's phone
+        {"mac": "aa:bb:cc:00:05:b4", "ap_mac": KITCHEN, "signal": -70, "last_seen": now - 5},        # his watch: two watches, no sample
         {"mac": "11:22:33:44:55:66", "ap_mac": GARAGE, "signal": -40, "last_seen": now - 5, "is_wired": True},
     ]
     layout = {"floor": [{"name": "Ground", "scale": SCALE, "receivers": [
-        {"entity_id": "kitchen_proxy", "address": "d0:cf:13:e1:73:7a", "cords": {"x": 120, "y": 130}},
+        {"entity_id": "kitchen_proxy", "address": "aa:bb:cc:00:02:7a", "cords": {"x": 120, "y": 130}},
         {"entity_id": "eth_proxy", "address": "aa:bb:cc:dd:ee:ff", "cords": {"x": 500, "y": 500}}]}]}
-    view = {"assigned": {"person.david": [{"entity": "device_tracker.iphone"}, {"entity": "device_tracker.watch"}]},
-            "candidates": {"device_tracker.iphone": {"name": "David's Phone", "home": True, "mac": "3a:26:7a:09:23:91"},
-                           "device_tracker.watch": {"name": "Watch", "home": True, "mac": "02:db:11:5b:db:b4"}}}
-    by_person = {"person.david": ["david_phone", "watch_a", "watch_b"]}
-    classes = {"david_phone": "phone", "watch_a": "watch", "watch_b": "watch"}
-    rows = {"david_phone": {"floor": "Ground", "cords": [350, 360], "updated": now - 2},
+    view = {"assigned": {"person.alex": [{"entity": "device_tracker.iphone"}, {"entity": "device_tracker.watch"}]},
+            "candidates": {"device_tracker.iphone": {"name": "Alex's Phone", "home": True, "mac": "aa:bb:cc:00:04:91"},
+                           "device_tracker.watch": {"name": "Watch", "home": True, "mac": "aa:bb:cc:00:05:b4"}}}
+    by_person = {"person.alex": ["alex_phone", "watch_a", "watch_b"]}
+    classes = {"alex_phone": "phone", "watch_a": "watch", "watch_b": "watch"}
+    rows = {"alex_phone": {"floor": "Ground", "cords": [350, 360], "updated": now - 2},
             "watch_a": {"floor": "Ground", "cords": [10, 10], "updated": now - 2},
             "watch_b": {"floor": "Ground", "cords": [20, 20], "updated": now - 2}}
     core._wifi_heat_cycle(_hass(clients), layout, view, by_person, rows, classes, now)
@@ -198,15 +198,15 @@ def test_offsets_are_named_by_whose_device_it_is(monkeypatch):
     import sextant as core
 
     s = heat.new_store()
-    s["bias"] = {"02:db:11:5b:db:b4": -4.4, "aa:aa:aa:aa:aa:aa": 1.0}
+    s["bias"] = {"aa:bb:cc:00:05:b4": -4.4, "aa:aa:aa:aa:aa:aa": 1.0}
     monkeypatch.setattr(core, "_wifi_heat", s)
-    monkeypatch.setattr(core, "_wifi_now", {"candidates": {"device_tracker.watch_2": {"name": "Watch", "mac": "02:db:11:5b:db:b4"}},
-                                            "assigned": {"person.michelle_bauer": [{"entity": "device_tracker.watch_2"}]}})
+    monkeypatch.setattr(core, "_wifi_now", {"candidates": {"device_tracker.watch_2": {"name": "Watch", "mac": "aa:bb:cc:00:05:b4"}},
+                                            "assigned": {"person.sam_smith": [{"entity": "device_tracker.watch_2"}]}})
 
     class Hass:
         config_entries = types.SimpleNamespace(async_entries=lambda domain: [])
-        states = types.SimpleNamespace(get=lambda e: types.SimpleNamespace(attributes={"friendly_name": "Michelle Bauer"}) if e == "person.michelle_bauer" else None)
-    assert core.wifi_heat_report(Hass(), {"floor": []})["bias"] == {"Michelle's Watch": -4.4}
+        states = types.SimpleNamespace(get=lambda e: types.SimpleNamespace(attributes={"friendly_name": "Sam Smith"}) if e == "person.sam_smith" else None)
+    assert core.wifi_heat_report(Hass(), {"floor": []})["bias"] == {"Sam's Watch": -4.4}
 
 
 def test_the_field_is_fitted_once_and_reused_until_the_plan_changes(monkeypatch):
@@ -272,9 +272,9 @@ def test_the_collector_records_the_band_the_controller_reports(monkeypatch):
     now = 10_000.0
     monkeypatch.setattr(core, "_wifi_heat", heat.new_store())
     monkeypatch.setattr(core, "_wifi_heat_tick", 0.0)
-    clients = [{"mac": "d0:cf:13:e1:73:78", "ap_mac": KITCHEN, "signal": -48, "last_seen": now - 5, "radio": "ng", "channel": 6}]
+    clients = [{"mac": "aa:bb:cc:00:02:78", "ap_mac": KITCHEN, "signal": -48, "last_seen": now - 5, "radio": "ng", "channel": 6}]
     layout = {"floor": [{"name": "Ground", "scale": SCALE, "receivers": [
-        {"entity_id": "kitchen_proxy", "address": "d0:cf:13:e1:73:7a", "cords": {"x": 120, "y": 130}}]}]}
+        {"entity_id": "kitchen_proxy", "address": "aa:bb:cc:00:02:7a", "cords": {"x": 120, "y": 130}}]}]}
     core._wifi_heat_cycle(_hass(clients), layout, {}, {}, {}, {}, now)
     assert list(core._wifi_heat["cells"]["Ground|1|1"]["aps"]) == [f"{KITCHEN}|2.4"]
 

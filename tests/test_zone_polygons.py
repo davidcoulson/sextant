@@ -205,8 +205,8 @@ def test_snap_uses_the_cached_union_and_still_takes_a_plain_list(tmp_path):
 
 
 def test_out_of_a_void_the_snap_keeps_the_room_the_thing_is_in(tmp_path):
-    """Eilee's watch: a fix in the foyer void about equally far from her wall
-    and Jack's. Memoryless, it snaps to whichever is nearer this cycle; with
+    """Robin's watch: a fix in the foyer void about equally far from her wall
+    and Jamie's. Memoryless, it snaps to whichever is nearer this cycle; with
     her room preferred it stays hers until his wall is clearly nearer."""
     hass = make_hass(tmp_path)
     data = _new_global_data(_two_room_layout())

@@ -14,7 +14,7 @@ device, nested beneath its Bermuda device:
 | `sensor.<device>_sextant_spot` | the spot inside the room, `unknown` when in none; attribute `room` |
 
 `_sextant_location` is the whole answer in one entity, at the finest
-resolution available: *David Bedside Table* when the watch is on the table,
+resolution available: *Alex Bedside Table* when the watch is on the table,
 *Master Bedroom* when it is somewhere else in the room. Its attributes say
 which of the two you got and fill in the rest, so nothing needs a second
 lookup:
@@ -137,7 +137,7 @@ triggers:
   - trigger: event
     event_type: sextant_person_arrived
     event_data:
-      person: person.david
+      person: person.alex
 ```
 
 ## Rooms
@@ -192,7 +192,7 @@ Assistant, but not to this count).
 type: custom:sextant-map-card
 floor: Ground Floor
 entities:            # thing keys as in /api/sextant/cords; omit for every tracked thing
-  - davids_phone
+  - alex_phone
 title: Downstairs    # optional
 height: 360          # px
 circles: false       # the solver's distance circles

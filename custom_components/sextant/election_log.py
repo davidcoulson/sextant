@@ -89,6 +89,7 @@ class ElectionLog:
         self.dirpath = dirpath
         self._buffer = []
         self._pruned_hour = None
+        self._emptied = False   # off and already swept: no directory scan per cycle
 
     def add(self, row: dict, stamp: float | None = None):
         if isinstance(row, dict) and row.get("floor_cands"):
@@ -98,11 +99,19 @@ class ElectionLog:
         """Write what the cycle recorded, and drop files past the window.
 
         ``hours`` <= 0 means the log is off: the buffer is discarded and the
-        files already written are left alone (turning it back on continues
-        them; the window prunes them in time).
+        files already written are deleted, once (a scan on the first cycle
+        after a restart or after switching off, none while it stays off).
         """
         rows, self._buffer = self._buffer, []
-        if not rows or not hours or hours <= 0:
+        if hours is None:   # the setting could not be read: touch nothing
+            return 0
+        if hours <= 0:
+            if not self._emptied:
+                self._emptied = True
+                await clear(self.dirpath)
+            return 0
+        self._emptied = False
+        if not rows:
             return 0
         now = time.time() if now is None else now
         try:
@@ -132,8 +141,8 @@ class ElectionLog:
 async def clear(dirpath: str):
     """Delete every log file (ours only), returning (files, bytes) removed.
 
-    Turning the log off stops the writing but keeps what was written - the
-    window prunes only while it writes - so this is how the files go.
+    Turning the log off calls this once; the ``sextant/election_log/clear``
+    command calls it too.
     """
     def _clear():
         files = size = 0

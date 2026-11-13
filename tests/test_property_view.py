@@ -23,8 +23,8 @@ def _layout(up_shift=0.0):
          "zones": [_room("Kitchen", 0, 0, 5, 5), {"entity_id": "Void", "no_go": True, "cords": _room("x", 1, 1, 2, 2)["cords"]}],
          "receivers": [{"entity_id": "kitchen_proxy", "address": "aa:bb", "cords": {"x": 250, "y": 250}},
                        {"entity_id": "gazebo", "cords": {"x": 900, "y": 250}}],
-         "access_points": [{"mac": "8c:ed:e1:00:de:ed", "name": "Kitchen E7", "cords": {"x": 100, "y": 100}}]},
-    ], "site": {"lat": 41.5, "lon": -81.7, "rotation": -10}}
+         "access_points": [{"mac": "aa:bb:cc:00:01:01", "name": "Kitchen E7", "cords": {"x": 100, "y": 100}}]},
+    ], "site": {"lat": 51.5, "lon": -0.1, "rotation": -10}}
 
 
 def test_every_floor_lands_in_the_house_frame_bottom_first():
@@ -35,13 +35,13 @@ def test_every_floor_lands_in_the_house_frame_bottom_first():
     assert ground["no_go"] == [{"name": "Void", "points": [[1, 1], [2, 1], [2, 2], [1, 2]]}]      # ... and sent apart
     # Up's plan is drawn 2 m to the right, its anchors too: in the house frame it sits on top of the ground floor.
     assert up["registered"] and [round(c, 3) for c in up["rooms"][0]["points"][0]] == [0, 0]
-    assert v["site"] == {"lat": 41.5, "lon": -81.7, "rotation": 350.0}
+    assert v["site"] == {"lat": 51.5, "lon": -0.1, "rotation": 350.0}
 
 
 def test_proxies_say_when_they_are_outdoors_and_access_points_come_along():
     ground = property_view.view(_layout())["floors"][0]
     assert [(p["slug"], p["outdoor"]) for p in ground["proxies"]] == [("kitchen_proxy", False), ("gazebo", True)]
-    assert ground["proxies"][0]["x"] == 2.5 and ground["access_points"] == [{"mac": "8c:ed:e1:00:de:ed", "name": "Kitchen E7", "x": 1.0, "y": 1.0}]
+    assert ground["proxies"][0]["x"] == 2.5 and ground["access_points"] == [{"mac": "aa:bb:cc:00:01:01", "name": "Kitchen E7", "x": 1.0, "y": 1.0}]
 
 
 def test_frames_carry_live_positions_into_the_house_frame():
@@ -60,14 +60,14 @@ def test_an_unregistered_floor_is_drawn_in_its_own_metres():
 
 
 def test_sites_are_cleaned():
-    assert property_view.clean_site({"lat": 41.5, "lon": -81.7}) == {"lat": 41.5, "lon": -81.7, "rotation": 0.0}
-    assert property_view.clean_site({"lat": 41.5, "lon": -81.7, "rotation": 725}) ["rotation"] == 5.0
+    assert property_view.clean_site({"lat": 51.5, "lon": -0.1}) == {"lat": 51.5, "lon": -0.1, "rotation": 0.0}
+    assert property_view.clean_site({"lat": 51.5, "lon": -0.1, "rotation": 725}) ["rotation"] == 5.0
     for bad in (None, {}, {"lat": 95, "lon": 0}, {"lat": 0, "lon": 200}, {"lat": "x", "lon": 1}, {"lat": True, "lon": 1}):
         assert property_view.clean_site(bad) is None
     assert property_view.view({})["floors"] == [] and property_view.view(None)["site"] is None
 
 
 def test_site_rotation_missing_is_zero_but_nan_is_rejected():
-    assert property_view.clean_site({"lat": 41.0, "lon": -81.0})["rotation"] == 0.0
-    assert property_view.clean_site({"lat": 41.0, "lon": -81.0, "rotation": float("nan")}) is None
-    assert property_view.clean_site({"lat": 41.0, "lon": -81.0, "rotation": -90})["rotation"] == 270.0
+    assert property_view.clean_site({"lat": 51.5, "lon": -0.1})["rotation"] == 0.0
+    assert property_view.clean_site({"lat": 51.5, "lon": -0.1, "rotation": float("nan")}) is None
+    assert property_view.clean_site({"lat": 51.5, "lon": -0.1, "rotation": -90})["rotation"] == 270.0

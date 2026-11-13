@@ -32,19 +32,19 @@ def test_room_names_match_however_they_are_spelt():
 
 def test_rooms_match_by_name_or_by_linked_area_once_each():
     floor = {"zones": [
-        box("Jack Room", 0, 0, 100, 100, area_id="jack_bedroom"),
+        box("Jamie Room", 0, 0, 100, 100, area_id="jamie_bedroom"),
         box("Kitchen", 200, 0, 300, 100),
         box("Void", 100, 0, 200, 100, no_go=True),
     ]}
     rooms = [
-        {"name": "Jack Bedroom", "x0": 0, "y0": 0, "x1": 4000, "y1": 4000},
+        {"name": "Jamie Bedroom", "x0": 0, "y0": 0, "x1": 4000, "y1": 4000},
         {"name": "kitchen", "x0": 0, "y0": 0, "x1": 2000, "y1": 2000},
         {"name": "Kitchen", "x0": 0, "y0": 0, "x1": 2000, "y1": 2000},   # a second robot room of the same name: plan room used once
         {"name": "Void", "x0": 0, "y0": 0, "x1": 10, "y1": 10},        # no-go areas are never rooms
         {"name": None, "x0": 0, "y0": 0, "x1": 10, "y1": 10},
     ]
     m = robots.match_rooms(rooms, floor)
-    assert [(a, b) for a, b, _m, _p in m] == [("Jack Bedroom", "Jack Room"), ("kitchen", "Kitchen")]
+    assert [(a, b) for a, b, _m, _p in m] == [("Jamie Bedroom", "Jamie Room"), ("kitchen", "Kitchen")]
     assert m[0][2] == (2000.0, 2000.0) and m[0][3] == (50.0, 50.0)
 
 

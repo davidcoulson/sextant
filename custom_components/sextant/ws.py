@@ -122,7 +122,7 @@ def code_signature() -> str | None:
 def _thing_names(hass, entities, layout=None) -> dict:
     """{slug: display name} for the tracked entities.
 
-    Bermuda's device name first ("Fry", "David's Phone"), then whatever the
+    Bermuda's device name first ("Fry", "Alex's Phone"), then whatever the
     user renamed the device to in Home Assistant, then the name typed in
     Sextant's own thing dialog (layout "thing_names"), which wins.
     """
@@ -158,7 +158,7 @@ def _thing_names(hass, entities, layout=None) -> dict:
 
 
 def _tidy_device_name(name: str) -> str:
-    """"Private BLE Device David's Phone" -> "David's Phone": the integration
+    """"Private BLE Device Alex's Phone" -> "Alex's Phone": the integration
     prefix Bermuda copies into the device name is not part of the name."""
     for prefix in ("Private BLE Device ", "Private BLE "):
         if name.startswith(prefix) and len(name) > len(prefix):
@@ -378,7 +378,7 @@ async def ws_tuning_set(hass, connection, msg):
     # How the panel refers to the thing: he, she, they or it. None or "" falls
     # back to its class (a man is he, a phone is it, a pet or person they).
     vol.Optional("pronouns"): vol.Any(None, "", "he", "she", "they", "it"),
-    # Whose it is: a Home Assistant person (person.david). Groups the Live
+    # Whose it is: a Home Assistant person (person.alex). Groups the Live
     # list, and is what a per-person location will be built from.
     vol.Optional("owner"): vol.Any(None, str),
     # Whether this thing's place may stand for its owner's (None: its class decides).
@@ -413,7 +413,7 @@ async def ws_thing_tune(hass, connection, msg):
     changes = {}
     owner = msg.get("owner")
     if owner and not re.fullmatch(r"person\.[a-z0-9_]+", owner):
-        return _error(connection, msg, "owner must be a Home Assistant person, like person.david")
+        return _error(connection, msg, "owner must be a Home Assistant person, like person.alex")
     charging = msg.get("charging_entity")
     if charging and not re.fullmatch(r"(sensor|binary_sensor)\.[a-z0-9_]+", charging):
         return _error(connection, msg, "the on-charger sensor must be a sensor or binary_sensor")
@@ -802,6 +802,7 @@ async def ws_history_timeline(hass, connection, msg):
     vol.Required("floor"): str,
     vol.Required("other"): str,
 })
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_floor_bias_map(hass, connection, msg):
     """This floor's election prior against another's, per half-metre cell (see floor_bias_map)."""
@@ -882,6 +883,7 @@ async def ws_history_clear(hass, connection, msg):
 
 
 @websocket_api.websocket_command({vol.Required("type"): "sextant/calibration/status"})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_calibration_status(hass, connection, msg):
     from .calibration import _status_payload, get_calibration_state  # noqa: PLC0415
@@ -909,6 +911,7 @@ async def ws_calibration_action(hass, connection, msg):
 
 
 @websocket_api.websocket_command({vol.Required("type"): "sextant/selftest"})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_selftest(hass, connection, msg):
     core = _core()
@@ -1040,6 +1043,7 @@ def _proxy_device(hass, slug, address):
 
 
 @websocket_api.websocket_command({vol.Required("type"): "sextant/scanner_linking"})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_scanner_linking(hass, connection, msg):
     core = _core()
@@ -1056,6 +1060,7 @@ async def ws_beacon_links(hass, connection, msg):
 
 
 @websocket_api.websocket_command({vol.Required("type"): "sextant/receivers"})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_receivers(hass, connection, msg):
     """Every placed receiver with its liveness, plus scanners Bermuda knows
@@ -1574,6 +1579,7 @@ async def ws_scanner_ignore(hass, connection, msg):
 
 
 @websocket_api.websocket_command({vol.Required("type"): "sextant/advice"})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_advice(hass, connection, msg):
     """Which rooms the proxies serve worst and where a proxy would help (sextant.advice)."""
@@ -1859,6 +1865,7 @@ def _robot_public(hass, vac, cfg):
 
 
 @websocket_api.websocket_command({vol.Required("type"): "sextant/robot/list"})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_robot_list(hass, connection, msg):
     """The Roborock vacuums, and how each is lined up with the plan (if it is)."""
@@ -1966,6 +1973,7 @@ async def ws_robot_dock(hass, connection, msg):
 
 
 @websocket_api.websocket_command({vol.Required("type"): "sextant/radar/devices"})
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_radar_devices(hass, connection, msg):
     """Every device that reports mmWave target coordinates, for the Edit page:
@@ -2002,6 +2010,7 @@ async def ws_radar_devices(hass, connection, msg):
     vol.Optional("mount"): vol.Any(None, vol.In(["wall", "ceiling"])),
     vol.Optional("z_ref"): vol.Any(None, vol.In(["floor", "up", "down"])),
 })
+@websocket_api.require_admin
 @websocket_api.async_response
 async def ws_radar_targets(hass, connection, msg):
     """One radar's targets right now, placed as the Edit page has it (which

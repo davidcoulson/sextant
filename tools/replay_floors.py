@@ -6,7 +6,7 @@ Sextant's floor election is a pipeline: each contending floor's fit
 confidence is scaled by proximity, biased, folded into smoothed odds, and the
 incumbent only loses to a challenger that leads by a margin for a dwell. The
 knobs are on the Tuning page, and the question is always the same - would a
-different setting have held Eilee's phone on her floor overnight without
+different setting have held Robin's phone on her floor overnight without
 freezing the cats on the wrong one. This answers it from cycles that really
 happened rather than from a guess.
 
@@ -24,10 +24,10 @@ flips (A -> B -> A), per thing.
 Usage::
 
     python tools/replay_floors.py config/sextant_election_log --layout layout.json
-    python tools/replay_floors.py capture.jsonl --hours 12 --thing eilee_phone
+    python tools/replay_floors.py capture.jsonl --hours 12 --thing robin_phone
 
     # grade a thing against where it really was (a still phone overnight):
-    python tools/replay_floors.py log/ --truth private_ble_device_eilee_phone="Second Floor" \\
+    python tools/replay_floors.py log/ --truth private_ble_device_robin_phone="Second Floor" \\
         --since "2026-09-25 00:00" --until "2026-09-25 07:00"
 
     # the proximity term is re-scored from each floor's nearest proxy, so

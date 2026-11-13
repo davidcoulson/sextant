@@ -7,7 +7,7 @@ import sextant  # noqa: F401
 from sextant import field
 
 S = 100.0   # px per metre
-A, B = "8c:ed:e1:00:de:ed", "28:70:4e:27:04:ed"
+A, B = "aa:bb:cc:00:01:01", "aa:bb:cc:00:01:02"
 
 
 def _room(name, x0, y0, x1, y1):

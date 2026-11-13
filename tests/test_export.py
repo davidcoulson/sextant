@@ -13,7 +13,7 @@ def rect(name, x0, y0, x1, y1, **extra):
 def layout():
     return {
         "thing_classes": {"phone": "phone", "cat_tag": "cat"},
-        "thing_owners": {"phone": "person.david", "cat_tag": "person.meg"},
+        "thing_owners": {"phone": "person.alex", "cat_tag": "person.meg"},
         "floor": [
             {
                 "name": "Ground", "scale": 100.0, "level": 0, "floor_id": "ground",
@@ -44,14 +44,14 @@ def rows():
 
 def people():
     return [
-        {"person": "person.david", "name": "David", "kind": "person", "location": "Table", "floor": "Ground", "room": "Kitchen", "spot": "Table", "presence": "here", "via": "phone"},
+        {"person": "person.alex", "name": "Alex", "kind": "person", "location": "Table", "floor": "Ground", "room": "Kitchen", "spot": "Table", "presence": "here", "via": "phone"},
         {"person": "person.meg", "name": "Meg", "kind": "pet", "location": "Hall", "floor": "Ground", "room": "Hall", "spot": None, "presence": "quiet", "via": "cat_tag"},
-        {"person": "person.jack", "name": "Jack", "kind": "person", "location": "Kent", "floor": "unknown", "room": "unknown", "presence": "away"},
+        {"person": "person.jamie", "name": "Jamie", "kind": "person", "location": "Hill", "floor": "unknown", "room": "unknown", "presence": "away"},
     ]
 
 
 def test_rooms_come_out_in_metres_with_neighbours_spots_and_proxies():
-    out = export.build_map(layout(), rows(), people(), names={"phone": "David's phone"}, now=1_700_000_200,
+    out = export.build_map(layout(), rows(), people(), names={"phone": "Alex's phone"}, now=1_700_000_200,
                            presence_of=lambda ent: "away" if ent == "gone" else "here")
     assert out["units"] == {"length": "m", "area": "m2"} and out["generated_at"].startswith("2023-11-14")
     ground = out["floors"][0]
@@ -70,17 +70,17 @@ def test_rooms_come_out_in_metres_with_neighbours_spots_and_proxies():
 
 
 def test_people_and_things_are_listed_in_their_rooms():
-    out = export.build_map(layout(), rows(), people(), names={"phone": "David's phone"}, now=1_700_000_200,
+    out = export.build_map(layout(), rows(), people(), names={"phone": "Alex's phone"}, now=1_700_000_200,
                            presence_of=lambda ent: "away" if ent == "gone" else "here")
     kitchen, hall, _garage = out["floors"][0]["rooms"]
-    assert kitchen["occupants"] == [{"name": "David", "kind": "person", "spot": "Table"}]
+    assert kitchen["occupants"] == [{"name": "Alex", "kind": "person", "spot": "Table"}]
     assert hall["occupants"] == [{"name": "Meg", "kind": "pet", "spot": None}]
-    assert [t["name"] for t in kitchen["things"]] == ["David's phone"]
+    assert [t["name"] for t in kitchen["things"]] == ["Alex's phone"]
     assert [t["key"] for t in hall["things"]] == ["cat_tag"]       # "gone" is away: not in the room
     phone = out["things"][0]
-    assert phone["x_m"] == 1.5 and phone["y_m"] == 1.2 and phone["owner"] == "person.david" and phone["class"] == "phone"
+    assert phone["x_m"] == 1.5 and phone["y_m"] == 1.2 and phone["owner"] == "person.alex" and phone["class"] == "phone"
     assert phone["in_room_since"] == "2023-11-14T22:13:20+00:00" and phone["last_heard"].endswith("22:15:00+00:00")
-    assert [p["name"] for p in out["people"]] == ["David", "Meg", "Jack"]
+    assert [p["name"] for p in out["people"]] == ["Alex", "Meg", "Jamie"]
 
 
 def test_an_unscaled_floor_gives_pixels_and_a_floor_filter_narrows():
@@ -89,7 +89,7 @@ def test_an_unscaled_floor_gives_pixels_and_a_floor_filter_narrows():
     assert loft["scaled"] is False and loft["rooms"][0]["outline_px"] == [[0, 0], [100, 0], [100, 100], [0, 100]]
     assert loft["rooms"][0]["area_m2"] is None
     only = export.build_map(layout(), rows(), people(), now=0, floor="Ground")
-    assert [f["name"] for f in only["floors"]] == ["Ground"] and [p["name"] for p in only["people"]] == ["David", "Meg"]
+    assert [f["name"] for f in only["floors"]] == ["Ground"] and [p["name"] for p in only["people"]] == ["Alex", "Meg"]
     with pytest.raises(ValueError, match="Roof"):
         export.build_map(layout(), floor="Roof")
 
@@ -102,9 +102,9 @@ def test_a_legacy_rectangle_is_ordered_around_its_centre():
 
 def test_people_from_states_reads_the_person_and_pet_sensors():
     states = {
-        "sensor.david_sextant_person_location": types.SimpleNamespace(state="Table", attributes={"floor": "Ground", "room": "Kitchen", "spot": "Table", "presence": "here", "via": "phone", "source": "ble"}),
+        "sensor.alex_sextant_person_location": types.SimpleNamespace(state="Table", attributes={"floor": "Ground", "room": "Kitchen", "spot": "Table", "presence": "here", "via": "phone", "source": "ble"}),
         "sensor.meg_sextant_pet_location": types.SimpleNamespace(state="Hall", attributes={"floor": "Ground", "room": "Hall", "spot": None, "presence": "quiet", "via": "cat_tag"}),
-        "person.david": types.SimpleNamespace(state="home", attributes={"friendly_name": "David C"}),
+        "person.alex": types.SimpleNamespace(state="home", attributes={"friendly_name": "Alex C"}),
     }
     out = export.people_from_states(states.get, layout())
-    assert [(p["name"], p["kind"], p["location"]) for p in out] == [("David C", "person", "Table"), ("meg", "pet", "Hall")]
+    assert [(p["name"], p["kind"], p["location"]) for p in out] == [("Alex C", "person", "Table"), ("meg", "pet", "Hall")]

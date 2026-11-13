@@ -33,10 +33,10 @@ is in the event; the departure is the last time any of their things was
 heard, not when the 15 minute grace ran out.
 
 ```yaml
-alias: David left
+alias: Alex left
 triggers:
   - trigger: state
-    entity_id: device_tracker.david_coulson_sextant
+    entity_id: device_tracker.alex_smith_sextant
     attribute: departed_at
 conditions:
   - condition: template
@@ -45,12 +45,12 @@ actions:
   - action: notify.notify
     data:
       message: >-
-        David left at
+        Alex left at
         {{ as_timestamp(trigger.to_state.attributes.departed_at) | timestamp_custom('%H:%M') }}
 ```
 
 Swap `departed_at` for `arrived_at` for a welcome-home, and for a dashboard:
-`home for {{ state_attr('device_tracker.david_coulson_sextant', 'arrived_at') | as_datetime | relative_time }}`.
+`home for {{ state_attr('device_tracker.alex_smith_sextant', 'arrived_at') | as_datetime | relative_time }}`.
 
 ### Lights follow a person from room to room
 
@@ -59,10 +59,10 @@ automation never needs a list of rooms and lights: it lights the area the
 person walked into and darkens the one they left.
 
 ```yaml
-alias: Lights follow David
+alias: Lights follow Alex
 triggers:
   - trigger: state
-    entity_id: sensor.david_coulson_sextant_person_room
+    entity_id: sensor.alex_smith_sextant_person_room
 conditions:
   - condition: template
     value_template: "{{ trigger.to_state.attributes.area_id is not none }}"
@@ -137,15 +137,15 @@ per real arrival or departure rather than every time a phone's GPS wanders
 across the property line.
 
 ```yaml
-alias: Michelle is home
+alias: Sam is home
 triggers:
   - trigger: state
-    entity_id: device_tracker.michelle_bauer_sextant
+    entity_id: device_tracker.sam_smith_sextant
     to: home
 actions:
-  - action: notify.mobile_app_davids_iphone
+  - action: notify.mobile_app_alex_phone
     data:
-      message: Michelle is home
+      message: Sam is home
 ```
 
 ```yaml
@@ -153,16 +153,16 @@ alias: Everyone has left
 triggers:
   - trigger: state
     entity_id:
-      - device_tracker.david_coulson_sextant
-      - device_tracker.michelle_bauer_sextant
-      - device_tracker.eilee_bauer_sextant
+      - device_tracker.alex_smith_sextant
+      - device_tracker.sam_smith_sextant
+      - device_tracker.robin_smith_sextant
     from: home
 conditions:
   - condition: template
     value_template: >
-      {{ ['device_tracker.david_coulson_sextant',
-          'device_tracker.michelle_bauer_sextant',
-          'device_tracker.eilee_bauer_sextant']
+      {{ ['device_tracker.alex_smith_sextant',
+          'device_tracker.sam_smith_sextant',
+          'device_tracker.robin_smith_sextant']
          | map('states') | select('eq', 'home') | list | count == 0 }}
 actions:
   - action: script.house_away
@@ -173,21 +173,21 @@ actions:
 The person is away by GPS, but the phone is still heard in the house.
 
 ```yaml
-alias: David left his phone
+alias: Alex left his phone
 triggers:
   - trigger: state
-    entity_id: device_tracker.david_coulson_sextant
+    entity_id: device_tracker.alex_smith_sextant
     from: home
     for: "00:05:00"
 conditions:
   - condition: state
-    entity_id: sensor.private_ble_device_david_phone_sextant_location
+    entity_id: sensor.private_ble_device_alex_phone_sextant_location
     attribute: presence
     state: here
 actions:
-  - action: notify.mobile_app_michelles_iphone
+  - action: notify.mobile_app_sams_iphone
     data:
-      message: "David's phone is still at home, in the {{ states('sensor.private_ble_device_david_phone_sextant_room') }}"
+      message: "Alex's phone is still at home, in the {{ states('sensor.private_ble_device_alex_phone_sextant_room') }}"
 ```
 
 ### A thing that has gone missing
@@ -200,16 +200,16 @@ at 5:10 PM:
 alias: Wallet not seen
 triggers:
   - trigger: state
-    entity_id: sensor.david_s_wallet_sextant_location
+    entity_id: sensor.alex_s_wallet_sextant_location
     attribute: presence
     to: away
 actions:
-  - action: notify.mobile_app_davids_iphone
+  - action: notify.mobile_app_alex_phone
     data:
       message: >
         Wallet not heard since
-        {{ as_datetime(state_attr('sensor.david_s_wallet_sextant_location', 'last_heard')) | as_local | as_timestamp | timestamp_custom('%-I:%M %p') }},
-        last in the {{ state_attr('sensor.david_s_wallet_sextant_location', 'room') }}
+        {{ as_datetime(state_attr('sensor.alex_s_wallet_sextant_location', 'last_heard')) | as_local | as_timestamp | timestamp_custom('%-I:%M %p') }},
+        last in the {{ state_attr('sensor.alex_s_wallet_sextant_location', 'room') }}
 ```
 
 Watch a tag's battery the same way: a tag that goes `quiet` more and more
@@ -232,7 +232,7 @@ conditions:
     entity_id: vacuum.rocky
     state: cleaning
 actions:
-  - action: notify.mobile_app_davids_iphone
+  - action: notify.mobile_app_alex_phone
     data:
       message: "Rocky has been in the {{ states('sensor.vacuum_rocky_sextant_room') }} for 20 minutes"
 ```
@@ -305,17 +305,17 @@ An entities card, one line per person, with how long they have been there:
 type: entities
 title: Who is where
 entities:
-  - entity: sensor.david_coulson_sextant_person_location
-    name: David
+  - entity: sensor.alex_smith_sextant_person_location
+    name: Alex
     secondary_info: last-changed
-  - entity: sensor.michelle_bauer_sextant_person_location
-    name: Michelle
+  - entity: sensor.sam_smith_sextant_person_location
+    name: Sam
     secondary_info: last-changed
-  - entity: sensor.eilee_bauer_sextant_person_location
-    name: Eilee
+  - entity: sensor.robin_smith_sextant_person_location
+    name: Robin
     secondary_info: last-changed
-  - entity: sensor.jack_bauer_sextant_person_location
-    name: Jack
+  - entity: sensor.jamie_smith_sextant_person_location
+    name: Jamie
     secondary_info: last-changed
 ```
 
@@ -342,8 +342,8 @@ The tile card can show attributes next to the state:
 
 ```yaml
 type: tile
-entity: sensor.eilee_bauer_sextant_person_location
-name: Eilee
+entity: sensor.robin_smith_sextant_person_location
+name: Robin
 state_content:
   - state
   - presence
@@ -382,7 +382,7 @@ hours_to_show: 24
 entities:
   - sensor.socks_sextant_room
   - sensor.leela_sextant_room
-  - sensor.david_coulson_sextant_person_room
+  - sensor.alex_smith_sextant_person_room
 ```
 
 ### Only when it matters
@@ -409,8 +409,8 @@ away shows at their GPS position and someone home shows at home:
 ```yaml
 type: map
 entities:
-  - device_tracker.jack_bauer_sextant
-  - device_tracker.eilee_bauer_sextant
+  - device_tracker.jamie_smith_sextant
+  - device_tracker.robin_smith_sextant
 hours_to_show: 12
 ```
 

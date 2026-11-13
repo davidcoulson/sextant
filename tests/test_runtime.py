@@ -162,11 +162,11 @@ def test_the_live_dicts_go_out_and_come_back(monkeypatch):
                                     "probs": {"Master Bedroom": 0.94}, "locked": True, "born": now - 900,
                                     "challenge": None, "still_since": now - 800}
     sextant._subzone_state["watch"] = {"floor": "Second Floor", "zone": "Master Bedroom",
-                                       "value": ("David Bedside Table", "Master Bedroom"),
-                                       "probs": {"David Bedside Table": 0.7}, "pending": None}
+                                       "value": ("Alex Bedside Table", "Master Bedroom"),
+                                       "probs": {"Alex Bedside Table": 0.7}, "pending": None}
     sextant._arrivals["watch"] = {"floor": "Second Floor", "x": 5.3, "y": 6.2, "since": now - 40000,
                                   "provisional": False, "first_seen": now - 40000, "away_since": None}
-    rows = [{"ent": "watch", "zone": "Master Bedroom", "sub_zone": "David Bedside Table",
+    rows = [{"ent": "watch", "zone": "Master Bedroom", "sub_zone": "Alex Bedside Table",
              "floor": "Second Floor", "updated": now - 5, "cords": [540.0, 632.0]}]
 
     saved = json.loads(json.dumps(sextant.runtime_mod.snapshot(
@@ -195,7 +195,7 @@ def test_the_live_dicts_go_out_and_come_back(monkeypatch):
     assert sextant._zone_state["watch"]["locked"] is True
     # The spot election compares this against its own answer, so it has to be
     # the tuple it was, not the list JSON made of it.
-    assert sextant._subzone_state["watch"]["value"] == ("David Bedside Table", "Master Bedroom")
+    assert sextant._subzone_state["watch"]["value"] == ("Alex Bedside Table", "Master Bedroom")
     # It has been on the table for eleven hours; it did not just arrive.
     assert now - sextant._arrivals["watch"]["since"] > 39000
     assert sextant._kf_position_state["watch"]["x"].tolist() == [1.0, 2.0, 0.1, -0.2]
@@ -251,19 +251,19 @@ def test_the_history_fills_in_a_last_sighting_once_it_has_loaded():
 
 def test_location_asks_come_back_whatever_the_gap():
     from sextant import runtime
-    data = runtime.snapshot(1000.0, asked={"person.david": 870.5, "person.bad": "x"})
-    assert data["asked"] == {"person.david": 870.5}
-    assert runtime.restore(data, 1000.0 + 10 * 86400)["asked"] == {"person.david": 870.5}
+    data = runtime.snapshot(1000.0, asked={"person.alex": 870.5, "person.bad": "x"})
+    assert data["asked"] == {"person.alex": 870.5}
+    assert runtime.restore(data, 1000.0 + 10 * 86400)["asked"] == {"person.alex": 870.5}
     assert runtime.restore({"asked": {"person.bad": True}}, 1000.0)["asked"] == {}
     assert "asked" not in runtime.snapshot(1000.0)
 
 
 def test_visits_come_back_whatever_the_gap():
     from sextant import runtime
-    data = runtime.snapshot(1000.0, visits={"person.david": {"arrived": 900.0, "departed": None, "via": "ble"}, "person.bad": "x"})
-    assert data["people"] == {"person.david": {"arrived": 900.0, "departed": None, "via": "ble"}}
+    data = runtime.snapshot(1000.0, visits={"person.alex": {"arrived": 900.0, "departed": None, "via": "ble"}, "person.bad": "x"})
+    assert data["people"] == {"person.alex": {"arrived": 900.0, "departed": None, "via": "ble"}}
     short = runtime.restore(data, 1010.0)
-    assert short["visits"] == {"person.david": {"arrived": 900.0, "departed": None, "via": "ble"}}
+    assert short["visits"] == {"person.alex": {"arrived": 900.0, "departed": None, "via": "ble"}}
     long = runtime.restore(data, 1000.0 + 10 * 86400)
     assert long["visits"] == short["visits"]            # a day later, "home since" still stands
     assert runtime.snapshot(1000.0).get("people") is None
@@ -277,7 +277,7 @@ def test_visits_come_back_whatever_the_gap():
 
 def test_the_wifi_store_rides_with_the_runtime_whatever_the_gap():
     from sextant import runtime
-    store = {"aps": {"8c:ed": {"floors": {"Ground Floor": 12.0}, "rooms": {"Kitchen": 12.0}}}, "matches": {"device_tracker.iphone": {"person.david": {"agree": 10.0, "cycles": 12.0}}}, "names": {"device_tracker.iphone": "iPhone"}}
+    store = {"aps": {"8c:ed": {"floors": {"Ground Floor": 12.0}, "rooms": {"Kitchen": 12.0}}}, "matches": {"device_tracker.iphone": {"person.alex": {"agree": 10.0, "cycles": 12.0}}}, "names": {"device_tracker.iphone": "iPhone"}}
     data = runtime.snapshot(1000.0, wifi=store)
     back = runtime.restore(data, 1000.0 + 30 * 86400)["wifi"]
     assert back["aps"] == store["aps"] and back["matches"] == store["matches"] and back["clients"] == {}

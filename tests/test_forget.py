@@ -34,7 +34,7 @@ def _hass(tmp_path, monkeypatch, tracked_slugs):
         "floor": [{"name": "F", "scale": 100.0, "receivers": [], "zones": [], "subzones": []}],
         "thing_names": {"tile_dead": "Office Tile", "tile_live": "Office Tile"},
         "thing_classes": {"tile_dead": "tag", "tile_live": "tag", "old_phone": "phone"},
-        "thing_owners": {"old_phone": "person.david"},
+        "thing_owners": {"old_phone": "person.alex"},
     }
     run(st.save_layout(hass, layout))
     monkeypatch.setattr(bermuda_source, "async_get_tracked_devices",

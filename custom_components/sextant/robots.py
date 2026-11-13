@@ -55,8 +55,8 @@ def plan_rooms(floor):
 def match_rooms(robot_rooms, floor):
     """[(robot room name, plan room name, map (x, y), plan (x, y))] for the
     rooms both maps name. A robot room matches a plan room by name, or by the
-    Home Assistant area the plan room is linked to ("Jack Bedroom" is the
-    room linked to area jack_bedroom). Each plan room is used once."""
+    Home Assistant area the plan room is linked to ("Jamie Bedroom" is the
+    room linked to area jamie_bedroom). Each plan room is used once."""
     by_key = {}
     for name, area, centre in plan_rooms(floor):
         for key in (norm(name), norm(area)):

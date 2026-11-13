@@ -34,7 +34,7 @@ test("rotation turns the house clockwise", () => {
 
 test("a pinch zooms by the finger spread and keeps the point between the fingers still", async () => {
   const { pinchView } = await import("../../custom_components/sextant/frontend/sextant-geo.js");
-  const view = { lat: 41.3, lon: -81.76, zoom: 19 }, W = 800, H = 600;
+  const view = { lat: 51.5, lon: -0.1, zoom: 19 }, W = 800, H = 600;
   const mid0 = { x: 200, y: 150 };
   const v = pinchView(view, mid0, 100, mid0, 200, W, H, 15, 22);
   near(v.zoom, 20, 1e-9);

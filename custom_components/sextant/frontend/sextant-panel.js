@@ -43,7 +43,7 @@ const FLOOR_MODES = new Set(["live", "edit", "proxies", "calibration"]);
 // Pages that change the layout, the things or Bermuda, or expose every
 // address the house hears: administrators only (the backend refuses the
 // commands too; this just keeps the tabs out of a non-admin's way).
-const ADMIN_MODES = new Set(["edit", "things", "bermuda", "calibration", "tuning"]);
+const ADMIN_MODES = new Set(["edit", "things", "bermuda", "proxies", "calibration", "tuning", "advice"]);
 // Modes from before the page split (3.7.0) still stored in the browser.
 const MODE_ALIASES = { devices: "things", health: "proxies", trackers: "things" };
 const REPO_URL = "https://github.com/davidcoulson/sextant";

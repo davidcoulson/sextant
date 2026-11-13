@@ -38,7 +38,7 @@ def test_a_room_name_shared_by_two_floors_gets_the_floor_in_its_entity_id():
 
 
 ROWS = [
-    {"ent": "david_phone", "zone": "Kitchen", "floor": "Ground Floor", "sub_zone": "Peninsula"},
+    {"ent": "alex_phone", "zone": "Kitchen", "floor": "Ground Floor", "sub_zone": "Peninsula"},
     {"ent": "meg", "zone": "Kitchen", "floor": "Ground Floor", "sub_zone": "unknown"},
     {"ent": "wallet", "zone": "Kitchen", "floor": "Ground Floor", "sub_zone": "Pantry"},
     {"ent": "fry", "zone": "Office", "floor": "Ground Floor"},
@@ -48,18 +48,18 @@ ROWS = [
     {"ent": "luggage", "zone": "Master Bedroom", "floor": "Second Floor"},
     {"ent": "vacuum_r2d2", "zone": "Master Bedroom", "floor": "Second Floor", "robot": "vacuum.r2d2"},
 ]
-PRESENCE = {"david_phone": "here", "meg": "quiet", "fry": "here", "leela": "here", "gone": "away", "wallet": "here", "luggage": "here", "vacuum_r2d2": "here"}
-CLASSES = {"meg": "cat", "fry": "cat", "leela": "cat", "david_phone": "phone", "wallet": "wallet", "luggage": "bag"}
-NAMES = {"david_phone": "David Phone", "meg": "Meg", "fry": "Fry", "leela": "Leela", "wallet": "Wallet", "luggage": "Luggage"}
+PRESENCE = {"alex_phone": "here", "meg": "quiet", "fry": "here", "leela": "here", "gone": "away", "wallet": "here", "luggage": "here", "vacuum_r2d2": "here"}
+CLASSES = {"meg": "cat", "fry": "cat", "leela": "cat", "alex_phone": "phone", "wallet": "wallet", "luggage": "bag"}
+NAMES = {"alex_phone": "Alex Phone", "meg": "Meg", "fry": "Fry", "leela": "Leela", "wallet": "Wallet", "luggage": "Luggage"}
 
 
 def test_occupancy_counts_the_things_placed_in_each_room():
     keys = rooms.room_keys(LAYOUT)
-    out = rooms.occupancy(keys, ROWS, PRESENCE.get, CLASSES, NAMES, {"David": ("Ground Floor", "Kitchen")})
+    out = rooms.occupancy(keys, ROWS, PRESENCE.get, CLASSES, NAMES, {"Alex": ("Ground Floor", "Kitchen")})
     on, kitchen = out[("Ground Floor", "Kitchen")]
     assert on and kitchen["count"] == 2                      # the phone and the cat; not the wallet
-    assert kitchen["things"] == ["David Phone", "Wallet", "Meg"]   # here before quiet, everything listed
-    assert kitchen["pets"] == ["Meg"] and kitchen["people"] == ["David"]
+    assert kitchen["things"] == ["Alex Phone", "Wallet", "Meg"]   # here before quiet, everything listed
+    assert kitchen["pets"] == ["Meg"] and kitchen["people"] == ["Alex"]
     assert kitchen["spots"] == ["Peninsula"] and kitchen["presence"] == "here"   # the wallet's Pantry is not a spot in use
     assert kitchen["area_id"] == "kitchen" and kitchen["floor_id"] == "ground"
     # Two rooms called Office, told apart by floor.
@@ -90,20 +90,20 @@ def test_a_room_of_only_quiet_things_is_on_but_says_quiet():
 
 
 def test_an_owned_thing_counts_only_while_it_speaks_for_its_owner():
-    owners = {"david_phone": "person.david", "david_watch": "person.david", "meg": "person.meg"}
-    by_class = lambda ent: ent in ("david_phone", "david_watch", "meg", "guest_phone", "wallet") and ent != "wallet"
-    counts = rooms.stands_for_someone(owners, {"david_phone", "meg"}, by_class)
-    assert counts("david_phone") and counts("meg")
-    assert not counts("david_watch")          # on the bedside table; David is spoken for by his phone
+    owners = {"alex_phone": "person.alex", "alex_watch": "person.alex", "meg": "person.meg"}
+    by_class = lambda ent: ent in ("alex_phone", "alex_watch", "meg", "guest_phone", "wallet") and ent != "wallet"
+    counts = rooms.stands_for_someone(owners, {"alex_phone", "meg"}, by_class)
+    assert counts("alex_phone") and counts("meg")
+    assert not counts("alex_watch")          # on the bedside table; Alex is spoken for by his phone
     assert counts("guest_phone")               # nobody's: its class decides
     assert not counts("wallet")
-    # The watch speaks for David once he wears it and leaves the phone behind.
-    assert rooms.stands_for_someone(owners, {"david_watch"}, by_class)("david_watch")
+    # The watch speaks for Alex once he wears it and leaves the phone behind.
+    assert rooms.stands_for_someone(owners, {"alex_watch"}, by_class)("alex_watch")
 
 
 def test_people_home_counts_the_people_heard_and_keeps_the_pets_apart():
-    count, attrs = rooms.people_home({"David": "here", "Eilee": "quiet", "Jack": "away", "Michelle": "here", "Meg": "here", "Willow": "away"}, pets={"Meg", "Willow"})
-    assert count == 3 and attrs == {"home": ["David", "Eilee", "Michelle"], "away": ["Jack"], "pets_home": ["Meg"]}
+    count, attrs = rooms.people_home({"Alex": "here", "Robin": "quiet", "Jamie": "away", "Sam": "here", "Meg": "here", "Willow": "away"}, pets={"Meg", "Willow"})
+    assert count == 3 and attrs == {"home": ["Alex", "Robin", "Sam"], "away": ["Jamie"], "pets_home": ["Meg"]}
 
 
 # --- the platform --------------------------------------------------------------

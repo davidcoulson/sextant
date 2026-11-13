@@ -16,7 +16,7 @@ the area, when the two differ), and the sensors of a thing in that room carry
 ```yaml
 action: light.turn_on
 target:
-  area_id: "{{ state_attr('sensor.david_sextant_person_location', 'area_id') }}"
+  area_id: "{{ state_attr('sensor.alex_sextant_person_location', 'area_id') }}"
 ```
 
 **Keys:** **Esc** cancels whatever is in progress. In the middle of a drag

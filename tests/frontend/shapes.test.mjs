@@ -13,16 +13,16 @@ const layout = (spots, rooms = []) => ({
 });
 
 test("an untouched plan loses nothing", () => {
-  const a = layout([["David Bedside Table", 4]]);
+  const a = layout([["Alex Bedside Table", 4]]);
   assert.deepEqual(lostShapes(a, JSON.parse(JSON.stringify(a))), []);
 });
 
 test("a spot collapsing to one point is reported - the bedside-table bug", () => {
-  const before = layout([["David Bedside Table", 4], ["Michelle Bedside Table", 4]]);
-  const after = layout([["David Bedside Table", 1], ["Michelle Bedside Table", 1]]);
+  const before = layout([["Alex Bedside Table", 4], ["Sam Bedside Table", 4]]);
+  const after = layout([["Alex Bedside Table", 1], ["Sam Bedside Table", 1]]);
   const lost = lostShapes(before, after);
   assert.equal(lost.length, 2);
-  assert.match(lost[0], /David Bedside Table.*4 corners to 1/);
+  assert.match(lost[0], /Alex Bedside Table.*4 corners to 1/);
 });
 
 test("a room collapsing is reported too", () => {
