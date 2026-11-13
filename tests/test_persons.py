@@ -16,16 +16,16 @@ def thing(ent, cls, still_for=None, heard_ago=5.0, zone="Great Room", spot=None,
 
 
 def test_owners_groups_things_by_person():
-    layout = {"thing_owners": {"watch": "person.david", "phone": "person.david", "mphone": "person.michelle", "x": "david"}}
-    assert persons.owners(layout) == {"person.david": ["watch", "phone"], "person.michelle": ["mphone"]}
+    layout = {"thing_owners": {"watch": "person.alex", "phone": "person.alex", "mphone": "person.sam", "x": "alex"}}
+    assert persons.owners(layout) == {"person.alex": ["watch", "phone"], "person.sam": ["mphone"]}
     assert persons.owners({}) == {}
 
 
 def test_a_person_with_only_gps_owns_nothing_but_is_placed():
-    layout = {"thing_owners": {"watch": "person.david"},
-              "person_trackers": {"person.david": ["device_tracker.d"], "person.sherry": ["device_tracker.s"],
+    layout = {"thing_owners": {"watch": "person.alex"},
+              "person_trackers": {"person.alex": ["device_tracker.d"], "person.sherry": ["device_tracker.s"],
                                   "person.none": []}}
-    assert persons.owners(layout) == {"person.david": ["watch"], "person.sherry": []}
+    assert persons.owners(layout) == {"person.alex": ["watch"], "person.sherry": []}
     assert persons.pet_persons(persons.owners(layout), {}) == set()
 
 
@@ -67,7 +67,7 @@ def test_states_give_the_spot_or_the_room_and_say_which_thing():
 
 def test_person_sensors_are_never_mistaken_for_an_untracked_things():
     for suffix, _label in persons.PERSON_SENSOR_KINDS:
-        assert sensor_mod.thing_of_unique_id(f"{suffix}_david_coulson") is None
+        assert sensor_mod.thing_of_unique_id(f"{suffix}_alex_smith") is None
 
 
 def test_headphones_keys_and_bags_do_not_locate_their_owner_unless_asked():
@@ -82,7 +82,7 @@ def test_headphones_keys_and_bags_do_not_locate_their_owner_unless_asked():
 def test_when_nothing_moves_the_latest_to_arrive_speaks_not_the_watch_on_its_charger():
     # The watch has sat on the nightstand since last night; the phone came
     # downstairs an hour ago. Neither is moving now.
-    watch = thing("watch", "watch", still_for=9 * 3600, zone="Master Bedroom", spot="David Bedside Table")
+    watch = thing("watch", "watch", still_for=9 * 3600, zone="Master Bedroom", spot="Alex Bedside Table")
     phone = thing("phone", "phone", still_for=3600, zone="Morning Room")
     assert persons.pick([watch, phone], NOW, 120)["ent"] == "phone"
     # A phone just carried somewhere keeps it ahead too.
@@ -181,8 +181,8 @@ def test_considered_stays_the_same_while_nobody_moves():
 
 
 def test_a_person_who_owns_only_pet_tags_is_a_pet_and_gets_a_pets_device():
-    by_person = {"person.leela": ["leela_tag"], "person.david": ["david_phone", "leela_spare"], "person.empty": []}
-    classes = {"leela_tag": "cat", "leela_spare": "cat", "david_phone": "phone"}
+    by_person = {"person.leela": ["leela_tag"], "person.alex": ["alex_phone", "leela_spare"], "person.empty": []}
+    classes = {"leela_tag": "cat", "leela_spare": "cat", "alex_phone": "phone"}
     assert persons.pet_persons(by_person, classes) == {"person.leela"}
     assert persons.device_model(True) == "Pet" and persons.device_model(False) == "Person"
 

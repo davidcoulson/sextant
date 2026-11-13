@@ -105,17 +105,17 @@ def test_a_year_of_daily_edits_stays_a_few_hundred_files():
 # --- what a save destroys ----------------------------------------------------
 
 def test_an_untouched_layout_reports_nothing():
-    lay = _layout(spots=[("David Bedside Table", 4)])
+    lay = _layout(spots=[("Alex Bedside Table", 4)])
     assert sn.degraded(lay, json.loads(json.dumps(lay))) == []
 
 
 def test_a_spot_collapsing_to_one_point_is_reported():
     """The 2026-09-22 bug: two bedside tables lost their corners and vanished."""
-    before = _layout(spots=[("David Bedside Table", 4), ("Michelle Bedside Table", 4)])
-    after = _layout(spots=[("David Bedside Table", 1), ("Michelle Bedside Table", 1)])
+    before = _layout(spots=[("Alex Bedside Table", 4), ("Sam Bedside Table", 4)])
+    after = _layout(spots=[("Alex Bedside Table", 1), ("Sam Bedside Table", 1)])
     lost = sn.degraded(before, after)
     assert len(lost) == 2
-    assert any("David Bedside Table" in line and "4 corners to 1" in line for line in lost)
+    assert any("Alex Bedside Table" in line and "4 corners to 1" in line for line in lost)
 
 
 def test_a_room_collapsing_is_reported_too():
@@ -158,12 +158,12 @@ def _hass(tmp_path):
 
 def test_a_save_leaves_the_outgoing_layout_behind(tmp_path):
     hass = _hass(tmp_path)
-    good = _layout(spots=[("David Bedside Table", 4)])
-    broken = _layout(spots=[("David Bedside Table", 1)])
+    good = _layout(spots=[("Alex Bedside Table", 4)])
+    broken = _layout(spots=[("Alex Bedside Table", 1)])
     run(st.save_layout(hass, good))
     lost = run(st.save_layout(hass, broken))
 
-    assert lost and "David Bedside Table" in lost[0]
+    assert lost and "Alex Bedside Table" in lost[0]
     rows = run(sn.listing(hass))
     assert rows, "the good layout should be recoverable"
     back = run(sn.read(hass, rows[0]["id"]))

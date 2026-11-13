@@ -122,7 +122,7 @@ def code_signature() -> str | None:
 def _thing_names(hass, entities, layout=None) -> dict:
     """{slug: display name} for the tracked entities.
 
-    Bermuda's device name first ("Fry", "David's Phone"), then whatever the
+    Bermuda's device name first ("Fry", "Alex's Phone"), then whatever the
     user renamed the device to in Home Assistant, then the name typed in
     Sextant's own thing dialog (layout "thing_names"), which wins.
     """
@@ -158,7 +158,7 @@ def _thing_names(hass, entities, layout=None) -> dict:
 
 
 def _tidy_device_name(name: str) -> str:
-    """"Private BLE Device David's Phone" -> "David's Phone": the integration
+    """"Private BLE Device Alex's Phone" -> "Alex's Phone": the integration
     prefix Bermuda copies into the device name is not part of the name."""
     for prefix in ("Private BLE Device ", "Private BLE "):
         if name.startswith(prefix) and len(name) > len(prefix):
@@ -378,7 +378,7 @@ async def ws_tuning_set(hass, connection, msg):
     # How the panel refers to the thing: he, she, they or it. None or "" falls
     # back to its class (a man is he, a phone is it, a pet or person they).
     vol.Optional("pronouns"): vol.Any(None, "", "he", "she", "they", "it"),
-    # Whose it is: a Home Assistant person (person.david). Groups the Live
+    # Whose it is: a Home Assistant person (person.alex). Groups the Live
     # list, and is what a per-person location will be built from.
     vol.Optional("owner"): vol.Any(None, str),
     # Whether this thing's place may stand for its owner's (None: its class decides).
@@ -413,7 +413,7 @@ async def ws_thing_tune(hass, connection, msg):
     changes = {}
     owner = msg.get("owner")
     if owner and not re.fullmatch(r"person\.[a-z0-9_]+", owner):
-        return _error(connection, msg, "owner must be a Home Assistant person, like person.david")
+        return _error(connection, msg, "owner must be a Home Assistant person, like person.alex")
     charging = msg.get("charging_entity")
     if charging and not re.fullmatch(r"(sensor|binary_sensor)\.[a-z0-9_]+", charging):
         return _error(connection, msg, "the on-charger sensor must be a sensor or binary_sensor")

@@ -5,21 +5,21 @@ from sextant import persons, wifi
 
 def _states():
     return [
-        ("device_tracker.iphone", "home", {"source_type": "router", "mac": "3a:26:7a:09:23:91", "ap_mac": "8c:ed:e1:00:de:ed", "friendly_name": "iPhone"}),
-        ("device_tracker.david_s_phone", "home", {"source_type": "router", "mac": "3A:26:7A:09:23:91", "ap_mac": None, "friendly_name": "David's Phone"}),
-        ("device_tracker.watch", "not_home", {"source_type": "router", "mac": "02:db:11:5b:db:b4", "ap_mac": None, "friendly_name": "Watch"}),
-        ("device_tracker.kitchen_e7", "home", {"source_type": "router", "mac": "8c:ed:e1:00:de:ed", "ap_mac": None, "friendly_name": "Kitchen E7"}),
-        ("device_tracker.davids_iphone", "home", {"source_type": "gps", "latitude": 41.0, "longitude": -81.0}),
-        ("device_tracker.david_coulson_sextant", "home", {"source_type": "bluetooth_le"}),
+        ("device_tracker.iphone", "home", {"source_type": "router", "mac": "aa:bb:cc:00:04:91", "ap_mac": "aa:bb:cc:00:01:01", "friendly_name": "iPhone"}),
+        ("device_tracker.alex_s_phone", "home", {"source_type": "router", "mac": "AA:BB:CC:00:04:91", "ap_mac": None, "friendly_name": "Alex's Phone"}),
+        ("device_tracker.watch", "not_home", {"source_type": "router", "mac": "aa:bb:cc:00:05:b4", "ap_mac": None, "friendly_name": "Watch"}),
+        ("device_tracker.kitchen_e7", "home", {"source_type": "router", "mac": "aa:bb:cc:00:01:01", "ap_mac": None, "friendly_name": "Kitchen E7"}),
+        ("device_tracker.alex_phone", "home", {"source_type": "gps", "latitude": 51.5, "longitude": -0.1}),
+        ("device_tracker.alex_smith_sextant", "home", {"source_type": "bluetooth_le"}),
         ("sensor.not_a_tracker", "home", {"source_type": "router", "ap_mac": "x"}),
     ]
 
 
 def test_candidates_are_router_trackers_with_an_access_point_minus_the_access_points_themselves():
-    c = wifi.candidates(_states(), ap_macs=["8C:ED:E1:00:DE:ED"])
+    c = wifi.candidates(_states(), ap_macs=["AA:BB:CC:00:01:01"])
     assert set(c) == {"device_tracker.iphone", "device_tracker.watch"}
     # The stale duplicate's better name is kept with the live tracker.
-    assert c["device_tracker.iphone"] == {"name": "David's Phone", "home": True, "ap": "8c:ed:e1:00:de:ed", "mac": "3a:26:7a:09:23:91", "ssid": None}
+    assert c["device_tracker.iphone"] == {"name": "Alex's Phone", "home": True, "ap": "aa:bb:cc:00:01:01", "mac": "aa:bb:cc:00:04:91", "ssid": None}
     assert wifi.better_name("iPhone iPhone", "iPhone") == "iPhone" and wifi.tidy({"name": "Watch Watch"})["name"] == "Watch"
     assert c["device_tracker.watch"]["home"] is False and c["device_tracker.watch"]["ap"] is None
 
@@ -27,9 +27,9 @@ def test_candidates_are_router_trackers_with_an_access_point_minus_the_access_po
 def test_a_client_once_seen_on_an_access_point_stays_a_candidate_when_away():
     """UniFi drops ap_mac from a client that is away; the store remembers the client."""
     known = {}
-    home = [("device_tracker.iphone", "home", {"source_type": "router", "mac": "3a:26:7a:09:23:91", "ap_mac": "8c:ed", "friendly_name": "iPhone"})]
-    assert set(wifi.candidates(home, known=known)) == {"device_tracker.iphone"} and known == {"device_tracker.iphone": {"mac": "3a:26:7a:09:23:91"}}
-    away = [("device_tracker.iphone", "not_home", {"source_type": "router", "mac": "3a:26:7a:09:23:91", "friendly_name": "iPhone"}),
+    home = [("device_tracker.iphone", "home", {"source_type": "router", "mac": "aa:bb:cc:00:04:91", "ap_mac": "8c:ed", "friendly_name": "iPhone"})]
+    assert set(wifi.candidates(home, known=known)) == {"device_tracker.iphone"} and known == {"device_tracker.iphone": {"mac": "aa:bb:cc:00:04:91"}}
+    away = [("device_tracker.iphone", "not_home", {"source_type": "router", "mac": "aa:bb:cc:00:04:91", "friendly_name": "iPhone"}),
             ("device_tracker.never", "not_home", {"source_type": "router", "mac": "aa:bb", "friendly_name": "Something"})]
     c = wifi.candidates(away, known=known)
     assert set(c) == {"device_tracker.iphone"} and c["device_tracker.iphone"]["home"] is False and c["device_tracker.iphone"]["ap"] is None
@@ -45,13 +45,13 @@ def test_nobody_eligible_means_no_owner():
 
 def test_the_footprint_learns_and_is_trusted_only_with_enough_cycles():
     store = wifi.new_store()
-    ap = "9c:05:d6:a9:e2:5b"
+    ap = "aa:bb:cc:00:07:5b"
     assert wifi.floor_odds(store, ap, "Ground Floor") == {"Ground Floor": 1.0}      # the access point's own floor stands in
     assert wifi.best_place(store, ap, ("Ground Floor", "Sewing Room")) == ("Ground Floor", "Sewing Room")
     for _ in range(30):
         wifi.footprint_update(store, ap, "Ground Floor", "Sewing Room")
     for _ in range(20):
-        wifi.footprint_update(store, ap, "Second Floor", "Eilee Room")
+        wifi.footprint_update(store, ap, "Second Floor", "Robin Room")
     odds = wifi.floor_odds(store, ap, "Ground Floor")
     assert odds == {"Ground Floor": 0.6, "Second Floor": 0.4}
     assert wifi.best_place(store, ap) == ("Ground Floor", "Sewing Room")
@@ -71,27 +71,27 @@ def test_footprint_counts_are_capped_not_unbounded():
 
 def test_a_tracker_is_matched_by_name_or_by_who_it_agrees_with():
     store = wifi.new_store()
-    store["names"] = {"device_tracker.david_s_phone": "David's Phone", "device_tracker.iphone_2": "iPhone"}
-    names = {"person.david_coulson": "David Coulson", "person.eilee_bauer": "Eilee Bauer"}
-    assert wifi.suggest(store, "device_tracker.david_s_phone", names) == ("person.david_coulson", 1.0, "name")
+    store["names"] = {"device_tracker.alex_s_phone": "Alex's Phone", "device_tracker.iphone_2": "iPhone"}
+    names = {"person.alex_smith": "Alex Smith", "person.robin_smith": "Robin Smith"}
+    assert wifi.suggest(store, "device_tracker.alex_s_phone", names) == ("person.alex_smith", 1.0, "name")
     # Whole words only, and one person only.
-    store["names"].update({"device_tracker.brian": "Brian's iPad", "device_tracker.two": "David Phone"})
+    store["names"].update({"device_tracker.brian": "Brian's iPad", "device_tracker.two": "Alex Phone"})
     assert wifi.suggest(store, "device_tracker.brian", {"person.ian": "Ian Smith"})[2] == "learning"
-    assert wifi.suggest(store, "device_tracker.two", {"person.a": "David A", "person.b": "David B"})[2] == "learning"
+    assert wifi.suggest(store, "device_tracker.two", {"person.a": "Alex A", "person.b": "Alex B"})[2] == "learning"
     assert wifi.suggest(store, "device_tracker.iphone_2", names) == (None, 0.0, "learning")
     for _ in range(wifi.MATCH_MIN_CYCLES):
-        wifi.match_update(store, "device_tracker.iphone_2", "person.eilee_bauer", 1.0)
-        wifi.match_update(store, "device_tracker.iphone_2", "person.david_coulson", 0.0)
+        wifi.match_update(store, "device_tracker.iphone_2", "person.robin_smith", 1.0)
+        wifi.match_update(store, "device_tracker.iphone_2", "person.alex_smith", 0.0)
     person, conf, why = wifi.suggest(store, "device_tracker.iphone_2", names)
-    assert person == "person.eilee_bauer" and why == "co-location" and conf == 1.0
+    assert person == "person.robin_smith" and why == "co-location" and conf == 1.0
     # A score kept for someone who is not a candidate owner (a pet) is not in the ranking.
     for _ in range(wifi.MATCH_MIN_CYCLES):
         wifi.match_update(store, "device_tracker.iphone_2", "person.meg", 0.9)
-    assert wifi.suggest(store, "device_tracker.iphone_2", names)[0] == "person.eilee_bauer"
+    assert wifi.suggest(store, "device_tracker.iphone_2", names)[0] == "person.robin_smith"
     # Two people it agrees with about equally stay ambiguous.
     for _ in range(wifi.MATCH_MIN_CYCLES):
-        wifi.match_update(store, "device_tracker.iphone_2", "person.david_coulson", 1.0)
-        wifi.match_update(store, "device_tracker.iphone_2", "person.eilee_bauer", 0.0)
+        wifi.match_update(store, "device_tracker.iphone_2", "person.alex_smith", 1.0)
+        wifi.match_update(store, "device_tracker.iphone_2", "person.robin_smith", 0.0)
     assert wifi.suggest(store, "device_tracker.iphone_2", names)[2] == "ambiguous"
 
 
@@ -104,8 +104,8 @@ def test_agreement_tells_people_apart_by_who_is_home():
 
 
 def test_wifi_keeps_a_person_home_between_ble_and_gps():
-    gps_away = {"entity": "device_tracker.t", "zone": "Kent State Dorm", "latitude": 41.4, "longitude": -81.6}
-    w = {"entity": "device_tracker.iphone", "home": True, "ap": "8c:ed:e1:00:de:ed", "ap_name": "Kitchen E7", "floor": "Ground Floor", "room": "Kitchen", "area_id": "kitchen", "floor_id": "ground"}
+    gps_away = {"entity": "device_tracker.t", "zone": "Hill College Dorm", "latitude": 51.6, "longitude": 0.0}
+    w = {"entity": "device_tracker.iphone", "home": True, "ap": "aa:bb:cc:00:01:01", "ap_name": "Kitchen E7", "floor": "Ground Floor", "room": "Kitchen", "area_id": "kitchen", "floor_id": "ground"}
     assert persons.home_via("away", gps_away, w) == "wifi"
     assert persons.home_via("away", gps_away, {**w, "home": False}) is None
     assert persons.home_via("quiet", None, w) == "ble"                    # BLE first
@@ -114,10 +114,10 @@ def test_wifi_keeps_a_person_home_between_ble_and_gps():
     out = persons.fuse(None, [], "away", None, gps_away, [], None, w)
     state, attrs = out["sextant_person_location"]
     assert state == "Kitchen" and attrs["source"] == "wifi" and attrs["kind"] == "room" and attrs["access_point"] == "Kitchen E7"
-    assert attrs["zone"] == "Kent State Dorm"                              # the GPS side still rides along
+    assert attrs["zone"] == "Hill College Dorm"                              # the GPS side still rides along
     assert out["sextant_person_room"][0] == "Kitchen" and out["sextant_person_floor"][0] == "Ground Floor"
     # Not home on Wi-Fi: GPS as before.
-    assert persons.fuse(None, [], "away", None, gps_away, [], None, {**w, "home": False})["sextant_person_location"][0] == "Kent State Dorm"
+    assert persons.fuse(None, [], "away", None, gps_away, [], None, {**w, "home": False})["sextant_person_location"][0] == "Hill College Dorm"
 
 
 def test_stale_match_pairs_are_forgotten_and_the_table_is_bounded():
@@ -136,25 +136,25 @@ def test_stale_match_pairs_are_forgotten_and_the_table_is_bounded():
 # --- access points on the plan -------------------------------------------------
 
 def test_norm_mac_accepts_dashes_and_case_and_rejects_the_rest():
-    assert wifi.norm_mac("9C-05-D6-A9-E2-5B") == "9c:05:d6:a9:e2:5b"
-    assert wifi.norm_mac(" a8:9c:6c:2e:d9:c6 ") == "a8:9c:6c:2e:d9:c6"
+    assert wifi.norm_mac("AA-BB-CC-00-07-5B") == "aa:bb:cc:00:07:5b"
+    assert wifi.norm_mac(" aa:bb:cc:00:08:c6 ") == "aa:bb:cc:00:08:c6"
     assert wifi.norm_mac("8c:ed") is None and wifi.norm_mac(None) is None and wifi.norm_mac(42) is None
 
 
 def test_access_points_are_the_hubs_uap_devices_named_as_home_assistant_names_them():
     raws = [
-        {"type": "uap", "mac": "8C:ED:E1:00:DE:ED", "name": "Kitchen E7 ctrl", "model": "UAPA697", "num_sta": 12, "state": 1},
-        {"type": "usw", "mac": "d0:21:f9:b2:67:72", "name": "Desk USW Flex Mini", "num_sta": 3, "state": 1},
-        {"type": "uap", "mac": "28:70:4e:27:04:ed", "name": "Garage U7-Pro", "num_sta": True, "state": 0},
-        {"type": "uap", "mac": "8c:ed:e1:00:de:ed", "name": "duplicate"},
+        {"type": "uap", "mac": "AA:BB:CC:00:01:01", "name": "Kitchen E7 ctrl", "model": "UAPA697", "num_sta": 12, "state": 1},
+        {"type": "usw", "mac": "aa:bb:cc:00:09:72", "name": "Desk USW Flex Mini", "num_sta": 3, "state": 1},
+        {"type": "uap", "mac": "aa:bb:cc:00:01:02", "name": "Garage U7-Pro", "num_sta": True, "state": 0},
+        {"type": "uap", "mac": "aa:bb:cc:00:01:01", "name": "duplicate"},
         {"type": "uap", "mac": "not a mac", "name": "broken"},
         None, "junk",
     ]
-    registry = {"8c:ed:e1:00:de:ed": {"name": "Kitchen E7", "area_id": "kitchen"}, "28:70:4e:27:04:ed": "junk"}
+    registry = {"aa:bb:cc:00:01:01": {"name": "Kitchen E7", "area_id": "kitchen"}, "aa:bb:cc:00:01:02": "junk"}
     aps = wifi.access_points(raws, registry)
-    assert [a["mac"] for a in aps] == ["28:70:4e:27:04:ed", "8c:ed:e1:00:de:ed"]   # by name; switches left out
+    assert [a["mac"] for a in aps] == ["aa:bb:cc:00:01:02", "aa:bb:cc:00:01:01"]   # by name; switches left out
     garage, kitchen = aps
-    assert kitchen == {"mac": "8c:ed:e1:00:de:ed", "name": "Kitchen E7", "model": "UAPA697", "clients": 12, "online": True, "area_id": "kitchen"}
+    assert kitchen == {"mac": "aa:bb:cc:00:01:01", "name": "Kitchen E7", "model": "UAPA697", "clients": 12, "online": True, "area_id": "kitchen"}
     # A bool is not a client count, and a disconnected device is offline.
     assert garage["clients"] is None and garage["online"] is False and garage["area_id"] is None and garage["name"] == "Garage U7-Pro"
     assert wifi.access_points(None) == [] and wifi.access_points([{"type": "uap", "mac": "aa:bb:cc:dd:ee:ff"}], None)[0]["name"] == "aa:bb:cc:dd:ee:ff"
@@ -163,18 +163,18 @@ def test_access_points_are_the_hubs_uap_devices_named_as_home_assistant_names_th
 def test_placed_access_points_first_placement_wins_and_bad_entries_are_skipped():
     layout = {"floor": [
         {"name": "Ground", "access_points": [
-            {"mac": "8C:ED:E1:00:DE:ED", "cords": {"x": 100, "y": 200.5}},
-            {"mac": "28:70:4e:27:04:ed", "cords": {"x": float("nan"), "y": 1}},
-            {"mac": "9c:05:d6:a9:e2:5b", "cords": {"x": True, "y": 1}},
+            {"mac": "AA:BB:CC:00:01:01", "cords": {"x": 100, "y": 200.5}},
+            {"mac": "aa:bb:cc:00:01:02", "cords": {"x": float("nan"), "y": 1}},
+            {"mac": "aa:bb:cc:00:07:5b", "cords": {"x": True, "y": 1}},
             {"mac": None, "cords": {"x": 1, "y": 1}},
             "junk",
         ]},
-        {"name": "Upstairs", "access_points": [{"mac": "8c:ed:e1:00:de:ed", "cords": {"x": 5, "y": 5}}, {"mac": "84:78:48:16:d2:c6", "cords": {"x": 7, "y": 8}}]},
-        {"access_points": [{"mac": "a8:9c:6c:2e:d9:c6", "cords": {"x": 1, "y": 1}}]},   # a floor without a name
+        {"name": "Upstairs", "access_points": [{"mac": "aa:bb:cc:00:01:01", "cords": {"x": 5, "y": 5}}, {"mac": "aa:bb:cc:00:06:c6", "cords": {"x": 7, "y": 8}}]},
+        {"access_points": [{"mac": "aa:bb:cc:00:08:c6", "cords": {"x": 1, "y": 1}}]},   # a floor without a name
     ]}
     assert wifi.placed_access_points(layout) == {
-        "8c:ed:e1:00:de:ed": {"floor": "Ground", "x": 100.0, "y": 200.5},
-        "84:78:48:16:d2:c6": {"floor": "Upstairs", "x": 7.0, "y": 8.0},
+        "aa:bb:cc:00:01:01": {"floor": "Ground", "x": 100.0, "y": 200.5},
+        "aa:bb:cc:00:06:c6": {"floor": "Upstairs", "x": 7.0, "y": 8.0},
     }
     assert wifi.placed_access_points(None) == {} and wifi.placed_access_points({"floor": None}) == {}
 
@@ -182,8 +182,8 @@ def test_placed_access_points_first_placement_wins_and_bad_entries_are_skipped()
 def _ap_layout():
     room = [{"x": 0, "y": 0}, {"x": 100, "y": 0}, {"x": 100, "y": 100}, {"x": 0, "y": 100}]
     return {"floor": [{"name": "Ground", "zones": [{"entity_id": "Kitchen", "cords": room, "poly": True}],
-                       "access_points": [{"mac": "8c:ed:e1:00:de:ed", "name": "Kitchen E7", "cords": {"x": 50, "y": 50}},
-                                         {"mac": "28:70:4e:27:04:ed", "name": "Garage U7-Pro", "cords": {"x": 500, "y": 50}}]}]}
+                       "access_points": [{"mac": "aa:bb:cc:00:01:01", "name": "Kitchen E7", "cords": {"x": 50, "y": 50}},
+                                         {"mac": "aa:bb:cc:00:01:02", "name": "Garage U7-Pro", "cords": {"x": 500, "y": 50}}]}]}
 
 
 def test_a_placed_access_point_is_on_the_floor_and_in_the_room_it_was_placed_in():
@@ -191,11 +191,11 @@ def test_a_placed_access_point_is_on_the_floor_and_in_the_room_it_was_placed_in(
 
     class Hass:   # no registries: the plan alone places them
         pass
-    aps = core._wifi_access_points(Hass(), _ap_layout(), ["8C:ED:E1:00:DE:ED", "28:70:4e:27:04:ed", "9c:05:d6:a9:e2:5b"])
-    assert aps["8c:ed:e1:00:de:ed"] == {"name": "Kitchen E7", "floor": "Ground", "room": "Kitchen", "area_id": None, "floor_id": None, "placed": True}
+    aps = core._wifi_access_points(Hass(), _ap_layout(), ["AA:BB:CC:00:01:01", "aa:bb:cc:00:01:02", "aa:bb:cc:00:07:5b"])
+    assert aps["aa:bb:cc:00:01:01"] == {"name": "Kitchen E7", "floor": "Ground", "room": "Kitchen", "area_id": None, "floor_id": None, "placed": True}
     # Outside every room: the floor still counts.
-    assert aps["28:70:4e:27:04:ed"]["floor"] == "Ground" and aps["28:70:4e:27:04:ed"]["room"] is None
-    assert "9c:05:d6:a9:e2:5b" not in aps   # not placed, and no registry to place it by
+    assert aps["aa:bb:cc:00:01:02"]["floor"] == "Ground" and aps["aa:bb:cc:00:01:02"]["room"] is None
+    assert "aa:bb:cc:00:07:5b" not in aps   # not placed, and no registry to place it by
     assert core._wifi_access_points(Hass(), _ap_layout(), []) == {}
 
 
@@ -205,14 +205,14 @@ def test_unifi_access_points_reads_every_hub_and_survives_one_not_set_up():
     import sextant as core
 
     dev = lambda raw: types.SimpleNamespace(raw=raw)   # noqa: E731
-    hub = types.SimpleNamespace(api=types.SimpleNamespace(devices={"a": dev({"type": "uap", "mac": "8c:ed:e1:00:de:ed", "name": "Kitchen E7", "num_sta": 4, "state": 1}),
-                                                                   "b": dev({"type": "usw", "mac": "d0:21:f9:b2:67:72", "name": "Switch"})}))
+    hub = types.SimpleNamespace(api=types.SimpleNamespace(devices={"a": dev({"type": "uap", "mac": "aa:bb:cc:00:01:01", "name": "Kitchen E7", "num_sta": 4, "state": 1}),
+                                                                   "b": dev({"type": "usw", "mac": "aa:bb:cc:00:09:72", "name": "Switch"})}))
     entries = [types.SimpleNamespace(runtime_data=hub), types.SimpleNamespace(runtime_data=None), types.SimpleNamespace()]
 
     class Hass:
         config_entries = types.SimpleNamespace(async_entries=lambda domain: entries if domain == "unifi" else [])
     aps = core._unifi_access_points(Hass())
-    assert [(a["mac"], a["name"], a["clients"]) for a in aps] == [("8c:ed:e1:00:de:ed", "Kitchen E7", 4)]
+    assert [(a["mac"], a["name"], a["clients"]) for a in aps] == [("aa:bb:cc:00:01:01", "Kitchen E7", 4)]
 
     # No hub set up (no integration, or still starting): not known, rather
     # than a controller with no access points.
@@ -225,14 +225,14 @@ def test_unifi_access_points_reads_every_hub_and_survives_one_not_set_up():
 def test_a_hyphenated_ap_mac_matches_the_access_point_placed_on_the_plan():
     import sextant as core
 
-    states = [("device_tracker.iphone", "home", {"source_type": "router", "mac": "3A-26-7A-09-23-91", "ap_mac": "8C-ED-E1-00-DE-ED", "friendly_name": "iPhone"})]
-    c = wifi.candidates(states, ap_macs=["8c:ed:e1:00:de:ed"])
-    assert c["device_tracker.iphone"]["ap"] == "8c:ed:e1:00:de:ed" and c["device_tracker.iphone"]["mac"] == "3a:26:7a:09:23:91"
+    states = [("device_tracker.iphone", "home", {"source_type": "router", "mac": "AA-BB-CC-00-04-91", "ap_mac": "AA-BB-CC-00-01-01", "friendly_name": "iPhone"})]
+    c = wifi.candidates(states, ap_macs=["aa:bb:cc:00:01:01"])
+    assert c["device_tracker.iphone"]["ap"] == "aa:bb:cc:00:01:01" and c["device_tracker.iphone"]["mac"] == "aa:bb:cc:00:04:91"
 
     class Hass:
         pass
-    aps = core._wifi_access_points(Hass(), _ap_layout(), [c["device_tracker.iphone"]["ap"], "28-70-4E-27-04-ED"])
-    assert aps["8c:ed:e1:00:de:ed"]["room"] == "Kitchen" and aps["28:70:4e:27:04:ed"]["placed"] is True
+    aps = core._wifi_access_points(Hass(), _ap_layout(), [c["device_tracker.iphone"]["ap"], "AA-BB-CC-00-01-02"])
+    assert aps["aa:bb:cc:00:01:01"]["room"] == "Kitchen" and aps["aa:bb:cc:00:01:02"]["placed"] is True
 
 
 def test_wifi_cycle_candidates_match_a_second_pass_with_the_access_points_ruled_out():
@@ -240,7 +240,7 @@ def test_wifi_cycle_candidates_match_a_second_pass_with_the_access_points_ruled_
 
     import sextant as core
 
-    states = _states() + [("device_tracker.e7_switch", "home", {"source_type": "router", "mac": "8c:ed:e1:00:de:ed", "ap_mac": "28:70:4e:27:04:ed", "friendly_name": "E7"})]
+    states = _states() + [("device_tracker.e7_switch", "home", {"source_type": "router", "mac": "aa:bb:cc:00:01:01", "ap_mac": "aa:bb:cc:00:01:02", "friendly_name": "E7"})]
     st = [types.SimpleNamespace(entity_id=e, state=s, attributes=a) for e, s, a in states]
 
     class Hass:
@@ -271,12 +271,12 @@ def test_wifi_access_points_are_remembered_until_the_layout_version_moves(monkey
     version = [1]
     monkeypatch.setattr(core, "get_layout_version", lambda _h: version[0])
     core._wifi_ap_cache.update(key=None, at=0.0, out=None)
-    macs = ["8c:ed:e1:00:de:ed"]
+    macs = ["aa:bb:cc:00:01:01"]
     first = core._wifi_access_points(Hass(), _ap_layout(), macs)
-    first["8c:ed:e1:00:de:ed"]["name"] = "mutated"
+    first["aa:bb:cc:00:01:01"]["name"] = "mutated"
     again = core._wifi_access_points(Hass(), _ap_layout(), macs)
-    assert len(calls) == 1 and again["8c:ed:e1:00:de:ed"]["name"] == "Kitchen E7"
-    core._wifi_access_points(Hass(), _ap_layout(), macs + ["28:70:4e:27:04:ed"])
+    assert len(calls) == 1 and again["aa:bb:cc:00:01:01"]["name"] == "Kitchen E7"
+    core._wifi_access_points(Hass(), _ap_layout(), macs + ["aa:bb:cc:00:01:02"])
     version[0] = 2
     core._wifi_access_points(Hass(), _ap_layout(), macs)
     assert len(calls) == 3

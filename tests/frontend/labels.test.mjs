@@ -22,7 +22,7 @@ test("labels far apart all keep their anchors", () => {
   for (const p of out) assert.equal(p.y, p.label.y);
 });
 
-test("two labels at the same point do not overlap - this is the 'Michel Michelle Phone 3 Case' bug", () => {
+test("two labels at the same point do not overlap - this is the 'Michel Sam Phone 3 Case' bug", () => {
   const out = placeLabels([lab(100, 100), lab(100, 100)]);
   assert.equal(out.length, 2);
   assert.ok(!overlaps(boxOf(out[0]), boxOf(out[1])));
@@ -78,7 +78,7 @@ test("a proxy with nothing on it is left alone", () => {
 });
 
 test("a proxy under a thing is reported, with the covering radius", () => {
-  // Michelle's nightstand: the C5 with her watch sitting on it.
+  // Sam's nightstand: the C5 with her watch sitting on it.
   const out = coveredProxies([proxy(267, 499)], [thing(267, 499)]);
   assert.equal(out.length, 1);
   assert.equal(out[0].cover, 12);
@@ -95,7 +95,7 @@ test("a thing just off the proxy does not count as covering it", () => {
 });
 
 test("only the covered proxy of a pair is reported - the other stays as drawn", () => {
-  // Both master-bedroom C5s; only Michelle's has things resting on it.
+  // Both master-bedroom C5s; only Sam's has things resting on it.
   const out = coveredProxies([proxy(267, 499), proxy(564, 500)], [thing(267, 499)]);
   assert.equal(out.length, 1);
   assert.equal(out[0].x, 267);

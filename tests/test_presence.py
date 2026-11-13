@@ -77,7 +77,7 @@ def test_a_thing_still_heard_is_written_once_not_every_cycle(monkeypatch):
 
 
 def test_a_thing_with_sensors_but_no_remembered_sighting_is_away():
-    """Jack's phone: not heard since before the sightings were first kept, so
+    """Jamie's phone: not heard since before the sightings were first kept, so
     it has no entry - and its sensors must still say away, once."""
     ent = "never_heard"
     hass = _hass_with_sensors(ent)
@@ -89,7 +89,7 @@ def test_a_thing_with_sensors_but_no_remembered_sighting_is_away():
 
 
 def test_a_thing_heard_but_not_located_still_reads_here():
-    """Eilee's watch: heard, so its sighting is fresh, but too few proxies for
+    """Robin's watch: heard, so its sighting is fresh, but too few proxies for
     a fix, so its sensors read unknown and the per-thing write never runs."""
     ent = "heard_unlocated"
     hass = _hass_with_sensors(ent)
@@ -208,7 +208,7 @@ def test_fit_quality_moving_alone_waits_like_last_heard():
 def test_a_person_sensor_tops_up_its_fit_quality_the_same_way():
     hass = make_hass()
     s = _CountingSensor()
-    person = "sensor.david_sextant_person_location"
+    person = "sensor.alex_sextant_person_location"
     hass.data["sextant_sensors"] = {person: s}
     t0 = 1_000_000.0
     for k in range(21):

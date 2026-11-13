@@ -2,8 +2,8 @@
 //
 // A note used to fall into the drag handler's rooms-or-spots branch and have
 // its single point written over the spot at the same list index. On
-// 2026-09-22 that turned "David Bedside Table" (subzones[0], dragged note
-// remarks[0]) and "Michelle Bedside Table" into one-point shapes that drew as
+// 2026-09-22 that turned "Alex Bedside Table" (subzones[0], dragged note
+// remarks[0]) and "Sam Bedside Table" into one-point shapes that drew as
 // nothing at all.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -36,8 +36,8 @@ function editMap(remarks) {
   map.floor = {
     name: "Second Floor", scale: 100, receivers: [], zones: [],
     subzones: [
-      { entity_id: "David Bedside Table", cords: rect(497, 495, 572, 549) },
-      { entity_id: "Michelle Bedside Table", cords: rect(232, 494, 308, 547) },
+      { entity_id: "Alex Bedside Table", cords: rect(497, 495, 572, 549) },
+      { entity_id: "Sam Bedside Table", cords: rect(232, 494, 308, 547) },
     ],
     remarks,
   };

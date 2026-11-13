@@ -24,16 +24,16 @@ def state(value, attrs=None, ago=60.0):
     return types.SimpleNamespace(state=value, attributes=attrs or {}, last_updated=when, last_reported=when)
 
 
-GPS = {"latitude": 41.30, "longitude": -81.70, "gps_accuracy": 15, "source_type": "gps"}
-LAYOUT = {"person_trackers": {"person.eilee": ["device_tracker.eilees_iphone", "device_tracker.eilee_bauer"]}}
+GPS = {"latitude": 51.50, "longitude": -0.10, "gps_accuracy": 15, "source_type": "gps"}
+LAYOUT = {"person_trackers": {"person.robin": ["device_tracker.robins_iphone", "device_tracker.robin_smith"]}}
 
 
 # --- one source -------------------------------------------------------------
 
 def test_a_fresh_gps_tracker_is_usable_with_its_zone_and_coordinates():
-    ok, reason, info = persons.judge_source("device_tracker.t", state("Lawrence Upper School", GPS), NOW)
+    ok, reason, info = persons.judge_source("device_tracker.t", state("Hill Academy", GPS), NOW)
     assert ok and reason is None
-    assert info["zone"] == "Lawrence Upper School" and info["latitude"] == 41.30 and info["accuracy"] == 15
+    assert info["zone"] == "Hill Academy" and info["latitude"] == 51.50 and info["accuracy"] == 15
 
 
 def test_a_missing_or_unavailable_tracker_is_broken():
@@ -43,54 +43,54 @@ def test_a_missing_or_unavailable_tracker_is_broken():
 
 
 def test_a_tracker_that_stopped_reporting_is_stale():
-    """Eilee's Companion app: frozen on home for six days after losing its
+    """Robin's Companion app: frozen on home for six days after losing its
     location permission. Six days without a report is not a location."""
     ok, reason, _ = persons.judge_source("device_tracker.t", state("home", GPS, ago=6 * 86400), NOW, stale_secs=7200)
     assert not ok and reason.startswith("no report for 144.0 h")
 
 
 def test_a_zone_only_tracker_still_gives_its_zone():
-    ok, _, info = persons.judge_source("device_tracker.t", state("Kent State Dorm"), NOW)
-    assert ok and info["zone"] == "Kent State Dorm" and info["latitude"] is None
+    ok, _, info = persons.judge_source("device_tracker.t", state("Hill College Dorm"), NOW)
+    assert ok and info["zone"] == "Hill College Dorm" and info["latitude"] is None
 
 
 def test_an_icloud3_stationary_zone_is_not_home_with_the_coordinates_kept():
-    """David parked 2 km from home for ten minutes: iCloud3 drew StatZon1
+    """Alex parked 2 km from home for ten minutes: iCloud3 drew StatZon1
     round the phone and the Companion app, person and Sextant all said so.
     A polling device is not a place."""
     attrs = {**GPS, "in_zones": ["zone.ic3_stationary_1"]}
     ok, _, info = persons.judge_source("device_tracker.t", state("StatZon1", attrs), NOW)
     assert ok and info["zone"] == "not_home" and info["stationary"] is True
-    assert info["latitude"] == 41.30 and info["accuracy"] == 15
+    assert info["latitude"] == 51.50 and info["accuracy"] == 15
     # Renamed in iCloud3 ("Parked#"): the zone's entity id still tells.
     renamed = persons.judge_source("device_tracker.t", state("Parked2", attrs), NOW)[2]
     assert renamed["zone"] == "not_home" and renamed["stationary"]
     # No in_zones (an older build): the default name is enough.
     assert persons.judge_source("device_tracker.t", state("StatZon3", GPS), NOW)[2]["zone"] == "not_home"
     # A real zone is untouched, whatever else is in the list.
-    real = persons.judge_source("device_tracker.t", state("Kent State", {**GPS, "in_zones": ["zone.kent_state"]}), NOW)[2]
-    assert real["zone"] == "Kent State" and real["stationary"] is False
+    real = persons.judge_source("device_tracker.t", state("Hill College", {**GPS, "in_zones": ["zone.hill_college"]}), NOW)[2]
+    assert real["zone"] == "Hill College" and real["stationary"] is False
     assert not persons.stationary_zone("Station", {})
 
 
 # --- choosing among sources ---------------------------------------------------
 
 def test_the_first_usable_source_wins_and_the_passed_over_are_named():
-    states = {"device_tracker.eilees_iphone": state("home", GPS, ago=6 * 86400),
-              "device_tracker.eilee_bauer": state("Lawrence Upper School", GPS)}
-    chosen, ignored = persons.choose_gps(states.get, LAYOUT, "person.eilee", NOW)
-    assert chosen["entity"] == "device_tracker.eilee_bauer"
-    assert ignored == [{"entity": "device_tracker.eilees_iphone", "reason": "no report for 144.0 h"}]
+    states = {"device_tracker.robins_iphone": state("home", GPS, ago=6 * 86400),
+              "device_tracker.robin_smith": state("Hill Academy", GPS)}
+    chosen, ignored = persons.choose_gps(states.get, LAYOUT, "person.robin", NOW)
+    assert chosen["entity"] == "device_tracker.robin_smith"
+    assert ignored == [{"entity": "device_tracker.robins_iphone", "reason": "no report for 144.0 h"}]
 
 
 def test_preference_order_is_honoured_when_both_are_usable():
-    states = {"device_tracker.eilees_iphone": state("home", GPS), "device_tracker.eilee_bauer": state("not_home", GPS)}
-    chosen, ignored = persons.choose_gps(states.get, LAYOUT, "person.eilee", NOW)
-    assert chosen["entity"] == "device_tracker.eilees_iphone" and ignored == []
+    states = {"device_tracker.robins_iphone": state("home", GPS), "device_tracker.robin_smith": state("not_home", GPS)}
+    chosen, ignored = persons.choose_gps(states.get, LAYOUT, "person.robin", NOW)
+    assert chosen["entity"] == "device_tracker.robins_iphone" and ignored == []
 
 
 def test_no_sources_configured_means_nothing_chosen():
-    assert persons.choose_gps(lambda e: None, {}, "person.eilee", NOW) == (None, [])
+    assert persons.choose_gps(lambda e: None, {}, "person.robin", NOW) == (None, [])
 
 
 def test_a_person_is_as_present_as_their_most_present_thing():
@@ -102,32 +102,32 @@ def test_a_person_is_as_present_as_their_most_present_thing():
 # --- the fused answer ---------------------------------------------------------
 
 def _best():
-    return {"ent": "watch", "cls": "watch", "updated": NOW - 5, "arrived": NOW - 600, "zone": "Eilee Room",
-            "sub_zone": "unknown", "floor": "Second Floor", "area": ("eilee_room", "second_floor")}
+    return {"ent": "watch", "cls": "watch", "updated": NOW - 5, "arrived": NOW - 600, "zone": "Robin Room",
+            "sub_zone": "unknown", "floor": "Second Floor", "area": ("robin_room", "second_floor")}
 
 
 def test_here_is_the_room_by_ble_with_gps_alongside():
-    gps = {"entity": "device_tracker.eilee_bauer", "zone": "home", "latitude": 41.3001, "longitude": -81.7001, "accuracy": 10}
-    out = persons.fuse(_best(), [], "here", None, gps, [], home=(41.30, -81.70))
+    gps = {"entity": "device_tracker.robin_smith", "zone": "home", "latitude": 51.5001, "longitude": -0.1001, "accuracy": 10}
+    out = persons.fuse(_best(), [], "here", None, gps, [], home=(51.50, -0.10))
     loc_state, loc = out["sextant_person_location"]
-    assert loc_state == "Eilee Room" and loc["source"] == "ble" and loc["presence"] == "here"
-    assert loc["zone"] == "home" and loc["tracker"] == "device_tracker.eilee_bauer" and 0 < loc["distance_m"] < 30
-    assert out["sextant_person_room"][0] == "Eilee Room" and out["sextant_person_room"][1]["source"] == "ble"
+    assert loc_state == "Robin Room" and loc["source"] == "ble" and loc["presence"] == "here"
+    assert loc["zone"] == "home" and loc["tracker"] == "device_tracker.robin_smith" and 0 < loc["distance_m"] < 30
+    assert out["sextant_person_room"][0] == "Robin Room" and out["sextant_person_room"][1]["source"] == "ble"
 
 
 def test_quiet_holds_the_last_place_they_were_put():
     out = persons.fuse(None, None, "quiet", _best(), None, [], home=None)
     loc_state, loc = out["sextant_person_location"]
-    assert loc_state == "Eilee Room" and loc["source"] == "held" and loc["presence"] == "quiet"
+    assert loc_state == "Robin Room" and loc["source"] == "held" and loc["presence"] == "quiet"
     assert out["sextant_person_floor"][0] == "Second Floor"
 
 
 def test_away_is_the_gps_zone_and_the_rooms_go_unknown():
-    gps = {"entity": "device_tracker.eilee_bauer", "zone": "Lawrence Upper School", "latitude": 41.40, "longitude": -81.60, "accuracy": 20}
-    out = persons.fuse(None, None, "away", None, gps, [{"entity": "device_tracker.eilees_iphone", "reason": "no report for 144.0 h"}], home=(41.30, -81.70))
+    gps = {"entity": "device_tracker.robin_smith", "zone": "Hill Academy", "latitude": 51.60, "longitude": 0.00, "accuracy": 20}
+    out = persons.fuse(None, None, "away", None, gps, [{"entity": "device_tracker.robins_iphone", "reason": "no report for 144.0 h"}], home=(51.50, -0.10))
     loc_state, loc = out["sextant_person_location"]
-    assert loc_state == "Lawrence Upper School" and loc["source"] == "gps" and loc["kind"] == "zone"
-    assert loc["distance_m"] > 10000 and loc["gps_ignored"][0]["entity"] == "device_tracker.eilees_iphone"
+    assert loc_state == "Hill Academy" and loc["source"] == "gps" and loc["kind"] == "zone"
+    assert loc["distance_m"] > 10000 and loc["gps_ignored"][0]["entity"] == "device_tracker.robins_iphone"
     assert out["sextant_person_room"] == ("unknown", {"area_id": None, "via": None, "source": "gps", "presence": "away"})
 
 
@@ -149,15 +149,15 @@ def test_a_quiet_person_with_nothing_held_falls_through_to_gps():
 
 # --- GPS ending the hold early --------------------------------------------------
 
-HOME = (41.30, -81.70)
+HOME = (51.50, -0.10)
 
 
-def _fix(zone="not_home", lat=41.34, lon=-81.70, reported=NOW - 30, accuracy=15):
+def _fix(zone="not_home", lat=51.54, lon=-0.10, reported=NOW - 30, accuracy=15):
     return {"entity": "device_tracker.t", "zone": zone, "latitude": lat, "longitude": lon, "accuracy": accuracy, "reported": reported}
 
 
 def test_a_fresh_fix_well_down_the_road_ends_the_hold():
-    """David's drive: the house fell quiet at 12:53, the phone reported 5 km
+    """Alex's drive: the house fell quiet at 12:53, the phone reported 5 km
     out at 12:55, and the card said Kitchen until 13:09. Not any more."""
     assert persons.gps_left(_fix(), NOW - 300, HOME)
 
@@ -169,8 +169,8 @@ def test_a_fix_from_before_the_last_sighting_says_nothing_about_now():
 
 def test_a_fix_in_the_home_zone_or_near_the_property_line_keeps_the_hold():
     assert not persons.gps_left(_fix(zone="home"), NOW - 300, HOME)
-    assert not persons.gps_left(_fix(lat=41.3010), NOW - 300, HOME)              # ~110 m: GPS wandering
-    assert not persons.gps_left(_fix(lat=41.3020, accuracy=100), NOW - 300, HOME)  # 220 m less 100 m of accuracy
+    assert not persons.gps_left(_fix(lat=51.5010), NOW - 300, HOME)              # ~110 m: GPS wandering
+    assert not persons.gps_left(_fix(lat=51.5020, accuracy=100), NOW - 300, HOME)  # 220 m less 100 m of accuracy
 
 
 def test_only_a_fix_with_coordinates_counts_and_zero_turns_it_off():
@@ -187,12 +187,12 @@ def test_never_heard_still_lets_a_far_fix_speak():
 # --- the device_tracker's word ------------------------------------------------
 
 def test_the_tracker_is_home_on_ble_and_gps_once_lost():
-    gps = {"entity": "device_tracker.t", "zone": "Lawrence Upper School", "latitude": 41.4, "longitude": -81.6, "accuracy": 20}
+    gps = {"entity": "device_tracker.t", "zone": "Hill Academy", "latitude": 41.4, "longitude": -81.6, "accuracy": 20}
     assert persons.tracker_fix("here", gps)["location_name"] == "home"
     assert persons.tracker_fix("quiet", None)["source_type"] == "bluetooth_le"
     fix = persons.tracker_fix("away", gps)
     assert fix["location_name"] is None and fix["latitude"] == 41.4 and fix["source_type"] == "gps"
-    assert persons.tracker_fix("away", {"entity": "device_tracker.t", "zone": "Kent State Dorm", "latitude": None})["location_name"] == "Kent State Dorm"
+    assert persons.tracker_fix("away", {"entity": "device_tracker.t", "zone": "Hill College Dorm", "latitude": None})["location_name"] == "Hill College Dorm"
     assert persons.tracker_fix("away", None)["location_name"] == "not_home"
 
 
@@ -249,7 +249,7 @@ def test_the_visit_follows_the_tracker_not_ble_alone():
     home, so no departure is stamped. Only once GPS leaves the zone too."""
     at_home_gps = {"entity": "device_tracker.t", "zone": "home", "latitude": 41.3, "longitude": -81.7}
     assert persons.home_via("away", at_home_gps) == "gps" and persons.tracker_home("away", at_home_gps) is True
-    assert persons.home_via("away", {"entity": "device_tracker.t", "zone": "Kent State Dorm"}) is None
+    assert persons.home_via("away", {"entity": "device_tracker.t", "zone": "Hill College Dorm"}) is None
     assert persons.home_via("away", None) is None
     assert persons.home_via("quiet", None) == "ble"
 
@@ -279,20 +279,20 @@ def test_the_command_writes_the_order_and_clears_an_empty_list(tmp_path):
     hass = make_hass(tmp_path)
     run(st.save_layout(hass, {"floor": [{"name": "F", "scale": 100.0, "receivers": [], "zones": [], "subzones": []}]}))
     conn = _Conn()
-    run(ws.ws_person_trackers_set(hass, conn, {"id": 1, "type": "sextant/person/trackers/set", "person": "person.eilee",
+    run(ws.ws_person_trackers_set(hass, conn, {"id": 1, "type": "sextant/person/trackers/set", "person": "person.robin",
                                               "trackers": ["device_tracker.b", "device_tracker.a", "device_tracker.b", "sensor.nope"]}))
     assert not conn.errors and conn.results[0][1]["trackers"] == ["device_tracker.b", "device_tracker.a"]
-    assert st.get_layout(hass)["person_trackers"] == {"person.eilee": ["device_tracker.b", "device_tracker.a"]}
-    run(ws.ws_person_trackers_set(hass, conn, {"id": 2, "type": "sextant/person/trackers/set", "person": "person.eilee", "trackers": []}))
+    assert st.get_layout(hass)["person_trackers"] == {"person.robin": ["device_tracker.b", "device_tracker.a"]}
+    run(ws.ws_person_trackers_set(hass, conn, {"id": 2, "type": "sextant/person/trackers/set", "person": "person.robin", "trackers": []}))
     assert "person_trackers" not in st.get_layout(hass)
-    run(ws.ws_person_trackers_set(hass, conn, {"id": 3, "type": "sextant/person/trackers/set", "person": "eilee", "trackers": []}))
+    run(ws.ws_person_trackers_set(hass, conn, {"id": 3, "type": "sextant/person/trackers/set", "person": "robin", "trackers": []}))
     assert conn.errors
 
 
 # --- GPS over a Wi-Fi tracker that still reads home ------------------------------
 
 def test_a_fix_down_the_road_after_the_router_last_saw_the_phone_overrules_wifi():
-    """Michelle's departures: Kitchen on Wi-Fi for up to 8 min with GPS 800 m out."""
+    """Sam's departures: Kitchen on Wi-Fi for up to 8 min with GPS 800 m out."""
     assert persons.wifi_outrun(_fix(), NOW - 200, HOME)
 
 
@@ -305,7 +305,7 @@ def test_wifi_stands_on_an_arrival_or_without_a_last_seen_time():
 
 # --- Events ----------------------------------------------------------------------
 
-D, M, J, CAT = "person.david", "person.michelle", "person.jack", "person.meg"
+D, M, J, CAT = "person.alex", "person.sam", "person.jamie", "person.meg"
 IN = {"arrived": NOW - 3600, "departed": None, "via": "ble"}
 OUT = {"arrived": None, "departed": NOW - 3600}
 
@@ -315,7 +315,7 @@ def _types(events):
 
 
 def test_a_departure_fires_left_and_the_last_one_everyone_left():
-    """Jack at the dorm all term never holds up "everyone left"."""
+    """Jamie at the dorm all term never holds up "everyone left"."""
     gone = {"arrived": None, "departed": NOW - 60}
     one = persons.visit_events({D: IN, M: IN, J: OUT}, {D: gone, M: IN, J: OUT})
     assert one == [("sextant_person_left", {"person": D, "source": "ble", "time": persons.visit_attrs(gone)["departed_at"], "people_home": [M]})]

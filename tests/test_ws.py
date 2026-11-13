@@ -267,11 +267,11 @@ def test_thing_names_come_from_bermuda_tidied_and_user_renames_win(tmp_path, mon
     hass = _hass_with_layout(tmp_path, _layout())
     monkeypatch.setattr(ws.bermuda_source, "async_get_tracked_devices", lambda _h: {
         "aa": {"slug": "fry", "name": "Fry"},
-        "bb": {"slug": "private_ble_device_david_s_phone", "name": "Private BLE Device David's Phone"},
-        "cc": {"slug": "private_ble_jack_watch", "name": "Private BLE Jack Watch"},
+        "bb": {"slug": "private_ble_device_alex_s_phone", "name": "Private BLE Device Alex's Phone"},
+        "cc": {"slug": "private_ble_jamie_watch", "name": "Private BLE Jamie Watch"},
     })
-    names = ws._thing_names(hass, ["fry", "private_ble_device_david_s_phone", "private_ble_jack_watch"])
-    assert names == {"fry": "Fry", "private_ble_device_david_s_phone": "David's Phone", "private_ble_jack_watch": "Jack Watch"}
+    names = ws._thing_names(hass, ["fry", "private_ble_device_alex_s_phone", "private_ble_jamie_watch"])
+    assert names == {"fry": "Fry", "private_ble_device_alex_s_phone": "Alex's Phone", "private_ble_jamie_watch": "Jamie Watch"}
     assert ws._tidy_device_name("Private BLE Device ").strip()   # a prefix alone never tidies to nothing
     assert ws._tidy_device_name("Fry") == "Fry"
 
@@ -603,9 +603,9 @@ def test_thing_tune_sets_and_clears_an_owner_and_pronouns(tmp_path):
     hass = _hass_with_layout(tmp_path, _layout())
     conn = _Conn()
     run(ws.ws_thing_tune(hass, conn, {"id": 1, "type": "sextant/thing/tune", "entity": "watch",
-                                        "owner": "person.david", "pronouns": "it"}))
+                                        "owner": "person.alex", "pronouns": "it"}))
     layout = st.get_layout(hass)
-    assert layout["thing_owners"] == {"watch": "person.david"} and layout["thing_pronouns"] == {"watch": "it"}
+    assert layout["thing_owners"] == {"watch": "person.alex"} and layout["thing_pronouns"] == {"watch": "it"}
     run(ws.ws_thing_tune(hass, conn, {"id": 2, "type": "sextant/thing/tune", "entity": "watch", "owner": ""}))
     assert st.get_layout(hass)["thing_owners"] == {}
 
@@ -614,12 +614,12 @@ def test_thing_tune_sets_and_clears_an_on_charger_sensor(tmp_path):
     hass = _hass_with_layout(tmp_path, _layout())
     conn = _Conn()
     run(ws.ws_thing_tune(hass, conn, {"id": 1, "type": "sextant/thing/tune", "entity": "watch",
-                                        "charging_entity": "sensor.david_apple_watch_battery_status"}))
-    assert st.get_layout(hass)["thing_charging_entity"] == {"watch": "sensor.david_apple_watch_battery_status"}
+                                        "charging_entity": "sensor.alex_apple_watch_battery_status"}))
+    assert st.get_layout(hass)["thing_charging_entity"] == {"watch": "sensor.alex_apple_watch_battery_status"}
     # Not a sensor: refused, nothing stored.
     run(ws.ws_thing_tune(hass, conn, {"id": 2, "type": "sextant/thing/tune", "entity": "watch",
                                         "charging_entity": "light.kitchen"}))
-    assert conn.errors and st.get_layout(hass)["thing_charging_entity"] == {"watch": "sensor.david_apple_watch_battery_status"}
+    assert conn.errors and st.get_layout(hass)["thing_charging_entity"] == {"watch": "sensor.alex_apple_watch_battery_status"}
     run(ws.ws_thing_tune(hass, conn, {"id": 3, "type": "sextant/thing/tune", "entity": "watch", "charging_entity": None}))
     assert st.get_layout(hass)["thing_charging_entity"] == {}
 
@@ -682,7 +682,7 @@ def test_thing_tune_sets_the_class_always_home_and_a_home_tracker(tmp_path):
     run(ws.ws_thing_tune(hass, conn, {"id": 2, "type": "sextant/thing/tune", "entity": "model_s", "home_entity": "sensor.model_s_range"}))
     assert conn.errors and st.get_layout(hass)["thing_home_entity"] == {"model_s": "device_tracker.model_s_location"}
     run(ws.ws_thing_tune(hass, conn, {"id": 3, "type": "sextant/thing/tune", "entity": "model_s", "home_entity": None}))
-    run(ws.ws_thing_tune(hass, conn, {"id": 4, "type": "sextant/thing/tune", "entity": "model_s", "home_entity": "person.david"}))
+    run(ws.ws_thing_tune(hass, conn, {"id": 4, "type": "sextant/thing/tune", "entity": "model_s", "home_entity": "person.alex"}))
     assert len(conn.errors) == 2, "a person is kept home by their other things"
     run(ws.ws_thing_tune(hass, conn, {"id": 5, "type": "sextant/thing/tune", "entity": "model_s", "thing_class": "luggage",
                                         "class_always_home": False}))

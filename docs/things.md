@@ -68,7 +68,7 @@ picture, and where they are), which folds their things away with a click. And ea
 `sensor.<person>_sextant_person_location` (the spot, or the room),
 `_sextant_person_room` and `_sextant_person_floor` (and a
 `device_tracker.<person>_sextant`), with `via` naming the
-thing they came from and `via_class` its class (`phone`, `watch`, `cat`...). Automations can then ask where David is rather than
+thing they came from and `via_class` its class (`phone`, `watch`, `cat`...). Automations can then ask where Alex is rather than
 where his phone is.
 A pet's are named `sensor.<pet>_sextant_pet_location`, `_sextant_pet_room` and
 `_sextant_pet_floor` instead (a pet is one whose things are all cat, dog or
@@ -119,7 +119,7 @@ does the rest by itself:
   that person is. A tracker that agrees with one person far more than with
   anyone else is matched to them (the card shows it as *learned*, with a
   tick to keep it); one whose name carries a person's first name - the
-  controller's "David's Phone" - is matched at once (*by name*). Pick from
+  controller's "Alex's Phone" - is matched at once (*by name*). Pick from
   the list to decide for yourself; the choice wins over any match.
 - **What each access point means.** Sextant learns each access point's
   footprint - the floors and rooms people are in, by BLE, while on it - so a
@@ -143,8 +143,8 @@ Things page lines that map up with one of your floors:
 
 1. Pick the floor the vacuum cleans and press **Line up**. Sextant reads
    the robot's map once, pairs the rooms both maps name - by room name, or
-   by the Home Assistant area a room is linked to, so the robot's "Jack
-   Bedroom" finds the room linked to `jack_bedroom` - and fits the robot's
+   by the Home Assistant area a room is linked to, so the robot's "Jamie
+   Bedroom" finds the room linked to `jamie_bedroom` - and fits the robot's
    map onto the plan: turned, moved and (usually) mirrored, never stretched,
    because the robot's millimetres are real ones. The card shows how well
    the rooms agree (a few tenths of a metre is good) and any room left out

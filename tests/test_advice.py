@@ -63,11 +63,11 @@ def test_unplaced_proxies_are_passed_through_and_floors_without_scale_skipped():
 
 
 def test_two_bad_proxies_among_three_are_both_named():
-    layout = _layout([("a", 20, 20), ("b", 380, 20), ("c", 200, 380)], [_rect("Jack", 0, 0, 400, 400)])
-    out = advice.advise(layout, _selftest([("a", "Jack", 0.7), ("b", "Jack", 7.0), ("c", "Jack", 4.7)]))
+    layout = _layout([("a", 20, 20), ("b", 380, 20), ("c", 200, 380)], [_rect("Jamie", 0, 0, 400, 400)])
+    out = advice.advise(layout, _selftest([("a", "Jamie", 0.7), ("b", "Jamie", 7.0), ("c", "Jamie", 4.7)]))
     room = out["rooms"][0]
     assert room["issue"] == "weak proxy" and room["weak"] == ["b"]
     # Errors that are merely bad everywhere are "noisy" and get one far-wall spot for a fourth opinion.
-    out = advice.advise(layout, _selftest([("a", "Jack", 4.1), ("b", "Jack", 4.9), ("c", "Jack", 4.7)]))
+    out = advice.advise(layout, _selftest([("a", "Jamie", 4.1), ("b", "Jamie", 4.9), ("c", "Jamie", 4.7)]))
     room = out["rooms"][0]
     assert room["issue"] == "noisy" and room["add"] == 1 and len(room["spots"]) == 1

@@ -71,4 +71,4 @@ def test_layout_check_accepts_the_single_thing_height_setting():
     assert layout_check.layout_problem(layout) is None
     assert sextant._thing_height(layout) == 0.7
     # The maps the cycle reads with .get() must still be maps.
-    assert layout_check.layout_problem({"floor": [], "thing_owners": "david"}) is not None
+    assert layout_check.layout_problem({"floor": [], "thing_owners": "alex"}) is not None

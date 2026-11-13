@@ -77,7 +77,7 @@ def candidates(states, ap_macs=(), known=None) -> dict:
         }
     # The same client twice (a stale registry entry the integration reclaimed
     # beside the live one): keep the one that knows its access point, and
-    # the better name of the two - "David's Phone" over "iPhone iPhone".
+    # the better name of the two - "Alex's Phone" over "iPhone iPhone".
     by_mac: dict = {}
     for entity_id, c in out.items():
         if c["mac"]:
@@ -231,15 +231,15 @@ def prune_matches(store: dict, now, max_age=MATCH_RETENTION_S, max_pairs=MATCH_M
 def suggest(store: dict, tracker: str, names: dict | None = None) -> tuple:
     """(person, confidence 0..1, why) for a tracker, or (None, 0, why).
 
-    A tracker whose name contains a person's first name is theirs ("David's
-    Phone" → person.david_coulson): confidence 1. Otherwise the person it
+    A tracker whose name contains a person's first name is theirs ("Alex's
+    Phone" → person.alex_smith): confidence 1. Otherwise the person it
     agrees with most, once MATCH_MIN_CYCLES have been scored and the lead
     over the runner-up is MATCH_MIN_LEAD or more.
     """
     names = names or {}
     tname = str((store.get("names") or {}).get(tracker) or "").lower()
     # Whole words only - "Ian" must not claim "Brian's iPad" - and one
-    # person only: two Davids leave the name out of it.
+    # person only: two Alexes leave the name out of it.
     words = set(re.findall(r"[a-z0-9]+", tname.replace("'s", "").replace("\u2019s", "")))
     named = [person for person, pname in names.items()
              if len(first := str(pname or "").split(" ")[0].lower()) > 2 and first in words]

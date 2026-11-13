@@ -705,13 +705,13 @@ def test_unifi_and_wifi_access_points_read_a_new_style_registry(monkeypatch):
     monkeypatch.setitem(sys.modules, "homeassistant.helpers", helpers)
 
     kitchen = types.SimpleNamespace(id="d1", name="U7 ctrl name", name_by_user="Kitchen E7", manufacturer="Ubiquiti Inc.",
-                                    area_id="kitchen", connections={("mac", "8c:ed:e1:00:de:ed")})
+                                    area_id="kitchen", connections={("mac", "aa:bb:cc:00:01:01")})
     registry = _new_style_registry([kitchen])
     dr.async_get = lambda hass: registry
     ar.async_get = (lambda hass: types.SimpleNamespace(
         async_get_area=lambda area_id: types.SimpleNamespace(floor_id="ground") if area_id == "kitchen" else None))
     hub = types.SimpleNamespace(api=types.SimpleNamespace(devices={"a": types.SimpleNamespace(
-        raw={"type": "uap", "mac": "8c:ed:e1:00:de:ed", "name": "U7 ctrl name", "num_sta": 3, "state": 1})}))
+        raw={"type": "uap", "mac": "aa:bb:cc:00:01:01", "name": "U7 ctrl name", "num_sta": 3, "state": 1})}))
 
     class Hass:
         config_entries = types.SimpleNamespace(async_entries=lambda domain: [types.SimpleNamespace(runtime_data=hub)] if domain == "unifi" else [])
@@ -721,5 +721,5 @@ def test_unifi_and_wifi_access_points_read_a_new_style_registry(monkeypatch):
 
     layout = {"floor": [{"name": "Ground", "floor_id": "ground", "zones": [
         {"entity_id": "Kitchen", "area_id": "kitchen", "cords": [{"x": 0, "y": 0}, {"x": 1, "y": 0}, {"x": 1, "y": 1}]}]}]}
-    placed = core._wifi_access_points(Hass(), layout, ["8c:ed:e1:00:de:ed"])
-    assert placed["8c:ed:e1:00:de:ed"]["room"] == "Kitchen" and placed["8c:ed:e1:00:de:ed"]["name"] == "Kitchen E7"
+    placed = core._wifi_access_points(Hass(), layout, ["aa:bb:cc:00:01:01"])
+    assert placed["aa:bb:cc:00:01:01"]["room"] == "Kitchen" and placed["aa:bb:cc:00:01:01"]["name"] == "Kitchen E7"

@@ -10,7 +10,7 @@ test("things far apart are not clustered", () => {
   assert.deepEqual(clusterThings([thing("a", 0, 0), thing("b", 500, 0)], 20), []);
 });
 
-test("Michelle's nightstand: phone, watch and case become one marker of three", () => {
+test("Sam's nightstand: phone, watch and case become one marker of three", () => {
   const out = clusterThings([thing("phone", 267, 499), thing("watch", 270, 502), thing("case", 264, 497), thing("lamp", 900, 900)], 20);
   assert.equal(out.length, 1);
   assert.deepEqual(names(out[0]), ["phone", "watch", "case"]);

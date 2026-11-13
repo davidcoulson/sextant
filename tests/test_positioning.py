@@ -388,7 +388,7 @@ def test_robust_loss_beats_linear_on_an_outlier():
 # --------------------------------------------------------------------------- #
 # Slant-singularity regression (the 1.7.0 accuracy collapse)
 # --------------------------------------------------------------------------- #
-def test_collapsed_radius_cannot_hijack_the_fix():
+def test_collapsed_radius_cannot_hijamie_the_fix():
     # THE 1.7.0 regression scenario: a height-corrected receiver whose filtered
     # slant latched below dz collapses its projected radius to the 0.5 m floor
     # while the thing is really ~5.7 m away. In a realistic mesh (8 honest
@@ -1278,7 +1278,7 @@ def test_proximity_weighting_favours_the_floor_with_the_nearest_receiver():
 
 
 def test_geometric_blend_lets_the_nearest_proxies_outweigh_a_poor_fit():
-    """Eilee's phone at 05:37: its own floor's fit was cut to 0.15 by the
+    """Robin's phone at 05:37: its own floor's fit was cut to 0.15 by the
     no-go penalty (a fix a metre over the foyer void) while the floor below,
     hearing it through the slab at much the same range, fitted at 0.72.
     Gated, the poor fit caps her floor (0.27 against 0.56); geometric at the
@@ -1558,7 +1558,7 @@ def _sub(entity, point, now, *, zone="Living", locked=False, layout=None, scale=
 # election rather than one helper at a time.
 
 def test_a_still_thing_keeps_a_small_spot_while_its_fix_wanders():
-    """David's watch on a 0.7 x 0.5 m bedside table: the fix wandered one to
+    """Alex's watch on a 0.7 x 0.5 m bedside table: the fix wandered one to
     two metres all night, and 3.17.49 dropped it off the spot."""
     sextant._subzone_state.clear()
     t = 1000.0
@@ -1650,18 +1650,18 @@ def test_a_locked_spot_gives_way_to_a_neighbour_the_fix_sits_in():
     so a fix that settles on the other table must still move the spot."""
     from shapely.geometry import Point, Polygon
     sextant._subzone_state.clear()
-    polys = [("David", "Bed", Polygon([(463, 461), (533, 461), (533, 511), (463, 511)]), frozenset()),
-             ("Michelle", "Bed", Polygon([(217, 460), (287, 460), (287, 510), (217, 510)]), frozenset())]
+    polys = [("Alex", "Bed", Polygon([(463, 461), (533, 461), (533, 511), (463, 511)]), frozenset()),
+             ("Sam", "Bed", Polygon([(217, 460), (287, 460), (287, 510), (217, 510)]), frozenset())]
     layout = {"tuning": {"subzone_switch_secs": 20.0, "zone_prob_smoothing": 0.6}}
     sub = lambda point, now, locked: sextant._elect_subzone("e", "F", "Bed", locked, Point(*point), None, polys, 100.0, layout, now=now)
     t = 1000.0
     for dt in (0, 10, 30, 31):
         sub((500, 480), t + dt, False)
-    assert sub((500, 480), t + 40, True) == ("David", "Bed")
+    assert sub((500, 480), t + 40, True) == ("Alex", "Bed")
     # Wandering between the tables keeps the spot, as before.
-    assert sub((380, 480), t + 60, True) == ("David", "Bed")
+    assert sub((380, 480), t + 60, True) == ("Alex", "Bed")
     seen = [sub((250, 470), t + 100 + dt, True)[0] for dt in range(0, 80, 10)]
-    assert seen[0] == "David" and seen[-1] == "Michelle"
+    assert seen[0] == "Alex" and seen[-1] == "Sam"
 
 
 def test_subzone_switches_to_a_clearly_better_neighbour():
@@ -1992,12 +1992,12 @@ def test_boundary_jitter_well_inside_the_margin_still_holds_the_lock():
 
 def test_location_publishes_the_spot_when_there_is_one():
     """In a spot, the state is the spot and the room is still available."""
-    state, attrs = sextant._location_state("Master Bedroom", "David Bedside Table", "Master Bedroom", "Second Floor")
-    assert state == "David Bedside Table"
+    state, attrs = sextant._location_state("Master Bedroom", "Alex Bedside Table", "Master Bedroom", "Second Floor")
+    assert state == "Alex Bedside Table"
     assert attrs == {
         "kind": "spot",
         "room": "Master Bedroom",
-        "spot": "David Bedside Table",
+        "spot": "Alex Bedside Table",
         "floor": "Second Floor",
         "area_id": None,
         "floor_id": None,
@@ -2267,7 +2267,7 @@ def test_no_lock_in_the_first_minutes_after_a_start():
 
 
 def test_marks_guide_their_own_thing_and_its_class_not_everything():
-    # Michelle's phone marked on the couch must not drag David's watch there.
+    # Sam's phone marked on the couch must not drag Alex's watch there.
     layout = {"thing_classes": {"m_phone": "phone", "d_phone": "phone", "d_watch": "watch", "meg": "cat", "socks": "cat"},
               "floor": [{"name": "F", "scale": SCALE, "receivers": []}]}
     sample = {"t": 1.0, "gain": 1.0, "estimator": "fingerprint", "thing_vec": {"aa": 2.0, "bb": 3.0},

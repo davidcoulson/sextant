@@ -39,19 +39,19 @@ def test_mark_reference_divides_each_sample_by_its_own_gain():
 
 def test_mac_suffix_match_is_not_overwritten_by_the_token_search():
     directory = {
-        "dc:06:75:4e:89:3e": {"slug": "sewing_room_rrn00_4e893c_dc_06_75_4e_89_3e",
+        "aa:bb:cc:01:02:1e": {"slug": "sewing_room_rrn00_01021c_aa_bb_cc_01_02_1e",
                               "unique_id": "zz", "address_wifi_mac": "zz"},
-        "dc:06:75:4e:89:4e": {"slug": "other_rrn00_4e893c",
+        "aa:bb:cc:01:02:2e": {"slug": "other_rrn00_01021c",
                               "unique_id": "yy", "address_wifi_mac": "yy"},
     }
     # Renamed since, so the slug alone no longer matches; the suffix still
-    # names the address, while the token ("4e893c") matches two scanners.
-    directory["dc:06:75:4e:89:3e"]["slug"] = "sewing_room_rrn00_4e893c_renamed"
+    # names the address, while the token ("01021c") matches two scanners.
+    directory["aa:bb:cc:01:02:1e"]["slug"] = "sewing_room_rrn00_01021c_renamed"
     layout = {"floor": [{"name": "F", "receivers": [
-        {"entity_id": "sewing_room_rrn00_4e893c_dc_06_75_4e_89_3e", "cords": {"x": 0, "y": 0}},
+        {"entity_id": "sewing_room_rrn00_01021c_aa_bb_cc_01_02_1e", "cords": {"x": 0, "y": 0}},
     ]}]}
     sextant._resolve_receiver_addresses(layout, directory)
-    assert layout["floor"][0]["receivers"][0].get("address") == "dc:06:75:4e:89:3e"
+    assert layout["floor"][0]["receivers"][0].get("address") == "aa:bb:cc:01:02:1e"
 
 
 def test_zone_membership_vectorised_matches_the_plain_walk():

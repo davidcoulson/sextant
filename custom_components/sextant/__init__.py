@@ -502,8 +502,8 @@ NO_GO_CONF_PENALTY = 0.15
 NO_GO_SNAP_MARGIN_PX = 3.0
 # A fix inside a no-go void says nothing about which side of the void the
 # thing is on, so the snap out of it keeps the thing's current room while that
-# room's wall is within this many metres of the nearest one. Eilee's watch on
-# her bedside table solved into the foyer void between her room and Jack's,
+# room's wall is within this many metres of the nearest one. Robin's watch on
+# her bedside table solved into the foyer void between her room and Jamie's,
 # about equally far from both walls; snapped memorylessly it went to her wall,
 # then his, 2.5 m apart, and the room flipped 50 times in a morning. Really
 # crossing a void means walking round it, through rooms, where nothing snaps.
@@ -698,7 +698,7 @@ TUNING_SPEC = {
     "floor_switch_secs": (FLOOR_SWITCH_SECS, float, 0.0, 3600.0),
     # The lead a challenger floor needs before its dwell starts. 0.05 lets a
     # near-tie (a phone on the floor above a strong proxy) drift between two
-    # floors on a half-hour period; 0.10 held Eilee's phone on its floor all
+    # floors on a half-hour period; 0.10 held Robin's phone on its floor all
     # night in replay with the cats' moves untouched.
     "floor_switch_margin": (FLOOR_SWITCH_MARGIN, float, 0.0, 0.5),
     "floor_tenure_bonus": (0.05, float, 0.0, 0.5),      # extra margin at full tenure
@@ -1933,7 +1933,7 @@ def _resolve_receiver_addresses(layout, directory):
         candidates = [a for a, s in directory.items() if s.get("slug") == slug and a not in claimed]
         if not candidates:
             # Bermuda disambiguates duplicate scanner names by appending the
-            # MAC, e.g. "sewing_room_rrn00_4e893c_dc_06_75_4e_89_3e". That
+            # MAC, e.g. "sewing_room_rrn00_01021c_aa_bb_cc_01_02_1e". That
             # suffix IS the address; and once the duplicate is gone Bermuda
             # drops it again, so the plain token must be tried on the slug
             # with the suffix stripped.
@@ -2071,7 +2071,7 @@ def _scanner_linking(hass, coordinates_json):
     """Debug view for issue #64: for every placed receiver, the Bermuda distance
     sensors that feed it and each one's current state.
 
-    This distinguishes the two failure modes David couldn't tell apart from the
+    This distinguishes the two failure modes Alex couldn't tell apart from the
     map alone: a receiver correctly linked but simply not reporting a distance
     right now ("silent" — usually just no recent BLE contact), versus one whose
     name matches no distance sensor at all ("unmatched" — a real naming
@@ -3153,7 +3153,7 @@ def room_area(layout, floor_name, room_name):
     the Home Assistant floor its Sextant floor is linked to. None where unlinked.
 
     A room is a shape on a plan and an area is a grouping of devices; linked,
-    an automation can act on the area a thing is in ("the lights where David
+    an automation can act on the area a thing is in ("the lights where Alex
     is") without a lookup table of its own.
     """
     floors = layout.get("floor") if isinstance(layout, dict) else None
@@ -4398,7 +4398,7 @@ async def _restore_runtime(hass):
     # the setup step that fills the layout cache - so it loads the layout
     # itself rather than reading an empty one. Its own window
     # (restore_state_secs) is a tuning key IN that layout: read too early, a
-    # window David had set to twenty minutes was silently the five-minute
+    # window Alex had set to twenty minutes was silently the five-minute
     # default, and a reboot that took five minutes ten seconds resumed nothing.
     layout = get_layout(hass)
     if not isinstance(layout, dict):
@@ -4866,7 +4866,7 @@ def wifi_heat_report(hass, layout, floor=None, band=None):
         for r in heat_mod.rooms(cells, lambda x, y, fl=f["name"]: _room_at(rooms_by_floor.get(fl), x, y)):
             out["rooms"].append({"floor": f["name"], **r})
     out["rooms"].sort(key=lambda r: r["dbm"])
-    # Offsets by whose device it is ("Michelle's Watch"): the trackers' own
+    # Offsets by whose device it is ("Sam's Watch"): the trackers' own
     # names are "iPhone" and "Watch" three times over.
     owner = {a.get("entity"): person for person, picks in (_wifi_now.get("assigned") or {}).items() for a in picks or []}
     names = {}
@@ -6156,8 +6156,8 @@ def _elect_subzone(entity, floor_name, zone, zone_locked, point, kf_state, sub_p
     still_near = away_px is not None and away_px <= margin_px
     release_px = _tuning(layout, "subzone_lock_release_m") * (scale if isinstance(scale, (int, float)) and scale > 0 else 0.0)
     # A fix sitting inside ANOTHER spot is not a wander: two bedside tables
-    # 1.8 m apart are both within the release distance, so Michelle's phone
-    # stayed on David's table all night (2026-11-06).
+    # 1.8 m apart are both within the release distance, so Sam's phone
+    # stayed on Alex's table all night (2026-11-06).
     on_other = any(poly.contains(Point(*center)) for sid, _p, poly in polys if sid != current)
     if current != "unknown" and zone_locked and away_px is not None and away_px <= release_px and not on_other:
         st["pending"] = None

@@ -26,9 +26,9 @@ def _hass(tmp_path, monkeypatch):
     layout = {
         "floor": [{"name": "F", "scale": 100.0, "receivers": [], "zones": [], "subzones": []}],
         "robots": {"vacuum.rocky": {"floor": "F", "fit": {"transform": [[1, 0], [0, 1]]}}},
-        "thing_names": {"old_irk": "David", "phone": "David"},
+        "thing_names": {"old_irk": "Alex", "phone": "Alex"},
         "thing_classes": {"old_irk": "phone", "phone": "phone"},
-        "thing_owners": {"old_irk": "person.david", "phone": "person.david"},
+        "thing_owners": {"old_irk": "person.alex", "phone": "person.alex"},
     }
     run(st.save_layout(hass, layout))
 
@@ -53,8 +53,8 @@ def test_an_orphan_within_its_grace_keeps_everything(tmp_path, monkeypatch):
     hass = _hass(tmp_path, monkeypatch)
     assert run(sextant.sweep_untracked_things(hass, {"phone"})) == []
     lay = st.get_layout(hass)
-    assert lay["thing_names"]["old_irk"] == "David"
-    assert lay["thing_owners"]["old_irk"] == "person.david"
+    assert lay["thing_names"]["old_irk"] == "Alex"
+    assert lay["thing_owners"]["old_irk"] == "person.alex"
     assert "old_irk" in sextant._last_seen, "the sweep waits, it does not act"
     # The wait started: the stamp is this cycle's.
     since = hass.data[sextant.DOMAIN]["orphan_since"]
@@ -68,7 +68,7 @@ def test_an_orphan_past_its_grace_is_forgotten(tmp_path, monkeypatch):
     lay = st.get_layout(hass)
     assert "old_irk" not in lay["thing_names"] and "old_irk" not in lay["thing_classes"]
     assert "old_irk" not in lay["thing_owners"], "a ghost pinned to its owner goes from owners too"
-    assert lay["thing_names"]["phone"] == "David", "the live slug keeps its settings"
+    assert lay["thing_names"]["phone"] == "Alex", "the live slug keeps its settings"
     assert "old_irk" not in sextant._last_seen and "old_irk" not in sextant._zone_state
     assert "old_irk" not in hass.data[sextant.DOMAIN]["orphan_since"]
 
@@ -112,8 +112,8 @@ def test_a_tracked_thing_away_from_home_is_never_swept(tmp_path, monkeypatch):
     sextant._last_seen["phone"] = {"zone": "Office", "updated": time.time() - 30 * 86400}
     assert run(sextant.sweep_untracked_things(hass, {"phone"})) == []
     lay = st.get_layout(hass)
-    assert lay["thing_names"]["phone"] == "David"
-    assert lay["thing_owners"]["phone"] == "person.david"
+    assert lay["thing_names"]["phone"] == "Alex"
+    assert lay["thing_owners"]["phone"] == "person.alex"
     assert "phone" in sextant._last_seen, "even its month-old sighting stays"
 
 
