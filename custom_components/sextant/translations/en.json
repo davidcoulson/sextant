@@ -1,0 +1,8 @@
+{
+  "issues": {
+    "dead_thing": {
+      "title": "{name} has gone quiet with a flat battery",
+      "description": "{name} has not been heard for {age}. It was last heard in {where}, and its battery last read {battery}%.\n\nIt most likely needs a new battery. This repair clears itself when {name} is heard again."
+    }
+  }
+}

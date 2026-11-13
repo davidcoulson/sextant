@@ -212,6 +212,14 @@ def _install_homeassistant_stubs():
     # on its parent (as done for panel_custom above).
     helpers.storage = sys.modules["homeassistant.helpers.storage"]
     _module("homeassistant.helpers.event", async_track_state_change_event=lambda *a, **k: None)
+    # The repairs registry: {(domain, issue_id): the create call's keywords} in hass.data.
+    _module(
+        "homeassistant.helpers.issue_registry",
+        IssueSeverity=types.SimpleNamespace(WARNING="warning"),
+        async_get=lambda hass: types.SimpleNamespace(issues=hass.data.setdefault("issues", {})),
+        async_create_issue=lambda hass, domain, issue_id, **k: hass.data.setdefault("issues", {}).__setitem__((domain, issue_id), k),
+        async_delete_issue=lambda hass, domain, issue_id: hass.data.setdefault("issues", {}).pop((domain, issue_id), None),
+    )
 
     # A working in-memory dispatcher, keyed per hass, so the websocket
     # subscription and the per-cycle push can be exercised for real.

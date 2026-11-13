@@ -12,6 +12,7 @@ from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.const import EVENT_HOMEASSISTANT_FINAL_WRITE, EVENT_HOMEASSISTANT_STOP, UnitOfLength
 from homeassistant.util.unit_conversion import DistanceConverter
 from homeassistant.util import slugify
@@ -3624,6 +3625,11 @@ async def process_entities(hass, new_global_data):
         _LOGGER.debug("Presence not published: %s", e)
     try:
         layout = get_layout(hass)
+        _update_dead_issues(hass, layout if isinstance(layout, dict) else {})
+    except Exception as e:  # noqa: BLE001 - a repair must never stop the things'
+        _LOGGER.debug("Dead-thing repairs not updated: %s", e)
+    try:
+        layout = get_layout(hass)
         await election_log.get(hass).flush(_tuning(layout, "election_log_hours"))
     except Exception as e:  # noqa: BLE001 - a log must never stop the things'
         _LOGGER.debug("Election log not flushed: %s", e)
@@ -4225,6 +4231,59 @@ def _patch_sensor_attrs(hass, entity_id, attrs):
     if sensor is None:
         return
     update_sextant_sensor_state(hass, entity_id, sensor._state, {**(sensor._attrs or {}), **attrs})
+
+
+# A thing is called dead - a repair, not a badge on a card nobody opened -
+# once it has been silent this long with its battery sensor last reading at or
+# under this level (the Live page's BATTERY_CRITICAL). Silence alone is not
+# enough: a phone, a car or a suitcase is away for days, and a tag at the
+# kennel with a good battery is only away.
+DEAD_AFTER_S = 86400.0
+DEAD_BATTERY_PCT = 10.0
+DEAD_ISSUE_PREFIX = "dead_thing_"
+
+
+def _dead_things(hass, layout, now):
+    """{thing: the repair's placeholders} for every thing that looks dead, on
+    the same last-heard clock the presence uses (_last_seen). A thing never
+    heard, or forgotten, has no sighting and is never dead."""
+    from .ws import _thing_names  # noqa: PLC0415 - ws imports this module
+
+    dead = {}
+    for ent, sensor in (layout.get("thing_battery_entity") or {}).items():
+        seen = _last_seen.get(ent)
+        updated = seen.get("updated") if isinstance(seen, dict) else None
+        if not isinstance(updated, (int, float)) or now - updated < DEAD_AFTER_S:
+            continue
+        try:
+            level = float(hass.states.get(sensor).state)
+        except (AttributeError, TypeError, ValueError):  # no sensor, or nothing to say
+            continue
+        if level > DEAD_BATTERY_PCT:
+            continue
+        days = int((now - updated) // 86400)
+        where = ", ".join(str(seen[k]) for k in ("zone", "floor") if seen.get(k) and seen[k] != "unknown")
+        dead[ent] = {
+            "name": _thing_names(hass, [ent], layout).get(ent) or ent,
+            "age": f"{days} day{'' if days == 1 else 's'}",
+            "where": where or "an unknown room",
+            "battery": f"{level:.0f}",
+        }
+    return dead
+
+
+def _update_dead_issues(hass, layout):
+    """One repair per dead thing, under a stable id; gone again as soon as the
+    thing is heard, forgotten or loses its battery sensor."""
+    dead = _dead_things(hass, layout, time.time())
+    for ent, placeholders in dead.items():
+        ir.async_create_issue(
+            hass, DOMAIN, DEAD_ISSUE_PREFIX + ent, is_fixable=False, severity=ir.IssueSeverity.WARNING,
+            translation_key="dead_thing", translation_placeholders=placeholders,
+        )
+    for domain, issue_id in list(ir.async_get(hass).issues):
+        if domain == DOMAIN and issue_id.startswith(DEAD_ISSUE_PREFIX) and issue_id[len(DEAD_ISSUE_PREFIX):] not in dead:
+            ir.async_delete_issue(hass, DOMAIN, issue_id)
 
 
 async def _restore_runtime(hass):
