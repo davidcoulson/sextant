@@ -109,6 +109,7 @@ def test_switching_off_deletes_the_files_once_and_then_stops_scanning(tmp_path):
     log = el.ElectionLog(str(d))
     log.add(_row("a"), NOW)
     assert run(log.flush(24, now=NOW)) == 1 and (d / el.file_for(NOW)).exists()
+    assert run(log.flush(None, now=NOW)) == 0 and (d / el.file_for(NOW)).exists(), "setting unread: nothing deleted"
     assert run(log.flush(0, now=NOW)) == 0
     assert not (d / el.file_for(NOW)).exists(), "off: the files go"
     (d / el.file_for(NOW)).write_text("x")

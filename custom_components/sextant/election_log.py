@@ -103,7 +103,9 @@ class ElectionLog:
         after a restart or after switching off, none while it stays off).
         """
         rows, self._buffer = self._buffer, []
-        if not hours or hours <= 0:
+        if hours is None:   # the setting could not be read: touch nothing
+            return 0
+        if hours <= 0:
             if not self._emptied:
                 self._emptied = True
                 await clear(self.dirpath)

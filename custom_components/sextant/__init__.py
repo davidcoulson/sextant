@@ -3695,7 +3695,9 @@ async def process_entities(hass, new_global_data):
     _maintain_dead_issues(hass)
     try:
         layout = get_layout(hass)
-        await election_log.get(hass).flush(_tuning(layout, "election_log_hours"))
+        # No layout to read the setting from is not "off": off deletes the files.
+        await election_log.get(hass).flush(
+            _tuning(layout, "election_log_hours") if isinstance(layout, dict) and layout else None)
     except Exception as e:  # noqa: BLE001 - a log must never stop the things'
         _LOGGER.debug("Election log not flushed: %s", e)
     try:
@@ -5142,6 +5144,9 @@ def _update_person_sensors(hass):
                 presence, best is not None, last_heard, _gps_asked.get(person)):
             if _ask_phones_for_location(hass, layout, person):
                 _gps_asked[person] = last_heard
+                # Saved now, not at the next periodic save: a crash in between
+                # would ask again for the same spell.
+                hass.async_create_task(_save_runtime(hass))
         wifi = _wifi_for(person, view)
         view["by_person"][person] = wifi
         # A router holds a client "home" for minutes after it last saw it: a
