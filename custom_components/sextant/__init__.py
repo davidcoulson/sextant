@@ -3155,7 +3155,15 @@ def _solve_floor_jobs(jobs):
             # a sole candidate still wins and is snapped out by the caller.
             if _point_in_no_go(fix, job["zone_polys"]):
                 conf *= NO_GO_CONF_PENALTY
+        geometric = fix is not None
         fix, conf, fp = _fuse_fingerprint(job.get("fingerprint"), fix, conf)
+        # A fingerprint-only fix has no geometry to check it, so check it
+        # against the nearest receiver: two garage proxies reading 2 m put
+        # phones on the Couch, 13 m away, off a match that fitted nothing.
+        if fix is not None and not geometric and job["weighted"] and job.get("scale"):
+            x, y, r = min(job["weighted"], key=lambda pt: pt[2])[:3]
+            if math.hypot(fix[0] - x, fix[1] - y) > r + FP_ONLY_MAX_NEAREST_M * job["scale"]:
+                fix = None
         if fix is None:
             out.append(None)
             continue

@@ -167,6 +167,20 @@ def test_full_cycle_fused_mode_publishes_and_places_with_one_receiver(monkeypatc
     assert not any(i["ent"] == "e" for i in sextant.apitricords)
 
 
+def test_fingerprint_only_fix_far_from_the_nearest_receiver_is_dropped():
+    # Two receivers reading 2 m, and the only reference that matches at all
+    # sits 13 m away: no fix. The same match beside the receivers stands.
+    def solve(ref_x):
+        spec = {"thing": {"a": 2.0, "b": 2.0}, "k": 3, "missing_m": 12.0, "mode": "fused",
+                "weight": 0.5, "floor_weight": 0.5,
+                "refs": [{"slug": "far", "address": "c", "x": ref_x, "y": 0.0, "vector": {"a": 9.0, "b": 9.0}}]}
+        job = {"weighted": [(0.0, 0.0, 200.0, 1.0), (300.0, 0.0, 200.0, 1.0)], "scale": 100.0, "fingerprint": spec}
+        return sextant._solve_floor_jobs([job])[0]
+
+    assert solve(1300.0) is None
+    assert solve(150.0)[0] == (150.0, 0.0)
+
+
 def test_geometric_mode_never_touches_the_reference_db(monkeypatch):
     _reset_thing_state()
     hass = make_hass()
