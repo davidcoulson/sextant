@@ -90,7 +90,7 @@ def _vector(value, size):
     return out if len(out) == size else None
 
 
-def snapshot(now, kf=None, zones=None, spots=None, arrivals=None, rows=None, floors=None, visits=None, wifi=None):
+def snapshot(now, kf=None, zones=None, spots=None, arrivals=None, rows=None, floors=None, visits=None, wifi=None, asked=None):
     """The state worth keeping, as JSON.
 
     ``rows`` are the published positions (ent, zone, sub_zone, floor, updated,
@@ -134,6 +134,10 @@ def snapshot(now, kf=None, zones=None, spots=None, arrivals=None, rows=None, flo
     people = {str(p): _json(v) for p, v in (visits or {}).items() if isinstance(v, dict)}
     if people:
         out["people"] = people
+    # Who was asked for a location, and for which sighting (persons.should_ask_gps),
+    # so a restart does not push the same quiet spell twice.
+    if asked:
+        out["asked"] = {str(p): t for p, t in asked.items() if _epoch(t) is not None}
     # What Wi-Fi association has taught (wifi.py): access-point footprints
     # and tracker-to-person scores. Kept whatever the gap: a week's learning
     # is worth more than a fresh start.
@@ -209,9 +213,12 @@ def restore(data, now, max_age=DEFAULT_MAX_AGE_SECS):
     so the Live page can still say where a thing was and when. A snapshot
     from the future (the clock moved) is treated as a long gap.
     """
-    out = {"kf": {}, "zone": {}, "spot": {}, "arrivals": {}, "floors": {}, "last": {}, "visits": {}, "wifi": None, "age": None}
+    out = {"kf": {}, "zone": {}, "spot": {}, "arrivals": {}, "floors": {}, "last": {}, "visits": {}, "asked": {}, "wifi": None, "age": None}
     if not isinstance(data, dict):
         return out
+    asked = data.get("asked")
+    if isinstance(asked, dict):
+        out["asked"] = {p: t for p, t in asked.items() if _epoch(t) is not None}
     wifi = data.get("wifi")
     if isinstance(wifi, dict) and isinstance(wifi.get("aps"), dict) and isinstance(wifi.get("matches"), dict):
         out["wifi"] = _wifi_clean(wifi)

@@ -249,6 +249,15 @@ def test_the_history_fills_in_a_last_sighting_once_it_has_loaded():
     assert sextant._last_seen["socks"]["zone"] == "Kitchen"
 
 
+def test_location_asks_come_back_whatever_the_gap():
+    from sextant import runtime
+    data = runtime.snapshot(1000.0, asked={"person.david": 870.5, "person.bad": "x"})
+    assert data["asked"] == {"person.david": 870.5}
+    assert runtime.restore(data, 1000.0 + 10 * 86400)["asked"] == {"person.david": 870.5}
+    assert runtime.restore({"asked": {"person.bad": True}}, 1000.0)["asked"] == {}
+    assert "asked" not in runtime.snapshot(1000.0)
+
+
 def test_visits_come_back_whatever_the_gap():
     from sextant import runtime
     data = runtime.snapshot(1000.0, visits={"person.david": {"arrived": 900.0, "departed": None, "via": "ble"}, "person.bad": "x"})

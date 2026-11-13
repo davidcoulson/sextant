@@ -202,6 +202,3 @@ def test_should_ask_gps_once_per_quiet_spell():
     assert not ask("away", False, NOW - 1000, None)
     assert not ask("quiet", True, NOW - 130, None)
     assert not ask("quiet", False, None, None)
-    # Already quiet when Home Assistant started: the run before asked.
-    assert not ask("quiet", False, NOW - 130, None, not_before=NOW - 100)
-    assert ask("quiet", False, NOW - 130, None, not_before=NOW - 200)

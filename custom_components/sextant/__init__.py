@@ -4220,8 +4220,6 @@ _presence_published = {}
 _person_last = {}
 # person -> the last_heard a location request was sent for (persons.should_ask_gps).
 _gps_asked = {}
-# When that memory starts: spells already quiet by then are not asked for again.
-_gps_asked_since = time.time()
 # Each person's visit (persons.visit): {person: {"arrived", "departed"}}; saved with the runtime.
 _person_visits = {}
 # The visits the events were last told from (persons.visit_events), and when
@@ -4444,6 +4442,7 @@ async def _restore_runtime(hass):
         _subzone_state[entity] = {**_new_subzone_state(state.get("floor"), state.get("zone"), now), **state}
     _arrivals.update(back["arrivals"])
     _person_visits.update(back.get("visits") or {})
+    _gps_asked.update(back.get("asked") or {})
     if back.get("wifi"):
         _wifi_store.update(back["wifi"])
     # The floor election, and with it the fact that this thing's floor is not
@@ -4574,7 +4573,7 @@ async def _save_runtime(hass, final=False):
         # a dying tag, was gone entirely after the 15:34 restart.
         rows = _rows_with_last_seen(rows, _last_seen)
         data = runtime_mod.snapshot(time.time(), kf=_kf_position_state, zones=_zone_state,
-                                    spots=_subzone_state, arrivals=_arrivals, rows=rows, visits=_person_visits, wifi=_wifi_store,
+                                    spots=_subzone_state, arrivals=_arrivals, rows=rows, visits=_person_visits, asked=_gps_asked, wifi=_wifi_store,
                                     floors=_floor_elections())
         await save_runtime(hass, data)
     except Exception as e:  # noqa: BLE001
@@ -5140,8 +5139,7 @@ def _update_person_sensors(hass):
         if best is None and presence == "quiet" and persons_mod.gps_left(gps, last_heard, home, _tuning(layout, "gps_leave_m")):
             presence, held, held_why = "away", None, None
         if _tuning(layout, "gps_leave_m") > 0 and persons_mod.should_ask_gps(
-                presence, best is not None, last_heard, _gps_asked.get(person),
-                _gps_asked_since - _tuning(layout, "stale_after_secs")):
+                presence, best is not None, last_heard, _gps_asked.get(person)):
             if _ask_phones_for_location(hass, layout, person):
                 _gps_asked[person] = last_heard
         wifi = _wifi_for(person, view)
