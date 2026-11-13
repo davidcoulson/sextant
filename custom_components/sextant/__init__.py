@@ -2397,6 +2397,10 @@ async def update_receiver_liveness(hass):
                 return True
         return False if saw_state else None
 
+    # Offline verdicts that are a guess, good enough for a badge but not for
+    # a repair (_update_receiver_issues): see the two places that add to it.
+    guessed = set()
+
     def is_online(slug):
         address = placed_address.get(slug)
         if address and address in directory:
@@ -2405,6 +2409,8 @@ async def update_receiver_liveness(hass):
                 return age <= RECEIVER_OFFLINE_SECS
         age = ages.get(slug)
         if age is not None:
+            if api_ages is None:
+                guessed.add(slug)  # the dump's ages only grow while dump_devices is failing
             return (age + elapsed) <= RECEIVER_OFFLINE_SECS
         st = hass.states.get(f"binary_sensor.{slug}_status")
         if st and st.attributes.get("device_class") == "connectivity":
@@ -2414,9 +2420,15 @@ async def update_receiver_liveness(hass):
             return resolved
         # tier 4: distance heuristic (last resort). Matches the card: a receiver
         # here is online only while some thing reads a distance through it.
+        # No reading says little: nothing tracked may be near. Unless Bermuda
+        # lists its scanners and has dropped this one, which it does to a
+        # proxy that is down.
+        if not (address and directory and address not in directory):
+            guessed.add(slug)
         return slug in with_reading
 
     dom["rl_offline"] = sorted(s for s in receivers if not is_online(s))
+    dom["rl_offline_guessed"] = sorted(guessed)
     try:
         _update_receiver_issues(hass, layout if isinstance(layout, dict) else {}, time.time())
     except Exception as e:  # noqa: BLE001 - a repair must never stop liveness
@@ -2434,12 +2446,15 @@ DEAD_RECEIVER_ISSUE_PREFIX = "dead_receiver_"
 def _update_receiver_issues(hass, layout, now):
     """One repair per placed receiver that has been offline (rl_offline) for
     DEAD_RECEIVER_AFTER_S; gone again once it is online, ignored
-    (ignored_scanners) or off the plan. Unplaced receivers never get one."""
+    (ignored_scanners) or off the plan. Unplaced receivers never get one, nor
+    does one whose offline is only a guess (rl_offline_guessed): a proxy with
+    no tag near it and no device to ask is not known to be down."""
     from .ws import ignored_scanners  # noqa: PLC0415 - ws imports this module
 
     dom = hass.data.setdefault(DOMAIN, {})
     was = dom.get("rl_offline_since") or {}
-    since = dom["rl_offline_since"] = {slug: was.get(slug, now) for slug in dom.get("rl_offline") or []}
+    offline = set(dom.get("rl_offline") or []) - set(dom.get("rl_offline_guessed") or [])
+    since = dom["rl_offline_since"] = {slug: was.get(slug, now) for slug in offline}
     ignored = ignored_scanners(layout)
     directory = bermuda_source.async_get_scanner_directory(hass) or {}
     dead = {}
