@@ -369,7 +369,7 @@ def gps_left(gps, last_heard, home=None, min_distance_m=200.0) -> bool:
     return _haversine_m(home, (lat, lon)) - max(0.0, float(accuracy)) >= min_distance_m
 
 
-def should_ask_gps(presence, placed, last_heard, asked_for) -> bool:
+def should_ask_gps(presence, placed, last_heard, asked_for, not_before=None) -> bool:
     """Whether to ask the person's phone for a location update now: they
     have just gone quiet (not placed, presence "quiet", which is already
     stale_after_secs since they were last heard) and have not been asked
@@ -378,9 +378,14 @@ def should_ask_gps(presence, placed, last_heard, asked_for) -> bool:
     asked_for is the last_heard value of the last ask; a new last_heard means
     they were heard again and went quiet again, a new spell. Never twice in
     one: iOS throttles these silent pushes.
+
+    not_before is the earliest last_heard still worth asking for: a spell
+    that was already quiet when Home Assistant started was asked for by the
+    run before, and that memory did not survive the restart.
     """
-    return (not placed and presence == "quiet" and valid_time(last_heard) is not None
-            and asked_for != last_heard)
+    heard = valid_time(last_heard)
+    return (not placed and presence == "quiet" and heard is not None
+            and asked_for != last_heard and (not_before is None or heard >= not_before))
 
 
 def wifi_outrun(gps, wifi_seen, home=None, min_distance_m=200.0, margin_secs=60.0) -> bool:
