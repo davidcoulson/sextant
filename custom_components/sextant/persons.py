@@ -190,7 +190,15 @@ def pick(things, now: float, stale_after: float):
         recent = age <= RECENT_MOVE_SECS
         return (not recent, -CARRY_PRIORITY.get(t.get("cls"), 0) if recent else 0, age)
 
-    return min(fresh, key=key)
+    best = min(fresh, key=key)
+    if best.get("cls") == "phone" and key(best)[0]:
+        # Everything is stationary: a watch placed at least as well as the phone
+        # beats it, since the phone is likelier to have been set down.
+        pconf = best.get("conf") or 0.0
+        watches = [t for t in fresh if t.get("cls") == "watch" and (t.get("conf") or -1.0) >= pconf]
+        if watches:
+            return min(watches, key=key)
+    return best
 
 
 def considered(things, now):
