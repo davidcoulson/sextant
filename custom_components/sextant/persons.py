@@ -195,7 +195,7 @@ def pick(things, now: float, stale_after: float):
         # Everything is stationary: a watch placed at least as well as the phone
         # beats it, since the phone is likelier to have been set down.
         pconf = best.get("conf") or 0.0
-        watches = [t for t in fresh if t.get("cls") == "watch" and (t.get("conf") or -1.0) >= pconf]
+        watches = [t for t in fresh if t.get("cls") == "watch" and t.get("conf") is not None and t["conf"] >= pconf]
         if watches:
             return min(watches, key=key)
     return best

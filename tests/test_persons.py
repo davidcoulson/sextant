@@ -50,6 +50,8 @@ def test_when_all_still_a_watch_placed_as_well_as_the_phone_wins():
     weak = dict(watch, conf=0.3)
     assert persons.pick([phone, weak], NOW, 120)["ent"] == "phone"
     assert persons.pick([phone, thing("watch", "watch", still_for=1500)], NOW, 120)["ent"] == "phone"
+    zero = [dict(phone, conf=0.0), dict(watch, conf=0.0)]
+    assert persons.pick(zero, NOW, 120)["ent"] == "watch"
 
 
 def test_unheard_or_unplaced_things_do_not_count():
