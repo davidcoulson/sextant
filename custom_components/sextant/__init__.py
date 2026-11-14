@@ -4221,12 +4221,13 @@ RESTORE_LOOKBACK_S = 600   # ...if it was heard within this long before the rest
 
 
 def _graced(updated, now):
-    """A sighting from just before a restart, lifted to the restart time for a few minutes:
+    """A sighting from just before a restart, read as heard just now for a few minutes
+    (candidates only: presence stays honest, so a GPS departure still wins):
     the proxies need that long to hear the thing again and, until they do, the
     saved place is the best there is."""
     if (_restored_at and isinstance(updated, (int, float)) and updated < _restored_at
             and now - _restored_at <= RESTORE_GRACE_S and _restored_at - updated <= RESTORE_LOOKBACK_S):
-        return _restored_at
+        return now
     return updated
 # ent -> the presence last written to its sensors ("here", "quiet", "away"),
 # so a transition is written once, not every cycle (see _publish_presence).
@@ -5121,7 +5122,7 @@ def _update_person_sensors(hass):
             if not persons_mod.locates_owner(layout, ent, classes.get(ent)):
                 continue
             seen = _last_seen.get(ent) or {}
-            presences.append(_presence_of(_graced(seen.get("updated") if isinstance(seen, dict) else None, now), now, layout))
+            presences.append(_presence_of(seen.get("updated") if isinstance(seen, dict) else None, now, layout))
             if isinstance(seen, dict) and isinstance(seen.get("updated"), (int, float)):
                 heard.append(seen["updated"])
             row = rows.get(ent)

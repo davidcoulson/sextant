@@ -176,7 +176,7 @@ def test_the_repair_has_its_text():
 
 def test_restored_sighting_counts_as_fresh_only_briefly_after_restart(monkeypatch):
     monkeypatch.setattr(sextant, "_restored_at", 1000.0)
-    assert sextant._graced(880.0, 1100.0) == 1000.0          # heard 2 min before the restart: lifted
+    assert sextant._graced(880.0, 1100.0) == 1100.0          # heard 2 min before the restart: read as now
     assert sextant._graced(300.0, 1100.0) == 300.0           # heard long before: left alone
     assert sextant._graced(1050.0, 1100.0) == 1050.0         # heard after the restart: left alone
     assert sextant._graced(880.0, 1000.0 + sextant.RESTORE_GRACE_S + 1) == 880.0   # grace over
