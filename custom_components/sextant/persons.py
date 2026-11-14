@@ -369,6 +369,26 @@ def gps_left(gps, last_heard, home=None, min_distance_m=200.0) -> bool:
     return _haversine_m(home, (lat, lon)) - max(0.0, float(accuracy)) >= min_distance_m
 
 
+def without_left_behind(candidates, gps, now, stale, home=None, min_distance_m=200.0):
+    """(candidates that may still speak for the person, those left behind).
+    A thing that came to rest (``arrived``) more than RECENT_MOVE_SECS ago and
+    before a GPS fix far from home was made did not go with them (gps_left, the
+    arrival standing for the last sighting): a watch on the bedside table while
+    the phone is down the road. One that moved recently is never ruled out: it
+    may be the very thing walking out, and one stray fix must not evict it.
+    Only when the two agree: a phone still heard at home says GPS is wrong (or
+    the phone is the thing left behind), so nothing is ruled out then."""
+    if any(c.get("cls") == "phone" and isinstance(c.get("updated"), (int, float)) and now - c["updated"] <= stale
+           for c in candidates):
+        return candidates, []
+    left = [
+        c for c in candidates
+        if isinstance(c.get("arrived"), (int, float)) and now - c["arrived"] > RECENT_MOVE_SECS
+        and gps_left(gps, c["arrived"], home, min_distance_m)
+    ]
+    return [c for c in candidates if c not in left], left
+
+
 def should_ask_gps(presence, placed, last_heard, asked_for) -> bool:
     """Whether to ask the person's phone for a location update now: they
     have just gone quiet (not placed, presence "quiet", which is already
