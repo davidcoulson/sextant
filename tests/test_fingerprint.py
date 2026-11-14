@@ -327,3 +327,24 @@ def test_vectors_are_computed_once_per_ingest_not_once_per_thing(monkeypatch):
     db.ingest(r)
     assert db.vectors()[ADDR["a"]][ADDR["b"]] == 9.0           # the new samples are seen
     assert len(calls) == 2 * medians_per_build                 # one rebuild, not one per call
+
+
+def test_the_receiver_references_are_built_once_and_follow_the_layout_and_the_vectors():
+    """Every thing asks for the references every cycle with its own gain; the
+    receiver part is shared until a receiver moves or ranging is ingested."""
+    db = fp.ReferenceDB()
+    db.ingest(_ranging())
+    layout = _layout_with_addresses()
+    name = layout["floor"][0]["name"]
+    base = fp._base_references(layout["floor"], db.vectors())
+    other = copy.deepcopy(layout)                               # each thing's layout is its own copy
+    assert fp._base_references(other["floor"], db.vectors()) is base
+    assert fp.build_references(other, db.vectors(), gain=0.5)[name][0]["vector"][ADDR["c"]] == 0.5 * math.hypot(10, 10)
+    assert fp.build_references(other, db.vectors())[name][0]["vector"][ADDR["c"]] == math.hypot(10, 10)   # the gain never sticks
+    other["floor"][0]["receivers"][1]["correction"] = 2.0       # a calibration lands
+    assert fp.build_references(other, db.vectors())[name][0]["vector"][ADDR["b"]] == 20.0
+    r = _ranging()
+    r["scanners"][ADDR["a"]][ADDR["b"]]["distance_raw"] = 4.0
+    for _ in range(fp.REF_SAMPLES):
+        db.ingest(r)
+    assert fp.build_references(other, db.vectors())[name][0]["vector"][ADDR["b"]] == 8.0   # the new ranging is seen

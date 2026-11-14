@@ -163,6 +163,65 @@ def _median(values):
     return ordered[mid] if n % 2 else 0.5 * (ordered[mid - 1] + ordered[mid])
 
 
+# The receiver references before any gain, kept while the placed receivers and
+# the vectors object (ReferenceDB.vectors(), replaced on ingest) stay the same.
+_base = {"key": None, "vectors": None, "refs": None}
+
+
+def _base_references(floors, vectors):
+    """Per floor (None for one with no scale), each receiver reference as
+    (slug, address, x, y, vector without its self entry, at gain 1).
+
+    Every thing asks for the references every cycle and only the gain and the
+    truth marks differ between them: building this part each time was a
+    quarter of Sextant's time on the event loop.
+    """
+    try:
+        key = tuple(
+            (bool(floor.get("scale")), tuple(
+                (r.get("address"), (r.get("cords") or {}).get("x"), (r.get("cords") or {}).get("y"), r.get("correction"), r.get("entity_id"))
+                for r in floor.get("receivers", []) or []))
+            for floor in floors)
+        hash(key)
+    except TypeError:  # a layout value that cannot be a key: build it uncached
+        key = None
+    if key is not None and _base["vectors"] is vectors and _base["key"] == key:
+        return _base["refs"]
+    # Every placed receiver's correction, by address, across all floors: a
+    # reference on the ground floor is ranged by upstairs receivers too.
+    correction_by_address = {}
+    for floor in floors:
+        for receiver in floor.get("receivers", []) or []:
+            address = receiver.get("address")
+            if not isinstance(address, str) or not address:
+                continue
+            corr = receiver.get("correction")
+            correction_by_address[address.lower()] = (
+                float(corr) if isinstance(corr, (int, float)) and not isinstance(corr, bool) and corr > 0 else 1.0
+            )
+    out = []
+    for floor in floors:
+        if not floor.get("scale"):
+            out.append(None)
+            continue
+        refs = []
+        for receiver in floor.get("receivers", []) or []:
+            address = receiver.get("address")
+            cords = receiver.get("cords") or {}
+            if not isinstance(address, str) or not address or not _finite(cords.get("x")) \
+                    or not _finite(cords.get("y")):
+                continue  # unplaced, or a coordinate that is not a number: never a reference
+            address = address.lower()
+            heard = vectors.get(address) or {}
+            vector = {rx: d * correction_by_address[rx] for rx, d in heard.items() if rx in correction_by_address and rx != address}
+            if vector:
+                refs.append((receiver.get("entity_id"), address, float(cords["x"]), float(cords["y"]), vector))
+        out.append(refs)
+    if key is not None:
+        _base.update(key=key, vectors=vectors, refs=out)
+    return out
+
+
 def build_references(layout, vectors, gain=1.0, extra=None):
     """Per floor, the reference points with their fingerprint vectors.
 
@@ -180,45 +239,15 @@ def build_references(layout, vectors, gain=1.0, extra=None):
     floors = (layout or {}).get("floor") if isinstance(layout, dict) else None
     if not floors or not isinstance(vectors, dict):
         return {}
-    # Every placed receiver's correction, by address, across all floors: a
-    # reference on the ground floor is ranged by upstairs receivers too.
-    correction_by_address = {}
-    for floor in floors:
-        for receiver in floor.get("receivers", []) or []:
-            address = receiver.get("address")
-            if not isinstance(address, str) or not address:
-                continue
-            corr = receiver.get("correction")
-            correction_by_address[address.lower()] = (
-                float(corr) if isinstance(corr, (int, float)) and not isinstance(corr, bool) and corr > 0 else 1.0
-            )
     refs_by_floor = {}
-    for floor in floors:
-        if not floor.get("scale"):
+    for floor, base in zip(floors, _base_references(floors, vectors)):
+        if base is None:
             continue
         refs = []
-        for receiver in floor.get("receivers", []) or []:
-            address = receiver.get("address")
-            cords = receiver.get("cords") or {}
-            if not isinstance(address, str) or not address or not _finite(cords.get("x")) \
-                    or not _finite(cords.get("y")):
-                continue  # unplaced, or a coordinate that is not a number: never a reference
-            address = address.lower()
-            heard = vectors.get(address) or {}
-            vector = {}
-            for rx, d in heard.items():
-                if rx in correction_by_address and rx != address:
-                    vector[rx] = d * correction_by_address[rx] * gain
-            if not vector:
-                continue
+        for slug, address, x, y, ranged in base:
+            vector = {rx: d * gain for rx, d in ranged.items()}
             vector[address] = SELF_DISTANCE_M
-            refs.append({
-                "slug": receiver.get("entity_id"),
-                "address": address,
-                "x": float(cords["x"]),
-                "y": float(cords["y"]),
-                "vector": vector,
-            })
+            refs.append({"slug": slug, "address": address, "x": x, "y": y, "vector": vector})
         for ref in extra or []:
             if ref.get("floor") != floor["name"] or not ref.get("vector"):
                 continue

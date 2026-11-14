@@ -59,6 +59,7 @@ def test_thing_of_unique_id_recognises_every_kind_and_nothing_else():
     assert sn.thing_of_unique_id("sextant_nearest_room_tile_1") == "tile_1"
     assert sn.thing_of_unique_id("sextant_spot_a_b") == "a_b"
     assert sn.thing_of_unique_id("sextant_position_accuracy") is None
+    assert sn.thing_of_unique_id("sextant_room_occupancy_basement_home_theater") is None   # a room, not a thing
     assert sn.thing_of_unique_id(None) is None
 
 
