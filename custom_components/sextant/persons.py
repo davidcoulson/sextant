@@ -411,7 +411,7 @@ def should_ask_gps(presence, placed, last_heard, asked_for) -> bool:
             and asked_for != last_heard)
 
 
-def wifi_outrun(gps, wifi_seen, home=None, min_distance_m=200.0, margin_secs=60.0) -> bool:
+def wifi_outrun(gps, wifi_seen, home=None, min_distance_m=200.0, margin_secs=10.0) -> bool:
     """Whether GPS overrules a Wi-Fi tracker that still reads home: the
     router keeps a client "home" for minutes after it last saw the phone, so
     a departure read Kitchen on Wi-Fi with the phone 800 m down the road. A

@@ -294,11 +294,13 @@ def test_the_command_writes_the_order_and_clears_an_empty_list(tmp_path):
 def test_a_fix_down_the_road_after_the_router_last_saw_the_phone_overrules_wifi():
     """Sam's departures: Kitchen on Wi-Fi for up to 8 min with GPS 800 m out."""
     assert persons.wifi_outrun(_fix(), NOW - 200, HOME)
+    # The router saw the watch leave half a minute before the fix: not the other way round.
+    assert persons.wifi_outrun(_fix(), NOW - 50, HOME)
 
 
 def test_wifi_stands_on_an_arrival_or_without_a_last_seen_time():
     assert not persons.wifi_outrun(_fix(reported=NOW - 600), NOW - 5, HOME)   # home again: the old fix is the stale one
-    assert not persons.wifi_outrun(_fix(), NOW - 50, HOME)                    # inside the margin
+    assert not persons.wifi_outrun(_fix(), NOW - 35, HOME)                    # inside the margin
     assert not persons.wifi_outrun(_fix(), None, HOME)                        # not a UniFi client
     assert not persons.wifi_outrun(_fix(zone="home"), NOW - 200, HOME)
 
