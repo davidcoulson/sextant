@@ -43,6 +43,17 @@ def test_among_things_moved_recently_the_one_usually_worn_wins():
     assert persons.pick([phone, watch, pods], NOW, 120)["ent"] == "watch"
 
 
+def test_when_all_still_a_watch_placed_as_well_as_the_phone_wins():
+    phone = dict(thing("phone", "phone", still_for=1000), conf=0.6)
+    watch = dict(thing("watch", "watch", still_for=1500), conf=0.7)
+    assert persons.pick([phone, watch], NOW, 120)["ent"] == "watch"
+    weak = dict(watch, conf=0.3)
+    assert persons.pick([phone, weak], NOW, 120)["ent"] == "phone"
+    assert persons.pick([phone, thing("watch", "watch", still_for=1500)], NOW, 120)["ent"] == "phone"
+    zero = [dict(phone, conf=0.0), dict(watch, conf=0.0)]
+    assert persons.pick(zero, NOW, 120)["ent"] == "watch"
+
+
 def test_unheard_or_unplaced_things_do_not_count():
     old = thing("watch", "watch", still_for=10, heard_ago=900)
     lost = thing("phone", "phone", still_for=10, zone="unknown")
