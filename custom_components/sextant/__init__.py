@@ -4215,6 +4215,19 @@ _arrivals = {}
 # The Live page reads it to say "away since 5:32 PM" for a thing nothing is
 # hearing, which the sensors cannot answer after a restart.
 _last_seen = {}
+_restored_at = 0.0   # when the saved sightings came back (0: none restored)
+RESTORE_GRACE_S = 300   # after a restart a sighting from just before it counts as fresh this long
+RESTORE_LOOKBACK_S = 600   # ...if it was heard within this long before the restart
+
+
+def _graced(updated, now):
+    """A sighting from just before a restart, lifted to the restart time for a few minutes:
+    the proxies need that long to hear the thing again and, until they do, the
+    saved place is the best there is."""
+    if (_restored_at and isinstance(updated, (int, float)) and updated < _restored_at
+            and now - _restored_at <= RESTORE_GRACE_S and _restored_at - updated <= RESTORE_LOOKBACK_S):
+        return _restored_at
+    return updated
 # ent -> the presence last written to its sensors ("here", "quiet", "away"),
 # so a transition is written once, not every cycle (see _publish_presence).
 _presence_published = {}
@@ -4414,6 +4427,8 @@ async def _restore_runtime(hass):
         return
     back = runtime_mod.restore(data, time.time(), _tuning(layout, "restore_state_secs"))
     _last_seen.update(back["last"])
+    global _restored_at
+    _restored_at = time.time() if back["last"] else 0.0
     _seed_last_seen_from_history(hass)
     now = time.time()
     for entity, kf in back["kf"].items():
@@ -5106,14 +5121,14 @@ def _update_person_sensors(hass):
             if not persons_mod.locates_owner(layout, ent, classes.get(ent)):
                 continue
             seen = _last_seen.get(ent) or {}
-            presences.append(_presence_of(seen.get("updated") if isinstance(seen, dict) else None, now, layout))
+            presences.append(_presence_of(_graced(seen.get("updated") if isinstance(seen, dict) else None, now), now, layout))
             if isinstance(seen, dict) and isinstance(seen.get("updated"), (int, float)):
                 heard.append(seen["updated"])
             row = rows.get(ent)
             if not row:
                 continue
             candidates.append({
-                "ent": ent, "cls": classes.get(ent), "updated": row.get("updated"),
+                "ent": ent, "cls": classes.get(ent), "updated": _graced(row.get("updated"), now),
                 "arrived": _arrived_at(hass, layout, ent, row, now),
                 "zone": row.get("zone"), "sub_zone": row.get("sub_zone"), "floor": row.get("floor"),
                 "outside": bool(row.get("outside")), **{k: row.get(k) for k in persons_mod.FIT_KEYS},
