@@ -5117,12 +5117,13 @@ def _update_person_sensors(hass):
     if _event_visits is None:
         _event_visits, _events_from = dict(_person_visits), now + EVENTS_SETTLE_S
     for person, things in by_person.items():
-        candidates, presences, heard = [], [], []
+        candidates, presences, heard, presence_by_ent = [], [], [], {}
         for ent in things:
             if not persons_mod.locates_owner(layout, ent, classes.get(ent)):
                 continue
             seen = _last_seen.get(ent) or {}
-            presences.append(_presence_of(seen.get("updated") if isinstance(seen, dict) else None, now, layout))
+            presence_by_ent[ent] = _presence_of(seen.get("updated") if isinstance(seen, dict) else None, now, layout)
+            presences.append(presence_by_ent[ent])
             if isinstance(seen, dict) and isinstance(seen.get("updated"), (int, float)):
                 heard.append(seen["updated"])
             row = rows.get(ent)
@@ -5138,17 +5139,34 @@ def _update_person_sensors(hass):
                     getattr(hass.states.get(chargers[ent]), "state", None)),
             })
         slug = person.split(".", 1)[1]
+        gps, ignored = persons_mod.choose_gps(hass.states.get, layout, person, now, gps_stale)
+        # A thing that came to rest before a GPS fix far from home was made did not
+        # go with them: a watch left on the bedside table while the phone walks down
+        # the road must not keep the person in the house (persons.gps_left, with the
+        # thing's arrival standing for the last sighting).
+        kept, left_behind = persons_mod.without_left_behind(candidates, gps, now, stale, home, _tuning(layout, "gps_leave_m"))
+        if left_behind:
+            gone = {c["ent"] for c in left_behind}
+            placed = {c["ent"] for c in kept}
+            # A thing heard at home but with no position row still says they are in:
+            # then nothing is ruled out. Otherwise what is left speaks, or they are away.
+            if any(p == "here" and e not in gone and e not in placed for e, p in presence_by_ent.items()):
+                left_behind = []
+            else:
+                candidates = kept
+                presences = [p for e, p in presence_by_ent.items() if e not in gone]
         why = persons_mod.considered(candidates, now)
         presence = persons_mod.presence_of_things(presences)
         best = persons_mod.pick(candidates, now, stale)
         if best is not None:
             _person_last[person] = (best, why)
+        elif left_behind:
+            _person_last.pop(person, None)  # the held place would be the thing just ruled out
         # Quiet: the last place they were put stands until BLE either hears
         # them again or gives up (away), when GPS takes over. Heard but not
         # placed this cycle (too few proxies for a fix) holds the same way:
         # a person Sextant can hear has not left the house.
         held, held_why = _person_last.get(person, (None, None)) if best is None and presence in ("here", "quiet") else (None, None)
-        gps, ignored = persons_mod.choose_gps(hass.states.get, layout, person, now, gps_stale)
         last_heard = max(heard) if heard else None
         # Except when GPS has already seen them leave: a quiet spell with a
         # fix made since the last sighting, outside the home zone and well

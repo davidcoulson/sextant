@@ -347,3 +347,30 @@ def test_a_restart_blip_between_two_tellings_makes_no_event():
     """Events compare the visits before the settle time with those after it:
     away and back in between is the same side, whatever the arrival time."""
     assert persons.visit_events({D: IN}, {D: {"arrived": NOW, "departed": None, "via": "gps"}}) == []
+
+
+def test_a_watch_left_on_the_bedside_table_does_not_hold_the_person_home():
+    """Eilee walked out with her phone at 11:05 and back at 11:29; the watch stayed
+    on the bedside table, fresh in her room, and Sextant never noticed she had left."""
+    watch = {"ent": "watch", "arrived": NOW - 40000}
+    phone = {"ent": "phone", "arrived": NOW - 10}  # came to rest after the fix was made
+    assert persons.without_left_behind([watch], _fix(), NOW, 120, HOME) == ([], [watch])
+    assert persons.without_left_behind([watch, phone], _fix(), NOW, 120, HOME) == ([phone], [watch])
+    # A fix in the home zone, or from before the watch came to rest, changes nothing.
+    assert persons.without_left_behind([watch], _fix(zone="home"), NOW, 120, HOME) == ([watch], [])
+    assert persons.without_left_behind([watch], _fix(reported=NOW - 50000), NOW, 120, HOME) == ([watch], [])
+    assert persons.without_left_behind([watch], None, NOW, 120, HOME) == ([watch], [])
+
+
+def test_a_thing_that_moved_recently_is_never_ruled_out_by_one_fix():
+    walking = {"ent": "watch", "arrived": NOW - 60}
+    assert persons.without_left_behind([walking], _fix(reported=NOW - 30), NOW, 120, HOME) == ([walking], [])
+
+
+def test_a_phone_still_heard_at_home_means_gps_is_not_believed():
+    """Both must agree: a fresh phone in the house keeps the watch, whatever one fix says."""
+    watch = {"ent": "watch", "cls": "watch", "arrived": NOW - 40000, "updated": NOW}
+    phone = {"ent": "phone", "cls": "phone", "arrived": NOW - 40000, "updated": NOW - 5}
+    assert persons.without_left_behind([watch, phone], _fix(), NOW, 120, HOME) == ([watch, phone], [])
+    phone["updated"] = NOW - 900  # not heard for 15 minutes: now they agree
+    assert persons.without_left_behind([watch, phone], _fix(), NOW, 120, HOME) == ([], [watch, phone])
