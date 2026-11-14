@@ -268,6 +268,12 @@ RADIUS_JUMP_TOL = 0.5
 # wrong (through-wall / body-shadowed) reading can't drag the position — the
 # temporal jump gate only sees a one-tick change and is blind to a steady liar.
 SOLVER_ROBUST_F_SCALE = 0.3
+# The fit stops when a step moves it by less than this fraction of its
+# coordinates (pixels: about 0.01 px on a 1000 px plan). The solver's own 1e-8
+# spent a third of its evaluations polishing below a tenth of a millimetre;
+# on 3000 synthetic fits this moved the median fix 0.04 mm, the 99th
+# percentile 6 cm, and the error against the true position not at all.
+SOLVER_XTOL = 1e-5
 # Multi-start (see trilaterate()) solves up to 3x per thing per cycle to
 # escape local minima. That's only needed when something could have actually
 # changed since last cycle; a stationary thing gains nothing from starting
@@ -7755,7 +7761,7 @@ def trilaterate(known_points, bounds=None, min_weight_radius=1e-3, stable_hint=N
     result = None
     if stable_hint is not None:
         hint = np.clip(np.asarray(stable_hint, dtype=float), lo, hi)
-        r = fit_point(*fit_args, hint, (lo, hi), SOLVER_ROBUST_F_SCALE)
+        r = fit_point(*fit_args, hint, (lo, hi), SOLVER_ROBUST_F_SCALE, xtol=SOLVER_XTOL)
         if r.success:
             result = r
 
@@ -7784,7 +7790,7 @@ def trilaterate(known_points, bounds=None, min_weight_radius=1e-3, stable_hint=N
     # is the same objective for every start, so it is directly comparable).
     result = fit_point(
         *fit_args, unique_starts[0], (lo, hi), SOLVER_ROBUST_F_SCALE,
-        extra_starts=unique_starts[1:],
+        extra_starts=unique_starts[1:], xtol=SOLVER_XTOL,
     )
 
     if result is None or not result.success:

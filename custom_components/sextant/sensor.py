@@ -119,7 +119,9 @@ def ensure_sensors_for_entity(hass, entity, sensors_cache, new_sensors):
 
 def thing_of_unique_id(unique_id):
     """The thing slug behind a per-thing Sextant unique_id, else None."""
-    if not unique_id:
+    # A room's occupancy sensor is sextant_room_occupancy_<floor>_<room>: read
+    # as a sextant_room sensor, the prune took 21 rooms for untracked things.
+    if not unique_id or unique_id.startswith("sextant_room_occupancy_"):
         return None
     for suffix, _label in SENSOR_KINDS:
         if unique_id.startswith(suffix + "_"):
