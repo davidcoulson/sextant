@@ -38,9 +38,14 @@ scale works on what is left.
 A thing Bermuda no longer tracks under a slug it once did - a rename, an IRK
 swap, a Tile whose ID rotated - would otherwise live on in the list on the
 [Live](live.md) page as a ghost that is *away* for ever, still pinned to its
-owner. After an hour of Bermuda not naming the slug, Sextant forgets it by
-itself: its settings, its remembered last sighting and its history go (the
-same as selecting it on the Live page and choosing **Forget**). The hour is a
+owner. **If the device is still tracked under its new name, its settings
+follow it there first**: Sextant remembers which slug is which device by
+Bermuda's stable unique id, and a rename moves the name, class, colour,
+owner and remembered sighting to the new slug in one cycle - a rename costs
+nothing. Only a slug whose device is gone entirely is forgotten, and after
+an hour of Bermuda not naming the slug at that: its settings, its
+remembered last sighting and its history go (the same as selecting it on
+the Live page and choosing **Forget**). The hour is a
 grace, so a Bermuda reload, a restart, or an untrack undone within it costs a
 thing nothing. Robots are never forgotten this way, and nothing is while a
 FindMy accessory set up in Bermuda has not been heard since Bermuda started:

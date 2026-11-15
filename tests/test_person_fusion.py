@@ -398,7 +398,7 @@ def test_a_visit_under_way_is_carried_on_by_wifi_at_once():
 
 def test_the_person_log_keeps_hours_and_drops_older(tmp_path):
     import os
-    from custom_components.sextant import person_log
+    from sextant import person_log
     a, ka = person_log.row("jo", 1000.0, "wifi", "away", "home", True, {"ap": "x"}, {"ap": "x"}, 1200.4, "not_home", "Garage", best=None, things=[{"e": "p"}])
     c, kc = person_log.row("jo", 1030.0, "gps", "away", "away", False, None, None, 1230.0, "not_home")
     assert ka != kc and a["ble_age"] == 1200 and a["wifi_used"] is True and a["things"] == [{"e": "p"}]
@@ -411,7 +411,7 @@ def test_the_person_log_keeps_hours_and_drops_older(tmp_path):
 
 
 def test_a_room_change_is_a_change_in_the_person_log():
-    from custom_components.sextant import person_log
+    from sextant import person_log
     _, a = person_log.row("jo", 1.0, "ble", "here", "Kitchen", True, None, None, 5, None)
     _, b = person_log.row("jo", 2.0, "ble", "here", "Bedroom", True, None, None, 5, None)
     assert a != b
