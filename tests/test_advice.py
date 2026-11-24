@@ -146,10 +146,12 @@ def test_lines_the_room_use_cannot_read_are_left_out_not_fatal(tmp_path):
     from sextant import person_log
     # Lines from before a line had a place say nothing of rooms and do not stretch the window.
     old = [{"t": 0, "p": "jo"}, {"t": 3600, "p": "jo"}]
-    odd = [{"t": 7200, "p": "jo", "place": ["Den"]}, {"t": 7200, "place": ["Den", "F"]}, {"t": "x", "p": "jo", "place": None}]
+    odd = [{"t": 7200, "p": "jo", "place": ["Den"]}, {"t": 7200, "place": ["Den", "F"]}, {"t": "x", "p": "jo", "place": None},
+           {"t": 10 ** 400, "p": "jo", "place": None}]
     new = [{"t": 7200, "p": "jo", "place": ["Den", "F"]}, {"t": 10800, "p": "jo", "place": ["Den", "F"]}]
     assert advice.room_usage(old + odd + new) == {"hours": 1.0, "rooms": {("F", "Den"): (advice.USE_STEP_MAX_S, 0)}}
     # The reader passes over a line with no time, and never opens an hour's file from before the window.
     (tmp_path / "1970-01-01T00Z.jsonl").write_text('{"t":99999,"p":"jo","place":null}\n')
-    (tmp_path / "1970-01-01T02Z.jsonl").write_text('{"t":null,"p":"jo"}\n[1]\n{"t":7300,"p":"jo","place":null}\n')
+    # Bytes that are not text (a power cut mid-write) cost their own line and no other.
+    (tmp_path / "1970-01-01T02Z.jsonl").write_bytes(b'{"t":null,"p":"jo"}\n[1]\n\xff\xfe{"t":7250}\n{"t":7300,"p":"jo","place":null}\n')
     assert [r["t"] for r in person_log.rows(str(tmp_path), since=7200)] == [7300]

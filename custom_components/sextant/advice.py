@@ -167,7 +167,7 @@ def room_usage(lines):
             if place is not None:
                 room, floor = place
                 place = (str(room), str(floor))
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, OverflowError):
             continue   # from before lines had a place, or not one this integration wrote
         first, last = (t if first is None else first), t
         was = prev.get(person)

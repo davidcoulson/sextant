@@ -53,7 +53,8 @@ def rows(dirpath, since=0.0):
         return
     for n in names:
         try:
-            with open(os.path.join(dirpath, n), encoding="utf-8") as f:
+            # errors="replace": bytes a power cut left in the file cost their own line, not the read.
+            with open(os.path.join(dirpath, n), encoding="utf-8", errors="replace") as f:
                 for line in f:
                     try:
                         r = json.loads(line)
