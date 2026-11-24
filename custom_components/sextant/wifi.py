@@ -307,6 +307,24 @@ def heard_at(raw) -> float | None:
     return float(seen) - float(idle)
 
 
+# Idle longer than this and the access point has lost the client; under it, the client is just quiet.
+# Two days of person log: phones at home idle 18 s at most; watches reach 80 s in 10% of cycles, 90 s in 0.5%.
+GONE_IDLE_SECS = 90.0
+
+
+def seen_for_gps(raw) -> float | None:
+    """The time a GPS fix must postdate to overrule this client's home word:
+    when the access point last heard it once it has gone quiet for
+    GONE_IDLE_SECS (it keeps listing a client for minutes after it left),
+    else last_seen (a watch on a desk idles over a minute, and a stray fix
+    must not beat a client the access point lists now)."""
+    heard = heard_at(raw)
+    if heard is None:
+        return None
+    seen = float(raw["last_seen"])
+    return heard if seen - heard >= GONE_IDLE_SECS else seen
+
+
 def _mac_key(value) -> str | None:
     """The key a MAC-ish value is matched by: norm_mac when it is a MAC,
     else the lower-cased text (a test's or a router's shorthand), else None."""

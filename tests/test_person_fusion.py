@@ -304,8 +304,12 @@ def test_a_watch_the_router_still_lists_but_stopped_hearing_is_overruled():
     from sextant import wifi
     raw = {"last_seen": NOW - 20, "idletime": 289}        # last heard NOW - 309, before the fix at NOW - 30
     assert not persons.wifi_outrun(_fix(), raw["last_seen"], HOME)
-    assert persons.wifi_outrun(_fix(), wifi.heard_at(raw), HOME)
-    assert not persons.wifi_outrun(_fix(), wifi.heard_at({"last_seen": NOW - 20, "idletime": 2}), HOME)   # heard just now: Wi-Fi stands
+    assert wifi.seen_for_gps(raw) == NOW - 309 and persons.wifi_outrun(_fix(), wifi.seen_for_gps(raw), HOME)
+    # Quiet for under 90 s, as a watch on a desk often is: listed now, so a stray fix does not beat it.
+    assert wifi.seen_for_gps({"last_seen": NOW - 2, "idletime": 89}) == NOW - 2
+    assert not persons.wifi_outrun(_fix(), wifi.seen_for_gps({"last_seen": NOW - 2, "idletime": 89}), HOME)
+    assert wifi.seen_for_gps({"last_seen": NOW - 2, "idletime": 90}) == NOW - 92
+    assert wifi.seen_for_gps({"last_seen": NOW - 2}) == NOW - 2 and wifi.seen_for_gps(None) is None and wifi.seen_for_gps({"idletime": 300}) is None
 
 
 def test_wifi_stands_on_an_arrival_or_without_a_last_seen_time():

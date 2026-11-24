@@ -76,7 +76,7 @@ Every cycle, each person's result and inputs are written to
 `config/sextant_person_log` (hourly files, `person_log_hours`, 48 h) to measure how often Wi-Fi misleads. A router
 holds a client home for minutes after it last heard it, so a GPS fix that far
 from home, made over 10 s after the access point last heard the phone
-(UniFi's `last_seen` less its `idletime`), overrules it. After
+(UniFi's `last_seen` less its `idletime`, once it has been idle 90 s; `last_seen` before that), overrules it. After
 that the first GPS tracker in their list that is neither broken nor stale
 gives the zone (`source: gps`), or the state is `away` with nothing usable
 (`source: none`). [Wi-Fi](things.md#wi-fi) says where the trackers come from. The list is set per person on

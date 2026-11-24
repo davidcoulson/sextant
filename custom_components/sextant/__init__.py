@@ -5471,9 +5471,7 @@ def _update_person_sensors(hass):
             outrun = {
                 a["entity"] for a in (view.get("assigned") or {}).get(person) or []
                 if persons_mod.wifi_outrun(
-                    # When the access point last heard it, not last listed it: a watch gone with its owner stayed listed for 5 min.
-                    # A phone asleep at home is idle too, but it has no fix down the road to be outrun by.
-                    gps, wifi_mod.heard_at(wifi_clients.get(((view.get("candidates") or {}).get(a["entity"]) or {}).get("mac"))),
+                    gps, wifi_mod.seen_for_gps(wifi_clients.get(((view.get("candidates") or {}).get(a["entity"]) or {}).get("mac"))),
                     home, _tuning(layout, "gps_leave_m"))
             }
             if outrun:
