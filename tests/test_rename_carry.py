@@ -225,8 +225,10 @@ def test_a_slug_bermuda_reports_now_is_tracked_for_the_sensor_prune(tmp_path, mo
         raise asyncio.CancelledError   # one look is enough: this ends the loop
     async def nothing(*args, **kwargs):
         return None
-    for name in ("update_receiver_liveness", "flush_position_history", "prune_stale_positions"):
-        monkeypatch.setattr(sextant, name, nothing)
+    # The loop's periodic jobs are not due (and their clocks go back afterwards).
+    for clock in ("last_liveness", "last_selftest", "last_history_flush"):
+        monkeypatch.setattr(sextant.update_tracked_entities, clock, sextant.time.time(), raising=False)
+    monkeypatch.setattr(sextant, "prune_stale_positions", nothing)
     monkeypatch.setattr(bermuda_source, "async_get_tracked_device_prefixes", lambda h: {"old_name"})
     monkeypatch.setattr(bermuda_source, "async_get_tracked_unique_ids", lambda h: {"new_name": "irk_1"})
     monkeypatch.setattr(sensor, "prune_sensors_for_untracked", prune)
