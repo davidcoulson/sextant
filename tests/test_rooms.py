@@ -440,6 +440,13 @@ def test_the_sleep_hold_keeps_a_sleeper_whose_phone_went_quiet_first(hass, monke
     assert cycle(kitchen=["Michelle", "David"]) == (True, True)
 
 
+def test_someone_who_walked_out_earlier_is_not_held_for(hass, monkeypatch):
+    cycle, _sensors = _sleepy_bedroom(hass, monkeypatch)
+    assert cycle(["David", "Guest"]) == (True, True)
+    assert cycle(["David"], kitchen=["Guest"]) == (True, True)           # the guest walks out; David stays
+    assert cycle(kitchen=["David"]) == (False, False)                    # the guest has gone home: David alone was held for
+
+
 def test_inputs_on_and_door_closed():
     states = {"binary_sensor.m": "on", "media_player.tv": "paused", "binary_sensor.n": "unavailable"}
     assert rooms.inputs_on(list(states), states.get) == ["binary_sensor.m"]

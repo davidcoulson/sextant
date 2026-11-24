@@ -5767,12 +5767,13 @@ def _publish_rooms(hass):
                                     None if kept and door else door, door_settle, door_max), kept
         sensor.memory, kept = settled(_restored_memory(sensor, now), sensed or forced, getattr(sensor, "door_people", None))
         if sensed and attrs.get("people"):
-            # Everyone named since the room came on (a lingering radar track names none), so one whose phone went quiet is still held for.
-            sensor.door_people = sorted(set(getattr(sensor, "door_people", None) or []) | set(attrs["people"]))
+            # Everyone named since the room came on (a lingering radar track names none), so one whose phone went quiet is
+            # still held for - less anyone since placed in another room, who walked out while others stayed.
+            sensor.door_people = sorted((set(getattr(sensor, "door_people", None) or []) - elsewhere(key)) | set(attrs["people"]))
         if not sensed and rooms_mod.release_if_elsewhere(sensor.memory, getattr(sensor, "door_people", None), elsewhere(key)):
             sensor.memory, kept = settled(sensor.memory, forced, getattr(sensor, "door_people", None))
         m = sensor.memory
-        if not m["on"]:
+        if not m["on"] and not grace:
             sensor.door_people = []   # the next stay is held for its own people
         _carry_since(sensor, m, grace, now, extended if own_ext is None else own_ext)
         since = datetime.fromtimestamp(m["since"], timezone.utc).isoformat(timespec="seconds")
@@ -5799,13 +5800,13 @@ def _publish_rooms(hass):
             # Radars, inputs and the force switch cannot tell a pet from a person, so they count as people here.
             humans = bool(attrs.get("humans") or attrs.get("people")) or seen["count"] > 0 or bool(inputs)
             if humans and attrs.get("people"):
-                who.door_people = sorted(set(getattr(who, "door_people", None) or []) | set(attrs["people"]))
+                who.door_people = sorted((set(getattr(who, "door_people", None) or []) - elsewhere(key)) | set(attrs["people"]))
             who_grace = _restoring(who, humans, now)
             who.memory, who_kept = settled(_restored_memory(who, now), humans or forced, getattr(who, "door_people", None))
             if not humans and rooms_mod.release_if_elsewhere(who.memory, getattr(who, "door_people", None), elsewhere(key)):
                 who.memory, who_kept = settled(who.memory, forced, getattr(who, "door_people", None))
             wm = who.memory
-            if not wm["on"]:
+            if not wm["on"] and not who_grace:
                 who.door_people = []
             _carry_since(who, wm, who_grace, now, extended if own_ext is None else own_ext)
             hold_over = wm["on"] and not humans and not forced and not who_kept and not wm["door_hold"]
