@@ -447,6 +447,17 @@ def test_someone_who_walked_out_earlier_is_not_held_for(hass, monkeypatch):
     assert cycle(kitchen=["David"]) == (False, False)                    # the guest has gone home: David alone was held for
 
 
+def test_a_longer_clear_after_never_brings_back_a_room_that_has_cleared():
+    # A clear-after raised from 0 to 300 s (or the sleep one coming into force) must not
+    # turn a room that cleared two minutes ago back on from its last reading.
+    m = rooms.settle(None, True, 1000.0, hold_s=0)
+    m = rooms.settle(m, False, 1060.0, hold_s=0)
+    assert m["on"] is False
+    assert rooms.settle(m, False, 1120.0, hold_s=300)["on"] is False
+    held = rooms.settle(rooms.settle(None, True, 1000.0, hold_s=300), False, 1120.0, hold_s=300)
+    assert held["on"] is True                                            # while it is still on, the hold keeps it
+
+
 def test_inputs_on_and_door_closed():
     states = {"binary_sensor.m": "on", "media_player.tv": "paused", "binary_sensor.n": "unavailable"}
     assert rooms.inputs_on(list(states), states.get) == ["binary_sensor.m"]
