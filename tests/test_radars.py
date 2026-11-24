@@ -155,6 +155,9 @@ def test_a_room_counts_the_targets_no_thing_claims_as_unknown(tmp_path):
     sextant.apitricords = [_thing("watch", (500, 810))]           # beside the target: its wearer
     _written(hass)
     assert (office.calls[-1][1]["radar"], office.calls[-1][1]["unknown"]) == (1, 0)
+    hass.data["sextant_radar_rooms"] = {("Office Floor", "Office"): {"count": 1, "held": 0}}   # the presence sensor's say: someone, not who
+    sextant._publish_rooms(hass)
+    assert (office.calls[-1][1]["radar"], office.calls[-1][1]["unknown"]) == (1, 0)
 
 
 def test_a_robot_claims_its_target_but_is_not_moved_by_it(tmp_path):
