@@ -1055,7 +1055,7 @@ class SextantDevices extends LitElement {
             <span class="muted small">${loc ? html`${loc.state}${a.source ? ` · via ${a.source === "ble" ? "Sextant" : a.source === "held" ? "Sextant (last known place)" : a.source === "wifi" ? `Wi-Fi (${this.hass?.states?.[a.via]?.attributes?.friendly_name || a.via} on ${a.access_point || "an access point"})` : a.source === "gps" ? (this.hass?.states?.[a.tracker]?.attributes?.friendly_name || a.tracker) : "nothing usable"}` : ""}${a.distance_m != null && a.source === "gps" ? ` · ${a.distance_m >= 1000 ? `${(a.distance_m / 1000).toFixed(1)} km` : `${a.distance_m} m`} from home` : ""}` : "no location yet"}</span>
             <span class="grow"></span>
             <span class="muted small" ?hidden=${!this.expert}>device_tracker.${slug}_sextant</span></div>
-          <div class="row"><span class="muted small">GPS, first that works wins</span>
+          <div class="row"><span class="muted small">GPS, first that works wins; any of them can mark a departure</span>
             ${chosen.map((t, i) => html`<span class="pill">${i + 1}. ${this.hass?.states?.[t]?.attributes?.friendly_name || t}
               <button class="iconbtn" title="Remove this source" aria-label="Remove this source" @click=${() => this._setPersonTrackers(p, chosen.filter((x) => x !== t))}><ha-icon icon="mdi:close" style="--mdc-icon-size: 14px"></ha-icon></button></span>`)}
             ${uiSelect({ label: chosen.length ? "Add another" : "Add a source", value: "", options: [{ value: "", label: "…" }, ...this._gpsTrackerOptions(chosen)], onChange: (v) => { if (v) this._setPersonTrackers(p, [...chosen, v]); }, style: "width: 280px" })}

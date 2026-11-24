@@ -18,10 +18,11 @@ def run(coro):
     return asyncio.new_event_loop().run_until_complete(coro)
 
 
-def state(value, attrs=None, ago=60.0):
-    """An HA State stand-in: state, attributes, last_updated/last_reported."""
+def state(value, attrs=None, ago=60.0, changed_ago=None):
+    """An HA State stand-in: state, attributes, last_updated/last_reported, last_changed."""
     when = NOW_DT - timedelta(seconds=ago)
-    return types.SimpleNamespace(state=value, attributes=attrs or {}, last_updated=when, last_reported=when)
+    return types.SimpleNamespace(state=value, attributes=attrs or {}, last_updated=when, last_reported=when,
+                                 last_changed=NOW_DT - timedelta(seconds=ago if changed_ago is None else changed_ago))
 
 
 GPS = {"latitude": 51.50, "longitude": -0.10, "gps_accuracy": 15, "source_type": "gps"}
@@ -75,22 +76,29 @@ def test_an_icloud3_stationary_zone_is_not_home_with_the_coordinates_kept():
 
 # --- choosing among sources ---------------------------------------------------
 
-def test_the_first_usable_source_wins_and_the_passed_over_are_named():
+def test_the_usable_sources_keep_their_order_and_the_passed_over_are_named():
     states = {"device_tracker.robins_iphone": state("home", GPS, ago=6 * 86400),
               "device_tracker.robin_smith": state("Hill Academy", GPS)}
-    chosen, ignored = persons.choose_gps(states.get, LAYOUT, "person.robin", NOW)
-    assert chosen["entity"] == "device_tracker.robin_smith"
+    usable, ignored = persons.usable_gps(states.get, LAYOUT, "person.robin", NOW)
+    assert [g["entity"] for g in usable] == ["device_tracker.robin_smith"]
     assert ignored == [{"entity": "device_tracker.robins_iphone", "reason": "no report for 144.0 h"}]
 
 
 def test_preference_order_is_honoured_when_both_are_usable():
     states = {"device_tracker.robins_iphone": state("home", GPS), "device_tracker.robin_smith": state("not_home", GPS)}
-    chosen, ignored = persons.choose_gps(states.get, LAYOUT, "person.robin", NOW)
-    assert chosen["entity"] == "device_tracker.robins_iphone" and ignored == []
+    usable, ignored = persons.usable_gps(states.get, LAYOUT, "person.robin", NOW)
+    assert [g["entity"] for g in usable] == ["device_tracker.robins_iphone", "device_tracker.robin_smith"] and ignored == []
+    assert persons.choose_gps(usable, [], NOW - 5, NOW, 45, HOME) is usable[0]
 
 
 def test_no_sources_configured_means_nothing_chosen():
-    assert persons.choose_gps(lambda e: None, {}, "person.robin", NOW) == (None, [])
+    assert persons.usable_gps(lambda e: None, {}, "person.robin", NOW) == ([], [])
+    assert persons.choose_gps([], [], None, NOW, 45, HOME) is None
+
+
+def test_a_source_tells_when_its_zone_last_changed():
+    info = persons.judge_source("device_tracker.t", state("home", GPS, ago=60, changed_ago=900), NOW)[2]
+    assert info["changed"] == NOW - 900 and info["reported"] == NOW - 60
 
 
 def test_a_person_is_as_present_as_their_most_present_thing():
@@ -442,3 +450,49 @@ def test_a_room_change_is_a_change_in_the_person_log():
     _, a = person_log.row("jo", 1.0, "ble", "here", "Kitchen", True, None, None, 5, None)
     _, b = person_log.row("jo", 2.0, "ble", "here", "Bedroom", True, None, None, 5, None)
     assert a != b
+
+
+# --- any source may mark the departure --------------------------------------------
+
+APP_HOME = {"entity": "device_tracker.robins_iphone", "zone": "home", "latitude": 51.50, "longitude": -0.10,
+            "accuracy": 15, "reported": NOW - 7200, "changed": NOW - 7200}
+APP_BACK = {**APP_HOME, "reported": NOW - 20, "changed": NOW - 20}
+
+
+def _other(**kw):
+    return {**_fix(**kw), "entity": "device_tracker.robin_smith"}
+
+
+def test_a_later_source_that_has_seen_them_leave_speaks_while_the_first_still_says_home():
+    """The phone app sat on "home" for two minutes into the drive; the other
+    service had the car on the main road within one."""
+    far = _other(reported=NOW - 30)
+    assert persons.choose_gps([APP_HOME, far], [], NOW - 300, NOW, 45, HOME) is far
+
+
+def test_the_first_source_speaks_while_no_other_has_seen_them_leave():
+    for other in (_other(zone="home"), _other(lat=51.5010), _other(reported=NOW - 400)):
+        assert persons.choose_gps([APP_HOME, other], [], NOW - 300, NOW, 45, HOME) is APP_HOME
+    assert persons.choose_gps([APP_HOME], [], NOW - 300, NOW, 45, HOME) is APP_HOME
+    # Both have left: the person's order decides, as before.
+    left = {**_other(), "entity": "device_tracker.robins_iphone"}
+    assert persons.choose_gps([left, _other()], [], NOW - 300, NOW, 45, HOME) is left
+
+
+def test_the_first_source_has_the_word_back_once_it_turns_home():
+    """Coming back: the phone app says home at the gate while the other
+    service still shows the road. An arrival, not a second departure."""
+    assert persons.choose_gps([APP_BACK, _other(reported=NOW - 120)], [], NOW - 3600, NOW, 45, HOME) is APP_BACK
+    # A late fix from the road, landing after it turned home, does not send them away again.
+    assert persons.choose_gps([APP_BACK, _other(reported=NOW - 10)], [], NOW - 3600, NOW, 45, HOME) is APP_BACK
+
+
+def test_a_later_source_rules_out_a_thing_left_behind():
+    """The watch on the bedside table is heard all along, so the last sighting
+    is seconds old: its coming to rest is what the fix is compared with."""
+    watch = {"ent": "watch", "arrived": NOW - 40000}
+    far = _other(reported=NOW - 30)
+    assert persons.choose_gps([APP_HOME, far], [watch], NOW - 2, NOW, 45, HOME) is far
+    assert persons.choose_gps([APP_HOME, far], [], NOW - 2, NOW, 45, HOME) is APP_HOME
+    # Back home: the first source turned home after that fix.
+    assert persons.choose_gps([APP_BACK, far], [watch], NOW - 2, NOW, 45, HOME) is APP_BACK

@@ -124,7 +124,9 @@ Below the things, a **People** card lists each owner: where they read as
 being and how (by their things, the last place held while unheard, or a
 GPS tracker), and their **GPS sources** in order. Add the Companion app,
 Life360 or any `device_tracker` with coordinates; the first one that is
-neither broken nor stale is used once Sextant has lost the person. The card
+neither broken nor stale is used once Sextant has lost the person. A later
+one still counts when it is the first to see them leave: its fix down the
+road marks the departure while the first source still says home. The card
 also says which sources are being passed over right now, and why. See
 [People](automation.md#people) for what the sensors then carry.
 

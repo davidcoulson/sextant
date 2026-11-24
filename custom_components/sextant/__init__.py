@@ -5531,7 +5531,10 @@ def _update_person_sensors(hass):
                 "on_charger": charging,
             })
         slug = person.split(".", 1)[1]
-        gps, ignored = persons_mod.choose_gps(hass.states.get, layout, person, now, gps_stale)
+        sources, ignored = persons_mod.usable_gps(hass.states.get, layout, person, now, gps_stale)
+        last_heard = max(heard) if heard else None
+        # The first usable source, unless a later one has seen them leave (persons.choose_gps).
+        gps = persons_mod.choose_gps(sources, candidates, last_heard, now, stale, home, _tuning(layout, "gps_leave_m"))
         # A thing that came to rest before a GPS fix far from home was made did not
         # go with them: a watch left on the bedside table while the phone walks down
         # the road must not keep the person in the house (persons.gps_left, with the
@@ -5559,7 +5562,6 @@ def _update_person_sensors(hass):
         # placed this cycle (too few proxies for a fix) holds the same way:
         # a person Sextant can hear has not left the house.
         held, held_why = _person_last.get(person, (None, None)) if best is None and presence in ("here", "quiet") else (None, None)
-        last_heard = max(heard) if heard else None
         # Except when GPS has already seen them leave: a quiet spell with a
         # fix made since the last sighting, outside the home zone and well
         # down the road, is a departure, not a pause, and the person is away
@@ -5671,7 +5673,7 @@ def _update_person_sensors(hass):
                     None if last_heard is None else now - last_heard, (gps or {}).get("zone"),
                     (wifi_raw or {}).get("ap_name") or (wifi_raw or {}).get("ap"),
                     best=(best or {}).get("ent"), held=bool(held), left_behind=sorted(c["ent"] for c in left_behind),
-                    place=_person_places.get(person),
+                    place=_person_places.get(person), gps_src=(gps or {}).get("entity"),
                     things=[{"e": e, "cls": classes.get(e), "pres": pr, "zone": (cand.get(e) or {}).get("zone"),
                              "age": None if not cand.get(e) or cand[e].get("updated") is None else round(now - cand[e]["updated"])}
                             for e, pr in presence_by_ent.items()],

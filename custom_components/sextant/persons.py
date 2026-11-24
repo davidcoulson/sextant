@@ -353,7 +353,8 @@ def states(best, why=None):
 # Companion app, Life360) knows the zone. The two are fused here: BLE while it
 # hears them (and held through a quiet spell - the last place they were put is
 # the best answer for a few minutes), the first GPS source that is neither
-# broken nor stale once BLE has lost them.
+# broken nor stale once BLE has lost them - or a later one that has seen them
+# leave while the first still says home (choose_gps).
 
 GPS_STALE_SECS = 7200.0            # a tracker that has not reported for this long is ignored
 _DEAD = (None, "", "unknown", "unavailable")
@@ -405,24 +406,26 @@ def judge_source(entity_id, state, now, stale_secs=GPS_STALE_SECS):
     lat, lon = attrs.get("latitude"), attrs.get("longitude")
     coords = isinstance(lat, (int, float)) and isinstance(lon, (int, float))
     stationary = stationary_zone(st, attrs)
+    changed = getattr(state, "last_changed", None)
     return True, None, {
         "entity": entity_id, "zone": "not_home" if stationary else st, "stationary": stationary,
         "latitude": float(lat) if coords else None, "longitude": float(lon) if coords else None,
         "accuracy": attrs.get("gps_accuracy") if coords else None,
         "reported": reported,
+        "changed": changed.timestamp() if hasattr(changed, "timestamp") else None,   # when the zone last changed
     }
 
 
-def choose_gps(get_state, layout, person, now, stale_secs=GPS_STALE_SECS):
-    """The first usable GPS source in the person's order, and the ones passed over."""
-    chosen, ignored = None, []
+def usable_gps(get_state, layout, person, now, stale_secs=GPS_STALE_SECS):
+    """The person's usable GPS sources in their order, and the ones passed over."""
+    usable, ignored = [], []
     for eid in gps_sources(layout, person):
         ok, reason, info = judge_source(eid, get_state(eid), now, stale_secs)
-        if ok and chosen is None:
-            chosen = info
-        elif not ok:
+        if ok:
+            usable.append(info)
+        else:
             ignored.append({"entity": eid, "reason": reason})
-    return chosen, ignored
+    return usable, ignored
 
 
 def has_exit(layout, floor, room) -> bool:
@@ -496,6 +499,37 @@ def without_left_behind(candidates, gps, now, stale, home=None, min_distance_m=2
         and gps_left(gps, c["arrived"], home, min_distance_m)
     ]
     return [c for c in candidates if c not in left], left
+
+
+def choose_gps(usable, candidates, last_heard, now, stale, home=None, min_distance_m=200.0):
+    """The GPS source that speaks for the person this cycle, of their usable
+    ones in order (usable_gps): the first, unless another has seen them leave.
+
+    A phone app can sit on "home" for minutes into a drive while another
+    service already has the car down the road, and reading only the first
+    source made every departure as slow as that one. So the first source
+    that shows a departure speaks: a fix that ends the quiet hold (gps_left)
+    or rules out a thing left behind (without_left_behind). It is then the
+    source for the rest of the cycle, or the first one's "home" would read
+    them home again by GPS.
+
+    The first source has the word back once it turns home (``changed``) after
+    that fix, or after the last sighting: coming back, it says home at the
+    gate while the other may still show the road, and that is an arrival.
+    """
+    if not usable:
+        return None
+    first, heard = usable[0], valid_time(last_heard)
+    came_home = valid_time(first.get("changed")) if str(first.get("zone") or "").lower() == "home" else None
+    for g in usable:
+        if not (gps_left(g, last_heard, home, min_distance_m)
+                or without_left_behind(candidates, g, now, stale, home, min_distance_m)[1]):
+            continue
+        # g["reported"]: gps_left is only true of a fix with a report time.
+        if came_home is not None and (came_home > g["reported"] or (heard is not None and came_home > heard)):
+            continue
+        return g
+    return first
 
 
 def should_ask_gps(presence, placed, last_heard, asked_for) -> bool:
