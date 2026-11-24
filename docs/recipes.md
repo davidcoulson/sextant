@@ -65,7 +65,9 @@ triggers:
     entity_id: sensor.alex_smith_sextant_person_room
 conditions:
   - condition: template
-    value_template: "{{ trigger.to_state.attributes.area_id is not none }}"
+    value_template: >
+      {{ trigger.from_state is not none and trigger.to_state is not none
+         and trigger.to_state.attributes.area_id is not none }}
 actions:
   - action: light.turn_on
     target:
@@ -85,6 +87,43 @@ mode: queued
 Rooms are linked to areas on the Edit page (a room's **Home Assistant
 area**); an unlinked room has `area_id: none` and the condition above skips
 it.
+
+### Music follows a person
+
+The same `area_id` finds the speakers. This joins the speaker in the room
+the person walked into to the one playing in the room they left.
+
+```yaml
+alias: Music follows Alex
+triggers:
+  - trigger: state
+    entity_id: sensor.alex_smith_sextant_person_room
+conditions:
+  - condition: template
+    value_template: "{{ trigger.from_state is not none and trigger.to_state is not none }}"
+actions:
+  - variables:
+      was: "{{ area_entities(trigger.from_state.attributes.area_id or '') | select('match', 'media_player[.]') | list }}"
+      now: "{{ area_entities(trigger.to_state.attributes.area_id or '') | select('match', 'media_player[.]') | list }}"
+  - condition: template
+    value_template: >
+      {{ was | count > 0 and now | count > 0 and was[0] != now[0]
+         and is_state(was[0], 'playing') }}
+  - action: media_player.join
+    target:
+      entity_id: "{{ was[0] }}"
+    data:
+      group_members: "{{ [now[0]] }}"
+```
+
+It takes the first media player of each area, so give a room with a TV and
+a speaker its own choice. Grouping is the speaker system's own:
+`media_player.join` works between speakers of one system that supports it
+(Sonos, for one).
+
+The room they left keeps playing, which is right when someone else is
+still in it. To stop it there, `media_player.unjoin` that speaker once its
+room is empty: the helper in the next recipe says when.
 
 ### Nobody left in a room
 

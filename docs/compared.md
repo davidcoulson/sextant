@@ -15,7 +15,9 @@ Sextant is the fourth step in a lineage:
    [@maxi1134](https://github.com/maxi1134) added polygon zones, sub-zones,
    proxy auto-calibration, Kalman smoothing, position history, floor
    election by hypothesis competition, no-go zones and a dark panel. BPS
-   0.2.0 merged that work upstream.
+   0.2.0 merged that work upstream, and BPS 0.3.0 (a beta in November
+   2026) adds people, a people count per zone, music that follows a
+   person and suggestions that learn from the answers.
 4. **Sextant** grew out of BPS-improved and rebuilt the positioning and the
    panel. It is a new integration domain (`sextant`) with its own sensors
    and its own panel, developed against
@@ -47,6 +49,25 @@ Sextant is the fourth step in a lineage:
 | Updates to clients | polling | polling | polling | websocket push per cycle |
 | SciPy | no | required | required | not needed |
 | Tiles across address rotation | no | no | no | with the Bermuda fork |
+
+The BPS column is BPS before 0.2.0. From 0.2.0 on it also has what the
+BPS-improved column lists.
+
+### BPS 0.3.0 and Sextant
+
+BPS 0.3.0 (a beta in November 2026) goes from placing devices to acting on
+where people are. What it adds, and what Sextant has in its place:
+
+| BPS 0.3.0 beta | Sextant |
+|---|---|
+| Persons: several trackers per person, the best one first | [People](things.md#people): things with an owner, with GPS and Wi-Fi to fall back on |
+| A count of known and unknown people per zone | A [room sensor](occupancy.md) that names the people, pets and things in the room. People a radar sees and no device accounts for are counted for the whole house (`sensor.sextant_untracked_people`) |
+| Presence sensors and camera person counts linked to a zone | Radars, presence, motion, door and media sensors and number tests [per room](occupancy.md#every-kind-of-sensor-a-room-can-use) |
+| Follow me: music moves with a person, after asking | Not built in. [A recipe](recipes.md#music-follows-a-person) does it with an automation |
+| Suggestions that ask before changing lights, and learn from the answers | Not built in. Sextant says who is where and leaves acting on it to your automations |
+| Receiver placement from a model of the expected error, weighted by where people spend time | [Advice](advice.md) from the measured error and how well the receivers cover each room, with each room's share of people's time beside it |
+| Administrators only by default, with a switch to open it to everyone | Everyone can look and administrators change things: [who can see and change what](install.md#who-can-see-and-change-what) |
+| Swedish and English | English |
 
 ### What Sextant adds to Bermuda
 
