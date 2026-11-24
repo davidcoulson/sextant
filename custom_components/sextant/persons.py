@@ -57,7 +57,7 @@ GAP_DROPOUT = 2
 # Two of a person's things this close together are in the same place, whatever
 # rooms their fixes fall in: a couch against a room line puts a watch's fix a
 # couple of metres off, across it, while the phone beside it reads the spot.
-SPOT_NEAR_M = 3.0
+SPOT_NEAR_M = 2.0
 # Higher speaks for its owner first, among things equally recently moved.
 CARRY_PRIORITY = {"cat": 4, "dog": 4, "paw": 4, "watch": 3, "phone": 2, "headphones": 1}
 # Classes whose place is their owner's place, unless the thing says otherwise

@@ -94,7 +94,7 @@ watch, then a phone. When nothing is on the move, the one that arrived
 where it is most recently wins - the phone you carried downstairs, not the
 watch on its charger since last night. One exception: when that thing is
 in no spot and another of the person's things is in a spot in the next room,
-within 3 m of it, the person is placed at the spot - a watch whose fix falls
+within 2 m of it, the person is placed at the spot - a watch whose fix falls
 just past the room line behind the couch does not move you out of the room
 while your phone reads the couch.
 
