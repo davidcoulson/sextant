@@ -59,9 +59,9 @@ on a floor plan.
 | Room sensor that says *who* is inside | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Combines motion, mmWave, doors and TVs per room | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ |
 | Set up by drawing your house in Home Assistant | ✅ | ✅ | ❌ | ➖ separate web app | ❌ | ❌ |
-| Switches lights, heating and media itself | ❌ on purpose¹ | ❌ | ❌ | ❌ | ✅ | ❌ |
-| Occupancy as a learned probability | ❌ on purpose² | ❌ | ❌ | ❌ | ❌ | ✅ |
-| Runs without Home Assistant | ❌ on purpose³ | ❌ | ❌ | ✅ over MQTT | ❌ | ❌ |
+| Switches lights, heating and media itself | ❌ on purpose¹ | ❌ | ❌ | ➖ a relay on the node | ✅ | ❌ |
+| Room occupancy as a learned percentage | ❌ on purpose² | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Live tracking without Home Assistant | ❌ on purpose³ | ❌ | ❌ | ✅ over MQTT | ❌ | ❌ |
 
 ✅ yes · ➖ partly · ❌ no. Based on each project's own README in November
 2026.
