@@ -59,9 +59,22 @@ on a floor plan.
 | Room sensor that says *who* is inside | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Combines motion, mmWave, doors and TVs per room | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ |
 | Set up by drawing your house in Home Assistant | ✅ | ✅ | ❌ | ➖ separate web app | ❌ | ❌ |
+| Switches lights, heating and media itself | ❌ on purpose¹ | ❌ | ❌ | ❌ | ✅ | ❌ |
+| Occupancy as a learned probability | ❌ on purpose² | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Runs without Home Assistant | ❌ on purpose³ | ❌ | ❌ | ✅ over MQTT | ❌ | ❌ |
 
 ✅ yes · ➖ partly · ❌ no. Based on each project's own README in November
 2026.
+
+Left out on purpose:
+
+1. Sextant says who is in each room and leaves what to do about it to
+   your automations, or to Magic Areas.
+2. A room is on or off, with the people, pets and sensors that put it
+   there, so you can see why. Area Occupancy Detection's learned
+   percentage suits people who would rather tune a threshold.
+3. Sextant is built on Home Assistant's own Bluetooth stack and Bermuda,
+   and its sensors, panel and services live there.
 
 **Use them together.** Sextant needs [Bermuda](https://github.com/agittins/bermuda)
 to hear the Bluetooth devices. Its room sensors can feed Magic Areas or
