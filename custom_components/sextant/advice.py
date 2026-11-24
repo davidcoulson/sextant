@@ -42,7 +42,7 @@ USE_STEP_MAX_S = 300.0  # the longest cycle the options allow; a longer wait for
 
 
 def _ring(zone):
-    return [(float(c["x"]), float(c["y"])) for c in zone.get("cords", []) if c.get("x") is not None and c.get("y") is not None]
+    return [(float(c["x"]), float(c["y"])) for c in zone.get("cords") or [] if c.get("x") is not None and c.get("y") is not None]
 
 
 def _largest(geom):
