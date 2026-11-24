@@ -16,12 +16,18 @@ coverage, one-sided geometry, or fine - and, for coverage and geometry,
 picks wall spots (an outlet or a switch is on a wall) one at a time, each
 the spot that best covers what is still uncovered, until the room is
 covered or MAX_ADD spots are used.
+
+Each room also carries how much it is used (room_usage, from the person
+log): the rooms that need attention are listed most used first.
 """
 
 import math
+from collections import Counter
 
 import numpy as np
 from shapely.geometry import Point, Polygon
+
+from .replay import bounce_pairs, switches
 
 GRID_M = 0.5            # interior sample spacing
 WALL_STEP_M = 0.25      # candidate spacing along the walls
@@ -143,13 +149,43 @@ def _stats(errors):
     return round(float(np.median(arr)), 3), round(float(arr.max()), 3)
 
 
-def advise(layout, selftest, unplaced=None):
-    """Advice rows, worst first, plus the unplaced proxies worth placing.
+def room_usage(lines):
+    """How much each room is used, from person log lines (person_log.rows), oldest first.
+
+    {"hours": the span of the lines, "rooms": {(floor, room): (share, bounces)}}.
+    A line is one person for one cycle, so a room's share of the lines that
+    name a place is its share of the time people were placed (Outside is a
+    place too, on no floor plan). A bounce
+    (replay.bounce_pairs) counts for both its rooms: the log cannot say which
+    of the two the person was in.
+    """
+    series, cycles, first, last = {}, Counter(), None, None
+    for r in lines:
+        place = tuple(r["place"]) if r.get("place") else None   # (room, floor)
+        last = r["t"]
+        first = last if first is None else first
+        seq = series.setdefault(r.get("p"), [])
+        if not seq or seq[-1][2] != place:
+            # Floor None: a bounce across floors counts too (the place carries its floor).
+            seq.append((last, None, place))
+        if place:
+            cycles[place] += 1
+    total = sum(cycles.values())
+    bounced = Counter(p for pair in bounce_pairs(switches(series)) for p in pair)
+    return {"hours": round((last - first) / 3600.0, 1) if total else 0.0,
+            "rooms": {(floor, room): (n / total, bounced[(room, floor)]) for (room, floor), n in cycles.items()}}
+
+
+def advise(layout, selftest, unplaced=None, usage=None):
+    """Advice rows, most used of the flagged rooms first, plus the unplaced proxies worth placing.
 
     ``layout`` is the stored layout, ``selftest`` a run_selftest result (its
     rows carry entity, floor, room, error_m), ``unplaced`` a list of
-    {slug, name} for proxies that are heard but placed on no floor.
+    {slug, name} for proxies that are heard but placed on no floor,
+    ``usage`` a room_usage result. A room the usage does not name gets None
+    for its share and bounces: no data is not zero.
     """
+    used = (usage or {}).get("rooms") or {}
     solved = [r for r in selftest.get("receivers", []) if isinstance(r.get("error_m"), (int, float))]
     rows = []
     for floor in layout.get("floor", []):
@@ -168,8 +204,10 @@ def advise(layout, selftest, unplaced=None):
             worst = max(errs, key=errs.get) if errs else None
             grid = _grid(poly, scale)
             share, d3, gaps = _covered_share(grid, positions, scale)
+            time_share, bounced = used.get((name, room), (None, None))
             row = {
                 "floor": name, "room": room, "area_m2": round(poly.area / scale ** 2, 1),
+                "time_share": None if time_share is None else round(time_share, 3), "bounces": bounced,
                 "proxies": len(inside), "solved": len(errs), "median_m": median_m, "max_m": max_m,
                 "worst": worst, "covered": round(share, 2),
                 "third_proxy_m": round(float(np.clip(d3, 0, 99).max()), 1) if len(d3) else None,
@@ -227,13 +265,16 @@ def advise(layout, selftest, unplaced=None):
                         row["note"] += "; a fourth proxy on the far wall gives the room another opinion"
             rows.append(row)
     rank = {"no proxy": 0, "weak proxy": 1, "one-sided": 2, "coverage": 2, "noisy": 3, "ok": 4}
-    rows.sort(key=lambda r: (rank[r["issue"]], -(r["median_m"] or 0), r["floor"], r["room"]))
+    # Rooms that need something first, most used first: poor coverage where
+    # people live comes before a closet with no proxy. With no usage this is
+    # worst issue first, as it was.
+    rows.sort(key=lambda r: (r["issue"] == "ok", -(r["time_share"] or 0), rank[r["issue"]], -(r["median_m"] or 0), r["floor"], r["room"]))
     # Proxies heard but placed nowhere: hand each the next open spot, worst room first.
     unplaced = [dict(u) for u in (unplaced or [])]
     open_spots = [(r["floor"], r["room"], s) for r in rows for s in r["spots"]]
     for u, (fl, room, spot) in zip(unplaced, open_spots):
         u["suggest"] = {"floor": fl, "room": room, "x": spot["x"], "y": spot["y"]}
-    return {"rooms": rows, "unplaced": unplaced,
+    return {"rooms": rows, "unplaced": unplaced, "usage_hours": (usage or {}).get("hours"),
             "summary": {"rooms": len(rows), "to_add": sum(r["add"] for r in rows),
                         "issues": {k: sum(1 for r in rows if r["issue"] == k) for k in rank if any(r["issue"] == k for r in rows)}}}
 

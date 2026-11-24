@@ -110,3 +110,29 @@ def test_short_stays_silences_and_unknown_floors_are_not_resting_places():
     assert advice.pin_gaps(layout, {"cat": dropout}, {}) == []                          # nor are points across dropouts
     gone = [(t, "Attic", 1.0, 1.0, 0) for t in range(0, 4 * 3600, 60)]
     assert advice.pin_gaps(layout, {"cat": gone}, {}) == []                             # a floor no longer on the plan
+
+
+def test_a_used_room_that_needs_something_comes_before_an_unused_one():
+    # The Closet has no proxy, the worse issue; the Corridor is poorly covered, and is where people are.
+    layout = _layout([("a", 20, 20), ("b", 180, 20), ("c", 100, 280)], [_rect("Corridor", 0, 0, 1200, 300), _rect("Closet", 0, 300, 300, 600)])
+    selftest = _selftest([("a", "Corridor", 2.5), ("b", "Corridor", 2.8), ("c", "Corridor", 2.4)])
+    assert [r["room"] for r in advice.advise(layout, selftest)["rooms"]] == ["Closet", "Corridor"]
+    out = advice.advise(layout, selftest, usage={"hours": 48.0, "rooms": {("F", "Corridor"): (0.9, 3)}})
+    corridor, closet = out["rooms"]
+    assert (corridor["room"], corridor["time_share"], corridor["bounces"]) == ("Corridor", 0.9, 3) and out["usage_hours"] == 48.0
+    # A room the log never names has no data, which is not zero.
+    assert (closet["room"], closet["time_share"], closet["bounces"]) == ("Closet", None, None)
+
+
+def test_room_use_is_read_from_the_person_log(tmp_path):
+    from sextant import person_log
+    lines = [{"t": t, "p": p, "place": place} for p, t, place in [
+        ("jo", 0, ["Den", "F"]), ("jo", 30, ["Hall", "F"]), ("jo", 60, ["Den", "F"]),      # Den, Hall and back in 30 s: a bounce
+        ("jo", 90, None),                                                                  # in no room: no time anywhere
+        ("sam", 0, ["Den", "F"]), ("sam", 30, ["Hall", "F"]), ("sam", 500, ["Den", "F"]),  # back after two minutes: two moves
+    ]]
+    person_log.append(str(tmp_path), lines, 48, now=1000.0)
+    use = advice.room_usage(person_log.rows(str(tmp_path)))
+    assert use["rooms"] == {("F", "Den"): (4 / 6, 1), ("F", "Hall"): (2 / 6, 1)}
+    assert [r["t"] for r in person_log.rows(str(tmp_path), since=400)] == [500]
+    assert advice.room_usage([]) == {"hours": 0.0, "rooms": {}}

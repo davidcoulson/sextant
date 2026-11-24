@@ -5548,6 +5548,7 @@ def _update_person_sensors(hass):
                     None if last_heard is None else now - last_heard, (gps or {}).get("zone"),
                     (wifi_raw or {}).get("ap_name") or (wifi_raw or {}).get("ap"),
                     best=(best or {}).get("ent"), held=bool(held), left_behind=sorted(c["ent"] for c in left_behind),
+                    place=_person_places.get(person),
                     things=[{"e": e, "cls": classes.get(e), "pres": pr, "zone": (cand.get(e) or {}).get("zone"),
                              "age": None if not cand.get(e) or cand[e].get("updated") is None else round(now - cand[e]["updated"])}
                             for e, pr in presence_by_ent.items()],

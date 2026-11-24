@@ -112,13 +112,17 @@ def switches(series) -> list:
             for (_t0, f0, z0), (t1, f1, z1) in zip(s, s[1:]) if f0 == f1 and z0 != z1 and z0 and z1]
 
 
-def bounces(sw) -> int:
-    """Switches undone within BOUNCE_WINDOW_S: A to B and straight back."""
+def bounce_pairs(sw) -> list:
+    """(A, B) for each switch undone within BOUNCE_WINDOW_S: A to B and straight back."""
     by = {}
     for e, t, a, b in sw:
         by.setdefault(e, []).append((t, a, b))
-    return sum(1 for lst in by.values() for (t0, a0, b0), (t1, a1, b1) in zip(lst, lst[1:])
-               if b1 == a0 and a1 == b0 and t1 - t0 <= BOUNCE_WINDOW_S)
+    return [(a0, b0) for lst in by.values() for (t0, a0, b0), (t1, a1, b1) in zip(lst, lst[1:])
+            if b1 == a0 and a1 == b0 and t1 - t0 <= BOUNCE_WINDOW_S]
+
+
+def bounces(sw) -> int:
+    return len(bounce_pairs(sw))
 
 
 def _same(a, b) -> float | None:
