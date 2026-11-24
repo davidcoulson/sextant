@@ -13,11 +13,32 @@ Which rooms the proxies serve worst, and where one more would help. Press
   third-nearest proxy on the floor is (a fix needs three) and whether the
   three nearest all sit to one side of the point.
 
-The rooms are grouped into one change plan per floor, worst floor first (a
+Each room also shows how much it is used, from the person log (the last 48
+hours unless `person_log_hours` on the [Tuning](tuning.md) page says
+otherwise):
+
+- **Time here**: the room's share of the time people spent in the rooms
+  listed. Pets that are tracked as persons count too. Time away, Outside, or
+  home with no room known, is left out.
+- **Bounces**: how many times someone was put into this room, or out of it,
+  and straight back within two minutes. A person rarely does that; a
+  position that cannot settle between two rooms does. A bounce counts for
+  both rooms, because the log cannot say which of the two the person was in.
+
+A dash means the log never names the room: nobody was placed there, the log
+is off, or it has only just started (the log records a person's room from
+the version that added these columns on, so they fill over the first two
+days). A dash is not a zero.
+
+The rooms are grouped into one change plan per floor. The rooms that need
+something are listed most used first, so poor coverage where people spend
+their day comes before a closet with no proxy; rooms with the same use, or
+none recorded, are worst issue first. The floors follow the same order: the
+floor whose flagged rooms are used most first, then worst floor first (a
 floor ranks by its single worst room, ties broken by how many proxies it
-needs), with each floor's own rooms worst first inside it. Each floor
-heading carries its own tally — how many rooms are flagged and how many
-proxies to add — so a floor is one trip up the stairs with one list.
+needs). Each floor heading carries its own tally — how many rooms are
+flagged and how many proxies to add — so a floor is one trip up the stairs
+with one list.
 
 Each room gets an issue:
 

@@ -1783,7 +1783,8 @@ async def ws_scanner_ignore(hass, connection, msg):
 @websocket_api.async_response
 async def ws_advice(hass, connection, msg):
     """Which rooms the proxies serve worst and where a proxy would help (sextant.advice)."""
-    from .advice import advise  # noqa: PLC0415
+    from . import person_log  # noqa: PLC0415
+    from .advice import advise, room_usage  # noqa: PLC0415
     from .calibration import get_calibration_state  # noqa: PLC0415
 
     core = _core()
@@ -1793,7 +1794,10 @@ async def ws_advice(hass, connection, msg):
     samples = {k: list(v) for k, v in get_calibration_state(hass).get("samples", {}).items()}
     selftest = await hass.async_add_executor_job(core.run_selftest, hass, samples)
     unplaced = _unplaced_scanners(hass, layout)
-    out = await hass.async_add_executor_job(advise, layout, selftest, unplaced)
+    # The person log's window, read in the executor with the rest: 48 hours is some 60,000 lines.
+    since = time.time() - core._tuning(layout, "person_log_hours") * 3600.0
+    out = await hass.async_add_executor_job(
+        lambda: advise(layout, selftest, unplaced, room_usage(person_log.rows(hass.config.path(person_log.LOG_DIRNAME), since))))
     out["ignored"] = _ignored_scanner_rows(hass, layout)
     connection.send_result(msg["id"], out)
 

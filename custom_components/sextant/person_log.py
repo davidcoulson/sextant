@@ -5,7 +5,9 @@ the result (source, presence, state, home/away, Wi-Fi word before and after
 the confirm hold, GPS zone, seconds since BLE last heard them) and its inputs
 (every thing of theirs with its presence, room and age, the thing picked, the
 ones ruled out as left behind, each Wi-Fi tracker with its access point and
-router last-seen age). ``chg`` marks a line whose result differs from the last
+router last-seen age). ``place`` is the [room, floor] they were put in, null
+when they are in no room; the Advice page counts its room use from it
+(advice.room_usage). ``chg`` marks a line whose result differs from the last
 one, so the changes can be pulled out with a filter. It exists to measure how
 often Wi-Fi misleads (Home Assistant's history drops attributes and the
 history files hold BLE placements only). About 0.5 MB an hour for five people.
@@ -39,3 +41,26 @@ def append(dirpath, rows, hours, now=None):
     for n in os.listdir(dirpath):
         if _NAME.match(n) and n < cutoff:
             os.remove(os.path.join(dirpath, n))
+
+
+def rows(dirpath, since=0.0):
+    """Every logged line from ``since`` on, oldest first, one at a time.
+    Blocking: run it in an executor."""
+    oldest = time.strftime("%Y-%m-%dT%HZ.jsonl", time.gmtime(since))   # an earlier hour's file holds nothing this late
+    try:
+        names = sorted(n for n in os.listdir(dirpath) if _NAME.match(n) and n >= oldest)
+    except OSError:
+        return
+    for n in names:
+        try:
+            # errors="replace": bytes a power cut left in the file cost their own line, not the read.
+            with open(os.path.join(dirpath, n), encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    try:
+                        r = json.loads(line)
+                    except ValueError:
+                        continue   # a line cut short by a restart
+                    if isinstance(r, dict) and isinstance(r.get("t"), (int, float)) and r["t"] >= since:
+                        yield r
+        except OSError:
+            continue   # dropped by append() since the listing

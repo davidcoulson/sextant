@@ -554,10 +554,10 @@ class SextantHealth extends LitElement {
     this.dispatchEvent(new CustomEvent("show-spots", { detail: { floor, spots: spots.map((s) => ({ floor, room: s.room, x: s.x, y: s.y, label: s.label })) }, bubbles: true, composed: true }));
   }
 
-  /** advice rows grouped into one change plan per floor, worst floor first
-   * (a floor's rank is its single worst room; ties broken by how many
-   * proxies it needs). Each floor keeps the existing worst-first order
-   * among its own rooms. */
+  /** advice rows grouped into one change plan per floor: the floor whose
+   * flagged rooms are used most first, then worst floor first (a floor's
+   * rank is its single worst room; ties broken by how many proxies it
+   * needs). Each floor keeps the server's order among its own rooms. */
   _adviceByFloor(rooms) {
     const rank = { "no proxy": 0, "weak proxy": 1, "one-sided": 2, "coverage": 2, "noisy": 3, "ok": 4 };
     const byFloor = new Map();
@@ -568,11 +568,12 @@ class SextantHealth extends LitElement {
     return [...byFloor.entries()]
       .map(([floor, rows]) => ({
         floor, rows,
+        use: Math.max(0, ...rows.filter((r) => r.issue !== "ok").map((r) => r.time_share || 0)),
         worst: Math.min(...rows.map((r) => rank[r.issue] ?? 9)),
         toAdd: rows.reduce((n, r) => n + (r.add || 0), 0),
         flagged: rows.filter((r) => r.issue !== "ok").length,
       }))
-      .sort((a, b) => a.worst - b.worst || b.toAdd - a.toAdd || a.floor.localeCompare(b.floor));
+      .sort((a, b) => b.use - a.use || a.worst - b.worst || b.toAdd - a.toAdd || a.floor.localeCompare(b.floor));
   }
 
   _renderAdvice() {
@@ -581,10 +582,10 @@ class SextantHealth extends LitElement {
     const floors = a ? this._adviceByFloor(a.rooms) : [];
     return html`<section class="card wide">
       <h3>Where a proxy would help</h3>
-      <p class="small muted">Every room is judged two ways: how far its proxies land from where they are placed in the self-test, and whether any point in the room has three proxies near enough and around it. Grouped into one change plan per floor, worst floor first; a suggested spot is on a wall, where an outlet or a switch is. <b>Show on plan</b> pins one room's spots on the Edit page, <b>Show all on this floor</b> pins every spot on the floor at once.</p>
+      <p class="small muted">Every room is judged two ways: how far its proxies land from where they are placed in the self-test, and whether any point in the room has three proxies near enough and around it. <b>Time here</b> is the room's share of the time people spent in these rooms, and <b>Bounces</b> how often someone was put into or out of it and straight back within two minutes, both from the person log; a dash is a room the log never names. Grouped into one change plan per floor, and the rooms that need something are listed most used first; a suggested spot is on a wall, where an outlet or a switch is. <b>Show on plan</b> pins one room's spots on the Edit page, <b>Show all on this floor</b> pins every spot on the floor at once.</p>
       <div class="row">${uiButton({ label: this._busy === "advice" ? "Analysing…" : a ? "Refresh" : "Analyse the house", kind: stale(a) || !a ? "primary" : "outline", disabled: this._busy === "advice", onClick: () => this._runAdvice() })}
         ${stale(a) ? html`<span class="pill warn" title="Auto calibration has sampled a lot since; refresh for a current picture">over an hour old</span>` : nothing}
-        ${a ? html`<span class="muted small">${a.at ? `analysed ${fmtAge((Date.now() - a.at) / 1000)} ago · ` : ""}${a.summary.rooms} rooms · ${a.summary.to_add ? `${a.summary.to_add} proxies to add` : "nothing to add"}${Object.entries(a.summary.issues || {}).filter(([k]) => k !== "ok").map(([k, n]) => ` · ${n} ${k}`).join("")}</span>` : nothing}</div>
+        ${a ? html`<span class="muted small">${a.at ? `analysed ${fmtAge((Date.now() - a.at) / 1000)} ago · ` : ""}${a.summary.rooms} rooms · ${a.summary.to_add ? `${a.summary.to_add} proxies to add` : "nothing to add"}${Object.entries(a.summary.issues || {}).filter(([k]) => k !== "ok").map(([k, n]) => ` · ${n} ${k}`).join("")}${a.usage_hours ? ` · room use over ${a.usage_hours} h` : ""}</span>` : nothing}</div>
       ${a?.unplaced?.length ? html`<div class="row"><b>Heard but not placed:</b>
         ${a.unplaced.map((u) => html`<span class="chips">${u.name}${u.suggest ? html` <span class="muted small">→ ${u.suggest.room} (${u.suggest.floor})</span> ${this._isAdmin() ? uiButton({ label: "Show on plan", kind: "text", onClick: () => this._showSpots(u.suggest.floor, [{ room: u.suggest.room, x: u.suggest.x, y: u.suggest.y }]) }) : nothing}` : nothing} ${this._isAdmin() ? uiButton({ label: "Ignore", kind: "text", title: "Leave this scanner out of the unplaced lists (a kiosk, a test board, an outdoor proxy)", onClick: () => this._ignoreScanner(u.address, true) }) : nothing}</span>`)}</div>` : nothing}
       ${a?.ignored?.length ? html`<div class="row muted small">Ignored: ${a.ignored.map((u) => html`<span class="chips">${u.name} ${this._isAdmin() ? uiButton({ label: "Un-ignore", kind: "text", onClick: () => this._ignoreScanner(u.address, false) }) : nothing}</span>`)}</div>` : nothing}
@@ -595,11 +596,13 @@ class SextantHealth extends LitElement {
             ${allSpots.length && this._isAdmin() ? uiButton({ label: `Show all ${allSpots.length} on this floor`, kind: "outline", onClick: () => this._showSpots(floor, allSpots) }) : nothing}
           </h4>
           <div class="wrap"><table>
-            <tr><th>Room</th><th>Issue</th><th class="num">Proxies</th><th class="num">Median</th><th class="num">Add</th><th>What to do</th><th></th></tr>
+            <tr><th>Room</th><th>Issue</th><th class="num">Proxies</th><th class="num">Median</th><th class="num">Time here</th><th class="num">Bounces</th><th class="num">Add</th><th>What to do</th><th></th></tr>
             ${rows.map((r) => html`<tr>
               <td>${r.room}</td><td>${issuePill(r.issue)}</td>
               <td class="num">${r.proxies}${r.solved < r.proxies ? html` <span class="muted small">(${r.solved} solved)</span>` : nothing}</td>
               <td class="num">${r.median_m != null ? fmtLen(r.median_m, this.hass, 2) : "—"}</td>
+              <td class="num">${r.time_share != null ? `${fmtNum(r.time_share * 100, 1)}%` : "—"}</td>
+              <td class="num">${r.bounces ?? "—"}</td>
               <td class="num">${r.add || ""}</td>
               <td class="small">${r.note ? r.note.replace(/[a-z0-9_]+_(rrn00|s2224|eth|shelly)[a-z0-9_]*/g, (m) => proxyName(this.data, m)) : html`<span class="muted">fine</span>`}</td>
               <td>${r.spots?.length && this._isAdmin() ? uiButton({ label: "Show on plan", kind: "text", onClick: () => this._showSpots(r.floor, r.spots.map((s) => ({ ...s, room: r.room }))) }) : nothing}</td>
