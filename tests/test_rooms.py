@@ -390,9 +390,8 @@ def test_publish_rooms_keep_sleep_mode_event_and_force_auto_off(hass, monkeypatc
     assert switch._attr_is_on is False and sensor._attr_is_on is False                                   # the force switch timed out
 
 
-def test_the_sleep_hold_ends_when_its_people_are_seen_in_another_room(hass, monkeypatch):
-    # The asleep helper here is "night and the room is on", so a sleep hold that kept the
-    # room on after everyone got up would keep the helper on, and so itself, for hours.
+def _sleepy_bedroom(hass, monkeypatch):
+    # The asleep entity stays on throughout (a bed sensor, or a helper that has not caught up).
     layout = {"floor": [{"name": "Ground Floor", "floor_id": "ground", "zones": [
         {"entity_id": "Bedroom", "sleep_entity": "binary_sensor.bedroom_asleep", "room_sleep_hold_secs": 7200, "cords": [{"x": 0, "y": 0}] * 3}]}]}
     _added(hass)
@@ -401,27 +400,44 @@ def test_the_sleep_hold_ends_when_its_people_are_seen_in_another_room(hass, monk
     hass.data["sextant_aggregate_sensors"] = {}
     platform.ensure_room_sensors(hass, layout)
     hass.data["sextant_room_switches"] = {}
-    key, kitchen = ("Ground Floor", "Bedroom"), ("Ground Floor", "Kitchen")
-    hass.states = type("S", (), {"get": staticmethod(lambda e: type("St", (), {"state": "on"})())})()   # asleep throughout
+    hass.states = type("S", (), {"get": staticmethod(lambda e: type("St", (), {"state": "on"})())})()
     clock = [1000.0]
     monkeypatch.setattr(sextant.time, "time", lambda: clock[0])
-    anyone, who = hass.data["sextant_room_sensors"][key], hass.data["sextant_room_people"][key]
-    here = {"room": "Bedroom", "floor": "Ground Floor", "count": 2, "humans": 2, "people": ["David", "Michelle"], "pets": []}
-    hass.data["sextant_room_answers"] = {key: (True, here)}
-    sextant._publish_rooms(hass)
-    assert anyone._attr_is_on is True and who._attr_is_on is True
-    gone = (False, {**here, "count": 0, "humans": 0, "people": []})
-    hass.data["sextant_room_answers"] = {key: gone}                          # seen nowhere (flat phones): the sleep hold keeps the room
-    clock[0] += 600
-    sextant._publish_rooms(hass)
-    assert anyone._attr_is_on is True and who._attr_is_on is True and anyone._attr_extra_state_attributes["hold_over"] is True
-    hass.data["sextant_room_answers"] = {key: gone, kitchen: (True, {"people": ["David"]})}
-    sextant._publish_rooms(hass)
-    assert anyone._attr_is_on is True and who._attr_is_on is True              # one of the two is up: the other may still be asleep
-    hass.data["sextant_room_answers"] = {key: gone, kitchen: (True, {"people": ["David", "Michelle"]})}
-    sextant._publish_rooms(hass)
-    assert anyone._attr_is_on is False and who._attr_is_on is False            # both are up: the usual clear-after (none here) applies
-    assert anyone._attr_extra_state_attributes["asleep"] is True              # the attribute still follows the helper
+    key = ("Ground Floor", "Bedroom")
+    sensors = (hass.data["sextant_room_sensors"][key], hass.data["sextant_room_people"][key])
+    here = {"room": "Bedroom", "floor": "Ground Floor", "pets": []}
+
+    def cycle(bedroom=(), kitchen=(), anonymous=0, after=60):
+        clock[0] += after
+        n = len(bedroom) + anonymous
+        hass.data["sextant_room_answers"] = {key: (n > 0, {**here, "count": n, "humans": n, "people": list(bedroom)}),
+                                             ("Ground Floor", "Kitchen"): (bool(kitchen), {"people": list(kitchen)})}
+        sextant._publish_rooms(hass)
+        return tuple(s._attr_is_on for s in sensors)
+    return cycle, sensors
+
+
+def test_the_sleep_hold_ends_when_its_people_are_seen_in_another_room(hass, monkeypatch):
+    # The house's asleep helper is "night and the room is on", so a sleep hold that kept the
+    # room on after everyone got up kept the helper on, and so itself, for hours.
+    cycle, (anyone, _who) = _sleepy_bedroom(hass, monkeypatch)
+    assert cycle(["David", "Michelle"]) == (True, True)
+    assert cycle(after=600) == (True, True) and anyone._attr_extra_state_attributes["hold_over"] is True   # seen nowhere: held
+    assert cycle(kitchen=["David"]) == (True, True)                      # one is up: the other may still be asleep
+    assert cycle(kitchen=["David", "Michelle"]) == (False, False)        # both are up: the usual clear-after (none here)
+    assert anyone._attr_extra_state_attributes["asleep"] is True        # the attribute still follows the entity
+    assert cycle() == (False, False)                                     # seen nowhere again: an old reading brings nothing back
+
+
+def test_the_sleep_hold_keeps_a_sleeper_whose_phone_went_quiet_first(hass, monkeypatch):
+    cycle, _sensors = _sleepy_bedroom(hass, monkeypatch)
+    assert cycle(["David", "Michelle"]) == (True, True)
+    assert cycle(["Michelle"]) == (True, True)                           # David's phone goes flat
+    assert cycle(kitchen=["Michelle"]) == (True, True)                   # Michelle gets up: David is still held for
+    assert cycle(kitchen=["Michelle", "David"]) == (False, False)
+    # A later stay nobody is named in is not let go because the last one's people are in the kitchen.
+    assert cycle(anonymous=1, kitchen=["Michelle", "David"]) == (True, True)
+    assert cycle(kitchen=["Michelle", "David"]) == (True, True)
 
 
 def test_inputs_on_and_door_closed():
