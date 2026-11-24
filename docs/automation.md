@@ -195,6 +195,7 @@ sensor:
 | `spots` | the spots they are in (the Couch, a bedside table) |
 | `presence` | `here` while any of them was heard within `stale_after_secs`, `quiet` while all have gone quiet (the sensor stays `on` until they are `away`), `None` when empty |
 | `radar` | how many people the mmWave sensors see in the room, held ones included; 1 when only the room's presence sensor says so |
+| `unknown` | how many of those no tracked thing accounts for: a guest, or someone without their phone. A pet's tag and a robot account for theirs, so they are not counted. It can read 1 for some seconds while a phone's position lags its owner, so give an automation a `for:` |
 | `held` | `true` while the room is `on` only because its hold has not run out since the radar lost everyone |
 | `room`, `floor`, `area_id`, `floor_id` | the room, its floor, and the linked Home Assistant area and floor |
 
