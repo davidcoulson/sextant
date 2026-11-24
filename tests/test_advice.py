@@ -63,9 +63,9 @@ def test_unplaced_proxies_are_passed_through_and_floors_without_scale_skipped():
 
 
 def test_a_room_without_an_outline_and_a_proxy_without_a_place_are_left_out_not_fatal():
-    # Both pass the layout check: None is "not drawn", an empty object "not placed".
+    # All pass the layout check: None is "not drawn", an object without x and y "not placed".
     layout = _layout([], [_rect("Hall", 0, 0, 400, 400), {"zone_id": "Attic", "entity_id": "Attic", "cords": None}])
-    layout["floor"][0]["receivers"] = [{"entity_id": "spare", "cords": {}}]
+    layout["floor"][0]["receivers"] = [{"entity_id": "spare", "cords": {}}, {"entity_id": "turned", "cords": {"r": 0}}]
     out = advice.advise(layout, {"receivers": []})["rooms"]
     assert [(r["room"], r["proxies"]) for r in out] == [("Hall", 0)]
 
