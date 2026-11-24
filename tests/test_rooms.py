@@ -390,6 +390,40 @@ def test_publish_rooms_keep_sleep_mode_event_and_force_auto_off(hass, monkeypatc
     assert switch._attr_is_on is False and sensor._attr_is_on is False                                   # the force switch timed out
 
 
+def test_the_sleep_hold_ends_when_its_people_are_seen_in_another_room(hass, monkeypatch):
+    # The asleep helper here is "night and the room is on", so a sleep hold that kept the
+    # room on after everyone got up would keep the helper on, and so itself, for hours.
+    layout = {"floor": [{"name": "Ground Floor", "floor_id": "ground", "zones": [
+        {"entity_id": "Bedroom", "sleep_entity": "binary_sensor.bedroom_asleep", "room_sleep_hold_secs": 7200, "cords": [{"x": 0, "y": 0}] * 3}]}]}
+    _added(hass)
+    monkeypatch.setattr(sextant, "get_layout", lambda h: layout)
+    hass.data["sextant_room_keys"] = rooms.room_keys(layout)
+    hass.data["sextant_aggregate_sensors"] = {}
+    platform.ensure_room_sensors(hass, layout)
+    hass.data["sextant_room_switches"] = {}
+    key, kitchen = ("Ground Floor", "Bedroom"), ("Ground Floor", "Kitchen")
+    hass.states = type("S", (), {"get": staticmethod(lambda e: type("St", (), {"state": "on"})())})()   # asleep throughout
+    clock = [1000.0]
+    monkeypatch.setattr(sextant.time, "time", lambda: clock[0])
+    anyone, who = hass.data["sextant_room_sensors"][key], hass.data["sextant_room_people"][key]
+    here = {"room": "Bedroom", "floor": "Ground Floor", "count": 2, "humans": 2, "people": ["David", "Michelle"], "pets": []}
+    hass.data["sextant_room_answers"] = {key: (True, here)}
+    sextant._publish_rooms(hass)
+    assert anyone._attr_is_on is True and who._attr_is_on is True
+    gone = (False, {**here, "count": 0, "humans": 0, "people": []})
+    hass.data["sextant_room_answers"] = {key: gone}                          # seen nowhere (flat phones): the sleep hold keeps the room
+    clock[0] += 600
+    sextant._publish_rooms(hass)
+    assert anyone._attr_is_on is True and who._attr_is_on is True and anyone._attr_extra_state_attributes["hold_over"] is True
+    hass.data["sextant_room_answers"] = {key: gone, kitchen: (True, {"people": ["David"]})}
+    sextant._publish_rooms(hass)
+    assert anyone._attr_is_on is True and who._attr_is_on is True              # one of the two is up: the other may still be asleep
+    hass.data["sextant_room_answers"] = {key: gone, kitchen: (True, {"people": ["David", "Michelle"]})}
+    sextant._publish_rooms(hass)
+    assert anyone._attr_is_on is False and who._attr_is_on is False            # both are up: the usual clear-after (none here) applies
+    assert anyone._attr_extra_state_attributes["asleep"] is True              # the attribute still follows the helper
+
+
 def test_inputs_on_and_door_closed():
     states = {"binary_sensor.m": "on", "media_player.tv": "paused", "binary_sensor.n": "unavailable"}
     assert rooms.inputs_on(list(states), states.get) == ["binary_sensor.m"]
