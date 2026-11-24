@@ -483,7 +483,8 @@ def settle(prev, raw_on, now, hold_s=0.0, extended_s=600.0, door=None, door_sett
             shut, shut_at = True, now
     if shut and now - (shut_at if shut_at is not None else now) >= door_max_s:
         shut, closed_since = False, float("inf")   # a door that never opened (or whose sensor is gone): let go, and do not take hold again
-    on = bool(raw_on) or shut or (hold_s > 0 and last_raw is not None and now - last_raw < hold_s)
+    # A hold keeps a room on, never turns one that has cleared back on: a clear-after that grew since must not revive an old reading.
+    on = bool(raw_on) or shut or (bool(prev.get("on")) and hold_s > 0 and last_raw is not None and now - last_raw < hold_s)
     since = prev.get("since") if prev.get("on") == on and prev.get("since") is not None else now
     state = "clear" if not on else ("extended" if now - since >= extended_s else "occupied")
     return {"on": on, "state": state, "since": since, "last_raw": last_raw,

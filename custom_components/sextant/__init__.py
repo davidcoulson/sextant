@@ -5758,8 +5758,7 @@ def _publish_rooms(hass):
             long = bool(prev.get("on")) and prev.get("since") is not None and now - prev["since"] >= ext_s
             # The sleep hold is for people seen nowhere (a flat phone): once everyone it held for is placed in another room, they are up.
             # shortcut: someone who left the house unseen on the way out still gets the sleep hold; count "not home" as elsewhere if that shows up.
-            # And it only keeps a room on: it never brings back one that has cleared, from an old reading.
-            sleeping = asleep and bool(prev.get("on")) and not (held and set(held) <= elsewhere(key))
+            sleeping = asleep and not (held and set(held) <= elsewhere(key))
             hold_s = rooms_mod.hold_for(sleeping, long, hold if own_hold is None else own_hold,
                                         sleep_hold if own_sleep is None else own_sleep, long_hold if own_long is None else own_long)
             # A keep-only sensor is not a person: it never starts the door's shut-in wait (an open door still ends one).
