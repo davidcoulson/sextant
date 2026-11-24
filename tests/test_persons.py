@@ -350,3 +350,22 @@ def test_a_dog_unheard_with_her_collar_at_home_is_outside():
     assert persons.fuse(None, [], "away", None, gps, [])["sextant_person_location"][0] == "home"      # a cat or a person
     away = {**gps, "zone": "not_home"}
     assert persons.fuse(None, [], "away", None, away, [], dog=True)["sextant_person_location"][0] == "away"
+
+
+def test_a_phone_in_a_spot_beats_a_watch_just_across_the_room_line():
+    # Both on the couch, which backs onto the Foyer line: the watch's fix lands
+    # two metres off, in the Foyer; the phone reads the Couch spot.
+    phone = {**thing("phone", "phone", still_for=3600, spot="Couch"), "xy_m": (13.0, 5.0), "conf": 0.5}
+    watch = {**thing("watch", "watch", still_for=3600, zone="Foyer"), "xy_m": (13.0, 7.1), "conf": 0.6}
+    assert persons.pick([phone, watch], NOW, 120)["ent"] == "phone"
+    # Farther apart than SPOT_NEAR_M they are not in the same place: the watch speaks.
+    far = {**watch, "xy_m": (13.0, 9.0)}
+    assert persons.pick([phone, far], NOW, 120)["ent"] == "watch"
+    # The watch walked off a minute ago and the phone stayed: the watch speaks.
+    walked = {**watch, "arrived": NOW - 60}
+    assert persons.pick([phone, walked], NOW, 120)["ent"] == "watch"
+    # Another floor, a watch in its own spot, a phone on its charger, no position: no change.
+    assert persons.pick([phone, {**watch, "floor": "Second Floor"}], NOW, 120)["ent"] == "watch"
+    assert persons.pick([phone, {**watch, "sub_zone": "Bench"}], NOW, 120)["ent"] == "watch"
+    assert persons.pick([{**phone, "on_charger": True}, watch], NOW, 120)["ent"] == "watch"
+    assert persons.pick([{**phone, "xy_m": None}, watch], NOW, 120)["ent"] == "watch"

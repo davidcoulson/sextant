@@ -92,7 +92,11 @@ it is in the last ten minutes, beats one that has sat still longer (the
 phone left on the couch is not you), and among those a pet's own tag, a
 watch, then a phone. When nothing is on the move, the one that arrived
 where it is most recently wins - the phone you carried downstairs, not the
-watch on its charger since last night.
+watch on its charger since last night. One exception: when that thing is
+in no spot and another of the person's things is in a spot in the next room,
+within 3 m of it, the person is placed at the spot - a watch whose fix falls
+just past the room line behind the couch does not move you out of the room
+while your phone reads the couch.
 
 A thing can also name an **On-charger sensor** - its battery state from
 iCloud3, the companion app, or any `binary_sensor` that is on while it

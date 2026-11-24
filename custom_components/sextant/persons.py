@@ -20,6 +20,9 @@ Only things that give their owner's location take part (locates_owner): by
 class a watch, a phone or a person's or pet's own tag; headphones, keys, a
 bag only when the thing is switched on for it.
 4. Then whichever moved most recently.
+5. If the winner is in no spot and another of the owner's things is in a
+   spot in another room within SPOT_NEAR_M of it, that one speaks instead
+   (unless the winner moved lately and the other did not).
 
 Pure: the caller hands in each thing's latest published row.
 """
@@ -51,6 +54,10 @@ ABSENCE_ENDS_STAY_SECS = 900.0
 # The history's "dropout" mark (history.GAP_DROPOUT): nothing was heard
 # between this point and the one before it.
 GAP_DROPOUT = 2
+# Two of a person's things this close together are in the same place, whatever
+# rooms their fixes fall in: a couch against a room line puts a watch's fix a
+# couple of metres off, across it, while the phone beside it reads the spot.
+SPOT_NEAR_M = 3.0
 # Higher speaks for its owner first, among things equally recently moved.
 CARRY_PRIORITY = {"cat": 4, "dog": 4, "paw": 4, "watch": 3, "phone": 2, "headphones": 1}
 # Classes whose place is their owner's place, unless the thing says otherwise
@@ -284,8 +291,27 @@ def pick(things, now: float, stale_after: float):
         pconf = best.get("conf") or 0.0
         watches = [t for t in fresh if t.get("cls") == "watch" and t.get("conf") is not None and t["conf"] >= pconf]
         if watches:
-            return min(watches, key=key)
-    return best
+            best = min(watches, key=key)
+    return _spot_beside(best, fresh, key) or best
+
+
+def _has_spot(t):
+    return t.get("sub_zone") not in (None, "", "unknown")
+
+
+def _spot_beside(best, fresh, key):
+    """Another of the owner's things, in a spot within SPOT_NEAR_M of ``best``
+    but in another room, when ``best`` is in no spot: the spot is the better
+    answer. Not when ``best`` moved lately and the other did not - it left."""
+    if _has_spot(best) or not best.get("xy_m"):
+        return None
+    near = [
+        (math.dist(best["xy_m"], t["xy_m"]), t) for t in fresh
+        if t is not best and _has_spot(t) and t.get("xy_m") and t.get("floor") == best.get("floor")
+        and t.get("zone") != best.get("zone") and not (key(t)[0] and not key(best)[0])
+    ]
+    near = [(d, t) for d, t in near if d <= SPOT_NEAR_M]
+    return min(near, key=lambda n: n[0])[1] if near else None
 
 
 def considered(things, now):
