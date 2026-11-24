@@ -47,7 +47,10 @@ names the old ones needs updating, and their history stays with the old
 ids. Only a slug whose device is gone entirely is forgotten, and after
 an hour of Bermuda not naming the slug at that: its settings, its
 remembered last sighting and its history go (the same as selecting it on
-the Live page and choosing **Forget**). The hour is a
+the Live page and choosing **Forget**). The one exception is a new slug
+that already has settings of its own: nothing is moved onto it, and the old
+slug's settings are forgotten once Bermuda has not named that slug for the
+hour. The hour is a
 grace, so a Bermuda reload, a restart, or an untrack undone within it costs a
 thing nothing. Robots are never forgotten this way, and nothing is while a
 FindMy accessory set up in Bermuda has not been heard since Bermuda started:

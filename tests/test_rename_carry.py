@@ -176,7 +176,8 @@ def test_a_name_set_while_waiting_keeps_the_old_slug_s_identity(tmp_path, monkey
 
 def test_settings_gone_while_waiting_move_nothing(tmp_path, monkeypatch):
     # A restore took old_name's settings while the carry waited for the lock:
-    # nothing is left to hand over, so its identity and its pins stay put.
+    # nothing is left to hand over, so its pins stay put, and the bare slug is
+    # the device's that Bermuda reports on it now (as any bare slug's is).
     hass = _hass(tmp_path)
     run(st.save_truth(hass, {"marks": [{"id": 1, "entity": "old_name", "floor": "F", "x": 1.0, "y": 2.0}], "next_id": 2}))
     real = sextant.get_layout_for_edit
@@ -188,6 +189,51 @@ def test_settings_gone_while_waiting_move_nothing(tmp_path, monkeypatch):
     monkeypatch.setattr(sextant, "get_layout_for_edit", restored)
     run(sextant.carry_renamed_thing_settings(hass, {"old_name", "new_name"}, {"old_name": "irk_9", "new_name": "irk_1"}))
     lay = st.get_layout(hass)
-    assert lay["thing_ids"]["old_name"] == "irk_1" and "new_name" not in lay.get("thing_names", {})
+    assert lay["thing_ids"]["old_name"] == "irk_9" and "new_name" not in lay.get("thing_names", {})
     assert [m["entity"] for m in run(st.load_truth(hass))["marks"]] == ["old_name"]
 
+
+def test_a_restore_that_gave_the_old_slug_to_another_device_moves_nothing(tmp_path, monkeypatch):
+    # A restore landed while the carry waited for the lock: old_name still has
+    # settings, but the restored memory says they are another device's (irk_7).
+    # The plan is made from the layout read under the lock, so they stay put.
+    hass = _hass(tmp_path)
+    run(st.save_truth(hass, {"marks": [{"id": 1, "entity": "old_name", "floor": "F", "x": 1.0, "y": 2.0}], "next_id": 2}))
+    real = sextant.get_layout_for_edit
+    def restored(h):
+        lay = real(h)
+        lay["thing_names"] = {"old_name": "Other"}
+        lay["thing_ids"] = {"old_name": "irk_7"}
+        return lay
+    monkeypatch.setattr(sextant, "get_layout_for_edit", restored)
+    run(sextant.carry_renamed_thing_settings(hass, {"new_name"}, {"new_name": "irk_1"}))
+    lay = st.get_layout(hass)
+    assert lay["thing_names"] == {"old_name": "Other"}, "the other device keeps its name"
+    assert lay["thing_ids"] == {"old_name": "irk_7", "new_name": "irk_1"}
+    assert "old_name" in sextant._last_seen, "and its sighting"
+    assert [m["entity"] for m in run(st.load_truth(hass))["marks"]] == ["old_name"]
+
+
+def test_a_slug_bermuda_reports_now_is_tracked_for_the_sensor_prune(tmp_path, monkeypatch):
+    # The cached prefix set has not caught up with new_name, which Bermuda
+    # already reports: the prune must not take its sensors for an orphan's.
+    from sextant import bermuda_source, sensor
+    hass = _hass(tmp_path)
+    pruned_with = []
+    def prune(h, tracked):
+        pruned_with.append(set(tracked))
+        raise asyncio.CancelledError   # one look is enough: this ends the loop
+    async def nothing(*args, **kwargs):
+        return None
+    # The loop's periodic jobs are not due (and their clocks go back afterwards).
+    for clock in ("last_liveness", "last_selftest", "last_history_flush"):
+        monkeypatch.setattr(sextant.update_tracked_entities, clock, sextant.time.time(), raising=False)
+    monkeypatch.setattr(sextant, "prune_stale_positions", nothing)
+    monkeypatch.setattr(bermuda_source, "async_get_tracked_device_prefixes", lambda h: {"old_name"})
+    monkeypatch.setattr(bermuda_source, "async_get_tracked_unique_ids", lambda h: {"new_name": "irk_1"})
+    monkeypatch.setattr(sensor, "prune_sensors_for_untracked", prune)
+    try:
+        run(sextant.update_tracked_entities(hass))
+    except asyncio.CancelledError:
+        pass
+    assert pruned_with == [{"old_name", "new_name"}]

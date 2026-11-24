@@ -1798,16 +1798,15 @@ async def update_tracked_entities(hass):
                 # carries for a device outside it (untracked while HA was down)
                 # is an orphan and goes. One set comparison per cycle.
                 from .sensor import prune_sensors_for_untracked  # noqa: PLC0415 - sensor imports this package
+                # A slug Bermuda reports now is tracked, even one the cached set has not caught up with.
+                ids = bermuda_source.async_get_tracked_unique_ids(hass)
                 # Robots are Sextant's own things, not Bermuda's: keep theirs.
-                full_tracked = set(tracked_prefixes) | set(robot_things(get_layout(hass)))
+                full_tracked = set(tracked_prefixes) | set(robot_things(get_layout(hass))) | set(ids or ())
                 prune_sensors_for_untracked(hass, full_tracked)
                 # A device Bermuda renamed under a new slug: its settings
                 # follow it there, matched by the stable unique_id thing_ids
                 # remembers - before the sweep below could delete them.
-                ids = bermuda_source.async_get_tracked_unique_ids(hass)
                 if ids:
-                    # A slug Bermuda reports now is tracked, even one the cached set has not caught up with.
-                    full_tracked |= set(ids)
                     await carry_renamed_thing_settings(hass, full_tracked, ids)
                 # And what the sensors' reconcile cannot reach - the settings of
                 # a slug Bermuda has left for good - goes too, once the grace in
@@ -3558,48 +3557,52 @@ async def carry_renamed_thing_settings(hass, tracked, ids):
     this the sweep would delete the old name's settings once its grace ran
     out, and the device would start from scratch under the new one.
     """
-    layout = get_layout(hass)
-    if not isinstance(layout, dict):
-        return
-    # shortcut: thing_ids keeps every slug ever seen and never shrinks; prune it if a layout ever nears MAX_ITEMS_PER_LIST-sized tables.
-    known = {s: u for s, u in (layout.get("thing_ids") or {}).items() if isinstance(s, str) and isinstance(u, str)}
     # Every slug Bermuda reports now counts as tracked, even one the caller's set
     # has not caught up with, or one two devices share (its id is None).
     tracked = set(tracked) | set(ids)
-
-    seated = {ent for table in _thing_settings_tables(layout).values() for ent in table}
-    # A slug still holding another device's settings keeps that device's
-    # identity until they have moved: relabelling it would hand them to the newcomer.
-    fresh = {slug: uid for slug, uid in ids.items()
-             if uid and known.get(slug) != uid and not (slug in seated and slug in known)}
-    # Matched by the identity each slug had when its settings were made (the
-    # memory, before this cycle's update): a slug another device has since
-    # taken still hands its settings to the device they belong to.
-    by_uid: dict[str, list[str]] = {}
-    for slug, uid in {**{s: u for s, u in ids.items() if u}, **known}.items():
-        by_uid.setdefault(uid, []).append(slug)
     shared = {u for u in ids.values() if u and list(ids.values()).count(u) > 1}
-    moves, taken = {}, set()
-    for slug in sorted(tracked & set(ids)):
-        if slug in seated or not ids.get(slug) or ids[slug] in shared:
-            continue   # it has settings of its own, no identity, or one two slugs claim
-        donors = sorted(s for s in by_uid.get(ids[slug], ()) if s != slug and s in seated and s not in taken
-                        and (s not in tracked or (ids.get(s) and ids[s] != known.get(s))))
-        if donors:
-            moves[slug] = donors
-            taken.update(donors)
-    if not fresh and not moves:
+
+    def plan(layout):
+        """(identities to remember, {receiver: donors}) for this layout."""
+        # shortcut: thing_ids keeps every slug ever seen and never shrinks; prune it if a layout ever nears MAX_ITEMS_PER_LIST-sized tables.
+        known = {s: u for s, u in (layout.get("thing_ids") or {}).items() if isinstance(s, str) and isinstance(u, str)}
+        seated = {ent for table in _thing_settings_tables(layout).values() for ent in table}
+        # A slug still holding another device's settings keeps that device's
+        # identity until they have moved: relabelling it would hand them to the newcomer.
+        fresh = {slug: uid for slug, uid in ids.items()
+                 if uid and known.get(slug) != uid and not (slug in seated and slug in known)}
+        # Matched by the identity each slug had when its settings were made (the
+        # memory, before this cycle's update): a slug another device has since
+        # taken still hands its settings to the device they belong to.
+        by_uid: dict[str, list[str]] = {}
+        for slug, uid in {**{s: u for s, u in ids.items() if u}, **known}.items():
+            by_uid.setdefault(uid, []).append(slug)
+        moves, taken = {}, set()
+        for slug in sorted(tracked & set(ids)):
+            if slug in seated or not ids.get(slug) or ids[slug] in shared:
+                continue   # it has settings of its own, no identity, or one two slugs claim
+            donors = sorted(s for s in by_uid.get(ids[slug], ()) if s != slug and s in seated and s not in taken
+                            and (s not in tracked or (ids.get(s) and ids[s] != known.get(s))))
+            if donors:
+                moves[slug] = donors
+                taken.update(donors)
+        return fresh, moves
+
+    # Cheap look first, so a cycle with nothing to do never takes the lock.
+    layout = get_layout(hass)
+    if not isinstance(layout, dict) or not any(plan(layout)):
         return
     async with LAYOUT_LOCK:
         layout = get_layout_for_edit(hass)
         if not isinstance(layout, dict):
             return
+        # Planned again from the layout the lock protects: whatever was saved
+        # while this waited (a name set by hand, a restore) is what it decides on.
+        fresh, moves = plan(layout)
+        if not fresh and not moves:
+            return
         table = dict(layout.get("thing_ids") or {})
         table.update(fresh)
-        # Read again under the lock: a name set since the check above stands.
-        seated = {ent for t in _thing_settings_tables(layout).values() for ent in t}
-        # And a donor whose settings went meanwhile (a restore) has nothing left to hand over.
-        moves = {r: left for r, d in moves.items() if r not in seated and (left := [x for x in d if x in seated])}
         # A slug whose old settings do move out now is the newcomer's from now on.
         table.update({d: ids[d] for donors in moves.values() for d in donors if d in tracked and ids.get(d)})
         layout["thing_ids"] = table
