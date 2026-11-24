@@ -4136,9 +4136,10 @@ async def _radar_cycle(hass, layout, now=None):
     if _tuning(layout, "mmwave_rooms"):
         for t in counted:
             if t.get("room") and t["room"] != "unknown":
-                seen = by_room.setdefault((t["floor"], t["room"]), {"count": 0, "held": 0})
+                seen = by_room.setdefault((t["floor"], t["room"]), {"count": 0, "held": 0, "unknown": 0})
                 seen["count"] += 1
                 seen["held"] += t["state"] == "held"
+                seen["unknown"] += not t["thing"]   # no phone, watch, pet tag or robot accounts for it
         # shortcut: read on the radar's clock, so a room's presence sensor counts only while some radar is placed; give it its own tick if one is wanted without.
         sensors = {(f.get("name"), z.get("entity_id")): getattr(hass.states.get(z["presence_entity"]), "state", None) == "on"
                    for f in layout["floor"] for z in (f.get("zones") or [])
@@ -5776,7 +5777,8 @@ def _publish_rooms(hass):
             sensor.door_people = []   # the next stay is held for its own people
         _carry_since(sensor, m, grace, now, extended if own_ext is None else own_ext)
         since = datetime.fromtimestamp(m["since"], timezone.utc).isoformat(timespec="seconds")
-        attrs = {**attrs, "radar": seen["count"], "held": not is_on and seen["count"] > 0 and seen["held"] == seen["count"],
+        attrs = {**attrs, "radar": seen["count"], "unknown": seen.get("unknown", 0),
+                 "held": not is_on and seen["count"] > 0 and seen["held"] == seen["count"],
                  "state": m["state"], "since": since, "forced": forced, "inputs": inputs, "door_hold": m["door_hold"],
                  "door_at": m["door_at"], "door_people": list(getattr(sensor, "door_people", None) or []),
                  "hold_over": m["on"] and not sensed and not forced and not kept and not m["door_hold"],
