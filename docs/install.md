@@ -60,13 +60,15 @@ positioning interval (15 s by default, 1 to 300).
 
 Every Home Assistant user gets Sextant in the sidebar with two pages,
 **Live** and **Occupancy**: the plan, where every tracked thing and person
-is, and which rooms are occupied. The map card shows the same to anyone
-who can open the dashboard it is on.
+is, and which rooms are occupied. The map card shows the plan and the
+positions on it to anyone who can open the dashboard it is on.
 
 Changing anything needs an administrator. The Edit, Things, Bermuda,
 Proxies, Calibration, Tuning and Advice pages, the pin buttons on Live and
 every `sextant.*` service are for administrators only, and Home Assistant
-refuses them for anyone else.
+refuses them for anyone else. The one exception is a room's
+[force occupied switch](occupancy.md), an ordinary Home Assistant switch
+that any user can turn on and off.
 
 Nothing hides the panel from some users and not others: the sidebar
 toggle above takes it away for everyone. Home Assistant shows its

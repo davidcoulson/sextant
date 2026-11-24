@@ -61,11 +61,11 @@ where people are. What it adds, and what Sextant has in its place:
 | BPS 0.3.0 beta | Sextant |
 |---|---|
 | Persons: several trackers per person, the best one first | [People](things.md#people): things with an owner, with GPS and Wi-Fi to fall back on |
-| A count of known and unknown people per zone | A [room sensor](occupancy.md) that names the people, pets and things in the room. People no device accounts for are counted for the whole house (`sensor.sextant_untracked_people`) |
+| A count of known and unknown people per zone | A [room sensor](occupancy.md) that names the people, pets and things in the room. People a radar sees and no device accounts for are counted for the whole house (`sensor.sextant_untracked_people`) |
 | Presence sensors and camera person counts linked to a zone | Radars, presence, motion, door and media sensors and number tests [per room](occupancy.md#every-kind-of-sensor-a-room-can-use) |
 | Follow me: music moves with a person, after asking | Not built in. [A recipe](recipes.md#music-follows-a-person) does it with an automation |
 | Suggestions that ask before changing lights, and learn from the answers | Not built in. Sextant says who is where and leaves acting on it to your automations |
-| Receiver placement from a model of the expected error, weighted by where people spend time | [Advice](advice.md) from the measured error, with the rooms that need attention listed most used first |
+| Receiver placement from a model of the expected error, weighted by where people spend time | [Advice](advice.md) from the measured error and how well the receivers cover each room, with each room's share of people's time beside it |
 | Administrators only by default, with a switch to open it to everyone | Everyone can look and administrators change things: [who can see and change what](install.md#who-can-see-and-change-what) |
 | Swedish and English | English |
 
