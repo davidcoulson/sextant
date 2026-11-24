@@ -10,7 +10,8 @@ when they are in no room; the Advice page counts its room use from it
 (advice.room_usage). ``chg`` marks a line whose result differs from the last
 one, so the changes can be pulled out with a filter. It exists to measure how
 often Wi-Fi misleads (Home Assistant's history drops attributes and the
-history files hold BLE placements only). About 0.5 MB an hour for five people.
+history files hold BLE placements only). About 0.25 MB an hour for each person
+at a six-second cycle (a pet tracked as a person is one more).
 This module imports nothing from the package."""
 import json
 import os

@@ -1794,7 +1794,8 @@ async def ws_advice(hass, connection, msg):
     samples = {k: list(v) for k, v in get_calibration_state(hass).get("samples", {}).items()}
     selftest = await hass.async_add_executor_job(core.run_selftest, hass, samples)
     unplaced = _unplaced_scanners(hass, layout)
-    # The person log's window, read in the executor with the rest: 48 hours is some 60,000 lines.
+    # shortcut: every request reads the person log's whole window, in the executor with the rest: about 30,000 lines
+    # (12 MB) a person for 48 hours at a six-second cycle, some 3 s for twelve; keep a sum per hour file if that gets slow.
     since = time.time() - core._tuning(layout, "person_log_hours") * 3600.0
     out = await hass.async_add_executor_job(
         lambda: advise(layout, selftest, unplaced, room_usage(person_log.rows(hass.config.path(person_log.LOG_DIRNAME), since))))

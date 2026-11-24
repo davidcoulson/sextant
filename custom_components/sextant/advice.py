@@ -42,7 +42,7 @@ USE_STEP_MAX_S = 300.0  # the longest cycle the options allow; a longer wait for
 
 
 def _ring(zone):
-    return [(float(c["x"]), float(c["y"])) for c in zone.get("cords", []) if c.get("x") is not None and c.get("y") is not None]
+    return [(float(c["x"]), float(c["y"])) for c in zone.get("cords") or [] if c.get("x") is not None and c.get("y") is not None]
 
 
 def _largest(geom):
@@ -202,7 +202,7 @@ def advise(layout, selftest, unplaced=None, usage=None):
         name = floor.get("name")
         rooms = _rooms_of(floor)
         placed = [(float(r["cords"]["x"]), float(r["cords"]["y"]), str(r.get("entity_id")))
-                  for r in floor.get("receivers", []) if isinstance(r.get("cords"), dict)]
+                  for r in floor.get("receivers") or [] if isinstance(r.get("cords"), dict) and {"x", "y"} <= r["cords"].keys()]   # no x and y: not placed
         positions = [(x, y) for x, y, _s in placed]
         for room, poly in rooms:
             inside = [s for x, y, s in placed if poly.covers(Point(x, y))]

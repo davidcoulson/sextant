@@ -62,6 +62,14 @@ def test_unplaced_proxies_are_passed_through_and_floors_without_scale_skipped():
     assert [r["floor"] for r in out["rooms"]] == ["F"] and out["rooms"][0]["issue"] == "no proxy"
 
 
+def test_a_room_without_an_outline_and_a_proxy_without_a_place_are_left_out_not_fatal():
+    # All pass the layout check: None is "not drawn", an object without x and y "not placed".
+    layout = _layout([], [_rect("Hall", 0, 0, 400, 400), {"zone_id": "Attic", "entity_id": "Attic", "cords": None}])
+    layout["floor"][0]["receivers"] = [{"entity_id": "spare", "cords": {}}, {"entity_id": "turned", "cords": {"r": 0}}]
+    out = advice.advise(layout, {"receivers": []})["rooms"]
+    assert [(r["room"], r["proxies"]) for r in out] == [("Hall", 0)]
+
+
 def test_two_bad_proxies_among_three_are_both_named():
     layout = _layout([("a", 20, 20), ("b", 380, 20), ("c", 200, 380)], [_rect("Jamie", 0, 0, 400, 400)])
     out = advice.advise(layout, _selftest([("a", "Jamie", 0.7), ("b", "Jamie", 7.0), ("c", "Jamie", 4.7)]))
