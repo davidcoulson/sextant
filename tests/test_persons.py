@@ -369,3 +369,5 @@ def test_a_phone_in_a_spot_beats_a_watch_just_across_the_room_line():
     assert persons.pick([phone, {**watch, "sub_zone": "Bench"}], NOW, 120)["ent"] == "watch"
     assert persons.pick([{**phone, "on_charger": True}, watch], NOW, 120)["ent"] == "watch"
     assert persons.pick([{**phone, "xy_m": None}, watch], NOW, 120)["ent"] == "watch"
+    # A thing read as outside the house stays outside.
+    assert persons.pick([phone, {**watch, "outside": True}], NOW, 120)["ent"] == "watch"

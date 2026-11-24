@@ -303,7 +303,7 @@ def _spot_beside(best, fresh, key):
     """Another of the owner's things, in a spot within SPOT_NEAR_M of ``best``
     but in another room, when ``best`` is in no spot: the spot is the better
     answer. Not when ``best`` moved lately and the other did not - it left."""
-    if _has_spot(best) or not best.get("xy_m"):
+    if _has_spot(best) or not best.get("xy_m") or best.get("outside"):
         return None
     near = [
         (math.dist(best["xy_m"], t["xy_m"]), t) for t in fresh
