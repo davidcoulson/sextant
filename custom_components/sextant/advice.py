@@ -202,7 +202,7 @@ def advise(layout, selftest, unplaced=None, usage=None):
         name = floor.get("name")
         rooms = _rooms_of(floor)
         placed = [(float(r["cords"]["x"]), float(r["cords"]["y"]), str(r.get("entity_id")))
-                  for r in floor.get("receivers", []) if isinstance(r.get("cords"), dict)]
+                  for r in floor.get("receivers") or [] if isinstance(r.get("cords"), dict) and r["cords"]]   # {} is not placed
         positions = [(x, y) for x, y, _s in placed]
         for room, poly in rooms:
             inside = [s for x, y, s in placed if poly.covers(Point(x, y))]
