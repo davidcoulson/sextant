@@ -522,6 +522,29 @@ def async_get_tracked_devices(hass) -> dict | None:
     return api.async_get_tracked_devices(hass)
 
 
+def async_get_tracked_unique_ids(hass) -> dict[str, str] | None:
+    """The tracked set as ``{slug: unique_id}``, or None without the API. A slug
+    two devices share maps to None: it is tracked, but no one device's.
+
+    A slug is Bermuda's mutable display name for a device (it can change
+    across a restart); the unique_id is the device itself, forever. This is
+    the pairing a rename rides on (see carry_renamed_thing_settings): one
+    attribute per known device, no advert walk.
+    """
+    devices = async_get_tracked_devices(hass)
+    if devices is None:
+        return None
+    out, seen, clash = {}, set(), set()
+    for dev in devices.values():
+        slug, uid = dev.get("slug"), dev.get("unique_id")
+        if slug in seen:
+            clash.add(slug)   # two devices under one slug: neither can be matched
+        seen.add(slug)
+        if slug and uid:
+            out[slug] = uid
+    return {**{s: u for s, u in out.items() if s not in clash}, **{s: None for s in clash if s}}
+
+
 async def async_set_tracked_devices(hass, add=(), remove=()) -> list | None:
     api = _mgmt_api()
     if api is None:

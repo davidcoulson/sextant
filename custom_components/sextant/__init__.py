@@ -1801,6 +1801,14 @@ async def update_tracked_entities(hass):
                 # Robots are Sextant's own things, not Bermuda's: keep theirs.
                 full_tracked = set(tracked_prefixes) | set(robot_things(get_layout(hass)))
                 prune_sensors_for_untracked(hass, full_tracked)
+                # A device Bermuda renamed under a new slug: its settings
+                # follow it there, matched by the stable unique_id thing_ids
+                # remembers - before the sweep below could delete them.
+                ids = bermuda_source.async_get_tracked_unique_ids(hass)
+                if ids:
+                    # A slug Bermuda reports now is tracked, even one the cached set has not caught up with.
+                    full_tracked |= set(ids)
+                    await carry_renamed_thing_settings(hass, full_tracked, ids)
                 # And what the sensors' reconcile cannot reach - the settings of
                 # a slug Bermuda has left for good - goes too, once the grace in
                 # sweep_untracked_things has run out.
@@ -3518,6 +3526,118 @@ async def prune_stale_positions(hass):
 ORPHAN_GRACE_S = 3600.0
 
 
+def _thing_settings_tables(layout):
+    """The layout's per-thing tables, minus thing_ids.
+
+    thing_ids is the memory of which slug was which device (see
+    carry_renamed_thing_settings), not settings: it is written by the rename
+    carry, read to answer "is this the same device?", and deliberately never
+    swept - an old name's identity is exactly what a future rename needs.
+    """
+    return {key: table for key, table in (layout or {}).items()
+            if key.startswith("thing_") and key != "thing_ids" and isinstance(table, dict)}
+
+
+async def carry_renamed_thing_settings(hass, tracked, ids):
+    """A device Bermuda renamed takes its settings to the new slug.
+
+    Bermuda names a device after whatever it can resolve - its beacon id, or
+    a name the beacon advertises - and which of those wins can change across
+    a restart: the same beacon has been tracked under three slugs in a week,
+    and every rename stranded its name, class, colour and owner on the old
+    one until someone set them up again by hand.
+
+    ``ids`` is Bermuda's current ``{slug: unique_id}`` for the tracked set
+    (bermuda_source.async_get_tracked_unique_ids); the unique_id is the
+    device, constant across every rename. Each sighting of a slug is
+    remembered against it in the layout's ``thing_ids``. When a tracked slug
+    carries no settings of its own and an untracked slug with the same
+    unique_id has some - the same device's previous name - they move across,
+    remembered sighting and learned gains included, and the old name's state
+    is forgotten. A rename costs one cycle instead of a re-setup; without
+    this the sweep would delete the old name's settings once its grace ran
+    out, and the device would start from scratch under the new one.
+    """
+    layout = get_layout(hass)
+    if not isinstance(layout, dict):
+        return
+    # shortcut: thing_ids keeps every slug ever seen and never shrinks; prune it if a layout ever nears MAX_ITEMS_PER_LIST-sized tables.
+    known = {s: u for s, u in (layout.get("thing_ids") or {}).items() if isinstance(s, str) and isinstance(u, str)}
+    # Every slug Bermuda reports now counts as tracked, even one the caller's set
+    # has not caught up with, or one two devices share (its id is None).
+    tracked = set(tracked) | set(ids)
+
+    seated = {ent for table in _thing_settings_tables(layout).values() for ent in table}
+    # A slug still holding another device's settings keeps that device's
+    # identity until they have moved: relabelling it would hand them to the newcomer.
+    fresh = {slug: uid for slug, uid in ids.items()
+             if uid and known.get(slug) != uid and not (slug in seated and slug in known)}
+    # Matched by the identity each slug had when its settings were made (the
+    # memory, before this cycle's update): a slug another device has since
+    # taken still hands its settings to the device they belong to.
+    by_uid: dict[str, list[str]] = {}
+    for slug, uid in {**{s: u for s, u in ids.items() if u}, **known}.items():
+        by_uid.setdefault(uid, []).append(slug)
+    shared = {u for u in ids.values() if u and list(ids.values()).count(u) > 1}
+    moves, taken = {}, set()
+    for slug in sorted(tracked & set(ids)):
+        if slug in seated or not ids.get(slug) or ids[slug] in shared:
+            continue   # it has settings of its own, no identity, or one two slugs claim
+        donors = sorted(s for s in by_uid.get(ids[slug], ()) if s != slug and s in seated and s not in taken
+                        and (s not in tracked or (ids.get(s) and ids[s] != known.get(s))))
+        if donors:
+            moves[slug] = donors
+            taken.update(donors)
+    if not fresh and not moves:
+        return
+    async with LAYOUT_LOCK:
+        layout = get_layout_for_edit(hass)
+        if not isinstance(layout, dict):
+            return
+        table = dict(layout.get("thing_ids") or {})
+        table.update(fresh)
+        # Read again under the lock: a name set since the check above stands.
+        seated = {ent for t in _thing_settings_tables(layout).values() for ent in t}
+        # And a donor whose settings went meanwhile (a restore) has nothing left to hand over.
+        moves = {r: left for r, d in moves.items() if r not in seated and (left := [x for x in d if x in seated])}
+        # A slug whose old settings do move out now is the newcomer's from now on.
+        table.update({d: ids[d] for donors in moves.values() for d in donors if d in tracked and ids.get(d)})
+        layout["thing_ids"] = table
+        for receiver, donors in moves.items():
+            for settings in _thing_settings_tables(layout).values():
+                for donor in donors:
+                    if donor in settings:
+                        settings[receiver] = settings.pop(donor)
+            # The sighting and the learned scales are the same device's; the
+            # newest sighting wins if more than one old name carried one. A
+            # donor still tracked is another device's now: its live state is that one's.
+            donors = [d for d in donors if d not in tracked]
+            seen = max((_last_seen[d] for d in donors if d in _last_seen),
+                       key=lambda s: s.get("updated") or 0, default=None)
+            if seen is not None:
+                _last_seen[receiver] = dict(seen)
+            for donor in donors:
+                for runtime in (_fingerprint_db.thing_gain, _range_scale):
+                    if donor in runtime and receiver not in runtime:
+                        runtime[receiver] = runtime.pop(donor)
+                _forget_thing_state(donor)
+            _LOGGER.info("%s is a device Bermuda renamed (%s); its settings followed it across",
+                         receiver, ", ".join(donors))
+        await save_layout(hass, layout)
+    if moves:
+        # Its pins are the same device's too.
+        renamed = {d: r for r, donors in moves.items() for d in donors}
+        async with TRUTH_LOCK:
+            store = await load_truth(hass)
+            hit = [m for m in store.get("marks", []) if m.get("entity") in renamed]
+            for m in hit:
+                m["entity"] = renamed[m["entity"]]
+            if hit:
+                # shortcut: a failed write here leaves these pins on the old slug for good (the layout has already moved); add a retry if it is ever seen.
+                await save_truth(hass, store)
+                _set_truth_marks(store["marks"])
+
+
 def _findmy_not_all_tracked(hass):
     """True while the sweep must hold: Bermuda only puts a FindMy accessory in
     its tracked set once it has heard it, so after a restart an AirTag that is
@@ -3554,7 +3674,7 @@ async def forget_thing_settings(hass, ents):
         if isinstance(layout, dict):
             for ent in ents:
                 for key, table in layout.items():
-                    if key.startswith("thing_") and isinstance(table, dict) and ent in table:
+                    if key.startswith("thing_") and key != "thing_ids" and isinstance(table, dict) and ent in table:
                         del table[ent]
                         dropped.append(key)
             if dropped:
@@ -3590,9 +3710,8 @@ async def sweep_untracked_things(hass, tracked):
     tracked = set(tracked) | {robot_thing(v) for v in _robots(layout)}
     candidates = {ent for ent in _last_seen if ent}
     if isinstance(layout, dict):
-        for key, table in layout.items():
-            if key.startswith("thing_") and isinstance(table, dict):
-                candidates.update(ent for ent in table if isinstance(ent, str))
+        candidates.update(ent for table in _thing_settings_tables(layout).values()
+                          for ent in table if isinstance(ent, str))
     orphans = {ent for ent in candidates if ent not in tracked}
     dom = hass.data.setdefault(DOMAIN, {}) if isinstance(getattr(hass, "data", None), dict) else {}
     since = dict(dom.get("orphan_since") or {})
