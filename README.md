@@ -51,17 +51,30 @@ on a floor plan.
 
 | | Sextant | [BPS](https://github.com/Hogster/BPS) | [Bermuda](https://github.com/agittins/bermuda) | [ESPresense](https://espresense.com) | [Magic Areas](https://github.com/jseidl/hass-magic_areas) | [Area Occupancy Detection](https://github.com/Hankanman/Area-Occupancy-Detection) |
 |---|:-:|:-:|:-:|:-:|:-:|:-:|
-| Tracks phones, watches and tags over Bluetooth | ✅ with Bermuda | ✅ with Bermuda | ✅ | ✅ | ➖ reads other trackers | ❌ |
+| Tracks phones, watches and tags over Bluetooth | ✅ with Bermuda | ✅ with Bermuda | ✅ | ✅ | 🟡 reads other trackers | ❌ |
 | Shows them on your floor plan | ✅ | ✅ | ❌ | ✅ with its Companion app | ❌ | ❌ |
-| Knows which room each person or thing is in | ✅ | ✅ | ✅ | ✅ | ➖ from other trackers | ❌ |
-| Knows which floor | ✅ | ✅ | ❌ | ✅ with its Companion app | ➖ groups rooms by floor | ❌ |
+| Knows which room each person or thing is in | ✅ | ✅ | ✅ | ✅ | 🟡 from other trackers | ❌ |
+| Knows which floor | ✅ | ✅ | ❌ | ✅ with its Companion app | 🟡 groups rooms by floor | ❌ |
 | Spots inside a room (sofa, bed) | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Room sensor that says *who* is inside | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Combines motion, mmWave, doors and TVs per room | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ |
-| Set up by drawing your house in Home Assistant | ✅ | ✅ | ❌ | ➖ separate web app | ❌ | ❌ |
+| Set up by drawing your house in Home Assistant | ✅ | ✅ | ❌ | 🟡 separate web app | ❌ | ❌ |
+| Switches lights, heating and media itself | ❌ on purpose¹ | ❌ | ❌ | 🟡 a relay on the node | ✅ | ❌ |
+| Room occupancy as a learned percentage | ❌ on purpose² | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Live tracking without Home Assistant | ❌ on purpose³ | ❌ | ❌ | ✅ over MQTT | ❌ | ❌ |
 
-✅ yes · ➖ partly · ❌ no. Based on each project's own README in November
+✅ yes · 🟡 partly · ❌ no. Based on each project's own README in November
 2026.
+
+Left out on purpose:
+
+1. Sextant says who is in each room and leaves what to do about it to
+   your automations, or to Magic Areas.
+2. A room is on or off, with the people, pets and sensors that put it
+   there, so you can see why. Area Occupancy Detection's learned
+   percentage suits people who would rather tune a threshold.
+3. Sextant is built on Home Assistant's own Bluetooth stack and Bermuda,
+   and its sensors, panel and services live there.
 
 **Use them together.** Sextant needs [Bermuda](https://github.com/agittins/bermuda)
 to hear the Bluetooth devices. Its room sensors can feed Magic Areas or
