@@ -86,6 +86,48 @@ Rooms are linked to areas on the Edit page (a room's **Home Assistant
 area**); an unlinked room has `area_id: none` and the condition above skips
 it.
 
+### Music follows a person
+
+The same `area_id` finds the speakers. This joins the speaker in the room
+the person walked into to the one playing in the room they left, and lets
+the first one go half a minute later unless they have come back.
+
+```yaml
+alias: Music follows Alex
+triggers:
+  - trigger: state
+    entity_id: sensor.alex_smith_sextant_person_room
+variables:
+  was: "{{ area_entities(trigger.from_state.attributes.area_id or '') | select('match', 'media_player[.]') | list }}"
+  now: "{{ area_entities(trigger.to_state.attributes.area_id or '') | select('match', 'media_player[.]') | list }}"
+conditions:
+  - condition: template
+    value_template: >
+      {{ was | count > 0 and now | count > 0 and was[0] != now[0]
+         and is_state(was[0], 'playing') }}
+actions:
+  - action: media_player.join
+    target:
+      entity_id: "{{ was[0] }}"
+    data:
+      group_members: "{{ [now[0]] }}"
+  - delay: "00:00:30"
+  - condition: template
+    value_template: >
+      {{ state_attr('sensor.alex_smith_sextant_person_room', 'area_id')
+         != trigger.from_state.attributes.area_id }}
+  - action: media_player.unjoin
+    target:
+      entity_id: "{{ was[0] }}"
+mode: parallel
+```
+
+It takes the first media player of each area, so give a room with a TV and
+a speaker its own choice. Grouping is the speaker system's own:
+`media_player.join` works between speakers of one system that supports it
+(Sonos, for one). Try the last step with yours, and take it out if the
+music stops when the first speaker leaves the group.
+
 ### Nobody left in a room
 
 A helper that is on while anyone is in the kitchen, from every person's room

@@ -56,15 +56,15 @@ on a floor plan.
 | Knows which room each person or thing is in | ✅ | ✅ | ✅ | ✅ | 🟡 from other trackers | ❌ |
 | Knows which floor | ✅ | ✅ | ❌ | ✅ with its Companion app | 🟡 groups rooms by floor | ❌ |
 | Spots inside a room (sofa, bed) | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Room sensor that says *who* is inside | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| Combines motion, mmWave, doors and TVs per room | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ |
+| Room sensor that says *who* is inside | ✅ | 🟡 a count per room, in the 0.3 beta | ❌ | ❌ | ❌ | ❌ |
+| Combines motion, mmWave, doors and TVs per room | ✅ | 🟡 presence sensors and camera counts, in the 0.3 beta | ❌ | ❌ | ✅ | ✅ |
 | Set up by drawing your house in Home Assistant | ✅ | ✅ | ❌ | 🟡 separate web app | ❌ | ❌ |
-| Switches lights, heating and media itself | ❌ on purpose¹ | ❌ | ❌ | 🟡 a relay on the node | ✅ | ❌ |
+| Switches lights, heating and media itself | ❌ on purpose¹ | 🟡 lights and music after asking, in the 0.3 beta | ❌ | 🟡 a relay on the node | ✅ | ❌ |
 | Room occupancy as a learned percentage | ❌ on purpose² | ❌ | ❌ | ❌ | ❌ | ✅ |
 | Live tracking without Home Assistant | ❌ on purpose³ | ❌ | ❌ | ✅ over MQTT | ❌ | ❌ |
 
 ✅ yes · 🟡 partly · ❌ no. Based on each project's own README in November
-2026.
+2026, and for BPS on the release notes of its 0.3.0 beta as well.
 
 Left out on purpose:
 
