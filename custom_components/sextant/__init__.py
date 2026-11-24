@@ -4861,6 +4861,15 @@ def _ask_last_charge(hass, ent, sensor, now):
     hass.async_create_task(ask())
 
 
+def _row_xy_m(layout, row):
+    """A published row's position in metres on its floor, or None."""
+    floor, cords = row.get("floor"), row.get("cords")
+    scale = next((f.get("scale") for f in layout.get("floor") or [] if f.get("name") == floor), None)
+    if not floor or not cords or not scale:
+        return None
+    return float(cords[0]) / float(scale), float(cords[1]) / float(scale)
+
+
 def _arrived_at(hass, layout, ent, row, now):
     """When this thing arrived within a couple of metres of where it is now.
 
@@ -4871,11 +4880,10 @@ def _arrived_at(hass, layout, ent, row, now):
     answer is kept. A history with nothing to say yet (it loads a little
     after the first cycle) is asked again rather than taken as "just now".
     """
-    floor, cords = row.get("floor"), row.get("cords")
-    scale = next((f.get("scale") for f in layout.get("floor") or [] if f.get("name") == floor), None)
-    if not floor or not cords or not scale:
+    floor, xy = row.get("floor"), _row_xy_m(layout, row)
+    if not xy:
         return now
-    x, y = float(cords[0]) / float(scale), float(cords[1]) / float(scale)
+    x, y = xy
     st = _arrivals.get(ent)
     if st is not None and st["floor"] == floor and math.hypot(x - st["x"], y - st["y"]) <= persons_mod.STAY_RADIUS_M:
         st["away_since"] = None
@@ -5401,7 +5409,7 @@ def _update_person_sensors(hass):
                 _last_charging.pop(ent, None)   # no sensor named any more: nothing holds it
             candidates.append({
                 "ent": ent, "cls": classes.get(ent), "updated": _graced(row.get("updated"), now),
-                "arrived": arrived,
+                "arrived": arrived, "xy_m": _row_xy_m(layout, row),
                 "zone": row.get("zone"), "zone_raw": row.get("zone_raw"), "sub_zone": row.get("sub_zone"), "floor": row.get("floor"),
                 "outside": bool(row.get("outside")), **{k: row.get(k) for k in persons_mod.FIT_KEYS},
                 "area": room_area(layout, row.get("floor"), row.get("zone")),
