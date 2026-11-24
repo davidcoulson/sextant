@@ -38,6 +38,7 @@ COVERED_FRAC = 0.85     # a room is covered when this share of its points pass b
 MAX_ADD = 2
 WEAK_M = 3.0            # a proxy this far off, and twice the room's median, is a weak proxy
 GOOD_MEDIAN_M = 2.0     # a room measuring this well gets no coverage advice
+USE_STEP_MAX_S = 300.0  # the longest cycle the options allow; a longer wait for a person's next log line is a restart or the log off
 
 
 def _ring(zone):
@@ -152,28 +153,33 @@ def _stats(errors):
 def room_usage(lines):
     """How much each room is used, from person log lines (person_log.rows), oldest first.
 
-    {"hours": the span of the lines, "rooms": {(floor, room): (share, bounces)}}.
-    A line is one person for one cycle, so a room's share of the lines that
-    name a place is its share of the time people were placed (Outside is a
-    place too, on no floor plan). A bounce
-    (replay.bounce_pairs) counts for both its rooms: the log cannot say which
-    of the two the person was in.
+    {"hours": the span of the lines, "rooms": {(floor, room): (seconds, bounces)}}.
+    A line's place holds until the person's next line, so the seconds do not
+    depend on how often the cycle ran (the Live page can speed it up). A
+    place can be Outside, which is on no plan. A bounce (replay.bounce_pairs)
+    counts for both its rooms: the log cannot say which of the two the
+    person was in.
     """
-    series, cycles, first, last = {}, Counter(), None, None
+    series, prev, secs, first, last = {}, {}, Counter(), None, None
     for r in lines:
-        place = tuple(r["place"]) if r.get("place") else None   # (room, floor)
-        last = r["t"]
-        first = last if first is None else first
-        seq = series.setdefault(r.get("p"), [])
-        if not seq or seq[-1][2] != place:
+        try:
+            t, person, place = float(r["t"]), str(r["p"]), r["place"]
+            if place is not None:
+                room, floor = place
+                place = (str(room), str(floor))
+        except (KeyError, TypeError, ValueError):
+            continue   # from before lines had a place, or not one this integration wrote
+        first, last = (t if first is None else first), t
+        was = prev.get(person)
+        if was and was[1]:
+            secs[was[1]] += min(max(t - was[0], 0.0), USE_STEP_MAX_S)
+        if not was or was[1] != place:
             # Floor None: a bounce across floors counts too (the place carries its floor).
-            seq.append((last, None, place))
-        if place:
-            cycles[place] += 1
-    total = sum(cycles.values())
+            series.setdefault(person, []).append((t, None, place))
+        prev[person] = (t, place)
     bounced = Counter(p for pair in bounce_pairs(switches(series)) for p in pair)
-    return {"hours": round((last - first) / 3600.0, 1) if total else 0.0,
-            "rooms": {(floor, room): (n / total, bounced[(room, floor)]) for (room, floor), n in cycles.items()}}
+    return {"hours": 0.0 if first is None else round((last - first) / 3600.0, 1),
+            "rooms": {(floor, room): (s, bounced[(room, floor)]) for (room, floor), s in secs.items() if s > 0}}
 
 
 def advise(layout, selftest, unplaced=None, usage=None):
@@ -182,8 +188,9 @@ def advise(layout, selftest, unplaced=None, usage=None):
     ``layout`` is the stored layout, ``selftest`` a run_selftest result (its
     rows carry entity, floor, room, error_m), ``unplaced`` a list of
     {slug, name} for proxies that are heard but placed on no floor,
-    ``usage`` a room_usage result. A room the usage does not name gets None
-    for its share and bounces: no data is not zero.
+    ``usage`` a room_usage result. A room's share is of the time spent in
+    the rooms listed here, so Outside is in neither side of it. A room the
+    usage does not name gets None for its share and bounces: no data is not zero.
     """
     used = (usage or {}).get("rooms") or {}
     solved = [r for r in selftest.get("receivers", []) if isinstance(r.get("error_m"), (int, float))]
@@ -204,10 +211,8 @@ def advise(layout, selftest, unplaced=None, usage=None):
             worst = max(errs, key=errs.get) if errs else None
             grid = _grid(poly, scale)
             share, d3, gaps = _covered_share(grid, positions, scale)
-            time_share, bounced = used.get((name, room), (None, None))
             row = {
                 "floor": name, "room": room, "area_m2": round(poly.area / scale ** 2, 1),
-                "time_share": None if time_share is None else round(time_share, 3), "bounces": bounced,
                 "proxies": len(inside), "solved": len(errs), "median_m": median_m, "max_m": max_m,
                 "worst": worst, "covered": round(share, 2),
                 "third_proxy_m": round(float(np.clip(d3, 0, 99).max()), 1) if len(d3) else None,
@@ -264,12 +269,16 @@ def advise(layout, selftest, unplaced=None, usage=None):
                         row["add"] = 1
                         row["note"] += "; a fourth proxy on the far wall gives the room another opinion"
             rows.append(row)
+    listed = sum(used[k][0] for k in {(r["floor"], r["room"]) for r in rows} & used.keys())
+    for r in rows:
+        secs, r["bounces"] = used.get((r["floor"], r["room"]), (None, None))
+        r["time_share"] = None if secs is None else round(secs / listed, 3)
     rank = {"no proxy": 0, "weak proxy": 1, "one-sided": 2, "coverage": 2, "noisy": 3, "ok": 4}
     # Rooms that need something first, most used first: poor coverage where
     # people live comes before a closet with no proxy. With no usage this is
     # worst issue first, as it was.
     rows.sort(key=lambda r: (r["issue"] == "ok", -(r["time_share"] or 0), rank[r["issue"]], -(r["median_m"] or 0), r["floor"], r["room"]))
-    # Proxies heard but placed nowhere: hand each the next open spot, worst room first.
+    # Proxies heard but placed nowhere: hand each the next open spot, in the rows' order.
     unplaced = [dict(u) for u in (unplaced or [])]
     open_spots = [(r["floor"], r["room"], s) for r in rows for s in r["spots"]]
     for u, (fl, room, spot) in zip(unplaced, open_spots):

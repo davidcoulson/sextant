@@ -46,8 +46,9 @@ def append(dirpath, rows, hours, now=None):
 def rows(dirpath, since=0.0):
     """Every logged line from ``since`` on, oldest first, one at a time.
     Blocking: run it in an executor."""
+    oldest = time.strftime("%Y-%m-%dT%HZ.jsonl", time.gmtime(since))   # an earlier hour's file holds nothing this late
     try:
-        names = sorted(n for n in os.listdir(dirpath) if _NAME.match(n))
+        names = sorted(n for n in os.listdir(dirpath) if _NAME.match(n) and n >= oldest)
     except OSError:
         return
     for n in names:
@@ -58,7 +59,7 @@ def rows(dirpath, since=0.0):
                         r = json.loads(line)
                     except ValueError:
                         continue   # a line cut short by a restart
-                    if isinstance(r, dict) and r.get("t", 0) >= since:
+                    if isinstance(r, dict) and isinstance(r.get("t"), (int, float)) and r["t"] >= since:
                         yield r
         except OSError:
             continue   # dropped by append() since the listing

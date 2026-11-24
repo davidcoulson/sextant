@@ -17,10 +17,9 @@ Each room also shows how much it is used, from the person log (the last 48
 hours unless `person_log_hours` on the [Tuning](tuning.md) page says
 otherwise):
 
-- **Time here**: the room's share of the time people were placed in the
-  house. Pets that are tracked as persons count too. Time away, or home with
-  no room known, is left out; time Outside is counted, so the rooms need not
-  add up to 100%.
+- **Time here**: the room's share of the time people spent in the rooms
+  listed. Pets that are tracked as persons count too. Time away, Outside, or
+  home with no room known, is left out.
 - **Bounces**: how many times someone was put into this room, or out of it,
   and straight back within two minutes. A person rarely does that; a
   position that cannot settle between two rooms does. A bounce counts for
