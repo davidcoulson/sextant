@@ -149,7 +149,7 @@ All of these are on the Tuning page, or set with `sextant.set_tuning`. See
 | `mmwave_tick_s` | 0.5 s (0.2 to 15) | How often the radars are read. |
 | `stale_after_secs` | 120 s (15 to 3600) | A thing not heard for this long is `quiet`. It still counts for its room. |
 | `away_after_secs` | 900 s (60 to 86400) | A thing not heard for this long is `away`, and no longer counts for any room. |
-| `exit_quiet_secs` | 120 s (0 to 3600) | Someone who goes quiet in a room with an outside door reads Outside after this long. |
+| `exit_quiet_secs` | 120 s (0 to 3600) | Someone who goes quiet in a room with an outside door reads Outside after this long (not a cat). |
 | `wifi_confirm_secs` | 300 s (0 to 3600) | How long Wi-Fi must say "home" before it starts a visit for someone Bluetooth has lost. |
 | `sensor_gone_secs` | 21600 s, 6 hours (600 to 2592000) | When an unavailable room sensor gets a Repair. |
 | `sensor_stuck_secs` | 86400 s, 24 hours (3600 to 2592000) | When a binary sensor stuck `on` gets a Repair. |

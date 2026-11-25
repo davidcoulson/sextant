@@ -25,14 +25,14 @@ def _tracker(value, lat, ago):
                                  last_updated=when, last_reported=when, last_changed=when)
 
 
-def _house(tmp_path, monkeypatch, tuning=None, wifi_view=None, wifi_clients=None):
+def _house(tmp_path, monkeypatch, tuning=None, wifi_view=None, wifi_clients=None, floor=(), cls="phone"):
     """A house with one person, last heard in the Kitchen five minutes ago
     (quiet, the room held): ``(states, cycle)``, cycle() running the person
     cycle and returning (state, source, tracker, the events fired)."""
     hass = make_hass(tmp_path)
     hass.config.latitude, hass.config.longitude = 51.50, -0.10
     asyncio.new_event_loop().run_until_complete(st.save_layout(hass, {
-        "floor": [], "thing_owners": {"phone": PERSON}, "thing_classes": {"phone": "phone"},
+        "floor": list(floor), "thing_owners": {"phone": PERSON}, "thing_classes": {"phone": cls},
         "person_trackers": {PERSON: [APP, OTHER]}, "tuning": {"person_log_hours": 0.0, **(tuning or {})}}))
     states, written, heard = {}, {}, time.time() - 300
     hass.states = types.SimpleNamespace(get=lambda e: states.get(e))
@@ -54,7 +54,7 @@ def _house(tmp_path, monkeypatch, tuning=None, wifi_view=None, wifi_clients=None
     def cycle():
         hass.events.clear()
         sextant._update_person_sensors(hass)
-        state, attrs = written[LOCATION]
+        state, attrs = written.get(LOCATION) or written[LOCATION.replace("_person_", "_pet_")]
         return state, attrs["source"], attrs["tracker"], [name for name, _ in hass.events]
 
     return states, cycle
@@ -150,3 +150,13 @@ def test_a_source_that_drops_out_while_it_says_home_keeps_nobody_home(tmp_path, 
     assert cycle()[1:3] == ("gps", APP)
     states[APP] = _tracker("unavailable", 51.50, 1)
     assert cycle() == ("away", "none", None, LEFT)
+
+
+def test_quiet_in_a_room_with_an_outside_door_is_outside_for_a_phone_or_a_dog_but_not_for_a_cat(tmp_path, monkeypatch):
+    """A cat does not let itself out: its tag going quiet by the front door is a
+    cat asleep on the tag, held in the room like anywhere else."""
+    door = [{"name": "Ground Floor", "zones": [{"entity_id": "Kitchen", "exit": True}]}]
+    for cls, state in (("phone", "Outside"), ("dog", "Outside"), ("cat", "Kitchen")):
+        (tmp_path / cls).mkdir()
+        _states, cycle = _house(tmp_path / cls, monkeypatch, floor=door, cls=cls)
+        assert cycle()[:2] == (state, "held"), cls
