@@ -102,7 +102,11 @@ it is in the last ten minutes, beats one that has sat still longer (the
 phone left on the couch is not you), and among those a pet's own tag, a
 watch, then a phone. When nothing is on the move, the one that arrived
 where it is most recently wins - the phone you carried downstairs, not the
-watch on its charger since last night.
+watch on its charger since last night. One exception: a watch placed at
+least as well as that phone still wins, since a phone is set down more
+often than a watch is taken off - unless the phone went to another room
+when the watch had already been still for four hours (`watch_still_secs`):
+that watch was left behind.
 
 A thing can also name an **On-charger sensor** - its battery state from
 iCloud3, the companion app, or any `binary_sensor` that is on while it

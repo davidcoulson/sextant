@@ -255,12 +255,12 @@ def settled_since(points, here, radius=STAY_RADIUS_M, confirm_secs=MOVE_CONFIRM_
     return since
 
 
-def pick(things, now: float, stale_after: float):
+def pick(things, now: float, stale_after: float, watch_still: float = 14400.0):
     """The thing that speaks for its owner now, or None.
 
     ``things`` are dicts: ent, cls, updated (epoch s),
     arrived (epoch s: when it came within STAY_RADIUS_M of where it is now),
-    zone, sub_zone, floor.
+    zone, sub_zone, floor. ``watch_still`` is the watch_still_secs tuning.
     """
     fresh = [
         t for t in things
@@ -282,7 +282,13 @@ def pick(things, now: float, stale_after: float):
         # Everything is stationary: a watch placed at least as well as the phone
         # beats it, since the phone is likelier to have been set down.
         pconf = best.get("conf") or 0.0
-        watches = [t for t in fresh if t.get("cls") == "watch" and t.get("conf") is not None and t["conf"] >= pconf]
+        # ...unless the phone went to another room when the watch had already lain
+        # still for watch_still: the watch was left behind, the phone was carried.
+        went = best.get("arrived")
+        asked = watch_still > 0 and isinstance(went, (int, float))
+        watches = [t for t in fresh if t.get("cls") == "watch" and t.get("conf") is not None and t["conf"] >= pconf
+                   and not (asked and (t.get("zone"), t.get("floor")) != (best.get("zone"), best.get("floor"))
+                            and isinstance(t.get("arrived"), (int, float)) and t["arrived"] <= went - watch_still)]
         if watches:
             return min(watches, key=key)
     return best
