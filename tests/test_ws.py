@@ -454,6 +454,8 @@ def test_advice_reports_rooms_and_unplaced_scanners(tmp_path, monkeypatch):
     rooms = {r["room"]: r for r in out["rooms"]}
     assert rooms["Far"]["issue"] == "no proxy" and rooms["Far"]["add"] >= 1 and out["rooms"][0]["room"] == "Far"
     assert rooms["Hall"]["proxies"] == 3 and out["summary"]["rooms"] == 2
+    # The error map rides along: no calibration pairs here, so the default noise line.
+    assert out["model"]["calibrated"] is False and out["maps"]["F"]["stars"][0]["room"] == "Far"
     # No plan at all is a clear error, not a traceback.
     empty = _hass_with_layout(tmp_path / "empty")
     run(ws.ws_advice(empty, conn, {"id": 31, "type": "sextant/advice"}))

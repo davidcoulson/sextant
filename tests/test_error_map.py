@@ -172,3 +172,14 @@ def test_no_history_no_purple_from_history():
     pin = {"entity": "person.d", "floor": "F", "x": 250.0, "y": 150.0, "error_m": 4.0}
     out = error_map.bad_squares(_LAYOUT, {}, [pin], [])
     assert [s["kinds"] for s in out["F"]] == [{"pin": 1}]
+
+
+def test_floor_maps_covers_scaled_floors_and_skips_the_rest():
+    import json
+    layout = {"floor": [_floor(_HALL3, _THREE_ROOMS), {"name": "Unscaled", "scale": None, "zones": _THREE_ROOMS, "receivers": []}]}
+    pin = {"entity": "person.d", "floor": "F", "x": 250.0, "y": 150.0, "error_m": 4.0}
+    out = error_map.floor_maps(layout, [], {"cat": _jump(0) + _jump(600) + _jump(3600)}, [pin], [])
+    assert list(out["maps"]) == ["F"] and out["model"] == {"a": 0.6, "b": 0.0, "pairs": 0, "calibrated": False}
+    assert {k for s in out["maps"]["F"]["bad"] for k in s["kinds"]} == {"pin", "jump"}
+    assert out["maps"]["F"]["stars"]
+    json.dumps(out, allow_nan=False)

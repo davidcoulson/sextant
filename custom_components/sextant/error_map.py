@@ -281,3 +281,18 @@ def bad_squares(layout, tracks, pins, weak):
         out[floor].append({"x": round(ix * size, 1), "y": round(iy * size, 1), "size": round(size, 1),
                            "kinds": dict(+k), "things": sorted(c["things"]), "hours": len(c["hours"])})
     return dict(out)
+
+
+def floor_maps(layout, pairs, tracks, pins, weak):
+    """The Advice page's maps: one noise fit for the house, a map per floor with a scale."""
+    noise = fit_noise(pairs)
+    tracks = {k: list(v) for k, v in tracks.items()}
+    seconds = room_seconds(layout, tracks)
+    bad = bad_squares(layout, tracks, pins, weak)
+    maps = {}
+    for floor in (layout or {}).get("floor") or []:
+        m = floor_map(floor, noise, seconds)
+        if m is not None:
+            maps[floor.get("name")] = {**m, "bad": bad.get(floor.get("name"), [])}
+    model = {"a": round(noise["a"], 3), "b": round(noise["b"], 4), "pairs": noise["pairs"], "calibrated": noise["calibrated"]}
+    return {"model": model, "maps": maps}
