@@ -115,3 +115,60 @@ def test_room_seconds_caps_long_steps_and_skips_gaps():
     track = [(0.0, "F", 1.0, 1.0, 0), (3600.0, "F", 1.0, 1.0, 0), (3610.0, "F", 1.0, 1.0, 2), (3620.0, "F", 1.0, 1.0, 0),
              (3630.0, "F", 9.0, 9.0, 0), (3640.0, "Elsewhere", 1.0, 1.0, 0), (3650.0, "F", 1.0, 1.0, 1)]
     assert error_map.room_seconds(layout, {"cat": track}) == {("F", "Hall"): 620.0}
+
+
+_LAYOUT = {"floor": [_floor([], [_rect("Hall", 0, 0, 1000, 400)])]}
+
+
+def _flip(t, back_x=2.6):
+    # Leaves F for G and is back on F 60 s later; spaced so G never flips back.
+    return [(t, "F", 2.5, 1.5, 0), (t + 30, "G", 2.5, 1.5, 1), (t + 60, "F", back_x, 1.5, 1)]
+
+
+def _jump(t, back_x=2.7):
+    return [(t, "F", 2.5, 1.5, 0), (t + 10, "F", 6.5, 1.5, 0), (t + 40, "F", back_x, 1.5, 0)]
+
+
+def test_a_pin_three_metres_off_turns_its_square_purple():
+    pin = {"entity": "person.d", "floor": "F", "x": 250.0, "y": 150.0}
+    out = error_map.bad_squares(_LAYOUT, {}, [{**pin, "error_m": 3.0}], [])
+    assert out == {"F": [{"x": 200.0, "y": 100.0, "size": 100.0, "kinds": {"pin": 1}, "things": ["person.d"], "hours": 0}]}
+    assert error_map.bad_squares(_LAYOUT, {}, [{**pin, "error_m": 2.9}], []) == {}
+
+
+def test_a_weak_proxy_turns_its_square_purple():
+    out = error_map.bad_squares(_LAYOUT, {}, [], [{"entity": "b", "floor": "F", "x": 50.0, "y": 50.0, "error_m": 6.5}])
+    assert out["F"][0]["kinds"] == {"proxy": 1} and (out["F"][0]["x"], out["F"][0]["y"]) == (0.0, 0.0)
+
+
+def test_floor_flips_need_three_across_two_hours():
+    one_hour = _flip(0) + _flip(600) + _flip(1200)
+    assert error_map.bad_squares(_LAYOUT, {"cat": one_hour}, [], []) == {}
+    two_hours = _flip(0) + _flip(600) + _flip(3600)
+    sq = error_map.bad_squares(_LAYOUT, {"cat": two_hours}, [], [])["F"]
+    assert len(sq) == 1 and sq[0]["kinds"] == {"flip": 3} and sq[0]["hours"] == 2 and sq[0]["things"] == ["cat"]
+    assert (sq[0]["x"], sq[0]["y"]) == (200.0, 100.0)
+
+
+def test_a_flip_that_does_not_come_back_near_is_not_one():
+    far = _flip(0, 7.5) + _flip(600, 7.5) + _flip(3600, 7.5)
+    assert error_map.bad_squares(_LAYOUT, {"cat": far}, [], []) == {}
+
+
+def test_jumps_out_and_back_count_and_a_real_walk_does_not():
+    out_and_back = _jump(0) + _jump(600) + _jump(3600)
+    sq = error_map.bad_squares(_LAYOUT, {"cat": out_and_back}, [], [])["F"]
+    assert len(sq) == 1 and sq[0]["kinds"] == {"jump": 3} and sq[0]["hours"] == 2
+    walk = _jump(0, 6.6) + _jump(600, 6.6) + _jump(3600, 6.6)
+    assert error_map.bad_squares(_LAYOUT, {"cat": walk}, [], []) == {}
+
+
+def test_flips_and_jumps_from_different_things_pool_in_one_square():
+    sq = error_map.bad_squares(_LAYOUT, {"cat": _flip(0) + _flip(600), "dog": _jump(3600)}, [], [])["F"]
+    assert sq[0]["kinds"] == {"flip": 2, "jump": 1} and sq[0]["things"] == ["cat", "dog"]
+
+
+def test_no_history_no_purple_from_history():
+    pin = {"entity": "person.d", "floor": "F", "x": 250.0, "y": 150.0, "error_m": 4.0}
+    out = error_map.bad_squares(_LAYOUT, {}, [pin], [])
+    assert [s["kinds"] for s in out["F"]] == [{"pin": 1}]

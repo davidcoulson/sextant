@@ -16,7 +16,7 @@ numpy and shapely, so it is testable without Home Assistant.
 from __future__ import annotations
 
 import math
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 import numpy as np
 import shapely
@@ -37,6 +37,12 @@ ROOM_FLOOR_S = 600.0                # every room counts a little, visited or not
 MAX_STARS = 2
 MIN_GAIN = 0.03                     # a star must cut the weighted error by this share
 CHUNK = 64
+# Measured bad spots, pooled in squares of BAD_CELL_M.
+BAD_CELL_M = 1.0
+PIN_BAD_M = 3.0                     # a pin read this far off
+FLIP_BACK_S, FLIP_NEAR_M = 180.0, 3.0   # off the floor and back, near where it left
+JUMP_M, JUMP_BACK_S, JUMP_NEAR_M = 4.0, 60.0, 1.5
+MIN_EVENTS, MIN_HOURS = 3, 2        # flips and jumps: repeated, not one bad afternoon
 
 
 def fit_noise(pairs):
@@ -213,3 +219,65 @@ def floor_map(floor, noise, seconds):
         "err_after": [round(float(v), 1) for v in cur],
         "stars": stars, "note": note,
     }
+
+
+def _events(pts):
+    """(kind, t, floor, x_m, y_m) for each floor flip and jump in one thing's track."""
+    if len(pts) < 3:
+        return []
+    f = np.array([p[1] for p in pts], dtype=object)
+    x = np.array([p[2] for p in pts], dtype=float)
+    y = np.array([p[3] for p in pts], dtype=float)
+    trig = np.nonzero((f[1:] != f[:-1]) | (np.hypot(np.diff(x), np.diff(y)) >= JUMP_M))[0] + 1
+    out = []
+    for i in trig:
+        t0, f0, x0, y0, _g = pts[i - 1]
+        flip = pts[i][1] != f0
+        back, near = (FLIP_BACK_S, FLIP_NEAR_M) if flip else (JUMP_BACK_S, JUMP_NEAR_M)
+        for tj, fj, xj, yj, _gj in pts[i + 1:]:
+            if tj - t0 > back:
+                break
+            if fj != f0:
+                continue
+            if math.hypot(xj - x0, yj - y0) <= near:
+                out.append(("flip" if flip else "jump", t0, f0, x0, y0))
+                break
+            if flip:
+                break   # back on the floor somewhere else: it walked
+    return out
+
+
+def bad_squares(layout, tracks, pins, weak):
+    """{floor: [purple square]} from pins, weak proxies, and flips and jumps in the tracks.
+
+    pins and weak are {entity, floor, x, y (plan px), error_m}; a square is
+    {x, y (top-left, plan px), size, kinds: {kind: count}, things, hours}.
+    """
+    scales = {f.get("name"): scale for f, scale, _rooms in _floors(layout)}
+    cells = defaultdict(lambda: {"kinds": Counter(), "things": set(), "hours": set()})
+
+    def add(floor, x_m, y_m, kind, thing, t=None):
+        c = cells[(floor, math.floor(x_m / BAD_CELL_M), math.floor(y_m / BAD_CELL_M))]
+        c["kinds"][kind] += 1
+        c["things"].add(thing)
+        if t is not None:
+            c["hours"].add(int(t // 3600))
+
+    for kind, items in (("pin", [p for p in pins if (p.get("error_m") or 0) >= PIN_BAD_M]), ("proxy", weak)):
+        for p in items:
+            scale = scales.get(p.get("floor"))
+            if scale:
+                add(p["floor"], p["x"] / scale, p["y"] / scale, kind, p["entity"])
+    for thing, pts in tracks.items():
+        for kind, t, floor, x, y in _events(list(pts)):
+            if floor in scales:
+                add(floor, x, y, kind, thing, t)
+    out = defaultdict(list)
+    for (floor, ix, iy), c in sorted(cells.items()):
+        k = c["kinds"]
+        if not (k["pin"] or k["proxy"] or (k["flip"] + k["jump"] >= MIN_EVENTS and len(c["hours"]) >= MIN_HOURS)):
+            continue
+        size = BAD_CELL_M * scales[floor]
+        out[floor].append({"x": round(ix * size, 1), "y": round(iy * size, 1), "size": round(size, 1),
+                           "kinds": dict(+k), "things": sorted(c["things"]), "hours": len(c["hours"])})
+    return dict(out)
