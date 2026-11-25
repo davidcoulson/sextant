@@ -25,20 +25,24 @@ def _tracker(value, lat, ago):
                                  last_updated=when, last_reported=when, last_changed=when)
 
 
-def _house(tmp_path, monkeypatch, tuning=None, wifi_view=None, wifi_clients=None, floor=(), cls="phone"):
+def _house(tmp_path, monkeypatch, tuning=None, wifi_view=None, wifi_clients=None, floor=(), cls="phone", watch=False):
     """A house with one person, last heard in the Kitchen five minutes ago
     (quiet, the room held): ``(states, cycle)``, cycle() running the person
     cycle and returning (state, source, tracker, the events fired)."""
     hass = make_hass(tmp_path)
     hass.config.latitude, hass.config.longitude = 51.50, -0.10
     asyncio.new_event_loop().run_until_complete(st.save_layout(hass, {
-        "floor": list(floor), "thing_owners": {"phone": PERSON}, "thing_classes": {"phone": cls},
+        "floor": list(floor), "thing_owners": {"phone": PERSON, **({"watch": PERSON} if watch else {})}, "thing_classes": {"phone": cls, **({"watch": "watch"} if watch else {})},
         "person_trackers": {PERSON: [APP, OTHER]}, "tuning": {"person_log_hours": 0.0, **(tuning or {})}}))
     states, written, heard = {}, {}, time.time() - 300
     hass.states = types.SimpleNamespace(get=lambda e: states.get(e))
+    if watch:   # a watch left on the charger: heard right now, at rest long before the phone left
+        hass.data.setdefault(sextant.DOMAIN, {})["apitricords"] = [
+            {"ent": "watch", "updated": time.time(), "zone": "Basement", "sub_zone": "unknown", "floor": "Ground Floor"}]
+        monkeypatch.setattr(sextant, "_arrived_at", lambda *a: time.time() - 5000)
     visits = {PERSON: {"arrived": heard - 9000, "departed": None, "via": "ble"}}
     for name, value in {
-        "_last_seen": {"phone": {"updated": heard}},
+        "_last_seen": {"phone": {"updated": heard}, **({"watch": {"updated": time.time()}} if watch else {})},
         "_person_last": {PERSON: (dict(KITCHEN, updated=heard, arrived=heard - 600), [])},
         "_person_visits": visits, "_event_visits": dict(visits), "_events_from": 0.0,
         "_gps_fixes": {}, "_gps_asked": {}, "_exit_door_opened": {}, "_exit_out": {}, "_person_sleep": {}, "_person_places": {}, "_person_log_key": {},
@@ -197,3 +201,13 @@ def test_a_door_window_shorter_than_the_quiet_wait_still_sees_an_opening_during_
     states, cycle = _house(tmp_path, monkeypatch, floor=floor, tuning={"exit_door_secs": 60.0})
     monkeypatch.setitem(sextant._exit_door_opened, door, time.time() - 200)   # 100 s after they were last heard
     assert cycle()[:2] == ("Outside", "held")
+
+
+def test_a_watch_left_at_home_does_not_hold_the_departure_the_phone_showed(tmp_path, monkeypatch):
+    """The watch stays heard in the house, so it must not stand for the last sighting: the fix
+    down the road is newer than the phone's, and the person is away at once, not 15 minutes later."""
+    states, cycle = _house(tmp_path, monkeypatch, watch=True)
+    states.update({APP: _tracker("home", 51.50, 600), OTHER: _tracker("home", 51.50, 600)})
+    cycle()
+    states[APP] = _tracker("not_home", 51.54, 30)
+    assert cycle() == ("away", "gps", APP, LEFT)
