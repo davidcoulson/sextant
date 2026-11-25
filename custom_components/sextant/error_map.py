@@ -37,6 +37,7 @@ ROOM_FLOOR_S = 600.0                # every room counts a little, visited or not
 MAX_STARS = 2
 MIN_GAIN = 0.03                     # a star must cut the weighted error by this share
 CHUNK = 64
+CHUNK_CELLS = 250_000      # candidates x cells tried at once: about 30 MB of temporaries
 # Measured bad spots, pooled in squares of BAD_CELL_M.
 BAD_CELL_M = 1.0
 PIN_BAD_M = 3.0                     # a pin read this far off
@@ -71,7 +72,7 @@ def fit_noise(pairs):
 
 
 def _info(gx, gy, proxies, a, b):
-    """Fisher terms (j00, j01, j11) at points gx, gy (metres).
+    """Fisher terms (j00, j01, j11) and proxies in range (n) at points gx, gy (metres).
 
     A proxy's x, y may be arrays broadcastable against gx: that tries many
     candidate spots at once.
@@ -79,6 +80,7 @@ def _info(gx, gy, proxies, a, b):
     j00 = np.zeros(np.broadcast(gx, gy).shape)
     j01 = np.zeros_like(j00)
     j11 = np.zeros_like(j00)
+    n = np.zeros_like(j00)
     for px, py, k in proxies:
         dx, dy = px - gx, py - gy
         d = np.maximum(np.hypot(dx, dy), MIN_D_M)
@@ -88,14 +90,21 @@ def _info(gx, gy, proxies, a, b):
         j00 = j00 + w * ux * ux
         j01 = j01 + w * ux * uy
         j11 = j11 + w * uy * uy
-    return j00, j01, j11
+        n = n + (d <= MAX_RANGE_M)
+    return j00, j01, j11, n
 
 
-def _err(j00, j01, j11):
+def _err(j00, j01, j11, n):
+    # Two proxies bound a point on paper, but the solver will not place from fewer than three.
     det = j00 * j11 - j01 ** 2
     with np.errstate(divide="ignore", invalid="ignore"):
         e = np.sqrt((j00 + j11) / det)
-    return np.minimum(np.where(np.isfinite(e), e, ERR_CAP_M), ERR_CAP_M)
+    return np.minimum(np.where(np.isfinite(e) & (n >= 3), e, ERR_CAP_M), ERR_CAP_M)
+
+
+def _chunk(cells):
+    """Candidates tried at once over this many cells: CHUNK, fewer on a big floor."""
+    return max(1, min(CHUNK, CHUNK_CELLS // max(1, cells)))
 
 
 def error_field(gx, gy, proxies, a, b):
@@ -106,19 +115,20 @@ def error_field(gx, gy, proxies, a, b):
 def _best_candidate(gx, gy, info, cand_x, cand_y, k_new, w, cur, a, b):
     """Index of the candidate that lowers sum(w * err) most, its gain, its field.
 
-    Vectorised over CHUNK candidates at a time: a few hundred numpy calls
-    rather than one small call per candidate.
+    Vectorised over up to CHUNK candidates at a time: a few hundred numpy
+    calls rather than one small call per candidate.
     """
     best_gain, best_i, best_e = -1.0, None, None
-    j00, j01, j11 = info
-    for s in range(0, len(cand_x), CHUNK):
-        cx, cy = cand_x[s:s + CHUNK, None], cand_y[s:s + CHUNK, None]
-        n00, n01, n11 = _info(gx[None, :], gy[None, :], [(cx, cy, k_new)], a, b)
-        e = _err(j00[None, :] + n00, j01[None, :] + n01, j11[None, :] + n11)
+    j00, j01, j11, n = info
+    step = _chunk(len(gx))
+    for s in range(0, len(cand_x), step):
+        cx, cy = cand_x[s:s + step, None], cand_y[s:s + step, None]
+        n00, n01, n11, nn = _info(gx[None, :], gy[None, :], [(cx, cy, k_new)], a, b)
+        e = _err(j00[None, :] + n00, j01[None, :] + n01, j11[None, :] + n11, n[None, :] + nn)
         gains = ((cur[None, :] - e) * w[None, :]).sum(axis=1)
         i = int(np.argmax(gains))
         if gains[i] > best_gain:
-            best_gain, best_i, best_e = float(gains[i]), s + i, e[i]
+            best_gain, best_i, best_e = float(gains[i]), s + i, e[i].copy()
     return best_i, best_gain, best_e
 
 

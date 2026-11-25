@@ -48,6 +48,20 @@ def test_two_proxies_or_fewer_in_range_hit_the_cap():
     assert e[1] == error_map.ERR_CAP_M and np.isfinite(e).all()
 
 
+def test_fewer_than_three_proxies_in_range_hit_the_cap():
+    # Two proxies either side of a point pin it down on paper, but the solver needs three.
+    e = error_map.error_field(np.array([3.0, 3.0]), np.array([3.0, 1.0]), [(0, 0, 1.0), (6, 0, 1.0)], 0.2, 0.0)
+    assert list(e) == [error_map.ERR_CAP_M] * 2
+    far_third = error_map.error_field(np.array([3.0]), np.array([3.0]), [(0, 0, 1.0), (6, 0, 1.0), (3, 30, 1.0)], 0.2, 0.0)
+    assert far_third[0] == error_map.ERR_CAP_M
+
+
+def test_big_floors_try_fewer_candidates_at_once():
+    assert error_map._chunk(1000) == error_map.CHUNK
+    assert error_map._chunk(40_000) * 40_000 <= error_map.CHUNK_CELLS
+    assert error_map._chunk(10 ** 8) == 1
+
+
 def _rect(name, x0, y0, x1, y1):
     return {"zone_id": name, "entity_id": name, "poly": True,
             "cords": [{"x": x0, "y": y0}, {"x": x1, "y": y0}, {"x": x1, "y": y1}, {"x": x0, "y": y1}]}
@@ -94,7 +108,8 @@ def test_a_floor_without_proxies_says_it_needs_three():
     assert out["stars"] == [] and "three proxies" in out["note"]
     assert set(out["err"]) == {error_map.ERR_CAP_M}
     two = error_map.floor_map(_floor(_HALL3[:2], _THREE_ROOMS), _NOISE, {})
-    assert all(math.isfinite(v) for v in two["err"] + two["err_after"]) and (two["stars"] or two["note"])
+    assert set(two["err"]) == {error_map.ERR_CAP_M}
+    assert two["stars"] and min(two["err_after"]) < error_map.ERR_CAP_M
 
 
 def test_after_is_no_worse_than_before_and_the_grid_matches():

@@ -1786,7 +1786,7 @@ async def ws_advice(hass, connection, msg):
     and per floor the predicted-error map with its measured bad squares (sextant.error_map)."""
     from . import error_map, person_log  # noqa: PLC0415
     from .advice import advise, room_usage  # noqa: PLC0415
-    from .calibration import _true_distance_m, get_calibration_state, solve_snapshot  # noqa: PLC0415
+    from .calibration import _build_receiver_map, _true_distance_m, get_calibration_state, solve_snapshot  # noqa: PLC0415
 
     core = _core()
     layout = get_layout(hass)
@@ -1816,11 +1816,13 @@ async def ws_advice(hass, connection, msg):
         weak = [{"entity": s, "floor": placed[s][0], "x": float(placed[s][1]["cords"]["x"]), "y": float(placed[s][1]["cords"]["y"]), "error_m": errs.get(s)}
                 for row in out["rooms"] for s in row.get("weak") or [] if s in placed]
         # The solver scales a proxy's distances by its correction, so the noise is judged on corrected ones.
-        fade = core._close_fade_params(layout)
+        # True distances from the plan: a calibration run's own receiver map is
+        # empty after a restart with Auto off, and one floor after a manual run.
+        fade, truth = core._close_fade_params(layout), {"receivers": _build_receiver_map(layout)}
         pairs = []
         for key, vals in snap["samples"].items():
             tx, _, rx = key.partition("|")
-            true_m = _true_distance_m(snap, tx, rx)
+            true_m = _true_distance_m(truth, tx, rx)
             if true_m:
                 corr = placed.get(rx, (None, {}))[1].get("correction")
                 k = float(corr) if isinstance(corr, (int, float)) and corr > 0 else 1.0

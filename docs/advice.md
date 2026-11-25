@@ -74,6 +74,8 @@ range well, red where they do not. It is predicted from where the proxies
 are placed and how well they range against each other (once eight pairs of
 proxies have heard each other; until then a default), so read the colours
 as a ranking of places on the floor. The metres in the legend are rough.
+Anywhere with fewer than three proxies within 15 m is red: Sextant will not
+place from two.
 
 **Purple squares** are where it measured bad, whatever the prediction says.
 Each is a 1 m square, and it turns purple for any of:
@@ -97,8 +99,8 @@ a floor, numbered in the order to add them. Like the table's spots they sit
 on a wall, and they favour the rooms where people and pets spend their time
 (every room counts for at least ten minutes, so an unused room is not
 ignored). A star that would improve the floor by less than 3% is left out,
-so a floor that is already fine gets none. A floor with fewer than three
-proxies says so instead.
+so a floor that is already fine gets none. A floor with one proxy or none,
+where one more still would not make three, says so instead.
 
 **With the suggested proxies** redraws the floor as if the starred proxies
 were already placed, with the stars drawn as proxies, so you can see what

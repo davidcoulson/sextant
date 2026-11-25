@@ -462,6 +462,28 @@ def test_advice_reports_rooms_and_unplaced_scanners(tmp_path, monkeypatch):
     assert conn.errors and "floor plan" in conn.errors[-1][2]
 
 
+def test_advice_fits_the_noise_from_samples_without_a_calibration_run(tmp_path, monkeypatch):
+    """After a restart with Auto calibration off the samples come back from
+    disk but no run has built its receiver map: the true distances come from
+    the plan, so the noise is still fitted."""
+    import math
+    from sextant import bermuda_source
+    from sextant.calibration import get_calibration_state
+    pts = {"a": (20, 20), "b": (380, 20), "c": (200, 380), "d": (380, 380)}
+    layout = {"floor": [{"name": "F", "scale": 100.0, "subzones": [],
+                         "zones": [{"zone_id": "z1", "entity_id": "Hall", "poly": True, "cords": [{"x": 0, "y": 0}, {"x": 400, "y": 0}, {"x": 400, "y": 400}, {"x": 0, "y": 400}]}],
+                         "receivers": [{"entity_id": s, "cords": {"x": x, "y": y}} for s, (x, y) in pts.items()]}]}
+    hass = _hass_with_layout(tmp_path, layout)
+    monkeypatch.setattr(bermuda_source, "async_get_scanner_directory", lambda _h: {})
+    cal = get_calibration_state(hass)
+    assert not cal.get("receivers")
+    cal["samples"] = {f"{t}|{r}": [math.dist(pts[t], pts[r]) / 100 * 1.2] * 10 for t in pts for r in pts if t != r}
+    conn = _Conn()
+    run(ws.ws_advice(hass, conn, {"id": 32, "type": "sextant/advice"}))
+    assert not conn.errors, conn.errors
+    assert conn.results[-1][1]["model"]["calibrated"] is True and conn.results[-1][1]["model"]["pairs"] == 12
+
+
 def test_every_write_and_bermuda_command_requires_admin():
     """Any signed-in user can open a websocket; only administrators may change
     the layout, tuning, things, history or Bermuda, list every address Bermuda
