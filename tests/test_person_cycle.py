@@ -127,7 +127,7 @@ def test_one_source_dropping_out_changes_nothing_and_a_stray_fix_corrected_gives
     states[APP] = _tracker("not_home", 51.5003, 2)          # 30 m from the house, not in the zone
     assert cycle() == (*held[:3], ARRIVED)
     states[APP] = _tracker("unavailable", 51.5003, 1)
-    assert cycle() == (*held[:2], None, [])
+    assert cycle() == (*held[:3], [])
     states[APP] = _tracker("not_home", 51.5003, 1)
     assert cycle() == (*held[:3], [])
 

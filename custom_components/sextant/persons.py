@@ -463,7 +463,10 @@ def usable_gps(get_state, layout, person, now, stale_secs=GPS_STALE_SECS, fixes=
             continue
         if fixes is not None:
             place = (info["zone"], info["latitude"], info["longitude"])
-            same_zone = kept and kept[0][0] == place[0] and kept[2]["stationary"] == info["stationary"]
+            # Not into an iCloud3 stationary zone (each is a new place under one name), and not
+            # coordinates older than a stale tracker's.
+            same_zone = (kept and kept[0][0] == place[0] and not (kept[2]["stationary"] or info["stationary"])
+                         and now - (kept[2]["reported"] or 0.0) <= stale_secs)
             if same_zone and place[1] is None and kept[0][1] is not None:
                 # The fix it had, coordinates and their time: without them a road fix would stop
                 # showing them gone, and with a new time it would show them gone after a later sighting.
@@ -557,11 +560,13 @@ def choose_gps(usable, presence, last_heard, home=None, min_distance_m=200.0):
     once BLE has lost them (``presence`` of their things, ``last_heard``), the
     fixes Sextant saw arrive since they were last heard (``fix_at``) are
     weighed first. One that would end the quiet hold (gps_left) speaks, the
-    first such in the person's order, unless a fix in the home zone is as new
-    or newer: then they are back, and that one speaks where the first source
-    does not say home itself (coming back, the app says home at the gate
-    while the other still shows the road; a road fix made after that is the
-    next departure). Nothing is remembered here from cycle to cycle: a source
+    first such in the person's order, unless a fix in the home zone, or
+    within min_distance_m of home, is as new or newer: then they are back,
+    and that one speaks where the first source does not say home itself
+    (coming back, the app says home at the gate while the other still shows
+    the road; a road fix made after that is the next departure; GPS drift
+    that puts the one at the gate just outside the zone is not). Nothing is
+    remembered here from cycle to cycle: a source
     that drops out keeps its last fix (usable_gps), so what it saw still counts.
     Only that, though: a source that is out is never the first that speaks, or
     a collar that died while it said home would keep the dog home for hours.
@@ -582,8 +587,13 @@ def choose_gps(usable, presence, last_heard, home=None, min_distance_m=200.0):
     def is_home(g):
         return str(g.get("zone") or "").lower() == "home"
 
+    def by_the_house(g):
+        lat, lon = g.get("latitude"), g.get("longitude")
+        return is_home(g) or (lat is not None and lon is not None and bool(home) and None not in home
+                              and _haversine_m(home, (lat, lon)) < min_distance_m)
+
     since = [g for g in usable if at(g) > heard]
-    back = max((g for g in since if is_home(g)), key=at, default=None)
+    back = max((g for g in since if by_the_house(g)), key=at, default=None)
     gone = [g for g in since if (back is None or at(g) > at(back)) and gps_left(g, heard, home, min_distance_m)]
     if gone:
         return gone[0]
