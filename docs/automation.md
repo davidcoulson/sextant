@@ -62,9 +62,30 @@ put stands (`source: held`): they have not left the house. Unless GPS has
 already seen them go: a fix made since the last sighting, outside the home
 zone and at least `gps_leave_m` (200 m) from home, ends the hold at once
 and the person is `away` now rather than when `away_after_secs` runs out.
+Any of their GPS sources can be the one to see it: the first in their order is
+read, unless another has a fix from since that sighting that shows the
+departure while the first still has them at or by the house. Between gone and
+home the newer fix wins: a fix in the home zone as new or newer, from either
+source, ends the departure. A source that goes
+unavailable keeps its last fix for `gps_stale_secs` (two hours) after its last
+report: dropping out is no news, so a departure it saw still stands, and the
+person does not return to their last room meanwhile. That kept fix counts only
+if it was made since they were last heard, whichever way it points: a tracker
+that drops out on a "home" from before then keeps nobody home. `gps_ignored`
+still names it (`unavailable; last fix kept`), and once the kept fix runs out
+the sources that are left speak again. Sextant times each fix
+itself, from when a source's zone or coordinates change: a restart, a battery
+level or a tracker coming back from unavailable with the fix it had is no
+news, and a source counts this way only once it has moved since Home Assistant
+started. The time is that of the first update Sextant's cycle sees the new fix
+in, so another update in between (a battery level) dates it a few seconds
+late. Another source is only
+read this way once Sextant has lost the person: with one of their things
+still heard in the house (a watch left at home), or for someone with GPS
+sources and no things, the first source alone speaks.
 So the phone reports promptly, the moment a person goes quiet (`stale_after_secs`,
 two minutes) Sextant asks their Home Assistant companion app (`notify.mobile_app_<device>`) for a fresh
-location, once per quiet spell. It is skipped when `gps_leave_m` is 0.
+location, once per quiet spell. It is skipped when `gps_leave_m` is 0, and when GPS already shows them gone.
 Once Sextant has lost them (`presence: away`), a phone or watch of theirs still joined to one
 of the house's Wi-Fi access points keeps them home (`source: wifi`): the
 location is `home` (an access point's room is a guess, so no room), the floor is
@@ -78,7 +99,7 @@ holds a client home for minutes after it last heard it, so a GPS fix that far
 from home, made over 10 s after the access point last heard the phone
 (UniFi's `last_seen` less its `idletime`, once it has been idle 90 s; `last_seen` before that), overrules it. After
 that the first GPS tracker in their list that is neither broken nor stale
-gives the zone (`source: gps`), or the state is `away` with nothing usable
+gives the zone (`source: gps`; another while its newer fix shows a departure the first has not seen), or the state is `away` with nothing usable
 (`source: none`). [Wi-Fi](things.md#wi-fi) says where the trackers come from. The list is set per person on
 the Things page (People card) and lives in the layout as `person_trackers`;
 a tracker that is unknown, unavailable, or has not reported within

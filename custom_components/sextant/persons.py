@@ -353,7 +353,8 @@ def states(best, why=None):
 # Companion app, Life360) knows the zone. The two are fused here: BLE while it
 # hears them (and held through a quiet spell - the last place they were put is
 # the best answer for a few minutes), the first GPS source that is neither
-# broken nor stale once BLE has lost them.
+# broken nor stale once BLE has lost them - or another whose newer fix shows
+# them gone, or back (choose_gps).
 
 GPS_STALE_SECS = 7200.0            # a tracker that has not reported for this long is ignored
 _DEAD = (None, "", "unknown", "unavailable")
@@ -403,26 +404,78 @@ def judge_source(entity_id, state, now, stale_secs=GPS_STALE_SECS):
     if reported is not None and now - reported > stale_secs:
         return False, f"no report for {(now - reported) / 3600:.1f} h", None
     lat, lon = attrs.get("latitude"), attrs.get("longitude")
-    coords = isinstance(lat, (int, float)) and isinstance(lon, (int, float))
+    # On the globe: anything else (an infinity, a NaN) would raise in the distance sum.
+    coords = (isinstance(lat, (int, float)) and isinstance(lon, (int, float))
+              and -90 <= lat <= 90 and -180 <= lon <= 180)
     stationary = stationary_zone(st, attrs)
+    accuracy, updated = (attrs.get("gps_accuracy") if coords else None), getattr(state, "last_updated", None)
+    try:
+        # An int no float can hold would raise in the distance guard (gps_left), a NaN or an
+        # infinity where the tracker entity rounds it: each would stop everyone's update.
+        if not math.isfinite(float(accuracy)):
+            accuracy = None
+    except (TypeError, ValueError, OverflowError):
+        accuracy = None
     return True, None, {
         "entity": entity_id, "zone": "not_home" if stationary else st, "stationary": stationary,
         "latitude": float(lat) if coords else None, "longitude": float(lon) if coords else None,
-        "accuracy": attrs.get("gps_accuracy") if coords else None,
-        "reported": reported,
+        "accuracy": accuracy, "reported": reported,
+        "updated": updated.timestamp() if hasattr(updated, "timestamp") else None,   # the last write (usable_gps)
     }
 
 
-def choose_gps(get_state, layout, person, now, stale_secs=GPS_STALE_SECS):
-    """The first usable GPS source in the person's order, and the ones passed over."""
-    chosen, ignored = None, []
+def usable_gps(get_state, layout, person, now, stale_secs=GPS_STALE_SECS, fixes=None):
+    """The person's usable GPS sources in their order, and the ones passed over.
+
+    ``fixes`` (entity -> (place, when, the fix), kept by the caller from cycle
+    to cycle) does two things. It times each fix: a source gets ``fix_at``,
+    when its zone or coordinates last changed while Sextant was watching, None
+    for the fix it started with. Home Assistant's own times will not do for
+    telling which of two sources has the newer word (choose_gps): a restart
+    stamps every state as new, a battery level moves last_updated, and a
+    tracker back from unavailable has a new last_changed with the fix it had
+    before. And it keeps a source's last fix while the source is out
+    (unavailable, unknown, not found), until that fix is as old as any stale
+    one: a tracker dropping out is no word about where the person is, so a
+    departure it saw still stands, and a fix it had corrected stays corrected.
+    Such a fix is marked ``out`` (the reason), and the source is still named as
+    passed over: it counts only if it was made since the person was last heard
+    (choose_gps). It is kept for stale_secs after the source's last report,
+    and then the sources that are left speak again. Coordinates left out of a
+    write, the zone unchanged, are the same place: the fix keeps them, and the
+    time they were reported at.
+
+    shortcut: the time is that of the write the cycle first sees the new place
+    in, so another write in between (a battery level) dates it up to a cycle
+    late, and a tracker back from an outage in a new place is dated at its
+    return. Listen for the state changes instead if a departure is ever read
+    from a fix made before the last sighting.
+    """
+    usable, ignored = [], []
     for eid in gps_sources(layout, person):
         ok, reason, info = judge_source(eid, get_state(eid), now, stale_secs)
-        if ok and chosen is None:
-            chosen = info
-        elif not ok:
+        kept = (fixes or {}).get(eid)
+        if not ok:
+            if kept and now - (kept[2]["reported"] or 0.0) <= stale_secs:
+                usable.append({**kept[2], "out": reason})
+                reason += "; last fix kept"
             ignored.append({"entity": eid, "reason": reason})
-    return chosen, ignored
+            continue
+        if fixes is not None:
+            place = (info["zone"], info["latitude"], info["longitude"])
+            # Not into an iCloud3 stationary zone (each is a new place under one name), and not
+            # coordinates older than a stale tracker's.
+            same_zone = (kept and kept[0][0] == place[0] and not (kept[2]["stationary"] or info["stationary"])
+                         and now - (kept[2]["reported"] or 0.0) <= stale_secs)
+            if same_zone and place[1] is None and kept[0][1] is not None:
+                # The fix it had, coordinates and their time: without them a road fix would stop
+                # showing them gone, and with a new time it would show them gone after a later sighting.
+                place = kept[0]
+                info.update({k: kept[2][k] for k in ("latitude", "longitude", "accuracy", "reported")})
+            info["fix_at"] = None if kept is None else kept[1] if kept[0] == place else info["updated"]
+            fixes[eid] = (place, info["fix_at"], info)
+        usable.append(info)
+    return usable, ignored
 
 
 def has_exit(layout, floor, room) -> bool:
@@ -496,6 +549,52 @@ def without_left_behind(candidates, gps, now, stale, home=None, min_distance_m=2
         and gps_left(gps, c["arrived"], home, min_distance_m)
     ]
     return [c for c in candidates if c not in left], left
+
+
+def choose_gps(usable, presence, last_heard, home=None, min_distance_m=200.0):
+    """The GPS source that speaks for the person this cycle, of their usable
+    ones in order (usable_gps).
+
+    The first source speaks. But a phone app can sit on "home" for minutes
+    into a drive while another service already has the car down the road. So
+    once BLE has lost them (``presence`` of their things, ``last_heard``), the
+    fixes Sextant saw arrive since they were last heard (``fix_at``) are
+    weighed first. One that would end the quiet hold (gps_left) speaks, the
+    first such in the person's order, unless a fix in the home zone is as new
+    or newer: then they are back, and that one speaks where the first source
+    does not say home itself (coming back, the app says home at the gate
+    while the other still shows the road; a road fix made after that is the
+    next departure). Nothing is remembered here from cycle to cycle: a source
+    that drops out keeps its last fix (usable_gps), so what it saw still counts.
+    Only that, though: a source that is out is never the first that speaks, or
+    a collar that died while it said home would keep the dog home for hours.
+
+    shortcut: someone heard right now (a watch left at home) or never heard
+    (a visitor with GPS only) has no last sighting to hold a fix against, so
+    only the first source speaks for them; and the fix times are not kept
+    over a restart, after which a source counts this way only once it has
+    moved. Upgrade when a departure is missed that way.
+    """
+    first, heard = next((g for g in usable if not g.get("out")), None), valid_time(last_heard)
+    if presence == "here" or heard is None or min_distance_m <= 0:
+        return first
+
+    def at(g):
+        return valid_time(g.get("fix_at")) or 0.0
+
+    def is_home(g):
+        return str(g.get("zone") or "").lower() == "home"
+
+    since = [g for g in usable if at(g) > heard]
+    # shortcut: only a fix in the home zone is "back". A source that said home and then drifts out of
+    # the zone by the house no longer holds off another's older road fix; a fix by the house cannot
+    # stand in for it (the app's zone-exit fix lands there on the way out). Remember when each source
+    # last said home if that shows up.
+    back = max((g for g in since if is_home(g)), key=at, default=None)
+    gone = [g for g in since if (back is None or at(g) > at(back)) and gps_left(g, heard, home, min_distance_m)]
+    if gone:
+        return gone[0]
+    return first if back is None or (first and is_home(first)) else back
 
 
 def should_ask_gps(presence, placed, last_heard, asked_for) -> bool:

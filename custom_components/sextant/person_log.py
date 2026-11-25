@@ -2,7 +2,8 @@
 per cycle, in hourly files under config/sextant_person_log, dropped once older
 than the ``person_log_hours`` tuning (default 48; 0 = off). Each line carries
 the result (source, presence, state, home/away, Wi-Fi word before and after
-the confirm hold, GPS zone, seconds since BLE last heard them) and its inputs
+the confirm hold, GPS zone and the source it was read from (``gps_src``),
+seconds since BLE last heard them) and its inputs
 (every thing of theirs with its presence, room and age, the thing picked, the
 ones ruled out as left behind, each Wi-Fi tracker with its access point and
 router last-seen age). ``place`` is the [room, floor] they were put in, null
