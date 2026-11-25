@@ -80,6 +80,8 @@ export function chipDetail(states, name, ids, classes) {
     since: typeof since === "number" ? since * 1000 : null,
     room: a.room, spot, floor: a.floor, presence: a.presence,
     conf: a.conf ?? t.conf ?? null, source: a.source || "ble",
+    // conf lifted by the stay; only while heard, a quiet thing's last word is no fresh evidence.
+    settled: a.presence === "here" && !outside ? a.settled_conf ?? null : null,
     accessPoint: a.access_point || null, gpsAccuracy: a.gps_accuracy ?? null,
     heardAt: heard ? Date.parse(heard) : null,
   };

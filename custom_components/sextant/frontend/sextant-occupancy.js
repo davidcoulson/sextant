@@ -103,6 +103,9 @@ class SextantOccupancy extends LitElement {
     let src = WHERE_SOURCE[d.source] || d.source;
     if (d.source === "wifi" && d.accessPoint) src += ` (${d.accessPoint})`;
     if (d.source === "gps" && d.gpsAccuracy != null) src += ` (±${fmtLen(d.gpsAccuracy, this.hass, 0)})`;
+    // The stay-lifted figure, with the single fit's own beside it when they differ.
+    const pct = (x) => `${Math.round(x * 100)}%`;
+    const conf = d.conf == null ? null : d.settled == null || pct(d.settled) === pct(d.conf) ? pct(d.conf) : `${pct(d.settled)} (fit ${pct(d.conf)})`;
     return html`<div class="pop" role="tooltip"><b>${name}</b>
       ${d.source ? html`<ha-icon class="si" icon=${WHERE_ICON[d.source] || "mdi:help-circle-outline"} title=${src}></ha-icon>` : nothing}
       ${d.outside ? row("Where", "Outside") : html`
@@ -111,7 +114,7 @@ class SextantOccupancy extends LitElement {
         ${row("Floor", d.floor && d.floor !== "unknown" ? d.floor : null)}`}
       ${row(d.outside ? "Out for" : "Here for", d.since ? fmtAge((Date.now() - d.since) / 1000) : null)}
       ${row("Tracked by", device)}
-      ${row("Confidence", d.conf != null ? `${Math.round(d.conf * 100)}%` : null)}
+      ${row("Confidence", conf)}
       ${row("Last heard", age ? `${age}${d.presence ? ` (${d.presence})` : ""}` : d.presence)}
     </div>`;
   }

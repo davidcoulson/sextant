@@ -205,6 +205,17 @@ def test_fit_quality_moving_alone_waits_like_last_heard():
     assert s.writes[-1][0] == "Dining" and s.writes[-1][1]["rms_m"] == 99 and s.writes[-1][1]["last_heard"] == "x"
 
 
+def test_settled_conf_creeping_up_does_not_make_a_write_of_its_own():
+    """It grows with every second of the stay: like the rest of the fit it must ride with last_heard."""
+    hass = make_hass()
+    s = _CountingSensor()
+    hass.data["sextant_sensors"] = {LOC: s}
+    t0 = 1_000_000.0
+    for k in range(21):
+        _write(hass, "Kitchen", f"heard+{15 * k}", t0 + 15 * k, conf=0.5, settled_conf=0.5 + k / 1000)
+    assert [w[1]["settled_conf"] for w in s.writes] == [0.5, 0.52]
+
+
 def test_a_person_sensor_tops_up_its_fit_quality_the_same_way():
     hass = make_hass()
     s = _CountingSensor()

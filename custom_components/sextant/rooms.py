@@ -25,6 +25,44 @@ PET_CLASSES = frozenset({"cat", "dog", "paw"})
 COUNTED = ("here", "quiet")
 _RANK = {"here": 0, "quiet": 1}
 
+# How long a stay lifts the confidence in a room call. A stay shows the call is
+# stable, not that it is right (a wrong room can sit there for hours), so it
+# closes at most DWELL_MAX_GAIN of the gap between the fit's confidence and 1,
+# and gets 63 % of that by DWELL_TAU_S.
+DWELL_MAX_GAIN = 0.5
+DWELL_TAU_S = 600.0
+
+
+def settled_confidence(conf, dwell_s, presence="here"):
+    """The fit's ``conf`` (0..1) lifted by how long the thing has stayed in the room.
+
+    Only while it is heard ("here"): a quiet thing's long stay is a last known
+    place, not fresh evidence. No stay, no conf, or any other presence leaves
+    ``conf`` as it was.
+    """
+    if conf is None or presence != "here" or not dwell_s or dwell_s <= 0:
+        return conf
+    return conf + (1.0 - conf) * DWELL_MAX_GAIN * (1.0 - math.exp(-dwell_s / DWELL_TAU_S))
+
+
+def settled_conf_of(attrs, now, floor=None):
+    """``settled_confidence`` for a location sensor's attributes, rounded for
+    publishing; None when they carry no conf or stay, or the thing is outside
+    (no room call to settle). The stay is the spot's when it is on one, as the
+    popup's "Here for" is. ``floor`` is the earliest time a stay may count
+    from (a person's arrival this visit: a tracker's earlier tenure is not theirs).
+    A time that is not a plain number is no stay."""
+    since = attrs.get("spot_since") if attrs.get("spot") else None
+    if since is None:
+        since = attrs.get("since")
+    if isinstance(since, bool) or not isinstance(since, (int, float)) or not math.isfinite(since):
+        return None
+    if isinstance(floor, (int, float)) and not isinstance(floor, bool):
+        since = max(since, floor)
+    if attrs.get("conf") is None or attrs.get("kind") == "outside":
+        return None
+    return round(settled_confidence(attrs["conf"], now - since, attrs.get("presence")), 3)
+
 
 def slug(text: str) -> str:
     """A lower-case entity-id-safe slug: 'Great Room' -> 'great_room'."""
