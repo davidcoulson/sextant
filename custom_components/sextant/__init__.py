@@ -5541,7 +5541,7 @@ def _update_person_sensors(hass):
     if _event_visits is None:
         _event_visits, _events_from = dict(_person_visits), now + EVENTS_SETTLE_S
     for person, things in by_person.items():
-        candidates, presences, heard, presence_by_ent = [], [], [], {}
+        candidates, presences, heard, presence_by_ent = [], [], {}, {}
         for ent in things:
             if not persons_mod.locates_owner(layout, ent, classes.get(ent)):
                 continue
@@ -5549,7 +5549,7 @@ def _update_person_sensors(hass):
             presence_by_ent[ent] = _presence_of(seen.get("updated") if isinstance(seen, dict) else None, now, layout)
             presences.append(presence_by_ent[ent])
             if isinstance(seen, dict) and isinstance(seen.get("updated"), (int, float)):
-                heard.append(seen["updated"])
+                heard[ent] = seen["updated"]
             row = rows.get(ent)
             if not row:
                 continue
@@ -5576,7 +5576,7 @@ def _update_person_sensors(hass):
             })
         slug = person.split(".", 1)[1]
         sources, ignored = persons_mod.usable_gps(hass.states.get, layout, person, now, gps_stale, _gps_fixes)
-        last_heard = max(heard) if heard else None
+        last_heard = max(heard.values()) if heard else None
         # The first usable source, unless BLE has lost them and another has a newer fix
         # that shows them gone, or back (persons.choose_gps).
         gps = persons_mod.choose_gps(
@@ -5596,6 +5596,9 @@ def _update_person_sensors(hass):
             else:
                 candidates = kept
                 presences = [p for e, p in presence_by_ent.items() if e not in gone]
+                # A watch left on the charger is still heard: it must not stand for their last
+                # sighting, or the fix that shows the phone gone is older than it and never counts.
+                last_heard = max((t for e, t in heard.items() if e not in gone), default=None)
         why = persons_mod.considered(candidates, now)
         presence = persons_mod.presence_of_things(presences)
         best = persons_mod.pick(candidates, now, stale, _tuning(layout, "watch_still_secs"))
