@@ -54,6 +54,24 @@ def test_when_all_still_a_watch_placed_as_well_as_the_phone_wins():
     assert persons.pick(zero, NOW, 120)["ent"] == "watch"
 
 
+def test_a_phone_that_moved_rooms_beats_a_watch_that_had_long_been_still():
+    # Left in the basement all evening; the phone went up to bed hours later.
+    watch = dict(thing("watch", "watch", still_for=7 * 3600, zone="Basement", floor="Basement"), conf=0.9)
+    phone = dict(thing("phone", "phone", still_for=3600, zone="Bedroom", floor="First Floor"), conf=0.6)
+    assert persons.pick([phone, watch], NOW, 60.0)["ent"] == "phone"
+    # A watch still for less than watch_still_secs when the phone left: the phone was set down.
+    worn = dict(watch, arrived=NOW - 2 * 3600)
+    assert persons.pick([phone, worn], NOW, 60.0)["ent"] == "watch"
+    # However long both then sit: the stay is measured at the phone's arrival.
+    later = [dict(phone, arrived=NOW - 9 * 3600), dict(worn, arrived=NOW - 10 * 3600)]
+    assert persons.pick(later, NOW, 60.0)["ent"] == "watch"
+    # Same room, another spot: nobody carried the phone away from the watch.
+    near = dict(phone, zone="Basement", floor="Basement")
+    assert persons.pick([near, watch], NOW, 60.0)["ent"] == "watch"
+    # 0 turns the rule off.
+    assert persons.pick([phone, watch], NOW, 60.0, watch_still=0)["ent"] == "watch"
+
+
 def test_unheard_or_unplaced_things_do_not_count():
     old = thing("watch", "watch", still_for=10, heard_ago=900)
     lost = thing("phone", "phone", still_for=10, zone="unknown")

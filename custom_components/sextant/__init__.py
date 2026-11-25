@@ -866,6 +866,10 @@ TUNING_SPEC = {
     # page's "Outside door contact"), only if some outside door was open
     # within this long of when they were last heard. 0 = doors not asked.
     "exit_door_secs": (300.0, float, 0.0, 3600.0),
+    # A watch that had been still this long when its owner's phone went to
+    # another room was left behind: the phone speaks for them (persons.pick).
+    # 0 = off.
+    "watch_still_secs": (14400.0, float, 0.0, 86400.0),
     # A Wi-Fi tracker reading home must stand this long before it starts a
     # visit for someone BLE has lost (persons.wifi_gate): a router holds a
     # client minutes after it left, which made false arrivals. 0 = off.
@@ -5578,7 +5582,7 @@ def _update_person_sensors(hass):
                 presences = [p for e, p in presence_by_ent.items() if e not in gone]
         why = persons_mod.considered(candidates, now)
         presence = persons_mod.presence_of_things(presences)
-        best = persons_mod.pick(candidates, now, stale)
+        best = persons_mod.pick(candidates, now, stale, _tuning(layout, "watch_still_secs"))
         if best is not None:
             _person_last[person] = (best, why)
         elif left_behind:
