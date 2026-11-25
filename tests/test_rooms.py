@@ -851,3 +851,14 @@ def test_settled_conf_of_follows_the_stay_the_popup_shows():
     assert of({**room, "presence": "quiet"}, 600.0) == 0.7
     assert of({**room, "kind": "outside"}, 600.0) is None and of({"presence": "away"}, 600.0) is None
     assert of({**room, "since": None}, 600.0) is None
+
+
+def test_settled_conf_of_ignores_bad_times_and_clamps_to_arrival():
+    of = rooms.settled_conf_of
+    room = {"conf": 0.7, "presence": "here", "kind": "room", "since": 0}
+    assert of({**room, "since": True}, 600.0) is None
+    assert of({**room, "since": "x"}, 600.0) is None
+    # A spot stay of 0 is a stay, not a missing one: it wins over the room's time.
+    assert of({**room, "spot": "Desk", "spot_since": 0, "since": 500.0}, 600.0) == round(rooms.settled_confidence(0.7, 600.0), 3)
+    # The tracker was in the room long before the person arrived: only the visit counts.
+    assert of({**room, "since": 0.5}, 600.0, floor=590.0) == round(rooms.settled_confidence(0.7, 10.0), 3)

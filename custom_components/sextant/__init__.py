@@ -3303,7 +3303,10 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
         update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_floor", lowest_floor_name, dict(here))
         update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_spot", sub_zone, {"room": parent_zone, **here})
         loc_attrs = {**loc_attrs, **here}
-        loc_attrs["settled_conf"] = rooms_mod.settled_conf_of(loc_attrs, row["updated"])
+        if (settled := rooms_mod.settled_conf_of(loc_attrs, row["updated"])) is not None:
+            loc_attrs["settled_conf"] = settled
+        else:
+            loc_attrs.pop("settled_conf", None)
         update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_location", loc_state, loc_attrs)
 
 def room_area(layout, floor_name, room_name):
@@ -4619,19 +4622,20 @@ def _publish_presence(hass, layout):
             continue
         attrs = _presence_attrs(seen.get("updated"), now, layout)
         for suffix in THING_SENSOR_SUFFIXES:
-            _patch_sensor_attrs(hass, f"sensor.{ent}{suffix}", attrs)
+            # A stay-lifted figure is a fit's, and presence moved on without one.
+            _patch_sensor_attrs(hass, f"sensor.{ent}{suffix}", attrs, drop=("settled_conf",))
         _presence_published[ent] = presence
 
 
 THING_SENSOR_SUFFIXES = ("_sextant_room", "_sextant_floor", "_sextant_nearest_room", "_sextant_spot", "_sextant_location")
 
 
-def _patch_sensor_attrs(hass, entity_id, attrs):
-    """Change some attributes of a registered Sextant sensor, keeping the rest."""
+def _patch_sensor_attrs(hass, entity_id, attrs, drop=()):
+    """Change some attributes of a registered Sextant sensor, keeping the rest (minus ``drop``)."""
     sensor = (hass.data.get("sextant_sensors") or {}).get(entity_id)
     if sensor is None:
         return
-    update_sextant_sensor_state(hass, entity_id, sensor._state, {**(sensor._attrs or {}), **attrs})
+    update_sextant_sensor_state(hass, entity_id, sensor._state, {k: v for k, v in {**(sensor._attrs or {}), **attrs}.items() if k not in drop})
 
 
 # A thing is called dead - a repair, not a badge on a card nobody opened - in
@@ -5690,8 +5694,10 @@ def _update_person_sensors(hass):
                 prev = hass.states.get(sensor_id)
                 # Away last cycle (a visit with no arrival): nothing from before carries over.
                 visit = _person_visits.get(person)
-                persons_mod.keep_since(prev.attributes if prev else None, attrs, (visit.get("arrived") or now) if visit else None)
-                attrs["settled_conf"] = rooms_mod.settled_conf_of(attrs, now)
+                arrived = (visit.get("arrived") or now) if visit else None
+                persons_mod.keep_since(prev.attributes if prev else None, attrs, arrived)
+                if (settled := rooms_mod.settled_conf_of(attrs, now, arrived)) is not None:
+                    attrs["settled_conf"] = settled
             update_sextant_sensor_state(hass, sensor_id, state, attrs)
             if suffix == "sextant_person_location":
                 logged = (state, attrs.get("source"))

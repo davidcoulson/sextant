@@ -116,6 +116,9 @@ test("chipDetail carries the stay-lifted confidence only while the thing is hear
   const d = chipDetail(states, "Leela", {}, {});
   assert.equal(d.conf, 0.71); assert.equal(d.settled, 0.86);
   states["sensor.leela_sextant_pet_location"].attributes.presence = "quiet";
+  // An explicit null on the person sensor is not filled in from the tracker's boost.
+  const own = { ...states, "sensor.leela_sextant_pet_location": { state: "Morning Room", attributes: { room: "Morning Room", via: "leela_tag", conf: 0.71, settled_conf: null, presence: "here" } }, "sensor.leela_tag_sextant_location": { state: "x", attributes: { settled_conf: 0.9 } } };
+  assert.equal(chipDetail(own, "Leela", {}, {}).settled, null);
   assert.equal(chipDetail(states, "Leela", {}, {}).settled, null);   // a last known place is not fresh evidence
 });
 
