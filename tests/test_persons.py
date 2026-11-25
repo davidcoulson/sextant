@@ -70,6 +70,9 @@ def test_a_phone_that_moved_rooms_beats_a_watch_that_had_long_been_still():
     assert persons.pick([near, watch], NOW, 60.0)["ent"] == "watch"
     # 0 turns the rule off.
     assert persons.pick([phone, watch], NOW, 60.0, watch_still=0)["ent"] == "watch"
+    # A phone with no arrival time has nothing to measure the watch's stay against.
+    assert persons.pick([dict(phone, arrived=None), watch], NOW, 60.0)["ent"] == "watch"
+    assert persons.pick([dict(phone, arrived=None)], NOW, 60.0)["ent"] == "phone"
 
 
 def test_unheard_or_unplaced_things_do_not_count():

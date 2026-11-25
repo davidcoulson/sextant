@@ -284,10 +284,11 @@ def pick(things, now: float, stale_after: float, watch_still: float = 14400.0):
         pconf = best.get("conf") or 0.0
         # ...unless the phone went to another room when the watch had already lain
         # still for watch_still: the watch was left behind, the phone was carried.
-        left = best["arrived"] - watch_still if watch_still > 0 else float("-inf")
+        went = best.get("arrived")
+        asked = watch_still > 0 and isinstance(went, (int, float))
         watches = [t for t in fresh if t.get("cls") == "watch" and t.get("conf") is not None and t["conf"] >= pconf
-                   and not ((t.get("zone"), t.get("floor")) != (best.get("zone"), best.get("floor"))
-                            and isinstance(t.get("arrived"), (int, float)) and t["arrived"] <= left)]
+                   and not (asked and (t.get("zone"), t.get("floor")) != (best.get("zone"), best.get("floor"))
+                            and isinstance(t.get("arrived"), (int, float)) and t["arrived"] <= went - watch_still)]
         if watches:
             return min(watches, key=key)
     return best
