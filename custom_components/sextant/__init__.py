@@ -4487,10 +4487,8 @@ _presence_published = {}
 _person_last = {}
 # person -> the last_heard a location request was sent for (persons.should_ask_gps).
 _gps_asked = {}
-# person -> (the last_heard a GPS departure was seen after, when its fix was made) (persons.choose_gps),
-# and tracker -> (its place, when that fix was made) (persons.usable_gps). Neither is kept over a
-# restart; the second holds one entry for each tracker listed since the start.
-_gps_gone = {}
+# tracker -> (its place, when that fix was made, the fix) (persons.usable_gps). Not kept over a
+# restart; it holds one entry for each tracker listed since the start.
 _gps_fixes = {}
 # Each person's visit (persons.visit): {person: {"arrived", "departed"}}; saved with the runtime.
 _person_visits = {}
@@ -5464,8 +5462,6 @@ def _update_person_sensors(hass):
         del _arrivals[ent]
     for person in [p for p in _person_visits if p not in by_person]:
         del _person_visits[person]
-    for person in [p for p in _gps_gone if p not in by_person]:
-        del _gps_gone[person]
     for person in [p for p in _person_sleep if p not in by_person]:
         del _person_sleep[person]
     for person in [p for p in _person_log_key if p not in by_person]:
@@ -5541,11 +5537,9 @@ def _update_person_sensors(hass):
         sources, ignored = persons_mod.usable_gps(hass.states.get, layout, person, now, gps_stale, _gps_fixes)
         last_heard = max(heard) if heard else None
         # The first usable source, unless BLE has lost them and another has a newer fix
-        # that shows them gone; that departure stands while its source is out (persons.choose_gps).
-        gps, passed, _gps_gone[person] = persons_mod.choose_gps(
-            sources, persons_mod.presence_of_things(presences), last_heard, _gps_gone.get(person),
-            home, _tuning(layout, "gps_leave_m"))
-        ignored += [{"entity": g["entity"], "reason": "says home from before another source saw them leave"} for g in passed]
+        # that shows them gone, or back (persons.choose_gps).
+        gps = persons_mod.choose_gps(
+            sources, persons_mod.presence_of_things(presences), last_heard, home, _tuning(layout, "gps_leave_m"))
         # A thing that came to rest before a GPS fix far from home was made did not
         # go with them: a watch left on the bedside table while the phone walks down
         # the road must not keep the person in the house (persons.gps_left, with the
@@ -5577,10 +5571,7 @@ def _update_person_sensors(hass):
         # fix made since the last sighting, outside the home zone and well
         # down the road, is a departure, not a pause, and the person is away
         # now rather than when away_after_secs runs out (persons.gps_left).
-        # Seen earlier counts the same while no source speaks: the one that saw it may
-        # be out for a cycle, and the held room must not come back meanwhile.
-        if best is None and presence == "quiet" and (
-                (gps is None and _gps_gone[person]) or persons_mod.gps_left(gps, last_heard, home, _tuning(layout, "gps_leave_m"))):
+        if best is None and presence == "quiet" and persons_mod.gps_left(gps, last_heard, home, _tuning(layout, "gps_leave_m")):
             presence, held, held_why = "away", None, None
         # Last heard in a room with an outside door, and quiet since: out of
         # it, not asleep in it. Every proxy losing a phone at once is a phone
@@ -5611,7 +5602,7 @@ def _update_person_sensors(hass):
                 a["entity"] for a in (view.get("assigned") or {}).get(person) or []
                 if persons_mod.wifi_outrun(
                     gps, wifi_mod.seen_for_gps(wifi_clients.get(((view.get("candidates") or {}).get(a["entity"]) or {}).get("mac"))),
-                    home, _tuning(layout, "gps_leave_m"), left_at=(_gps_gone[person] or (None, None))[1])
+                    home, _tuning(layout, "gps_leave_m"))
             }
             if outrun:
                 wifi_home = _wifi_for(person, view, outrun)

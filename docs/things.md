@@ -125,9 +125,9 @@ being and how (by their things, the last place held while unheard, or a
 GPS tracker), and their **GPS sources** in order. Add the Companion app,
 Life360 or any `device_tracker` with coordinates; the first one that is
 neither broken nor stale is used once Sextant has lost the person. Another
-one still counts when it is the first to see them leave: its newer fix down
-the road marks the departure while the first source still says home from
-before it. The card also says which sources are being passed over right now,
+one still counts when its fix is the newer: down the road while the first
+source still says home from before it, or back home while the first still
+shows the road. The card also says which sources are being passed over right now,
 and why. See
 [People](automation.md#people) for what the sensors then carry.
 

@@ -64,19 +64,23 @@ zone and at least `gps_leave_m` (200 m) from home, ends the hold at once
 and the person is `away` now rather than when `away_after_secs` runs out.
 Any of their GPS sources can be the one to see it: the first in their order is
 read, unless another has a newer fix that shows the departure while the first
-still says home from before it. The newer fix wins both ways: a source that
-then reports home with a newer fix ends the departure, and until one does, or
-Sextant hears them again, it stands, even while the source that saw it is out
-(the person is `away`, `source: none`). Sextant times each fix itself, from
-when a source's zone or coordinates change: a restart, a battery level or a
-tracker coming back from unavailable is no news, and a source counts this way
-only once it has moved since Home Assistant started. Another source is only
+still says home from before it. The newer fix wins both ways: a newer fix in
+the home zone, from either source, ends the departure. A source that goes
+unavailable keeps its last fix until that fix is stale (`gps_stale_secs`, two
+hours): dropping out is no news, so a departure it saw still stands, and the
+person does not return to their last room meanwhile. That kept fix counts only
+for what it saw since they were last heard: a tracker that dropped out while it
+said home tells nothing, and `gps_ignored` still names it (`unavailable; last
+fix kept`). Sextant times each fix
+itself, from when a source's zone or coordinates change: a restart, a battery
+level or a tracker coming back from unavailable is no news, and a source
+counts this way only once it has moved since Home Assistant started. Another source is only
 read this way once Sextant has lost the person: with one of their things
 still heard in the house (a watch left at home), or for someone with GPS
 sources and no things, the first source alone speaks.
 So the phone reports promptly, the moment a person goes quiet (`stale_after_secs`,
 two minutes) Sextant asks their Home Assistant companion app (`notify.mobile_app_<device>`) for a fresh
-location, once per quiet spell. It is skipped when `gps_leave_m` is 0.
+location, once per quiet spell. It is skipped when `gps_leave_m` is 0, and when GPS already shows them gone.
 Once Sextant has lost them (`presence: away`), a phone or watch of theirs still joined to one
 of the house's Wi-Fi access points keeps them home (`source: wifi`): the
 location is `home` (an access point's room is a guess, so no room), the floor is

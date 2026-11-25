@@ -1,8 +1,8 @@
 """The person cycle over several cycles (_update_person_sensors): a GPS
 departure that a later source saw first, the cycles its sources drop out for,
-the return, and a second trip before Bluetooth hears them again. The rule
-itself is tested in test_person_fusion (choose_gps); this is the loop keeping
-its word from one cycle to the next."""
+the return, and a second trip before Bluetooth hears them again. The rules
+themselves are tested in test_person_fusion (usable_gps, choose_gps); this is
+the loop reading them the same from one cycle to the next."""
 import asyncio
 import time
 import types
@@ -41,7 +41,7 @@ def _house(tmp_path, monkeypatch, tuning=None, wifi_view=None, wifi_clients=None
         "_last_seen": {"phone": {"updated": heard}},
         "_person_last": {PERSON: (dict(KITCHEN, updated=heard, arrived=heard - 600), [])},
         "_person_visits": visits, "_event_visits": dict(visits), "_events_from": 0.0,
-        "_gps_gone": {}, "_gps_fixes": {}, "_gps_asked": {}, "_person_sleep": {}, "_person_places": {}, "_person_log_key": {},
+        "_gps_fixes": {}, "_gps_asked": {}, "_person_sleep": {}, "_person_places": {}, "_person_log_key": {},
         "_wifi_since": {}, "_event_places": {}, "_place_pending": {}, "_wifi_now": {}, "_wifi_store": {},
         "_wifi_cycle": lambda *a: dict(wifi_view or {}), "_unifi_clients": lambda h: wifi_clients or {},
         "update_sextant_sensor_state": lambda h, e, s, a=None: written.__setitem__(e, (s, a)),
@@ -69,12 +69,12 @@ def test_a_departure_a_later_source_saw_stands_through_dropouts_until_a_newer_ho
     # The phone app still says home; the other service has the car 4 km down the road.
     states[OTHER] = _tracker("not_home", 51.54, 30)
     assert cycle() == ("away", "gps", OTHER, LEFT)
-    # The other service drops out for a cycle: no held Kitchen, no "home" from the app, no arrival.
+    # The other service drops out for a cycle: its fix stands. No held Kitchen, no "home" from the app, no arrival.
     states[OTHER] = _tracker("unavailable", 51.54, 1)
-    assert cycle() == ("away", "none", None, [])
+    assert cycle() == ("away", "gps", OTHER, [])
     # The app drops out too, and comes back with the fix it had: Home Assistant stamps it as changed, but it is no news.
     states[APP] = _tracker("unavailable", 51.50, 1)
-    assert cycle() == ("away", "none", None, [])
+    assert cycle() == ("away", "gps", OTHER, [])
     states.update({APP: _tracker("home", 51.50, 1), OTHER: _tracker("not_home", 51.54, 40)})
     assert cycle() == ("away", "gps", OTHER, [])
     # Coming back: the app has a new fix at the gate while the other still shows the road.
@@ -85,10 +85,18 @@ def test_a_departure_a_later_source_saw_stands_through_dropouts_until_a_newer_ho
     # Out again before Bluetooth has heard them: the other service's newer fix down the road.
     states[OTHER] = _tracker("not_home", 51.56, 2)
     assert cycle() == ("away", "gps", OTHER, LEFT)
-    # Heard in the house: the departure is done with.
-    sextant._last_seen["phone"] = {"updated": time.time() - 1}
+
+
+def test_a_return_only_the_second_source_has_seen_is_read(tmp_path, monkeypatch):
+    states, cycle = _house(tmp_path, monkeypatch)
+    states.update({APP: _tracker("home", 51.50, 60), OTHER: _tracker("home", 51.50, 90)})
     cycle()
-    assert sextant._gps_gone[PERSON] is None
+    states[APP] = _tracker("not_home", 51.54, 30)
+    assert cycle() == ("away", "gps", APP, LEFT)
+    # Back at the gate by the other service's newer fix; the app still shows the road.
+    states[OTHER] = _tracker("home", 51.5001, 5)
+    assert cycle() == ("Kitchen", "held", OTHER, ARRIVED)
+    assert cycle() == ("Kitchen", "held", OTHER, [])
 
 
 def test_a_router_still_listing_the_phone_does_not_read_them_home_while_the_gps_source_is_out(tmp_path, monkeypatch):
@@ -103,15 +111,32 @@ def test_a_router_still_listing_the_phone_does_not_read_them_home_while_the_gps_
     states[OTHER] = _tracker("not_home", 51.54, 30)
     assert cycle() == ("away", "gps", OTHER, LEFT)
     states[OTHER] = _tracker("unavailable", 51.54, 1)
-    assert cycle() == ("away", "none", None, [])
+    assert cycle() == ("away", "gps", OTHER, [])
 
 
-def test_one_source_correcting_a_stray_fix_gives_the_held_room_back(tmp_path, monkeypatch):
-    """As before there was a departure to remember: a fix that speaks and no longer clears the guard ends nothing."""
+def test_one_source_dropping_out_changes_nothing_and_a_stray_fix_corrected_gives_the_held_room_back(tmp_path, monkeypatch):
+    """A tracker that goes unavailable has said nothing new: gone stays gone,
+    and a fix corrected to the house stays corrected, with no second departure."""
     states, cycle = _house(tmp_path, monkeypatch)
     states[APP] = _tracker("home", 51.50, 60)
     held = cycle()
     states[APP] = _tracker("not_home", 51.54, 30)
     assert cycle() == ("away", "gps", APP, LEFT)
+    states[APP] = _tracker("unavailable", 51.54, 1)
+    assert cycle() == ("away", "gps", APP, [])
     states[APP] = _tracker("not_home", 51.5003, 2)          # 30 m from the house, not in the zone
     assert cycle() == (*held[:3], ARRIVED)
+    states[APP] = _tracker("unavailable", 51.5003, 1)
+    assert cycle() == (*held[:2], None, [])
+    states[APP] = _tracker("not_home", 51.5003, 1)
+    assert cycle() == (*held[:3], [])
+
+
+def test_a_source_that_drops_out_while_it_says_home_keeps_nobody_home(tmp_path, monkeypatch):
+    """A collar with a flat battery: its "home" is from before they were last
+    heard, so with nothing heard for away_after_secs they are away, as with no GPS."""
+    states, cycle = _house(tmp_path, monkeypatch, tuning={"away_after_secs": 120.0})
+    states[APP] = _tracker("home", 51.50, 60)
+    assert cycle()[1:3] == ("gps", APP)
+    states[APP] = _tracker("unavailable", 51.50, 1)
+    assert cycle() == ("away", "none", None, LEFT)
