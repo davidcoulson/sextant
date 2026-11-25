@@ -1789,7 +1789,10 @@ def test_a_receiver_within_floor_proximity_near_m_is_the_floors_proximity_alone(
             lay["tuning"] = tuning
         return {c["name"]: c for c in sextant.extract_candidate_floors([{"entity": "e", "data": lay}], "e")}
     c = cands((0.4, 3.1, 3.7), (1.8, 2.2, 3.4))
-    assert c["Up"]["near_k_m"] == 0.4 and c["Up"]["near_k_any_m"] == 0.4
+    assert c["Up"]["near_k_m"] == 0.4
+    # The stand-in for a floor heard only by position-only proxies keeps the mean:
+    # one through-slab reading under 1 m must not give that floor full credit.
+    assert abs(c["Up"]["near_k_any_m"] - 2.4) < 1e-9
     assert abs(c["Down"]["near_k_m"] - 7.4 / 3) < 1e-9 and "_first" not in c["Up"]
     assert abs(cands((1.2, 3.1, 3.7), (3.0, 3.0, 3.4))["Up"]["near_k_m"] - 8.0 / 3) < 1e-9   # not that near: the mean
     # A light below reading nearly as short through the slab: nobody speaks alone.

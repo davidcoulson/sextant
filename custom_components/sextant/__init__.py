@@ -6068,17 +6068,18 @@ def extract_candidate_floors(new_global_data, tmpentity):
                     # The same over every proxy, voters or not: the stand-in when no voter heard it.
                     "near_k_any_m": sum(any_k) / len(any_k) if any_k else float("inf"),
                     "no_vote": no_vote,  # entity_ids of this floor's position-only proxies
-                    "_first": (ranked[:1], any_k[:1]),
+                    "_first": ranked[:1], "_first_any": any_k[:1],
                 })
-    # A receiver under floor_proximity_near_m, and at most FLOOR_NEAR_RATIO of
-    # the nearest reading on any other floor, speaks for its floor alone.
+    # A voting receiver under floor_proximity_near_m, and at most FLOOR_NEAR_RATIO
+    # of the nearest reading on any other floor, speaks for its floor alone. Not
+    # for the position-only stand-in: that is a through-slab guard, kept a mean.
     for c in candidates:
-        others = min((o["_first"][1][0] for o in candidates if o is not c and o["_first"][1]), default=float("inf"))
-        for key, first in zip(("near_k_m", "near_k_any_m"), c["_first"]):
-            if first and first[0] < near_m and first[0] <= FLOOR_NEAR_RATIO * others:
-                c[key] = first[0]
+        others = min((o["_first_any"][0] for o in candidates if o is not c and o["_first_any"]), default=float("inf"))
+        first = c["_first"]
+        if first and first[0] < near_m and first[0] <= FLOOR_NEAR_RATIO * others:
+            c["near_k_m"] = first[0]
     for c in candidates:
-        del c["_first"]
+        del c["_first"], c["_first_any"]
     candidates.sort(key=lambda c: c["nearest_m"])  # stable: file order breaks ties
     return candidates
 
