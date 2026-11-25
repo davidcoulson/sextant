@@ -8,8 +8,8 @@
  *                        history retention.
  */
 import { LitElement, html, css, nothing } from "./lit.js";
-import { pointInPolygon } from "./sextant-map.js";
-import { sharedStyles, widgetStyles, fmtAge, fmtNum, toast, callWS, confirmAsync, uiField, uiSelect, uiSwitch, uiButton, sortFloors, thingName, proxyName, fmtLen, isImperial } from "./sextant-ui.js";
+import { pointInPolygon, SextantMap, errorRgb } from "./sextant-map.js";
+import { sharedStyles, widgetStyles, fmtAge, fmtNum, toast, callWS, confirmAsync, uiField, uiSelect, uiSwitch, uiButton, sortFloors, thingName, proxyName, fmtLen, isImperial, mapUrlFor } from "./sextant-ui.js";
 
 // A far move is a room change to a room on the same floor whose outline is
 // more than 2.5 m from the previous room's. Walked, it passes through
@@ -157,6 +157,9 @@ class SextantHealth extends LitElement {
     _report: { state: true },
     _logUse: { state: true },
     _advice: { state: true },
+    _errFloorSel: { state: true },
+    _errAfter: { state: true },
+    _errPick: { state: true },
     _kpi: { state: true },
     _accuracy: { state: true },
     _pinHealth: { state: true },
@@ -211,6 +214,8 @@ class SextantHealth extends LitElement {
     super.disconnectedCallback();
     clearInterval(this._timer);
     document.removeEventListener("visibilitychange", this._onVisible);
+    this._errMap?.destroy();
+    this._errMap = null;
   }
 
   willUpdate(changed) {
@@ -225,6 +230,46 @@ class SextantHealth extends LitElement {
       this._logUse = null;
       this.hass.callWS({ type: "sextant/election_log/usage" }).then((r) => { this._logUse = r; }).catch(() => {});
     }
+    this._syncErrorMap();
+  }
+
+  /** The Advice page's error map: made once its canvas is on the page, dropped
+   * with the canvas (another section, no analysis yet), and fed again only
+   * when the analysis, the floor, the toggle or the layout changes - hass
+   * changes many times a second and none of it is drawn here. */
+  _syncErrorMap() {
+    const canvas = this.renderRoot?.querySelector("canvas.errmap") || null;
+    if (this._errMap && this._errMap.canvas !== canvas) { this._errMap.destroy(); this._errMap = null; }
+    if (!canvas) return;
+    const name = this._errFloor(), key = [this._advice, name, !!this._errAfter, this.data];
+    if (this._errMap && this._errKey?.every((v, i) => v === key[i])) return;
+    this._errMap = this._errMap || new SextantMap(canvas, { fetch: (url) => this.hass.fetchWithAuth(url), onPlanClick: (pt) => this._errClick(pt) });
+    this._errKey = key;
+    const floor = (this.data?.layout?.floor || []).find((f) => f.name === name) || null;
+    this._errMap.setFloor(floor, mapUrlFor(name, this.data?.maps));
+    this._errMap.setOptions({ labels: true });
+    const m = this._advice?.maps?.[name];
+    this._errMap.setErrorMap(m ? { ...m, after: !!this._errAfter } : null);
+  }
+
+  /** The floor the error map shows: the one picked, else the first in the Advice order. */
+  _errFloor() {
+    const maps = this._advice?.maps || {};
+    if (this._errFloorSel && maps[this._errFloorSel]) return this._errFloorSel;
+    return this._adviceByFloor(this._advice?.rooms).map((f) => f.floor).find((f) => maps[f]) || Object.keys(maps)[0] || null;
+  }
+
+  /** A click on the error map: a purple square says what went wrong there,
+   * anywhere else in a room shows that room's row. */
+  _errClick(pt) {
+    const a = this._advice, name = this._errFloor(), m = a?.maps?.[name];
+    if (!m) return;
+    const square = (m.bad || []).find((b) => pt.x >= b.x && pt.x < b.x + b.size && pt.y >= b.y && pt.y < b.y + b.size);
+    const floor = (this.data?.layout?.floor || []).find((f) => f.name === name);
+    const zone = (floor?.zones || []).find((z) => !z.no_go && (z.cords || []).length >= 3 && pointInPolygon(pt, z.cords));
+    const key = zone ? String(zone.entity_id || zone.zone_id) : null;
+    const row = key ? (a.rooms || []).find((r) => r.floor === name && r.room === key) : null;
+    this._errPick = square || row ? { adv: a, floor: name, square, row } : null;
   }
 
   async _refresh() {
@@ -592,6 +637,7 @@ class SextantHealth extends LitElement {
       ${a?.unplaced?.length ? html`<div class="row"><b>Heard but not placed:</b>
         ${a.unplaced.map((u) => html`<span class="chips">${u.name}${u.suggest ? html` <span class="muted small">→ ${u.suggest.room} (${u.suggest.floor})</span> ${this._isAdmin() ? uiButton({ label: "Show on plan", kind: "text", onClick: () => this._showSpots(u.suggest.floor, [{ room: u.suggest.room, x: u.suggest.x, y: u.suggest.y }]) }) : nothing}` : nothing} ${this._isAdmin() ? uiButton({ label: "Ignore", kind: "text", title: "Leave this scanner out of the unplaced lists (a kiosk, a test board, an outdoor proxy)", onClick: () => this._ignoreScanner(u.address, true) }) : nothing}</span>`)}</div>` : nothing}
       ${a?.ignored?.length ? html`<div class="row muted small">Ignored: ${a.ignored.map((u) => html`<span class="chips">${u.name} ${this._isAdmin() ? uiButton({ label: "Un-ignore", kind: "text", onClick: () => this._ignoreScanner(u.address, false) }) : nothing}</span>`)}</div>` : nothing}
+      ${a?.maps ? this._renderErrorMap(a, floors) : nothing}
       ${a ? floors.map(({ floor, rows, toAdd, flagged }) => {
         const allSpots = rows.flatMap((r) => (r.spots || []).map((s) => ({ ...s, room: r.room })));
         return html`<div class="floorplan">
@@ -614,6 +660,51 @@ class SextantHealth extends LitElement {
         </div>`;
       }) : html`<p class="muted small">Runs the self-test (a few seconds) and reads the plan.</p>`}
     </section>`;
+  }
+
+  _renderErrorMap(a, floors) {
+    const name = this._errFloor(), m = a.maps[name];
+    const order = [...floors.map((f) => f.floor), ...Object.keys(a.maps)].filter((f, i, all) => a.maps[f] && all.indexOf(f) === i);
+    const rgb = (v) => `rgb(${errorRgb(v).join(",")})`;
+    const swatch = (bg, text) => html`<span class="chips"><span class="swatch" style="background:${bg}"></span>${text}</span>`;
+    const pick = this._errPick?.adv === a && this._errPick.floor === name ? this._errPick : null;
+    return html`<div class="floorplan errmap-wrap">
+      <h4>Predicted error</h4>
+      <div class="row">${order.map((f) => {
+        const fm = a.maps[f], stars = fm.stars?.length || 0, bad = fm.bad?.length || 0;
+        const label = `${f}${stars ? ` · ${stars} to add` : ""}${bad ? ` · ${bad} bad spot${bad === 1 ? "" : "s"}` : ""}`;
+        return uiButton({ label, kind: f === name ? "primary" : "outline", onClick: () => { this._errFloorSel = f; this._errPick = null; } });
+      })}
+        <span class="chips">${uiSwitch({ label: "With the suggested proxies", checked: !!this._errAfter, onChange: (v) => { this._errAfter = v; } })}</span></div>
+      ${m?.note ? html`<p class="small muted">${name}: ${m.note}.</p>` : nothing}
+      <canvas class="errmap"></canvas>
+      <div class="row small">${swatch(rgb(0.5), "<1 m")}${swatch(rgb(2), "2 m")}${swatch(rgb(3), "3 m")}${swatch(rgb(4), "4 m+")}${swatch("rgba(127,119,221,0.7)", "measured bad")}${swatch("#EF9F27", "suggested proxy")}</div>
+      <p class="small muted">Predicted from where the proxies are: the colours rank places, the metres are rough. ${a.model?.calibrated ? `Ranging noise fitted from ${a.model.pairs} proxy pairs.` : "Ranging noise is the default: fewer than 8 proxy pairs to fit from."} Click a room for its numbers, or a purple square for what went wrong there.</p>
+      ${pick?.square ? this._renderSquareCard(pick.square) : pick?.row ? this._renderRoomCard(pick.row) : nothing}
+    </div>`;
+  }
+
+  _renderSquareCard(sq) {
+    const words = { pin: ["pin placed 3 m or more off", "pins placed 3 m or more off"], proxy: ["weak proxy", "weak proxies"],
+                    flip: ["floor flip (another floor and straight back)", "floor flips (another floor and straight back)"],
+                    jump: ["jump (4 m out and straight back)", "jumps (4 m out and straight back)"] };
+    const who = (e) => { const p = proxyName(this.data, e); return p !== e ? p : thingName(this.data, e); };
+    const kinds = Object.entries(sq.kinds || {}).map(([k, n]) => `${n} ${(words[k] || [k, k])[n === 1 ? 0 : 1]}`);
+    return html`<div class="errcard"><b>Measured bad here</b>: ${kinds.join(", ")}${sq.hours ? ` across ${sq.hours} hour${sq.hours === 1 ? "" : "s"}` : ""}.
+      ${sq.things?.length ? html`<div class="small muted">${sq.things.map(who).join(", ")}</div>` : nothing}</div>`;
+  }
+
+  _renderRoomCard(r) {
+    const bits = [
+      r.median_m != null ? `median ${fmtLen(r.median_m, this.hass, 2)}` : null,
+      r.third_proxy_m != null ? `third-nearest proxy ${fmtLen(r.third_proxy_m, this.hass, 1)}` : null,
+      r.time_share != null ? `time here ${fmtNum(r.time_share * 100, 1)}%` : null,
+      r.bounces != null ? `${r.bounces} bounce${r.bounces === 1 ? "" : "s"}` : null,
+    ].filter(Boolean);
+    return html`<div class="errcard"><b>${r.room}</b> <span class="pill ${r.issue === "ok" ? "ok" : r.issue === "noisy" || r.issue === "coverage" || r.issue === "one-sided" ? "warn" : "bad"}">${r.issue}</span>
+      <span class="small muted">${bits.join(" · ")}</span>
+      ${r.note ? html`<div class="small">${r.note.replace(/[a-z0-9_]+_(rrn00|s2224|eth|shelly)[a-z0-9_]*/g, (x) => proxyName(this.data, x))}</div>` : nothing}
+      ${r.spots?.length && this._isAdmin() ? uiButton({ label: "Show on plan", kind: "text", onClick: () => this._showSpots(r.floor, r.spots.map((s) => ({ ...s, room: r.room }))) }) : nothing}</div>`;
   }
 
   _renderSelftest() {
@@ -985,6 +1076,9 @@ class SextantHealth extends LitElement {
        suggested spots on the map together, then that floor's own table. */
     .floorplan { border-top: 1px solid var(--divider-color); margin-top: 10px; padding-top: 8px; }
     .floorplan h4 { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+    canvas.errmap { width: 100%; height: 420px; display: block; border-radius: 8px; --sextant-map-bg: var(--card-background-color, #fff); }
+    .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; }
+    .errcard { border: 1px solid var(--divider-color); border-radius: 8px; padding: 8px 10px; margin-top: 6px; }
     .tfield { display: inline-flex; flex-direction: column; gap: 2px; }
     .tfield .hint { font-size: 11px; color: var(--secondary-text-color); padding-left: 2px; }
     .tfilter { box-sizing: border-box; width: 280px; max-width: 100%; padding: 8px 10px; border: 1px solid var(--divider-color); border-radius: 6px; background: var(--card-background-color); color: var(--primary-text-color); font: inherit; }
