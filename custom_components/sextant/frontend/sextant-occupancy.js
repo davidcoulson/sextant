@@ -42,9 +42,9 @@ class SextantOccupancy extends LitElement {
     /* Background only: the border still says occupied (solid) or pets only (dashed). */
     .room.mode { background: color-mix(in srgb, var(--accent-color, #ff9800) 18%, transparent); }
     .src .mi { --mdc-icon-size: 20px; color: var(--accent-color, #ff9800); }
-    .room.mode .rn { padding-right: 64px; overflow-wrap: anywhere; }   /* the mode icon and the reasons beside it */
+    .room.mode .rn { overflow-wrap: anywhere; }
     .rn .ml { display: block; font-size: 12px; font-weight: 400; color: var(--secondary-text-color); }
-    .rn { font-size: 13px; font-weight: 500; margin-bottom: 6px; padding-right: 44px; }
+    .rn { font-size: 13px; font-weight: 500; margin-bottom: 6px; }   /* its right padding is set per tile, by the icons in the corner */
     .src { position: absolute; top: 6px; right: 8px; display: flex; align-items: center; gap: 4px; color: var(--secondary-text-color); }
     .src ha-icon { --mdc-icon-size: 16px; }
     .chip { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; margin: 0 4px 4px 0; padding: 2px 7px; border-radius: 10px; background: var(--card-background-color); border: 1px solid var(--divider-color); }
@@ -127,7 +127,7 @@ class SextantOccupancy extends LitElement {
           ${f.pets ? html`<span class="pill">${f.pets} ${f.pets === 1 ? "pet" : "pets"}</span>` : nothing}</div>
         <div class="grid">${f.rooms.map((r) => html`
           <div class="room ${r.on ? (r.peopleOn ? "on" : "pets") : ""} ${r.mode ? "mode" : ""}">
-            ${f === this._outside ? nothing : html`<div class="rn">${r.room}${r.mode ? html`<span class="ml">${r.mode}</span>` : nothing}</div>`}
+            ${f === this._outside ? nothing : html`<div class="rn" style="padding-right:${(r.on ? r.sources.length : 0) * 20 + (r.mode ? 24 : 0) + 4}px">${r.room}${r.mode ? html`<span class="ml">${r.mode}</span>` : nothing}</div>`}
             ${r.people.map((p) => this._chip(r, p, "mdi:account", firstName(p)))}
             ${r.pets.map((p) => this._chip(r, p, "mdi:paw"))}
             ${r.mode || (r.on && r.sources.length) ? html`<div class="src">${r.on ? r.sources.map((x) => html`<ha-icon icon=${SOURCE_ICON[x] || "mdi:help-circle-outline"} title=${SOURCE_LABEL[x] || x}></ha-icon>`) : nothing}${r.mode ? html`<ha-icon class="mi" icon=${modeIcon(r.mode)} aria-hidden="true"></ha-icon>` : nothing}</div>` : nothing}
