@@ -350,3 +350,23 @@ def test_a_dog_unheard_with_her_collar_at_home_is_outside():
     assert persons.fuse(None, [], "away", None, gps, [])["sextant_person_location"][0] == "home"      # a cat or a person
     away = {**gps, "zone": "not_home"}
     assert persons.fuse(None, [], "away", None, away, [], dog=True)["sextant_person_location"][0] == "away"
+
+
+def test_an_outside_door_with_a_sensor_must_have_opened_for_a_quiet_person_to_have_gone_out():
+    layout = {"floor": [{"name": "Ground", "zones": [
+        {"entity_id": "Foyer", "exit": True, "exit_door": "binary_sensor.front"},
+        {"entity_id": "Laundry Room", "exit": True, "exit_door": "binary_sensor.laundry"},
+        {"entity_id": "Sun Room", "exit": True}, {"entity_id": "Kitchen", "exit_door": "binary_sensor.pantry"}]}]}
+    assert persons.exit_doors(layout) == {"binary_sensor.front", "binary_sensor.laundry"}
+    foyer, backs = {"floor": "Ground", "zone": "Foyer"}, persons.door_backs_exit
+    assert not backs(layout, foyer, {}, 1000.0, 300.0)                                   # no door opened
+    assert backs(layout, foyer, {"binary_sensor.front": 950.0}, 1000.0, 300.0)
+    # Held in the Foyer, out by the laundry door: any outside door counts.
+    assert backs(layout, foyer, {"binary_sensor.laundry": 900.0}, 1000.0, 300.0)
+    assert backs(layout, foyer, {"binary_sensor.laundry": 1100.0}, 1000.0, 300.0)        # opened after the phone went quiet
+    assert not backs(layout, foyer, {"binary_sensor.front": 600.0}, 1000.0, 300.0)       # hours-old opening
+    assert not backs(layout, foyer, {"binary_sensor.pantry": 950.0}, 1000.0, 300.0)      # not an outside door
+    # A room whose outside door has no sensor cannot be checked: as before. So is the check turned off.
+    assert backs(layout, {"floor": "Ground", "zone": "Sun Room"}, {}, 1000.0, 300.0)
+    assert backs(layout, {"floor": "Ground", "zone": "Kitchen", "zone_raw": "Sun Room"}, {}, 1000.0, 300.0)
+    assert backs(layout, foyer, {}, 1000.0, 0.0)

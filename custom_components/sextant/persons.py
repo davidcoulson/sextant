@@ -487,6 +487,32 @@ def has_exit(layout, floor, room) -> bool:
     return False
 
 
+def _exit_zones(layout):
+    """(floor name, zone) of every room with an outside door."""
+    for f in (layout or {}).get("floor") or []:
+        for z in (f.get("zones") or []) if isinstance(f, dict) else []:
+            if isinstance(z, dict) and z.get("exit") and not z.get("no_go"):
+                yield f.get("name"), z
+
+
+def exit_doors(layout) -> set[str]:
+    """Every outside door's contact sensor (a room's ``exit_door``, set on the Edit page)."""
+    return {z["exit_door"] for _, z in _exit_zones(layout) if isinstance(z.get("exit_door"), str) and z["exit_door"]}
+
+
+def door_backs_exit(layout, held, opened, last_heard, window) -> bool:
+    """Whether the doors allow that someone quiet at an outside door went out:
+    an outside door was open within ``window`` seconds of when they were last
+    heard (``opened``: contact -> when last seen open). Any outside door, not
+    the held room's: they are held in the Foyer and out by the laundry door.
+    True when it cannot be told: the room's own door has no sensor, or window is 0."""
+    rooms = [z for floor, z in _exit_zones(layout)
+             if floor == held.get("floor") and z.get("entity_id") in (held.get("zone"), held.get("zone_raw"))]
+    if window <= 0 or any(not z.get("exit_door") for z in rooms):
+        return True
+    return any(abs(opened[d] - last_heard) <= window for d in exit_doors(layout) if d in opened)
+
+
 def held_by_exit(layout, held) -> bool:
     """Whether a held place is at an outside door: its room, or the room its last fix fell in."""
     return any(has_exit(layout, held.get("floor"), z) for z in (held.get("zone"), held.get("zone_raw")))

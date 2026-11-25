@@ -935,6 +935,8 @@ class SextantEdit extends LitElement {
             : uiButton({ label: "Done", kind: "primary", onClick: () => { go(null); toast(this, "Room set up. Save to keep it"); } })}
         </div>` : html`
         ${uiSwitch({ label: "Has an outside door (someone whose phone goes quiet here has gone out)", checked: !!item.exit, onChange: (v) => this._edit("exit", v || undefined) })}
+        ${item.exit ? uiField({ label: "Outside door contact (entity id; with one, they have gone out only if an outside door opened)", value: item.exit_door ?? "",
+          placeholder: "binary_sensor.front_door", onChange: (v) => this._edit("exit_door", v.trim() || undefined), style: "width: 100%" }) : nothing}
         <div class="muted small">Blank timings use the Tuning page's. The wizard explains each setting and offers the sensors in the room's area.</div>`}`;
   }
 
