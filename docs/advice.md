@@ -66,7 +66,7 @@ so keep **Auto calibration** on for it to see every floor.
 
 ## Error map
 
-![The Advice page's error map for a basement: green near the proxies, red across the far end of the big room, three purple squares where a cat kept being put on the wrong floor, and two numbered stars on the walls where a proxy would help most](../img/screenshots/sextant-advice-map.png)
+![The Advice page's error map for a basement: green near the proxies, red across the far end of the big room, three purple squares where things measured bad, and two numbered stars on the walls where a proxy would help most](../img/screenshots/sextant-advice-map.png)
 
 Above the tables, each floor is drawn as a picture of how far off a position
 is likely to be at each point: green where the proxies surround the spot and
