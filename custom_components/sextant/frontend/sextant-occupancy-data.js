@@ -1,8 +1,8 @@
 /** Room occupancy grouped by floor, from the room sensors' states. No DOM: the tab and the tests share it. */
 import { sortFloors } from "./sextant-floors.js";
 
-export const SOURCE_LABEL = { bluetooth: "Bluetooth", radar: "Radar", media_player: "Media playing", sensor: "Sensor", forced: "Forced on", door: "Door held", restored: "Carried over restart", hold: "Holding" };
-export const SOURCE_ICON = { bluetooth: "mdi:bluetooth", radar: "mdi:radar", media_player: "mdi:television-play", sensor: "mdi:motion-sensor", forced: "mdi:toggle-switch", door: "mdi:door", restored: "mdi:restart", hold: "mdi:timer-sand" };
+export const SOURCE_LABEL = { bluetooth: "Bluetooth", radar: "Radar", media_player: "Media playing", sensor: "Sensor", forced: "Forced on", door: "Door held", restored: "Carried over restart", keep: "Kept on by a sensor", hold: "Holding" };
+export const SOURCE_ICON = { bluetooth: "mdi:bluetooth", radar: "mdi:radar", media_player: "mdi:television-play", sensor: "mdi:motion-sensor", forced: "mdi:toggle-switch", door: "mdi:door", restored: "mdi:restart", keep: "mdi:pin", hold: "mdi:timer-sand" };
 
 // A room's mode (Movie, Gaming, ...) picks its icon by its first word that starts like one; anything else gets a tag.
 const MODE_ICONS = [[/^(movie|film|cinema|theat)/, "mdi:movie-open"], [/^(tv|watch)/, "mdi:television-play"], [/^gam/, "mdi:controller"],
