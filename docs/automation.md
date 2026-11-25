@@ -63,10 +63,10 @@ already seen them go: a fix made since the last sighting, outside the home
 zone and at least `gps_leave_m` (200 m) from home, ends the hold at once
 and the person is `away` now rather than when `away_after_secs` runs out.
 Any of their GPS sources can be the one to see it: the first in their order is
-read, unless another has a newer fix that shows the departure while the first
-still has them at or by the house from before it. The newer fix wins both
-ways: a newer fix in the home zone, or within `gps_leave_m` of home, from
-either source, ends the departure. A source that goes
+read, unless another has a fix from since that sighting that shows the
+departure while the first still has them at or by the house. Between gone and
+home the newer fix wins: a fix in the home zone as new or newer, from either
+source, ends the departure. A source that goes
 unavailable keeps its last fix for `gps_stale_secs` (two hours) after its last
 report: dropping out is no news, so a departure it saw still stands, and the
 person does not return to their last room meanwhile. That kept fix counts only

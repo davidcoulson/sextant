@@ -87,6 +87,16 @@ def test_a_departure_a_later_source_saw_stands_through_dropouts_until_a_newer_ho
     assert cycle() == ("away", "gps", OTHER, LEFT)
 
 
+def test_the_apps_zone_exit_fix_by_the_house_does_not_undo_a_departure_the_other_source_saw(tmp_path, monkeypatch):
+    states, cycle = _house(tmp_path, monkeypatch)
+    states.update({APP: _tracker("home", 51.50, 60), OTHER: _tracker("home", 51.50, 90)})
+    cycle()
+    states[OTHER] = _tracker("not_home", 51.54, 30)
+    assert cycle() == ("away", "gps", OTHER, LEFT)
+    states[APP] = _tracker("not_home", 51.5012, 5)          # 130 m out: past the zone, short of gps_leave_m
+    assert cycle() == ("away", "gps", OTHER, [])
+
+
 def test_a_return_only_the_second_source_has_seen_is_read(tmp_path, monkeypatch):
     states, cycle = _house(tmp_path, monkeypatch)
     states.update({APP: _tracker("home", 51.50, 60), OTHER: _tracker("home", 51.50, 90)})
@@ -127,7 +137,7 @@ def test_one_source_dropping_out_changes_nothing_and_a_stray_fix_corrected_gives
     states[APP] = _tracker("not_home", 51.5003, 2)          # 30 m from the house, not in the zone
     assert cycle() == (*held[:3], ARRIVED)
     states[APP] = _tracker("unavailable", 51.5003, 1)
-    assert cycle() == (*held[:3], [])
+    assert cycle() == (*held[:2], None, [])
     states[APP] = _tracker("not_home", 51.5003, 1)
     assert cycle() == (*held[:3], [])
 

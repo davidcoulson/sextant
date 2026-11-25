@@ -162,7 +162,7 @@ def test_coordinates_left_out_of_one_write_are_the_ones_the_fix_had():
     states[other] = state("not_home", {}, ago=0.2)
     assert persons.usable_gps(states.get, LAYOUT, "person.robin", NOW, 0.5, dict(fixes))[0][0]["latitude"] is None
     # Another zone is another place, and an iCloud3 stationary zone is a new one each time: nothing is carried into them.
-    for before, zone in (("not_home", "StatZon1"), ("not_home", "work"), ("StatZon1", "StatZon2")):
+    for before, zone in (("not_home", "StatZon1"), ("StatZon1", "not_home"), ("not_home", "work"), ("StatZon1", "StatZon2")):
         states[other] = state(before, {**GPS, "latitude": 51.54}, ago=2)
         assert read()["latitude"] == 51.54
         states[other] = state(zone, {}, ago=1)
@@ -638,22 +638,7 @@ def test_a_source_that_is_out_counts_only_for_what_it_saw_since_they_were_last_h
     out_far, out_back = {**far, "out": "unavailable"}, {**APP_BACK, "out": "unavailable"}
     assert _choose([APP_HOME, out_far]) is out_far and _choose([out_far]) is out_far
     assert _choose([out_back, far]) is out_back and _choose([out_back]) is out_back
-    # A fix by the house it had corrected itself to still says so: it does not show them gone.
-    out_near = {**near, "out": "unavailable"}
-    assert _choose([out_near]) is out_near and not persons.gps_left(out_near, HEARD, HOME)
-
-
-def test_a_fix_by_the_house_ends_an_older_departure_as_one_in_the_home_zone_does():
-    """Back at the gate, then GPS drift puts that source just outside the zone:
-    the other's old road fix is not the news again."""
-    road = _other("device_tracker.first", reported=NOW - 200)      # first in their order, still on the road
-    drift = _other(lat=51.5012, reported=NOW - 20)                 # 130 m out: not home, not gone
-    assert _choose([road, drift]) is drift
-    kept = {**drift, "out": "unavailable"}
-    assert _choose([road, kept]) is kept
-    # A road fix newer than it is the next departure.
-    again = _other("device_tracker.first", reported=NOW - 5)
-    assert _choose([again, drift]) is again
-    # No coordinates, or too rough to place them by the house: no such word, the road fix stands.
-    assert _choose([road, {**drift, "latitude": None, "longitude": None}]) is road
-    assert _choose([road, _other(lat=51.51, accuracy=2000, reported=NOW - 20)]) is road
+    # A fix by the house it had corrected itself to says neither: the hold is left alone.
+    assert _choose([{**near, "out": "unavailable"}]) is None
+    # Nor is it a return: the app's zone-exit fix lands there after the other source's road fix, on the way out.
+    assert _choose([_other("device_tracker.first", lat=51.5012, reported=NOW - 5), far]) is far
