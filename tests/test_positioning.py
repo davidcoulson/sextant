@@ -1777,6 +1777,27 @@ def test_candidates_carry_the_mean_of_the_k_nearest_slants():
     assert abs(cand["near_k_m"] - 4.0) < 1e-9             # more than the floor has: all of them
 
 
+def test_a_receiver_within_floor_proximity_near_m_is_the_floors_proximity_alone():
+    # A phone 0.4 m from a bedside proxy, the room's others 3 m off: the mean of
+    # three read 2.4 m, the same as three ceiling relays on the floor below.
+    def cands(up, down, tuning=None):
+        lay = {"floor": [{"name": name, "scale": 100.0, "zones": [], "subzones": [], "receivers": [
+            {"entity_id": f"{name}{i}", "cords": {"x": i * 100.0, "y": 0.0, "r": d * 100.0}, "distance": d}
+            for i, d in enumerate(dists)
+        ]} for name, dists in (("Up", up), ("Down", down))]}
+        if tuning:
+            lay["tuning"] = tuning
+        return {c["name"]: c for c in sextant.extract_candidate_floors([{"entity": "e", "data": lay}], "e")}
+    c = cands((0.4, 3.1, 3.7), (1.8, 2.2, 3.4))
+    assert c["Up"]["near_k_m"] == 0.4 and c["Up"]["near_k_any_m"] == 0.4
+    assert abs(c["Down"]["near_k_m"] - 7.4 / 3) < 1e-9 and "_first" not in c["Up"]
+    assert abs(cands((1.2, 3.1, 3.7), (3.0, 3.0, 3.4))["Up"]["near_k_m"] - 8.0 / 3) < 1e-9   # not that near: the mean
+    # A light below reading nearly as short through the slab: nobody speaks alone.
+    c = cands((0.4, 3.1, 3.7), (0.7, 2.2, 3.4))
+    assert abs(c["Up"]["near_k_m"] - 2.4) < 1e-9 and abs(c["Down"]["near_k_m"] - 2.1) < 1e-9
+    assert abs(cands((0.4, 3.1, 3.7), (1.8, 2.2, 3.4), {"floor_proximity_near_m": 0})["Up"]["near_k_m"] - 2.4) < 1e-9   # 0 = off
+
+
 def test_floor_bias_reads_the_layout_and_ignores_junk():
     layout = {"floor": [{"name": "Ground", "bias": 1.2}, {"name": "Up", "bias": "hot"}, {"name": "Down", "bias": 0}, {"name": "Attic"}]}
     assert sextant._floor_bias(layout, "Ground") == 1.2
