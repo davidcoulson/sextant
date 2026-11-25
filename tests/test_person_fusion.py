@@ -138,6 +138,27 @@ def test_sextant_times_each_fix_itself():
     assert "fix_at" not in persons.usable_gps(states.get, LAYOUT, "person.robin", NOW)[0][0]   # no clock kept, none told
 
 
+def test_coordinates_left_out_of_one_write_are_the_ones_the_fix_had():
+    """A road fix written once with the zone alone is the same fix: it still
+    shows them gone, so no arrival and second departure are made of it."""
+    other, fixes = "device_tracker.robin_smith", {}
+    states = {other: state("not_home", {**GPS, "latitude": 51.54}, ago=30)}
+
+    def read():
+        return persons.usable_gps(states.get, LAYOUT, "person.robin", NOW, fixes=fixes)[0][0]
+
+    road = read()
+    for write in (state("not_home", {}, ago=4), state("not_home", {}, ago=3), state("unavailable"),
+                  state("not_home", {**GPS, "latitude": 51.54}, ago=1)):
+        states[other] = write
+        got = read()
+        assert (got["latitude"], got["longitude"], got["accuracy"]) == (51.54, -0.10, 15) and got["fix_at"] is road["fix_at"]
+        assert persons.gps_left(got, NOW - 300, HOME)
+    # Another zone is another place: nothing is carried into it.
+    states[other] = state("work", {}, ago=1)
+    assert read()["latitude"] is None
+
+
 def test_a_person_is_as_present_as_their_most_present_thing():
     assert persons.presence_of_things(["away", "quiet", "here"]) == "here"
     assert persons.presence_of_things(["away", "quiet"]) == "quiet"
@@ -555,6 +576,16 @@ def test_the_newer_fix_decides_between_gone_and_home_whichever_source_made_it():
     assert _choose([APP_BACK, _other(reported=NOW - 20)]) is APP_BACK
     # At home, another source moving about inside the zone does not take the word from the first.
     assert _choose([APP_HOME, back]) is APP_HOME
+
+
+def test_with_three_sources_the_road_fix_newer_than_the_home_one_speaks():
+    """Out, back and out again, each seen by another source: the fix that is
+    the news speaks, not the first road fix in the order."""
+    first = _other("device_tracker.first", reported=NOW - 200)
+    back = {**APP_BACK, "reported": NOW - 100, "fix_at": NOW - 100}
+    again = _other(reported=NOW - 30)
+    assert _choose([first, back, again]) is again
+    assert _choose([first, back]) is back
 
 
 def test_a_tracker_that_drops_out_keeps_its_last_fix_until_that_fix_is_stale():

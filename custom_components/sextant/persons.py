@@ -439,9 +439,10 @@ def usable_gps(get_state, layout, person, now, stale_secs=GPS_STALE_SECS, fixes=
     one: a tracker dropping out is no word about where the person is, so a
     departure it saw still stands, and a fix it had corrected stays corrected.
     Such a fix is marked ``out`` (the reason), and the source is still named as
-    passed over: it counts only for what it saw since the person was last heard
-    (choose_gps). Coordinates left out of one write, the zone unchanged, are
-    the same place.
+    passed over: it counts only if it was made since the person was last heard
+    (choose_gps). It is kept for stale_secs after the source's last report,
+    and then the sources that are left speak again. Coordinates left out of a
+    write, the zone unchanged, are the same place, and the fix keeps them.
 
     shortcut: the time is that of the write the cycle first sees the new place
     in, so another write in between (a battery level) dates it up to a cycle
@@ -462,7 +463,9 @@ def usable_gps(get_state, layout, person, now, stale_secs=GPS_STALE_SECS, fixes=
         if fixes is not None:
             place = (info["zone"], info["latitude"], info["longitude"])
             if kept and place[1] is None and kept[0][0] == place[0]:
+                # The fix it had, coordinates and all: without them a road fix would stop showing them gone.
                 place = kept[0]
+                info.update({k: kept[2][k] for k in ("latitude", "longitude", "accuracy")})
             info["fix_at"] = None if kept is None else kept[1] if kept[0] == place else info["updated"]
             fixes[eid] = (place, info["fix_at"], info)
         usable.append(info)
@@ -577,9 +580,9 @@ def choose_gps(usable, presence, last_heard, home=None, min_distance_m=200.0):
         return str(g.get("zone") or "").lower() == "home"
 
     since = [g for g in usable if at(g) > heard]
-    gone = [g for g in since if gps_left(g, heard, home, min_distance_m)]
     back = max((g for g in since if is_home(g)), key=at, default=None)
-    if gone and (back is None or max(map(at, gone)) > at(back)):
+    gone = [g for g in since if (back is None or at(g) > at(back)) and gps_left(g, heard, home, min_distance_m)]
+    if gone:
         return gone[0]
     return first if back is None or (first and is_home(first)) else back
 

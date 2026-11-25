@@ -66,15 +66,18 @@ Any of their GPS sources can be the one to see it: the first in their order is
 read, unless another has a newer fix that shows the departure while the first
 still says home from before it. The newer fix wins both ways: a newer fix in
 the home zone, from either source, ends the departure. A source that goes
-unavailable keeps its last fix until that fix is stale (`gps_stale_secs`, two
-hours): dropping out is no news, so a departure it saw still stands, and the
+unavailable keeps its last fix for `gps_stale_secs` (two hours) after its last
+report: dropping out is no news, so a departure it saw still stands, and the
 person does not return to their last room meanwhile. That kept fix counts only
-for what it saw since they were last heard: a tracker that dropped out while it
-said home tells nothing, and `gps_ignored` still names it (`unavailable; last
-fix kept`). Sextant times each fix
+if it was made since they were last heard, whichever way it points: a tracker
+that drops out on a "home" from before then keeps nobody home. `gps_ignored`
+still names it (`unavailable; last fix kept`), and once the kept fix runs out
+the sources that are left speak again. Sextant times each fix
 itself, from when a source's zone or coordinates change: a restart, a battery
 level or a tracker coming back from unavailable is no news, and a source
-counts this way only once it has moved since Home Assistant started. Another source is only
+counts this way only once it has moved since Home Assistant started. The time
+is that of the update cycle's first look at the new fix, so it can be a few
+seconds late. Another source is only
 read this way once Sextant has lost the person: with one of their things
 still heard in the house (a watch left at home), or for someone with GPS
 sources and no things, the first source alone speaks.
