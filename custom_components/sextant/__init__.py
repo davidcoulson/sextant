@@ -5578,9 +5578,10 @@ def _update_person_sensors(hass):
         # leaving the house; one dying on the dryer reads Outside too. The last
         # fix's own room counts as well: walking out fast, the election can
         # still be holding the room before (Kitchen) when the phone goes quiet.
+        # Not a cat: it does not let itself out, and a tag it sleeps on goes quiet.
         exit_secs = _tuning(layout, "exit_quiet_secs")
         if (best is None and presence == "quiet" and held and last_heard and exit_secs > 0
-                and now - last_heard >= exit_secs
+                and now - last_heard >= exit_secs and not (things and all(classes.get(t) == "cat" for t in things))
                 and persons_mod.held_by_exit(layout, held)):
             held = {**held, "outside": True, "since": last_heard}
         if _tuning(layout, "gps_leave_m") > 0 and persons_mod.should_ask_gps(
