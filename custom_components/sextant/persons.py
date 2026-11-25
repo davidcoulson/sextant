@@ -442,7 +442,8 @@ def usable_gps(get_state, layout, person, now, stale_secs=GPS_STALE_SECS, fixes=
     passed over: it counts only if it was made since the person was last heard
     (choose_gps). It is kept for stale_secs after the source's last report,
     and then the sources that are left speak again. Coordinates left out of a
-    write, the zone unchanged, are the same place, and the fix keeps them.
+    write, the zone unchanged, are the same place: the fix keeps them, and the
+    time they were reported at.
 
     shortcut: the time is that of the write the cycle first sees the new place
     in, so another write in between (a battery level) dates it up to a cycle
@@ -462,10 +463,12 @@ def usable_gps(get_state, layout, person, now, stale_secs=GPS_STALE_SECS, fixes=
             continue
         if fixes is not None:
             place = (info["zone"], info["latitude"], info["longitude"])
-            if kept and place[1] is None and kept[0][0] == place[0]:
-                # The fix it had, coordinates and all: without them a road fix would stop showing them gone.
+            same_zone = kept and kept[0][0] == place[0] and kept[2]["stationary"] == info["stationary"]
+            if same_zone and place[1] is None and kept[0][1] is not None:
+                # The fix it had, coordinates and their time: without them a road fix would stop
+                # showing them gone, and with a new time it would show them gone after a later sighting.
                 place = kept[0]
-                info.update({k: kept[2][k] for k in ("latitude", "longitude", "accuracy")})
+                info.update({k: kept[2][k] for k in ("latitude", "longitude", "accuracy", "reported")})
             info["fix_at"] = None if kept is None else kept[1] if kept[0] == place else info["updated"]
             fixes[eid] = (place, info["fix_at"], info)
         usable.append(info)

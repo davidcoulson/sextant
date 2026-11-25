@@ -74,10 +74,11 @@ that drops out on a "home" from before then keeps nobody home. `gps_ignored`
 still names it (`unavailable; last fix kept`), and once the kept fix runs out
 the sources that are left speak again. Sextant times each fix
 itself, from when a source's zone or coordinates change: a restart, a battery
-level or a tracker coming back from unavailable is no news, and a source
-counts this way only once it has moved since Home Assistant started. The time
-is that of the update cycle's first look at the new fix, so it can be a few
-seconds late. Another source is only
+level or a tracker coming back from unavailable with the fix it had is no
+news, and a source counts this way only once it has moved since Home Assistant
+started. The time is that of the first update Sextant's cycle sees the new fix
+in, so another update in between (a battery level) dates it a few seconds
+late. Another source is only
 read this way once Sextant has lost the person: with one of their things
 still heard in the house (a watch left at home), or for someone with GPS
 sources and no things, the first source alone speaks.

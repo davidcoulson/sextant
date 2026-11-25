@@ -139,8 +139,9 @@ def test_sextant_times_each_fix_itself():
 
 
 def test_coordinates_left_out_of_one_write_are_the_ones_the_fix_had():
-    """A road fix written once with the zone alone is the same fix: it still
-    shows them gone, so no arrival and second departure are made of it."""
+    """A road fix written once with the zone alone is the same fix, as old as
+    it was: it still shows them gone, so no arrival and second departure are
+    made of it, and it is no newer word than it was either."""
     other, fixes = "device_tracker.robin_smith", {}
     states = {other: state("not_home", {**GPS, "latitude": 51.54}, ago=30)}
 
@@ -148,15 +149,24 @@ def test_coordinates_left_out_of_one_write_are_the_ones_the_fix_had():
         return persons.usable_gps(states.get, LAYOUT, "person.robin", NOW, fixes=fixes)[0][0]
 
     road = read()
-    for write in (state("not_home", {}, ago=4), state("not_home", {}, ago=3), state("unavailable"),
-                  state("not_home", {**GPS, "latitude": 51.54}, ago=1)):
+    for write in (state("not_home", {}, ago=4), state("not_home", {}, ago=3), state("unavailable")):
         states[other] = write
         got = read()
         assert (got["latitude"], got["longitude"], got["accuracy"]) == (51.54, -0.10, 15) and got["fix_at"] is road["fix_at"]
+        assert got["reported"] == NOW - 30
         assert persons.gps_left(got, NOW - 300, HOME)
-    # Another zone is another place: nothing is carried into it.
-    states[other] = state("work", {}, ago=1)
-    assert read()["latitude"] is None
+        assert not persons.gps_left(got, NOW - 10, HOME)       # heard at home since those coordinates were sent
+    states[other] = state("not_home", {**GPS, "latitude": 51.54}, ago=1)
+    assert read()["reported"] == NOW - 1 and read()["fix_at"] is road["fix_at"]      # said again in full: a new report
+    # Another zone is another place, an iCloud3 stationary zone too: nothing is carried into it.
+    for zone in ("StatZon1", "work"):
+        states[other] = state(zone, {}, ago=1)
+        assert read()["latitude"] is None
+    # A tracker that never had coordinates has none to keep: its report time moves as ever.
+    states[other], fixes = state("home", {}, ago=30), {}
+    read()
+    states[other] = state("home", {}, ago=5)
+    assert read()["reported"] == NOW - 5 and read()["fix_at"] is None
 
 
 def test_a_person_is_as_present_as_their_most_present_thing():
