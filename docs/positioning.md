@@ -57,7 +57,8 @@ change or an absence.
 solved and scored by how well its fit explains all of its proxies. A
 through-ceiling reading fits one proxy and contradicts the rest. Scores
 are scaled by proximity (the mean of the `floor_proximity_k` nearest
-distances on this floor against the best competing floor; `gated`, or the
+distances on this floor, or the nearest alone when it reads under
+`floor_proximity_near_m`, against the best competing floor; `gated`, or the
 weighted `geometric` mean of fit and proximity, see
 [`floor_proximity_blend`](tuning.md)) and by the floor's `bias`, then
 smoothed; a challenger must lead for `floor_switch_secs`, by a margin that

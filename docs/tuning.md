@@ -102,6 +102,7 @@ distances in metres.
 | `wifi_floor_weight` | 0.25 | how much the access point a person's phone is on sways their floor (a watch's is ignored: watches stay on an access point long after leaving it): a floor it never means scores this much less; 0 = off |
 | `floor_proximity_blend` | `gated` | how that weight combines a floor's fit with its proximity: `gated` (fit × ((1 − w) + w × proximity): a poor fit caps the floor) or `geometric` (fit^(1 − w) × proximity^w: the nearest proxies can carry a floor whose fit is poor). Try `geometric` at weight 0.7 with `floor_switch_margin` 0.10 when a still thing next to an open foyer or landing keeps reading the floor below |
 | `floor_proximity_k` | 3 | nearest proxies averaged for proximity |
+| `floor_proximity_near_m` | 1.0 | a floor whose nearest proxy reads under this and at most half the nearest reading on any other floor, is scored on that proxy alone, not the average: a thing 0.4 m from one proxy is on that proxy's floor, however far the room's others are; 0 turns it off |
 | `anchor_max_m` | 0.8 | anchor when one proxy reads closer than this (0 = off) |
 | `anchor_ratio` | 2 | every other proxy at least this many times farther |
 | `anchor_secs` | 20 | for this long |

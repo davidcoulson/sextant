@@ -493,6 +493,8 @@ FLOOR_SWITCH_SECS = 60.0
 # at least FLOOR_LASTING_LEAD_MIN_S) takes the floor whatever the margin.
 FLOOR_LASTING_LEAD_X = 4.0
 FLOOR_LASTING_LEAD_MIN_S = 120.0
+# shortcut: fixed, not a tuning value; make it one if a house needs another ratio.
+FLOOR_NEAR_RATIO = 0.5
 FLOOR_DARK_GRACE_S = 45.0    # how long a dark incumbent holds everything frozen (was 3 cycles at 15 s)
 
 # The smoothing weights (FLOOR_PROB_SMOOTHING, zone_prob_smoothing) are the
@@ -774,6 +776,14 @@ TUNING_SPEC = {
     # receivers in the room (a dog on the sun-room floor: basement 1.7 m,
     # ground 1.9 m); the three nearest cannot (3.1 m vs 4.9 m).
     "floor_proximity_k": (3, int, 1, 8),
+    # ...unless the nearest reads under this and no other floor has a reading
+    # within twice it (FLOOR_NEAR_RATIO): then it alone is the floor's
+    # proximity. A phone 0.4 m from a bedside proxy, the room's others 3 m
+    # off, averaged 2.4 m, level with three ceiling relays on the floor
+    # below, and dropped to the kitchen six times in a night. Without the
+    # ratio, ceiling lights reading short through the slab made it worse
+    # (a day replayed: 5 % more wrong cycles; with it, 3 % fewer). 0 = off.
+    "floor_proximity_near_m": (1.0, float, 0.0, 10.0),
     # Where receiver calibration writes its corrections. "sextant": a per-receiver
     # distance multiplier in this layout (the original behaviour). "bermuda":
     # the equivalent per-scanner rssi offset written into Bermuda itself
@@ -6018,6 +6028,7 @@ def extract_candidate_floors(new_global_data, tmpentity):
         max_range = _tuning(layout, "solver_max_range")
         near_always = _tuning(layout, "solver_near_always")
         prox_k = max(1, int(_tuning(layout, "floor_proximity_k")))
+        near_m = _tuning(layout, "floor_proximity_near_m")
         for floor in layout["floor"]:
             entries = []
             no_vote = set()
@@ -6050,13 +6061,25 @@ def extract_candidate_floors(new_global_data, tmpentity):
                     "cords": cords,
                     "heard": heard,
                     "nearest_m": nearest,
-                    # Mean of the floor_proximity_k nearest slants: what the
-                    # proximity term compares across floors.
+                    # Mean of the floor_proximity_k nearest slants (the nearest alone
+                    # when under floor_proximity_near_m): what the proximity term
+                    # compares across floors.
                     "near_k_m": sum(ranked) / len(ranked) if ranked else float("inf"),
                     # The same over every proxy, voters or not: the stand-in when no voter heard it.
                     "near_k_any_m": sum(any_k) / len(any_k) if any_k else float("inf"),
                     "no_vote": no_vote,  # entity_ids of this floor's position-only proxies
+                    "_first": ranked[:1], "_first_any": any_k[:1],
                 })
+    # A voting receiver under floor_proximity_near_m, and at most FLOOR_NEAR_RATIO
+    # of the nearest reading on any other floor, speaks for its floor alone. Not
+    # for the position-only stand-in: that is a through-slab guard, kept a mean.
+    for c in candidates:
+        others = min((o["_first_any"][0] for o in candidates if o is not c and o["_first_any"]), default=float("inf"))
+        first = c["_first"]
+        if first and first[0] < near_m and first[0] <= FLOOR_NEAR_RATIO * others:
+            c["near_k_m"] = first[0]
+    for c in candidates:
+        del c["_first"], c["_first_any"]
     candidates.sort(key=lambda c: c["nearest_m"])  # stable: file order breaks ties
     return candidates
 
