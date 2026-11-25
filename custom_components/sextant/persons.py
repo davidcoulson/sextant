@@ -353,8 +353,8 @@ def states(best, why=None):
 # Companion app, Life360) knows the zone. The two are fused here: BLE while it
 # hears them (and held through a quiet spell - the last place they were put is
 # the best answer for a few minutes), the first GPS source that is neither
-# broken nor stale once BLE has lost them - or a later one that has seen them
-# leave while the first still says home (choose_gps).
+# broken nor stale once BLE has lost them - or another whose newer fix shows
+# them gone while the first still says home (choose_gps).
 
 GPS_STALE_SECS = 7200.0            # a tracker that has not reported for this long is ignored
 _DEAD = (None, "", "unknown", "unavailable")
@@ -408,27 +408,44 @@ def judge_source(entity_id, state, now, stale_secs=GPS_STALE_SECS):
     coords = (isinstance(lat, (int, float)) and isinstance(lon, (int, float))
               and -90 <= lat <= 90 and -180 <= lon <= 180)
     stationary = stationary_zone(st, attrs)
-    changed, updated = getattr(state, "last_changed", None), getattr(state, "last_updated", None)
+    accuracy, updated = (attrs.get("gps_accuracy") if coords else None), getattr(state, "last_updated", None)
+    try:
+        float(accuracy)   # an int no float can hold would raise in the distance guard (gps_left)
+    except (TypeError, ValueError, OverflowError):
+        accuracy = None
     return True, None, {
         "entity": entity_id, "zone": "not_home" if stationary else st, "stationary": stationary,
         "latitude": float(lat) if coords else None, "longitude": float(lon) if coords else None,
-        "accuracy": attrs.get("gps_accuracy") if coords else None,
-        "reported": reported,
-        # When the zone last changed, and the fix itself: a report with nothing new in it moves neither.
-        "changed": changed.timestamp() if hasattr(changed, "timestamp") else None,
-        "updated": updated.timestamp() if hasattr(updated, "timestamp") else None,
+        "accuracy": accuracy, "reported": reported,
+        "updated": updated.timestamp() if hasattr(updated, "timestamp") else None,   # the last write (usable_gps)
     }
 
 
-def usable_gps(get_state, layout, person, now, stale_secs=GPS_STALE_SECS):
-    """The person's usable GPS sources in their order, and the ones passed over."""
+def usable_gps(get_state, layout, person, now, stale_secs=GPS_STALE_SECS, fixes=None):
+    """The person's usable GPS sources in their order, and the ones passed over.
+
+    ``fixes`` (entity -> (place, when), kept by the caller from cycle to cycle)
+    times each fix: a source gets ``fix_at``, when its zone or coordinates last
+    changed while Sextant was watching, None for the fix it started with.
+    Home Assistant's own times will not do for telling which of two sources has
+    the newer word (choose_gps): a restart stamps every state as new, a battery
+    level moves last_updated, and a tracker back from unavailable has a new
+    last_changed with the fix it had before.
+    """
     usable, ignored = [], []
     for eid in gps_sources(layout, person):
         ok, reason, info = judge_source(eid, get_state(eid), now, stale_secs)
-        if ok:
-            usable.append(info)
-        else:
+        if not ok:
             ignored.append({"entity": eid, "reason": reason})
+            continue
+        if fixes is not None:
+            place = (info["zone"], info["latitude"], info["longitude"])
+            if eid not in fixes:
+                fixes[eid] = (place, None)
+            elif fixes[eid][0] != place:
+                fixes[eid] = (place, info["updated"])
+            info["fix_at"] = fixes[eid][1]
+        usable.append(info)
     return usable, ignored
 
 
@@ -505,52 +522,48 @@ def without_left_behind(candidates, gps, now, stale, home=None, min_distance_m=2
     return [c for c in candidates if c not in left], left
 
 
-def choose_gps(usable, presence, last_heard, gone_for=None, home=None, min_distance_m=200.0, restored=0.0):
-    """``(gps, gone_for)``: the GPS source that speaks for the person this
-    cycle, of their usable ones in order (usable_gps), and the sighting a
-    departure has been seen after (None for none; hand it back next cycle).
+def choose_gps(usable, presence, last_heard, gone=None, home=None, min_distance_m=200.0):
+    """``(gps, passed, gone)``: the GPS source that speaks for the person this
+    cycle, of their usable ones in order (usable_gps); the ones passed over
+    for it; and the departure GPS has seen, to hand back next cycle.
 
     The first source speaks. But a phone app can sit on "home" for minutes
-    into a drive while another service already has the car down the road, so
-    once BLE has lost them (``presence`` of their things, ``last_heard``) a
-    later source speaks while the first still says home: the newest fix that
-    would end the quiet hold (gps_left), made since they were last heard. It
-    is then the source for the rest of the cycle, or the first one's "home"
-    would read them home again by GPS.
+    into a drive while another service already has the car down the road. So
+    once BLE has lost them (``presence`` of their things, ``last_heard``), any
+    source's fix that would end the quiet hold (gps_left) and that Sextant saw
+    arrive since they were last heard (``fix_at``) marks a departure, and a
+    source still saying home from before that fix is passed over: the first
+    of the others speaks, one that shows the departure before one that does
+    not. The newer word wins both ways: a home fix made after the departure
+    ends it (coming back, the app says home at the gate while the other still
+    shows the road), and a road fix made after that starts the next.
 
-    A departure once seen stands until BLE hears them again (``gone_for``
-    is that last_heard): the source that saw it dropping out for a cycle must
-    not hand the word back to a "home" that never moved. The first source has
-    the word back when it turns home after the last sighting (``changed``):
-    coming back, it says home at the gate while the other still shows the
-    road, and that is an arrival.
-
-    ``restored`` is when the states a restart restored have settled: a restart
-    stamps every one as just changed, which is neither a return nor a new fix.
+    ``gone`` is (the last_heard the departure followed, when its fix was
+    made). It stands until they are heard again, so the source that saw it
+    dropping out does not hand the word back to a "home" that never moved;
+    with no source left to speak, ``gps`` is None and they stay away.
 
     shortcut: someone heard right now (a watch left at home) or never heard
     (a visitor with GPS only) has no last sighting to hold a fix against, so
-    only the first source speaks for them, as before; and gone_for is not
-    kept over a restart. Upgrade when a departure is missed that way.
+    only the first source speaks for them; and neither ``gone`` nor the fix
+    times are kept over a restart, after which a source counts only once it
+    has moved. Upgrade when a departure is missed that way.
     """
     first, heard = (usable[0] if usable else None), valid_time(last_heard)
-    if presence == "here" or heard is None:
-        return first, None
-    since = max(heard, valid_time(restored) or 0.0)
+    if presence == "here" or heard is None or min_distance_m <= 0:
+        return first, [], None
 
-    def stuck(g):   # says home, and has since before they were last heard: no word on a departure
-        return str(g.get("zone") or "").lower() == "home" and (valid_time(g.get("changed")) or 0.0) <= since
+    def at(g):
+        return valid_time(g.get("fix_at")) or 0.0
 
-    gone = gone_for == heard
-    left = [g for g in usable[1:] if (valid_time(g.get("updated")) or 0.0) > since
-            and gps_left(g, heard, home, min_distance_m)] if first and stuck(first) else []
-    if left:
-        gps = max(left, key=lambda g: g["reported"])   # gps_left is only true of a fix with a report time
-    elif gone:
-        gps = next((g for g in usable if not stuck(g)), None)
-    else:
-        gps = first
-    return gps, heard if gone or gps_left(gps, heard, home, min_distance_m) else None
+    seen = [gone[1]] if gone and gone[0] == heard else []
+    left_at = max(seen + [at(g) for g in usable if at(g) > heard and gps_left(g, heard, home, min_distance_m)], default=0.0)
+    homes = [g for g in usable if str(g.get("zone") or "").lower() == "home"]
+    if not left_at or any(at(g) > left_at for g in homes):
+        return first, [], None
+    rest = [g for g in usable if g not in homes]
+    gps = next((g for g in rest if gps_left(g, heard, home, min_distance_m)), rest[0] if rest else None)
+    return gps, homes, (heard, left_at)
 
 
 def should_ask_gps(presence, placed, last_heard, asked_for) -> bool:
@@ -567,19 +580,23 @@ def should_ask_gps(presence, placed, last_heard, asked_for) -> bool:
             and asked_for != last_heard)
 
 
-def wifi_outrun(gps, wifi_seen, home=None, min_distance_m=200.0, margin_secs=10.0) -> bool:
+def wifi_outrun(gps, wifi_seen, home=None, min_distance_m=200.0, margin_secs=10.0, left_at=None) -> bool:
     """Whether GPS overrules a Wi-Fi tracker that still reads home: the
     router keeps a client "home" for minutes after it last saw the phone, so
     a departure read Kitchen on Wi-Fi with the phone 800 m down the road. A
     fix that would end the hold (gps_left), made over margin_secs after the
     access point last saw the client, says the Wi-Fi word is the stale one.
 
+    So does a departure GPS saw that long after (``left_at``, from choose_gps),
+    while the source that saw it is out.
+
     Without a last-seen time (not a UniFi client) Wi-Fi stands: on an
     arrival the old far-away fix is the stale one, and nothing else tells
     the two apart.
     """
     seen = valid_time(wifi_seen)
-    return seen is not None and gps_left(gps, seen + margin_secs, home, min_distance_m)
+    return seen is not None and (gps_left(gps, seen + margin_secs, home, min_distance_m)
+                                 or (valid_time(left_at) or 0.0) > seen + margin_secs)
 
 
 def visit_events(before, after, pets=()) -> list:

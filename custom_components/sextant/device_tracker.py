@@ -6,7 +6,7 @@ automation already understand: ``home`` while Sextant hears any of the
 person's things - BLE is far surer of "in the house" than GPS is at the
 property line - and, once it has lost them, the coordinates of the GPS
 tracker that speaks for them: the first that is neither broken nor stale, or
-a later one that has seen them leave (persons.choose_gps, tracker_fix).
+another whose newer fix shows them gone (persons.choose_gps, tracker_fix).
 """
 import logging
 
