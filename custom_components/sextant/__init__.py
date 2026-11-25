@@ -5581,7 +5581,7 @@ def _update_person_sensors(hass):
         # Not a cat: it does not let itself out, and a tag it sleeps on goes quiet.
         exit_secs = _tuning(layout, "exit_quiet_secs")
         if (best is None and presence == "quiet" and held and last_heard and exit_secs > 0
-                and now - last_heard >= exit_secs and classes.get(held.get("ent")) != "cat"
+                and now - last_heard >= exit_secs and not (things and all(classes.get(t) == "cat" for t in things))
                 and persons_mod.held_by_exit(layout, held)):
             held = {**held, "outside": True, "since": last_heard}
         if _tuning(layout, "gps_leave_m") > 0 and persons_mod.should_ask_gps(
