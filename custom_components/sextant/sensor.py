@@ -704,6 +704,8 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         async_add_entities(new_sensors, update_before_add=True)
         normalize_sextant_registry_entity_ids_from_cache(hass)
 
+    from . import note_exit_door  # noqa: PLC0415 - the package imports this platform
+
     @callback
     def state_changed_listener(event):
         """Create Sextant sensors when a NEW distance sensor appears.
@@ -723,6 +725,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             return
 
         entity_id = event.data.get("entity_id") or ""
+        note_exit_door(entity_id, event.data.get("new_state"))   # a set lookup for all but outside doors
         if "_distance_to_" not in entity_id or event.data.get("old_state") is not None:
             return
 

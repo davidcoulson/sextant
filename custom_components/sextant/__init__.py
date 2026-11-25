@@ -862,6 +862,10 @@ TUNING_SPEC = {
     # "Has an outside door") went out of it: after this long unheard they read
     # Outside instead of being held in that room. 0 = off.
     "exit_quiet_secs": (120.0, float, 0.0, 3600.0),
+    # ...and, where the room's outside door has a contact sensor (the Edit
+    # page's "Outside door contact"), only if some outside door was open
+    # within this long of when they were last heard. 0 = doors not asked.
+    "exit_door_secs": (300.0, float, 0.0, 3600.0),
     # A Wi-Fi tracker reading home must stand this long before it starts a
     # visit for someone BLE has lost (persons.wifi_gate): a router holds a
     # client minutes after it left, which made false arrivals. 0 = off.
@@ -5441,6 +5445,20 @@ def _ask_phones_for_location(hass, layout, person):
     return sent
 
 
+# Outside door contacts (persons.exit_doors), when each was last seen open, and
+# person -> the last sighting they went out after (so a later opening of the
+# door does not bring them back in).
+# shortcut: not saved, so someone who goes quiet just before a restart is held in the room, not Outside; save with _save_runtime if that shows up.
+_exit_doors, _exit_door_opened, _exit_out = frozenset(), {}, {}
+
+
+def note_exit_door(entity_id, state):
+    """An outside door's new state, from the state listener (sensor.py): an
+    opening is shorter than a cycle, so the cycle alone would miss it."""
+    if entity_id in _exit_doors and state is not None and rooms_mod.door_closed(state.state) is False:
+        _exit_door_opened[entity_id] = time.time()
+
+
 def _update_person_sensors(hass):
     """Each owner's location from the thing that speaks for them (persons.py)."""
     layout = get_layout(hass)
@@ -5496,7 +5514,10 @@ def _update_person_sensors(hass):
         wifi_clients = _unifi_clients(hass) or {}
     except Exception:  # noqa: BLE001 - no last-seen times: Wi-Fi stands as it reads
         wifi_clients = {}
-    global _event_visits, _events_from, _event_places, _place_pending
+    global _event_visits, _events_from, _event_places, _place_pending, _exit_doors
+    _exit_doors = frozenset(persons_mod.exit_doors(layout))
+    for door in _exit_doors:
+        note_exit_door(door, hass.states.get(door))   # a door standing open
     if _event_visits is None:
         _event_visits, _events_from = dict(_person_visits), now + EVENTS_SETTLE_S
     for person, things in by_person.items():
@@ -5582,7 +5603,12 @@ def _update_person_sensors(hass):
         exit_secs = _tuning(layout, "exit_quiet_secs")
         if (best is None and presence == "quiet" and held and last_heard and exit_secs > 0
                 and now - last_heard >= exit_secs and not (things and all(classes.get(t) == "cat" for t in things))
-                and persons_mod.held_by_exit(layout, held)):
+                and persons_mod.held_by_exit(layout, held)
+                and (_exit_out.get(person) == last_heard or persons_mod.door_backs_exit(
+                    layout, held, _exit_door_opened, last_heard,
+                    # At least the quiet wait: an opening during the wait must not fall outside the window.
+                    _tuning(layout, "exit_door_secs") and max(_tuning(layout, "exit_door_secs"), exit_secs)))):
+            _exit_out[person] = last_heard
             held = {**held, "outside": True, "since": last_heard}
         if _tuning(layout, "gps_leave_m") > 0 and persons_mod.should_ask_gps(
                 presence, best is not None, last_heard, _gps_asked.get(person)):
