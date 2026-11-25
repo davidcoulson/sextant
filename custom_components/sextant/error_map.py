@@ -35,6 +35,8 @@ MARGIN_M = 1.0                      # grid margin around the rooms and proxies
 STEP_CAP_S = 600.0                  # a longer wait for a thing's next point is not time spent
 ROOM_FLOOR_S = 600.0                # every room counts a little, visited or not
 MAX_STARS = 2
+STAR_GAP_M = 2.0                    # the second star is at least this far from the first
+MAX_CELLS = 40_000                  # a bigger floor gets coarser squares: 100 x 100 m stays at GRID_M
 MIN_GAIN = 0.03                     # a star must cut the weighted error by this share
 CHUNK = 64
 CHUNK_CELLS = 250_000      # candidates x cells tried at once: about 30 MB of temporaries
@@ -43,6 +45,7 @@ BAD_CELL_M = 1.0
 PIN_BAD_M = 3.0                     # a pin read this far off
 FLIP_BACK_S, FLIP_NEAR_M = 180.0, 3.0   # off the floor and back, near where it left
 JUMP_M, JUMP_BACK_S, JUMP_NEAR_M = 4.0, 60.0, 1.5
+GAP_DROPOUT = 2                     # history.GAP_DROPOUT: not heard across this step
 MIN_EVENTS, MIN_HOURS = 3, 2        # flips and jumps: repeated, not one bad afternoon
 
 
@@ -50,8 +53,8 @@ def fit_noise(pairs):
     """Noise line and per-proxy factor from (tx, rx, true_m, samples_m) pairs."""
     used = []
     for tx, rx, true_m, samples in pairs:
-        s = [float(v) for v in samples or [] if v and v > 0]
-        if not true_m or true_m <= 0 or not s:
+        s = [float(v) for v in samples or [] if v and v > 0 and math.isfinite(v)]
+        if not true_m or true_m <= 0 or not math.isfinite(true_m) or not s:
             continue
         jit = float(np.std(np.log(s))) if len(s) > 5 else JITTER_DEFAULT
         bias = abs(math.log(float(np.median(s)) / true_m))
@@ -83,10 +86,12 @@ def _info(gx, gy, proxies, a, b):
     n = np.zeros_like(j00)
     for px, py, k in proxies:
         dx, dy = px - gx, py - gy
-        d = np.maximum(np.hypot(dx, dy), MIN_D_M)
+        r = np.hypot(dx, dy)
+        d = np.maximum(r, MIN_D_M)          # floors the noise only: the direction stays a unit vector
         sig = d * (a + b * d) * k
         w = np.where(d <= MAX_RANGE_M, 1.0 / sig ** 2, 0.0)
-        ux, uy = dx / d, dy / d
+        r = np.where(r > 0, r, 1.0)
+        ux, uy = dx / r, dy / r
         j00 = j00 + w * ux * ux
         j01 = j01 + w * ux * uy
         j11 = j11 + w * uy * uy
@@ -130,6 +135,21 @@ def _best_candidate(gx, gy, info, cand_x, cand_y, k_new, w, cur, a, b):
         if gains[i] > best_gain:
             best_gain, best_i, best_e = float(gains[i]), s + i, e[i].copy()
     return best_i, best_gain, best_e
+
+
+def _grid(rooms, scale):
+    """(x0, y0, step, nx, ny) in metres: the rooms' box plus MARGIN_M, at most MAX_CELLS squares.
+
+    Proxies off the rooms do not widen it: the map is drawn inside the rooms only.
+    """
+    xs = [v / scale for _r, p in rooms for v in p.bounds[0::2]]
+    ys = [v / scale for _r, p in rooms for v in p.bounds[1::2]]
+    x0, y0 = min(xs) - MARGIN_M, min(ys) - MARGIN_M
+    w, h = max(xs) + MARGIN_M - x0, max(ys) + MARGIN_M - y0
+    step = GRID_M
+    while math.ceil(w / step) * math.ceil(h / step) > MAX_CELLS:
+        step *= 2
+    return x0, y0, step, int(math.ceil(w / step)), int(math.ceil(h / step))
 
 
 def _floors(layout):
@@ -187,12 +207,8 @@ def floor_map(floor, noise, seconds):
     a, b, factor = noise["a"], noise["b"], noise.get("factor") or {}
     placed = [(float(r["cords"]["x"]) / scale, float(r["cords"]["y"]) / scale, factor.get(str(r.get("entity_id")), 1.0))
               for r in floor.get("receivers") or [] if isinstance(r.get("cords"), dict) and {"x", "y"} <= r["cords"].keys()]
-    xs = [v / scale for _r, p in rooms for v in p.bounds[0::2]] + [p[0] for p in placed]
-    ys = [v / scale for _r, p in rooms for v in p.bounds[1::2]] + [p[1] for p in placed]
-    x0, y0 = min(xs) - MARGIN_M, min(ys) - MARGIN_M
-    nx = int(math.ceil((max(xs) + MARGIN_M - x0) / GRID_M))
-    ny = int(math.ceil((max(ys) + MARGIN_M - y0) / GRID_M))
-    GX, GY = np.meshgrid(x0 + GRID_M * (np.arange(nx) + 0.5), y0 + GRID_M * (np.arange(ny) + 0.5))
+    x0, y0, step, nx, ny = _grid(rooms, scale)
+    GX, GY = np.meshgrid(x0 + step * (np.arange(nx) + 0.5), y0 + step * (np.arange(ny) + 0.5))
     gx, gy = GX.ravel(), GY.ravel()
 
     room_of = np.full(gx.shape, -1)
@@ -221,10 +237,12 @@ def floor_map(floor, noise, seconds):
                       "room": cands[i][2], "gain_pct": round(100 * gain / before, 1)})
         info = tuple(p + q for p, q in zip(info, _info(gx, gy, [(cand_x[i], cand_y[i], k_new)], a, b)))
         cur = e
+        keep = np.hypot(cand_x - cand_x[i], cand_y - cand_y[i]) >= STAR_GAP_M
+        cand_x, cand_y, cands = cand_x[keep], cand_y[keep], [c for c, k in zip(cands, keep) if k]
     note = "needs three proxies on this floor before a spot can be chosen" if not stars and len(placed) < 3 else ""
     return {
-        "grid": {"x0": round((x0 + GRID_M / 2) * scale, 1), "y0": round((y0 + GRID_M / 2) * scale, 1),
-                 "step": round(GRID_M * scale, 3), "w": nx, "h": ny},
+        "grid": {"x0": round((x0 + step / 2) * scale, 1), "y0": round((y0 + step / 2) * scale, 1),
+                 "step": round(step * scale, 3), "w": nx, "h": ny},
         "err": [round(float(v), 1) for v in base],
         "err_after": [round(float(v), 1) for v in cur],
         "stars": stars, "note": note,
@@ -244,9 +262,10 @@ def _events(pts):
         t0, f0, x0, y0, _g = pts[i - 1]
         flip = pts[i][1] != f0
         back, near = (FLIP_BACK_S, FLIP_NEAR_M) if flip else (JUMP_BACK_S, JUMP_NEAR_M)
-        for tj, fj, xj, yj, _gj in pts[i + 1:]:
-            if tj - t0 > back:
-                break
+        for j in range(i, len(pts)):   # by index: a slice would copy the rest of the track every time
+            tj, fj, xj, yj, gj = pts[j]
+            if gj == GAP_DROPOUT or tj - t0 > back:
+                break                   # not heard across it, or too slow to be a bounce
             if fj != f0:
                 continue
             if math.hypot(xj - x0, yj - y0) <= near:

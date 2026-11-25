@@ -95,7 +95,7 @@ more. Flips and jumps come from the position history, so a longer
 `history_hours` on the [Tuning](tuning.md) page finds more.
 
 **Stars** are where one more proxy would shrink the error most, at most two
-a floor, numbered in the order to add them. Like the table's spots they sit
+a floor and at least 2 m apart, numbered in the order to add them. Like the table's spots they sit
 on a wall, and they favour the rooms where people and pets spend their time
 (every room counts for at least ten minutes, so an unused room is not
 ignored). A star that would improve the floor by less than 3% is left out,
@@ -108,6 +108,10 @@ the drill would buy before you pick it up. Click a room to see its row from
 the table (its issue, median, third-nearest proxy, time here, bounces, what
 to do and, for admins, **Show on plan**), or click a purple square to see
 what went wrong there, how often, and for which things.
+
+The map is drawn from the plan as it was when you pressed **Analyse the
+house**. Move a proxy, a room or the scale afterwards and the map says so
+until you press **Refresh**.
 
 ## Location pins
 

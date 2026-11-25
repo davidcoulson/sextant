@@ -198,3 +198,54 @@ def test_floor_maps_covers_scaled_floors_and_skips_the_rest():
     assert {k for s in out["maps"]["F"]["bad"] for k in s["kinds"]} == {"pin", "jump"}
     assert out["maps"]["F"]["stars"]
     json.dumps(out, allow_nan=False)
+
+
+def test_a_proxy_close_by_still_counts_in_full():
+    # Only the noise is floored at MIN_D_M: the direction to a proxy 0.1 m away is still a unit vector.
+    near = [(0.1, 0, 1.0), (0, 0.1, 1.0), (-0.1, 0, 1.0)]
+    e = error_map.error_field(np.array([0.0]), np.array([0.0]), near, 0.6, 0.0)
+    assert math.isclose(e[0], math.sqrt(0.09 * 1.5), rel_tol=1e-6)
+    on_one = error_map.error_field(np.array([0.0]), np.array([0.0]), [(0, 0, 1.0), (6, 0, 1.0), (0, 6, 1.0), (6, 6, 1.0)], 0.3, 0.0)
+    assert np.isfinite(on_one).all()
+
+
+def test_an_infinite_sample_is_skipped():
+    pairs = [_pair(f"t{i}", "r", 2.0 + i, 0.1) for i in range(8)] + [("t9", "r", 3.0, [float("inf")] * 8)]
+    out = error_map.fit_noise(pairs)
+    assert out["pairs"] == 8 and math.isfinite(out["a"]) and math.isfinite(out["b"])
+
+
+def test_the_second_star_is_not_on_top_of_the_first():
+    # A 1 m room with two proxies just off it once got both stars on one wall spot.
+    out = error_map.floor_map(_floor([("a", 0, 55), ("b", 25, 40)], [_rect("Box", 0, 0, 100, 100)]), _NOISE, {})
+    s = out["stars"]
+    assert s and all(math.dist((p["x"], p["y"]), (q["x"], q["y"])) >= error_map.STAR_GAP_M * 100
+                     for i, p in enumerate(s) for q in s[i + 1:])
+
+
+def test_a_far_off_proxy_does_not_grow_the_grid():
+    plain = error_map.floor_map(_floor(_HALL3, _THREE_ROOMS), _NOISE, {})["grid"]
+    stray = error_map.floor_map(_floor(_HALL3 + [("stray", 5000, 5000)], _THREE_ROOMS), _NOISE, {})["grid"]
+    assert stray == plain
+
+
+def test_a_huge_floor_gets_coarser_squares_not_more_of_them():
+    field = [("Field", error_map.shapely.box(0, 0, 1000, 800))]
+    x0, y0, step, nx, ny = error_map._grid(field, 1.0)
+    assert nx * ny <= error_map.MAX_CELLS and step > error_map.GRID_M
+    house = [("House", error_map.shapely.box(0, 0, 1200, 400))]
+    assert error_map._grid(house, 100.0) == (-1.0, -1.0, error_map.GRID_M, 28, 12)
+
+
+def _dropout_flip(t):
+    return [(t, "F", 2.5, 1.5, 0), (t + 30, "G", 2.5, 1.5, 2), (t + 60, "F", 2.6, 1.5, 1)]
+
+
+def _dropout_jump(t):
+    return [(t, "F", 2.5, 1.5, 0), (t + 10, "F", 6.5, 1.5, 0), (t + 40, "F", 2.7, 1.5, 2)]
+
+
+def test_a_flip_or_jump_across_a_dropout_is_not_one():
+    # Not heard across the excursion (gap 2): the track is broken there, not bouncing.
+    for make in (_dropout_flip, _dropout_jump):
+        assert error_map.bad_squares(_LAYOUT, {"cat": make(0) + make(600) + make(3600)}, [], []) == {}

@@ -138,6 +138,12 @@ function recall(key) {
     return Date.now() - at <= REMEMBER_MS ? { ...value, at } : null;
   } catch { return null; }
 }
+// What the error map was drawn from on one floor: moving a proxy, a room or the scale makes it out of date.
+function planSig(floor) {
+  return floor ? JSON.stringify([floor.scale, (floor.zones || []).map((z) => z.cords),
+    (floor.receivers || []).map((r) => [r.entity_id, r.cords?.x, r.cords?.y])]) : null;
+}
+
 function stale(result) {
   return !!(result && result.at && Date.now() - result.at > STALE_MS);
 }
@@ -577,7 +583,10 @@ class SextantHealth extends LitElement {
     this._busy = "advice";
     const r = await callWS(this, this.hass, { type: "sextant/advice" });
     this._busy = null;
-    if (r) { this._advice = { ...r, at: Date.now() }; remember("advice", r); }
+    if (!r) return;
+    const plans = Object.fromEntries((this.data?.layout?.floor || []).map((f) => [f.name, planSig(f)]));
+    this._advice = { ...r, plans, at: Date.now() };
+    remember("advice", { ...r, plans });
   }
 
   async _ignoreScanner(address, ignored) {
@@ -677,6 +686,7 @@ class SextantHealth extends LitElement {
       })}
         <span class="chips">${uiSwitch({ label: "With the suggested proxies", checked: !!this._errAfter, onChange: (v) => { this._errAfter = v; } })}</span></div>
       ${m?.note ? html`<p class="small muted">${name}: ${m.note}.</p>` : nothing}
+      ${a.plans && a.plans[name] !== planSig((this.data?.layout?.floor || []).find((f) => f.name === name)) ? html`<p class="small warn">The plan of ${name} has changed since this analysis: press Refresh to redraw it.</p>` : nothing}
       <canvas class="errmap"></canvas>
       <div class="row small">${swatch(rgb(0.5), "<1 m")}${swatch(rgb(2), "2 m")}${swatch(rgb(3), "3 m")}${swatch(rgb(4), "4 m+")}${swatch("rgba(127,119,221,0.7)", "measured bad")}${swatch("#EF9F27", "suggested proxy")}</div>
       <p class="small muted">Predicted from where the proxies are: the colours rank places, the metres are rough. ${a.model?.calibrated ? `Ranging noise fitted from ${a.model.pairs} proxy pairs.` : "Ranging noise is the default: fewer than 8 proxy pairs to fit from."} Click a room for its numbers, or a purple square for what went wrong there.</p>
@@ -1079,6 +1089,7 @@ class SextantHealth extends LitElement {
     canvas.errmap { width: 100%; height: 420px; display: block; border-radius: 8px; --sextant-map-bg: var(--card-background-color, #fff); }
     .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; }
     .errcard { border: 1px solid var(--divider-color); border-radius: 8px; padding: 8px 10px; margin-top: 6px; }
+    p.warn { color: var(--warning-color, #c77800); font-weight: 600; }
     .tfield { display: inline-flex; flex-direction: column; gap: 2px; }
     .tfield .hint { font-size: 11px; color: var(--secondary-text-color); padding-left: 2px; }
     .tfilter { box-sizing: border-box; width: 280px; max-width: 100%; padding: 8px 10px; border: 1px solid var(--divider-color); border-radius: 6px; background: var(--card-background-color); color: var(--primary-text-color); font: inherit; }
