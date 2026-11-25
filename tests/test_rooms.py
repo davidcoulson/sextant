@@ -830,3 +830,24 @@ def test_a_room_keeps_its_since_over_a_restart(hass):
 
 def test_a_dog_whose_collar_says_home_is_a_pet_at_home():
     assert rooms.people_home({"Meg": "gps"}, pets={"Meg"})[1]["pets_home"] == ["Meg"]
+
+
+def test_settled_confidence_grows_with_the_stay_but_never_reaches_one():
+    s = rooms.settled_confidence
+    assert s(0.7, 0) == 0.7 and s(0.7, None) == 0.7 and s(None, 600) is None
+    assert s(0.7, 3600, presence="quiet") == 0.7          # a last known place is not fresh evidence
+    short, long_, forever = s(0.7, 60), s(0.7, 2400), s(0.7, 10 ** 9)
+    assert 0.7 < short < long_ < forever
+    assert abs(forever - (0.7 + 0.3 * rooms.DWELL_MAX_GAIN)) < 1e-9   # the ceiling: half the gap closed
+    assert s(1.0, 2400) == 1.0
+
+
+def test_settled_conf_of_follows_the_stay_the_popup_shows():
+    of = rooms.settled_conf_of
+    room = {"conf": 0.7, "since": 0.0, "spot_since": 1800.0, "spot": None, "presence": "here"}
+    assert of(room, 600.0) == round(rooms.settled_confidence(0.7, 600.0), 3)
+    assert of({**room, "spot": "Desk"}, 1800.0 + 600.0) == of(room, 600.0)      # on a spot, the spot's stay counts
+    assert of({**room, "spot": "Desk", "spot_since": None}, 600.0) == of(room, 600.0)
+    assert of({**room, "presence": "quiet"}, 600.0) == 0.7
+    assert of({**room, "kind": "outside"}, 600.0) is None and of({"presence": "away"}, 600.0) is None
+    assert of({**room, "since": None}, 600.0) is None

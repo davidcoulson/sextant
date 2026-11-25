@@ -3302,7 +3302,9 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
         update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_nearest_room", nearest_zone, dict(here))
         update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_floor", lowest_floor_name, dict(here))
         update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_spot", sub_zone, {"room": parent_zone, **here})
-        update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_location", loc_state, {**loc_attrs, **here})
+        loc_attrs = {**loc_attrs, **here}
+        loc_attrs["settled_conf"] = rooms_mod.settled_conf_of(loc_attrs, row["updated"])
+        update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_location", loc_state, loc_attrs)
 
 def room_area(layout, floor_name, room_name):
     """(area_id, floor_id): the Home Assistant area a room is linked to, and
@@ -5689,6 +5691,7 @@ def _update_person_sensors(hass):
                 # Away last cycle (a visit with no arrival): nothing from before carries over.
                 visit = _person_visits.get(person)
                 persons_mod.keep_since(prev.attributes if prev else None, attrs, (visit.get("arrived") or now) if visit else None)
+                attrs["settled_conf"] = rooms_mod.settled_conf_of(attrs, now)
             update_sextant_sensor_state(hass, sensor_id, state, attrs)
             if suffix == "sextant_person_location":
                 logged = (state, attrs.get("source"))

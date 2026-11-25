@@ -107,6 +107,18 @@ test("chipDetail reports how long it has been there and what tracks it", async (
   assert.equal(out.outside, true); assert.equal(out.since, 1000000);   // Outside: since is the spell's, not the spot's
 });
 
+test("chipDetail carries the stay-lifted confidence only while the thing is heard", async () => {
+  const { chipDetail } = await import("../../custom_components/sextant/frontend/sextant-occupancy-data.js");
+  const states = {
+    "person.leela": { attributes: { friendly_name: "Leela" } },
+    "sensor.leela_sextant_pet_location": { state: "Morning Room", attributes: { room: "Morning Room", via: "leela_tag", conf: 0.71, settled_conf: 0.86, presence: "here" } },
+  };
+  const d = chipDetail(states, "Leela", {}, {});
+  assert.equal(d.conf, 0.71); assert.equal(d.settled, 0.86);
+  states["sensor.leela_sextant_pet_location"].attributes.presence = "quiet";
+  assert.equal(chipDetail(states, "Leela", {}, {}).settled, null);   // a last known place is not fresh evidence
+});
+
 test("askStrimmer asks once per connection, again on each reconnect, and swallows HA's refusal", async () => {
   const { askStrimmer, STRIMMER_WANT } = await import("../../custom_components/sextant/frontend/sextant-occupancy-data.js");
   const sent = []; let ready;
