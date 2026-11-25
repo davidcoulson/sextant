@@ -5605,7 +5605,9 @@ def _update_person_sensors(hass):
                 and now - last_heard >= exit_secs and not (things and all(classes.get(t) == "cat" for t in things))
                 and persons_mod.held_by_exit(layout, held)
                 and (_exit_out.get(person) == last_heard or persons_mod.door_backs_exit(
-                    layout, held, _exit_door_opened, last_heard, _tuning(layout, "exit_door_secs")))):
+                    layout, held, _exit_door_opened, last_heard,
+                    # At least the quiet wait: an opening during the wait must not fall outside the window.
+                    _tuning(layout, "exit_door_secs") and max(_tuning(layout, "exit_door_secs"), exit_secs)))):
             _exit_out[person] = last_heard
             held = {**held, "outside": True, "since": last_heard}
         if _tuning(layout, "gps_leave_m") > 0 and persons_mod.should_ask_gps(

@@ -174,6 +174,7 @@ def test_a_phone_quiet_by_an_outside_door_that_never_opened_stays_in_the_room(tm
     sextant.note_exit_door(door, types.SimpleNamespace(state="unavailable"))
     assert cycle()[:2] == ("Kitchen", "held")
     sextant.note_exit_door(door, types.SimpleNamespace(state="on"))
+    assert list(sextant._exit_door_opened) == [door]
     monkeypatch.setitem(sextant._exit_door_opened, door, time.time() - 350)   # 50 s before they were last heard
     assert cycle()[:2] == ("Outside", "held")
     # The door opening again an hour on (someone else) does not bring them back in.
@@ -187,4 +188,12 @@ def test_an_outside_door_standing_open_counts_as_opened(tmp_path, monkeypatch):
     # Last heard five minutes ago (_house): a window wide enough to reach now.
     states, cycle = _house(tmp_path, monkeypatch, floor=floor, tuning={"exit_door_secs": 600.0})
     states[door] = types.SimpleNamespace(state="on", attributes={})
+    assert cycle()[:2] == ("Outside", "held")
+
+
+def test_a_door_window_shorter_than_the_quiet_wait_still_sees_an_opening_during_the_wait(tmp_path, monkeypatch):
+    door = "binary_sensor.back_door"
+    floor = [{"name": "Ground Floor", "zones": [{"entity_id": "Kitchen", "exit": True, "exit_door": door}]}]
+    states, cycle = _house(tmp_path, monkeypatch, floor=floor, tuning={"exit_door_secs": 60.0})
+    monkeypatch.setitem(sextant._exit_door_opened, door, time.time() - 200)   # 100 s after they were last heard
     assert cycle()[:2] == ("Outside", "held")
