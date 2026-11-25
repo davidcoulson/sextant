@@ -18,10 +18,11 @@ def run(coro):
     return asyncio.new_event_loop().run_until_complete(coro)
 
 
-def state(value, attrs=None, ago=60.0, changed_ago=None):
+def state(value, attrs=None, ago=60.0, changed_ago=None, reported_ago=None):
     """An HA State stand-in: state, attributes, last_updated/last_reported, last_changed."""
     when = NOW_DT - timedelta(seconds=ago)
-    return types.SimpleNamespace(state=value, attributes=attrs or {}, last_updated=when, last_reported=when,
+    return types.SimpleNamespace(state=value, attributes=attrs or {}, last_updated=when,
+                                 last_reported=when if reported_ago is None else NOW_DT - timedelta(seconds=reported_ago),
                                  last_changed=NOW_DT - timedelta(seconds=ago if changed_ago is None else changed_ago))
 
 
@@ -53,6 +54,14 @@ def test_a_tracker_that_stopped_reporting_is_stale():
 def test_a_zone_only_tracker_still_gives_its_zone():
     ok, _, info = persons.judge_source("device_tracker.t", state("Hill College Dorm"), NOW)
     assert ok and info["zone"] == "Hill College Dorm" and info["latitude"] is None
+
+
+def test_coordinates_off_the_globe_are_no_coordinates():
+    """An infinite latitude would raise in the distance sum and stop everyone's update."""
+    for bad in ({"latitude": float("inf")}, {"longitude": 181.0}, {"latitude": float("nan")}):
+        ok, _, info = persons.judge_source("device_tracker.t", state("not_home", {**GPS, **bad}), NOW)
+        assert ok and info["zone"] == "not_home" and info["latitude"] is None and info["longitude"] is None
+        assert not persons.gps_left(info, NOW - 300, HOME)
 
 
 def test_an_icloud3_stationary_zone_is_not_home_with_the_coordinates_kept():
@@ -88,17 +97,19 @@ def test_preference_order_is_honoured_when_both_are_usable():
     states = {"device_tracker.robins_iphone": state("home", GPS), "device_tracker.robin_smith": state("not_home", GPS)}
     usable, ignored = persons.usable_gps(states.get, LAYOUT, "person.robin", NOW)
     assert [g["entity"] for g in usable] == ["device_tracker.robins_iphone", "device_tracker.robin_smith"] and ignored == []
-    assert persons.choose_gps(usable, [], NOW - 5, NOW, 45, HOME) is usable[0]
+    # Heard a moment ago: the first one speaks, whatever another says.
+    assert persons.choose_gps(usable, "here", NOW - 5, None, HOME) == (usable[0], None)
 
 
 def test_no_sources_configured_means_nothing_chosen():
     assert persons.usable_gps(lambda e: None, {}, "person.robin", NOW) == ([], [])
-    assert persons.choose_gps([], [], None, NOW, 45, HOME) is None
+    assert persons.choose_gps([], "away", None) == (None, None)
 
 
-def test_a_source_tells_when_its_zone_last_changed():
-    info = persons.judge_source("device_tracker.t", state("home", GPS, ago=60, changed_ago=900), NOW)[2]
-    assert info["changed"] == NOW - 900 and info["reported"] == NOW - 60
+def test_a_source_tells_when_its_zone_and_its_fix_last_changed():
+    """A report with nothing new in it moves only the report time."""
+    info = persons.judge_source("device_tracker.t", state("home", GPS, ago=60, changed_ago=900, reported_ago=5), NOW)[2]
+    assert (info["changed"], info["updated"], info["reported"]) == (NOW - 900, NOW - 60, NOW - 5)
 
 
 def test_a_person_is_as_present_as_their_most_present_thing():
@@ -454,45 +465,85 @@ def test_a_room_change_is_a_change_in_the_person_log():
 
 # --- any source may mark the departure --------------------------------------------
 
+HEARD = NOW - 300
 APP_HOME = {"entity": "device_tracker.robins_iphone", "zone": "home", "latitude": 51.50, "longitude": -0.10,
-            "accuracy": 15, "reported": NOW - 7200, "changed": NOW - 7200}
-APP_BACK = {**APP_HOME, "reported": NOW - 20, "changed": NOW - 20}
+            "accuracy": 15, "reported": NOW - 7200, "updated": NOW - 7200, "changed": NOW - 7200}
+APP_BACK = {**APP_HOME, "reported": NOW - 20, "updated": NOW - 20, "changed": NOW - 20}
 
 
-def _other(**kw):
-    return {**_fix(**kw), "entity": "device_tracker.robin_smith"}
+def _other(entity="device_tracker.robin_smith", **kw):
+    fix = {**_fix(**kw), "entity": entity}
+    return {**fix, "updated": fix["reported"]}
+
+
+def _choose(usable, presence="quiet", heard=HEARD, gone_for=None, restored=0.0):
+    return persons.choose_gps(usable, presence, heard, gone_for, HOME, 200.0, restored)
 
 
 def test_a_later_source_that_has_seen_them_leave_speaks_while_the_first_still_says_home():
     """The phone app sat on "home" for two minutes into the drive; the other
-    service had the car on the main road within one."""
+    service had the car on the main road within one. The departure is kept
+    against the sighting it followed."""
     far = _other(reported=NOW - 30)
-    assert persons.choose_gps([APP_HOME, far], [], NOW - 300, NOW, 45, HOME) is far
+    assert _choose([APP_HOME, far]) == (far, HEARD)
+    assert _choose([APP_HOME, far], presence="away", heard=NOW - 3600) == (far, NOW - 3600)
 
 
 def test_the_first_source_speaks_while_no_other_has_seen_them_leave():
-    for other in (_other(zone="home"), _other(lat=51.5010), _other(reported=NOW - 400)):
-        assert persons.choose_gps([APP_HOME, other], [], NOW - 300, NOW, 45, HOME) is APP_HOME
-    assert persons.choose_gps([APP_HOME], [], NOW - 300, NOW, 45, HOME) is APP_HOME
+    stale_news = {**_other(reported=NOW - 30), "updated": NOW - 400}   # reported again, the fix itself from before
+    for other in (_other(zone="home"), _other(lat=51.5010), _other(reported=NOW - 400), stale_news):
+        assert _choose([APP_HOME, other]) == (APP_HOME, None)
+    assert _choose([APP_HOME]) == (APP_HOME, None)
     # Both have left: the person's order decides, as before.
-    left = {**_other(), "entity": "device_tracker.robins_iphone"}
-    assert persons.choose_gps([left, _other()], [], NOW - 300, NOW, 45, HOME) is left
+    left = _other("device_tracker.robins_iphone")
+    assert _choose([left, _other()]) == (left, HEARD)
 
 
-def test_the_first_source_has_the_word_back_once_it_turns_home():
-    """Coming back: the phone app says home at the gate while the other
-    service still shows the road. An arrival, not a second departure."""
-    assert persons.choose_gps([APP_BACK, _other(reported=NOW - 120)], [], NOW - 3600, NOW, 45, HOME) is APP_BACK
-    # A late fix from the road, landing after it turned home, does not send them away again.
-    assert persons.choose_gps([APP_BACK, _other(reported=NOW - 10)], [], NOW - 3600, NOW, 45, HOME) is APP_BACK
+def test_only_the_first_source_speaks_for_someone_heard_now_or_never_heard():
+    """A watch at home is heard every few seconds, so there is no last
+    sighting to hold a fix against; a visitor with no things has none either."""
+    far = _other(reported=NOW - 1)
+    assert _choose([APP_HOME, far], presence="here", heard=NOW - 2) == (APP_HOME, None)
+    assert _choose([APP_HOME, far], presence="away", heard=None) == (APP_HOME, None)
 
 
-def test_a_later_source_rules_out_a_thing_left_behind():
-    """The watch on the bedside table is heard all along, so the last sighting
-    is seconds old: its coming to rest is what the fix is compared with."""
-    watch = {"ent": "watch", "arrived": NOW - 40000}
+def test_the_newest_of_several_fixes_down_the_road_speaks():
+    older, newer = _other(reported=NOW - 200), _other("device_tracker.robin_tag", reported=NOW - 20)
+    assert _choose([APP_HOME, older, newer])[0] is newer
+
+
+def test_a_departure_once_seen_stands_until_they_are_heard_again():
     far = _other(reported=NOW - 30)
-    assert persons.choose_gps([APP_HOME, far], [watch], NOW - 2, NOW, 45, HOME) is far
-    assert persons.choose_gps([APP_HOME, far], [], NOW - 2, NOW, 45, HOME) is APP_HOME
-    # Back home: the first source turned home after that fix.
-    assert persons.choose_gps([APP_BACK, far], [watch], NOW - 2, NOW, 45, HOME) is APP_BACK
+    gps, gone = _choose([APP_HOME, far])
+    assert (gps, gone) == (far, HEARD)
+    # The other service drops out for a cycle: the first one's old "home" does not call them back.
+    assert _choose([APP_HOME], gone_for=gone) == (None, HEARD)
+    assert _choose([], gone_for=gone) == (None, HEARD)
+    assert _choose([APP_HOME, {**APP_HOME, "entity": "device_tracker.robin_tag"}], gone_for=gone) == (None, HEARD)
+    # A nearer fix that no longer clears the guard is still theirs to tell: away, never the old "home".
+    near = _other(lat=51.5012, reported=NOW - 5)
+    assert _choose([APP_HOME, near], gone_for=gone) == (near, HEARD)
+    # Coming back: the first source turns home at the gate while the other still shows the road.
+    assert _choose([APP_BACK, far], gone_for=gone) == (APP_BACK, HEARD)
+    assert _choose([APP_BACK, _other(reported=NOW - 10)], gone_for=gone) == (APP_BACK, HEARD)
+    # Heard in the house: the spell is over, and so is its departure.
+    assert _choose([APP_BACK, far], presence="here", heard=NOW - 1, gone_for=gone) == (APP_BACK, None)
+    # A departure kept for another sighting is not this one's.
+    assert _choose([APP_HOME], gone_for=HEARD - 900) == (APP_HOME, None)
+
+
+def test_a_single_source_keeps_its_departure_through_a_dropout_too():
+    left = _other("device_tracker.robins_iphone")
+    assert _choose([left]) == (left, HEARD)
+    assert _choose([], gone_for=HEARD) == (None, HEARD)
+
+
+def test_a_home_restored_by_a_restart_is_no_arrival():
+    """A restart stamps every restored state as just changed: the first
+    source's "home" then looks like a return, and the other's old fix new."""
+    heard, started = NOW - 600, NOW - 400
+    restored_home = {**APP_HOME, "reported": started, "updated": started, "changed": started}
+    far = _other(reported=NOW - 30)
+    assert _choose([restored_home, far], heard=heard, restored=started + 300) == (far, heard)
+    # A fix restored with it is no news either: the first source speaks, as it always did.
+    assert _choose([restored_home, _other(reported=started)], heard=heard, restored=started + 300) == (restored_home, None)

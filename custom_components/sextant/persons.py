@@ -404,15 +404,19 @@ def judge_source(entity_id, state, now, stale_secs=GPS_STALE_SECS):
     if reported is not None and now - reported > stale_secs:
         return False, f"no report for {(now - reported) / 3600:.1f} h", None
     lat, lon = attrs.get("latitude"), attrs.get("longitude")
-    coords = isinstance(lat, (int, float)) and isinstance(lon, (int, float))
+    # On the globe: anything else (an infinity, a NaN) would raise in the distance sum.
+    coords = (isinstance(lat, (int, float)) and isinstance(lon, (int, float))
+              and -90 <= lat <= 90 and -180 <= lon <= 180)
     stationary = stationary_zone(st, attrs)
-    changed = getattr(state, "last_changed", None)
+    changed, updated = getattr(state, "last_changed", None), getattr(state, "last_updated", None)
     return True, None, {
         "entity": entity_id, "zone": "not_home" if stationary else st, "stationary": stationary,
         "latitude": float(lat) if coords else None, "longitude": float(lon) if coords else None,
         "accuracy": attrs.get("gps_accuracy") if coords else None,
         "reported": reported,
-        "changed": changed.timestamp() if hasattr(changed, "timestamp") else None,   # when the zone last changed
+        # When the zone last changed, and the fix itself: a report with nothing new in it moves neither.
+        "changed": changed.timestamp() if hasattr(changed, "timestamp") else None,
+        "updated": updated.timestamp() if hasattr(updated, "timestamp") else None,
     }
 
 
@@ -501,35 +505,52 @@ def without_left_behind(candidates, gps, now, stale, home=None, min_distance_m=2
     return [c for c in candidates if c not in left], left
 
 
-def choose_gps(usable, candidates, last_heard, now, stale, home=None, min_distance_m=200.0):
-    """The GPS source that speaks for the person this cycle, of their usable
-    ones in order (usable_gps): the first, unless another has seen them leave.
+def choose_gps(usable, presence, last_heard, gone_for=None, home=None, min_distance_m=200.0, restored=0.0):
+    """``(gps, gone_for)``: the GPS source that speaks for the person this
+    cycle, of their usable ones in order (usable_gps), and the sighting a
+    departure has been seen after (None for none; hand it back next cycle).
 
-    A phone app can sit on "home" for minutes into a drive while another
-    service already has the car down the road, and reading only the first
-    source made every departure as slow as that one. So the first source
-    that shows a departure speaks: a fix that ends the quiet hold (gps_left)
-    or rules out a thing left behind (without_left_behind). It is then the
-    source for the rest of the cycle, or the first one's "home" would read
-    them home again by GPS.
+    The first source speaks. But a phone app can sit on "home" for minutes
+    into a drive while another service already has the car down the road, so
+    once BLE has lost them (``presence`` of their things, ``last_heard``) a
+    later source speaks while the first still says home: the newest fix that
+    would end the quiet hold (gps_left), made since they were last heard. It
+    is then the source for the rest of the cycle, or the first one's "home"
+    would read them home again by GPS.
 
-    The first source has the word back once it turns home (``changed``) after
-    that fix, or after the last sighting: coming back, it says home at the
-    gate while the other may still show the road, and that is an arrival.
+    A departure once seen stands until BLE hears them again (``gone_for``
+    is that last_heard): the source that saw it dropping out for a cycle must
+    not hand the word back to a "home" that never moved. The first source has
+    the word back when it turns home after the last sighting (``changed``):
+    coming back, it says home at the gate while the other still shows the
+    road, and that is an arrival.
+
+    ``restored`` is when the states a restart restored have settled: a restart
+    stamps every one as just changed, which is neither a return nor a new fix.
+
+    shortcut: someone heard right now (a watch left at home) or never heard
+    (a visitor with GPS only) has no last sighting to hold a fix against, so
+    only the first source speaks for them, as before; and gone_for is not
+    kept over a restart. Upgrade when a departure is missed that way.
     """
-    if not usable:
-        return None
-    first, heard = usable[0], valid_time(last_heard)
-    came_home = valid_time(first.get("changed")) if str(first.get("zone") or "").lower() == "home" else None
-    for g in usable:
-        if not (gps_left(g, last_heard, home, min_distance_m)
-                or without_left_behind(candidates, g, now, stale, home, min_distance_m)[1]):
-            continue
-        # g["reported"]: gps_left is only true of a fix with a report time.
-        if came_home is not None and (came_home > g["reported"] or (heard is not None and came_home > heard)):
-            continue
-        return g
-    return first
+    first, heard = (usable[0] if usable else None), valid_time(last_heard)
+    if presence == "here" or heard is None:
+        return first, None
+    since = max(heard, valid_time(restored) or 0.0)
+
+    def stuck(g):   # says home, and has since before they were last heard: no word on a departure
+        return str(g.get("zone") or "").lower() == "home" and (valid_time(g.get("changed")) or 0.0) <= since
+
+    gone = gone_for == heard
+    left = [g for g in usable[1:] if (valid_time(g.get("updated")) or 0.0) > since
+            and gps_left(g, heard, home, min_distance_m)] if first and stuck(first) else []
+    if left:
+        gps = max(left, key=lambda g: g["reported"])   # gps_left is only true of a fix with a report time
+    elif gone:
+        gps = next((g for g in usable if not stuck(g)), None)
+    else:
+        gps = first
+    return gps, heard if gone or gps_left(gps, heard, home, min_distance_m) else None
 
 
 def should_ask_gps(presence, placed, last_heard, asked_for) -> bool:

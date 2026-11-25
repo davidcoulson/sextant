@@ -994,7 +994,8 @@ class SextantDevices extends LitElement {
 
   /** Each owner, where they read as being, and their GPS sources in order:
    * their things place them while home; away, the first source that is
-   * neither broken nor stale (persons.judge_source) gives the zone. */
+   * neither broken nor stale (persons.judge_source) gives the zone, or a
+   * later one that saw them leave first (persons.choose_gps). */
   _people() {
     return [...new Set(Object.values(this.data?.layout?.thing_owners || {}).filter((p) => typeof p === "string" && p.startsWith("person.")))].sort();
   }

@@ -63,8 +63,12 @@ already seen them go: a fix made since the last sighting, outside the home
 zone and at least `gps_leave_m` (200 m) from home, ends the hold at once
 and the person is `away` now rather than when `away_after_secs` runs out.
 Any of their GPS sources can be the one to see it: the first in their order is
-read, unless a later one shows the departure while the first still says home
-(the first has the word back when it turns home again).
+read, unless a later one shows the departure while the first still says home.
+The departure then stands until Sextant hears them again or GPS reads them
+home again, even if the source that saw it drops out for a while. A later
+source is only read this way once Sextant has lost the person: with one of
+their things still heard in the house (a watch left at home), or for someone
+with GPS sources and no things, the first source alone speaks.
 So the phone reports promptly, the moment a person goes quiet (`stale_after_secs`,
 two minutes) Sextant asks their Home Assistant companion app (`notify.mobile_app_<device>`) for a fresh
 location, once per quiet spell. It is skipped when `gps_leave_m` is 0.
@@ -81,7 +85,7 @@ holds a client home for minutes after it last heard it, so a GPS fix that far
 from home, made over 10 s after the access point last heard the phone
 (UniFi's `last_seen` less its `idletime`, once it has been idle 90 s; `last_seen` before that), overrules it. After
 that the first GPS tracker in their list that is neither broken nor stale
-gives the zone (`source: gps`), or the state is `away` with nothing usable
+gives the zone (`source: gps`; a later one while it alone has seen them leave), or the state is `away` with nothing usable
 (`source: none`). [Wi-Fi](things.md#wi-fi) says where the trackers come from. The list is set per person on
 the Things page (People card) and lives in the layout as `person_trackers`;
 a tracker that is unknown, unavailable, or has not reported within
