@@ -1,7 +1,7 @@
 /** Occupancy tab: floors stacked like the house, a tile per room with who is in it and why it is on. Read only. */
-import { LitElement, html, css, nothing } from "./lit.js";
+import { LitElement, html, css, nothing, repeat } from "./lit.js";
 import { sharedStyles, fmtAge, fmtLen, classIcon, THING_CLASSES } from "./sextant-ui.js";
-import { occupancyByFloor, outsideNow, chipDetail, firstName, spotInRoom, SOURCE_ICON, SOURCE_LABEL, WHERE_SOURCE, WHERE_ICON, modeIcon } from "./sextant-occupancy-data.js";
+import { occupancyByFloor, isActive, outsideNow, chipDetail, firstName, spotInRoom, SOURCE_ICON, SOURCE_LABEL, WHERE_SOURCE, WHERE_ICON, modeIcon } from "./sextant-occupancy-data.js";
 
 class SextantOccupancy extends LitElement {
   static properties = { hass: {}, data: {}, _open: { state: true } };
@@ -35,6 +35,9 @@ class SextantOccupancy extends LitElement {
     .pill { font-size: 12px; padding: 2px 10px; border-radius: 8px; background: var(--secondary-background-color); color: var(--secondary-text-color); }
     .pill.on { background: color-mix(in srgb, var(--success-color, #4caf50) 20%, transparent); color: var(--primary-text-color); }
     .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+    .grid.quiet { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); margin-top: 8px; }
+    .grid.quiet .room { min-height: 0; padding: 4px 10px; }
+    .grid.quiet .rn { margin-bottom: 0; overflow-wrap: anywhere; font-weight: 400; color: var(--secondary-text-color); }
     .room { border: 1px solid var(--divider-color); border-radius: 8px; padding: 8px 10px; min-height: 70px; background: var(--secondary-background-color); }
     .room.on { background: color-mix(in srgb, var(--primary-color) 14%, transparent); border-color: var(--primary-color); }
     .room.pets { background: var(--secondary-background-color); border: 1px dashed var(--primary-color); }
@@ -128,13 +131,13 @@ class SextantOccupancy extends LitElement {
         <div class="fh"><b>${f.name}</b>
           <span class="pill ${f.people ? "on" : ""}">${f.people} ${f.people === 1 ? "person" : "people"}</span>
           ${f.pets ? html`<span class="pill">${f.pets} ${f.pets === 1 ? "pet" : "pets"}</span>` : nothing}</div>
-        <div class="grid">${f.rooms.map((r) => html`
+        ${[f.rooms.filter(isActive), f.rooms.filter((r) => !isActive(r))].map((list, i) => list.length ? html`<div class="grid ${i ? "quiet" : ""}">${repeat(list, (r) => r.room, (r) => html`
           <div class="room ${r.on ? (r.peopleOn ? "on" : "pets") : ""} ${r.mode ? "mode" : ""}">
             ${f === this._outside ? nothing : html`<div class="rn" style="padding-right:${(r.on ? r.sources.length : 0) * 20 + (r.mode ? 24 : 0) + 4}px">${r.room}${r.mode ? html`<span class="ml">${r.mode}</span>` : nothing}</div>`}
             ${r.people.map((p) => this._chip(r, p, "mdi:account", firstName(p)))}
             ${r.pets.map((p) => this._chip(r, p, "mdi:paw"))}
             ${r.mode || (r.on && r.sources.length) ? html`<div class="src">${r.on ? r.sources.map((x) => html`<ha-icon icon=${SOURCE_ICON[x] || "mdi:help-circle-outline"} title=${SOURCE_LABEL[x] || x}></ha-icon>`) : nothing}${r.mode ? html`<ha-icon class="mi" icon=${modeIcon(r.mode)} aria-hidden="true"></ha-icon>` : nothing}</div>` : nothing}
-          </div>`)}</div>
+          </div>`)}</div>` : nothing)}
       </div>`)}
       <div class="foot">${people} ${people === 1 ? "person" : "people"} in the house</div>`;
   }

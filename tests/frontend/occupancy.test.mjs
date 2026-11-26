@@ -141,11 +141,16 @@ test("askStrimmer asks once per connection, again on each reconnect, and swallow
 test("a room in a mode carries it, and the mode picks an icon", async () => {
   const { modeIcon } = await import("../../custom_components/sextant/frontend/sextant-occupancy-data.js");
   const out = occupancyByFloor({ "binary_sensor.ht": st("on", "Home Theater", "Basement", { mode: "Movie" }), "binary_sensor.den": st("off", "Den", "Basement") }, []);
-  const [den, ht] = out[0].rooms;
+  const [ht, den] = out[0].rooms;
   assert.equal(ht.mode, "Movie"); assert.equal(den.mode, null);
   assert.equal(modeIcon("Movie"), "mdi:movie-open");
   assert.equal(modeIcon("Gaming"), "mdi:controller");
   assert.equal(modeIcon("Chill"), "mdi:tag");
   assert.equal(modeIcon("Flowerbed"), "mdi:tag");
   assert.equal(modeIcon("Work then Movie"), "mdi:briefcase");
+});
+
+test("rooms with activity come first, then empty ones, each alphabetical", () => {
+  const out = occupancyByFloor({ "binary_sensor.a": st("off", "Attic", "G"), "binary_sensor.b": st("on", "Study", "G"), "binary_sensor.c": st("off", "Den", "G", { mode: "Movie" }), "binary_sensor.d": st("on", "Hall", "G"), "binary_sensor.e": st("off", "Bath", "G") }, []);
+  assert.deepEqual(out[0].rooms.map((r) => r.room), ["Den", "Hall", "Study", "Attic", "Bath"]);
 });

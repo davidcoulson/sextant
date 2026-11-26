@@ -325,6 +325,6 @@ Drag to pan, scroll, pinch or use **+**/**−** to zoom (past the map's last til
 
 ## Occupancy tab
 
-A read-only page beside Live: floors stacked top to bottom, a tile per room with the people and pets in it and an icon in its corner for why the room is on (Bluetooth, media playing, radar, door held; hover for the name; see [How occupancy works](occupancy.md)). Dashed tiles are pets only. It reads the room sensors, so it follows them live.
+A read-only page beside Live: floors stacked top to bottom, a tile per room (rooms with something going on first, then the empty ones as small tiles, each group alphabetical) with the people and pets in it and an icon in its corner for why the room is on (Bluetooth, media playing, radar, door held; hover for the name; see [How occupancy works](occupancy.md)). Dashed tiles are pets only. It reads the room sensors, so it follows them live.
 
 A person's chip shows their first name (the full name is in the details), and a chip names the spot when the person or pet is in one ("Fry · Meg's Cafe"). Hover a chip, or tap it on a phone, for the details: room, spot, floor, confidence, how long ago it was heard, the source (Bluetooth, Wi-Fi or GPS) and, for Bluetooth, the receivers hearing it now with their distances. Tap again, tap elsewhere or press Escape to close.
