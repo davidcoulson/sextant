@@ -6537,7 +6537,7 @@ def _habit_zone(floor_name, zone):
     return f"{floor_name}|{zone}"
 
 
-_door_seen: dict[str, tuple] = {}  # door entity -> (door_closed() last cycle, last_changed then, close earns grace)
+_door_seen: dict[str, tuple] = {}  # door entity -> (state last cycle, last_changed then, close earns grace)
 
 
 def _closed_rooms(hass, zone_polys, layout, now):
@@ -6556,9 +6556,10 @@ def _closed_rooms(hass, zone_polys, layout, now):
         prev = _door_seen.get(door)
         if prev is not None and prev[1] == changed:
             earns = prev[2]
-        else:
-            earns = prev is not None and (prev[0] is False or (prev[0] is True and closed))
-        _door_seen[door] = (closed, changed, earns)
+        else:  # a cover's opening/closing counts as open; only unavailable/unknown is no sighting
+            earns = prev is not None and str(prev[0]).lower() not in ("unavailable", "unknown", "none", "") and (
+                rooms_mod.door_closed(prev[0]) is not True or bool(closed))
+        _door_seen[door] = (st.state, changed, earns)
         if closed and (not earns or now - changed >= grace):
             out.add(zid)
     return out

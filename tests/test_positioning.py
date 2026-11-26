@@ -2747,6 +2747,10 @@ def test_closed_rooms_wait_out_the_entry_grace():
     assert at("unavailable", 2100.0, 2100.0) is False
     assert at("off", 2110.0, 2111.0)                      # back from unavailable: closed at once
     sextant._door_seen.clear()
+    assert not at("open", 3000.0, 3001.0)
+    assert not at("closing", 3002.0, 3003.0)
+    assert not at("closed", 3010.0, 3011.0)               # a cover seen closing: a real close
+    sextant._door_seen.clear()
     assert sextant._closed_rooms(hass, _three_rooms(), {}, 99999.0) == set()   # no doors known
 
 
