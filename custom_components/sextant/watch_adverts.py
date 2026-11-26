@@ -49,6 +49,7 @@ def setup(hass):
     """Start logging; returns the callable that stops it, or None without bluetooth."""
     try:
         from homeassistant.components import bluetooth
+        from homeassistant.core import callback
     except ImportError:
         return None
     watches = {}          # address (upper case) -> entity_id
@@ -85,19 +86,20 @@ def setup(hass):
         data = (info.manufacturer_data or {}).get(APPLE)
         if not ent or data is None:
             return
-        hexed = bytes(data).hex()
+        hexed = bytes(data).hex() + "@" + str(info.address).upper()   # a new address is news even with the same data
         prev = last.get(ent)
         if prev and prev[0] == hexed and now - prev[1] < HEARTBEAT:
             return
         last[ent] = (hexed, now)
         pending.append({"t": round(now, 1), "e": ent, "addr": info.address, "src": info.source, "rssi": info.rssi,
-                        "apple": hexed, "types": [k for k, _ in messages(bytes(data))], "ni": nearby_info(bytes(data)),
+                        "apple": bytes(data).hex(), "types": [k for k, _ in messages(bytes(data))], "ni": nearby_info(bytes(data)),
                         "chg": not prev or prev[0] != hexed})
         if len(pending) >= 20:
             flush()
         elif timer[0] is None:
             timer[0] = hass.loop.call_later(15, flush)
 
+    @callback   # on the event loop: a plain listener would run in a worker thread
     def moved(event):
         eid, new = event.data.get("entity_id", ""), event.data.get("new_state")
         if not (eid.startswith("device_tracker.private_ble_") and "watch" in eid and new):
