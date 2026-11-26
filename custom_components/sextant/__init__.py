@@ -6548,9 +6548,10 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
     2. Margin and dwell. The incumbent zone holds until a challenger leads
        its smoothed share by zone_switch_margin continuously for
        zone_switch_secs of wall clock.
-       A challenger in ``closed`` (its door shut past the grace) never wins:
-       the thing stays where it was. The first pick has no incumbent to keep
-       and is not held back.
+       A room in ``closed`` (its door shut past the grace) is no challenger:
+       the strongest open room challenges instead. The first pick after a
+       restart is not held back; one after a floor change is, unless only
+       shut rooms have any evidence.
     3. Stationary lock. When the filter's speed stays under stationary_speed
        for stationary_secs, the thing is on a table and the zone locks -
        but only a zone it has EARNED: held for stationary_secs already, and
@@ -6578,7 +6579,8 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
         return instant_zone, False, None
 
     st = _zone_state.get(entity)
-    if st is None or st["floor"] != floor_name or (st["zone"] is not None and st["zone"] not in valid):
+    new_floor = st is not None and st["floor"] != floor_name   # come up or down the stairs, not a first sighting
+    if st is None or new_floor or (st["zone"] is not None and st["zone"] not in valid):
         st = _zone_state[entity] = _new_zone_state(floor_name, now)
 
     # 1. Membership, smoothed.
@@ -6621,6 +6623,8 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
         return (incumbent if incumbent is not None else instant_zone), False, speed
     best = max(probs, key=probs.get)
     if incumbent is None:
+        if new_floor:   # a thing arriving from another floor cannot walk into a shut room either
+            best = max((z for z in probs if z not in closed), key=probs.get, default=best)
         st.update(zone=best, since=now, challenge=None, locked=False, away_since=None)
         return best, False, speed
     # Anchored: the thing sits on a proxy (one reads it within anchor_max_m,
@@ -6698,6 +6702,9 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
         st.update(locked=False, still_since=None, away_since=None, outvoted_since=None)
 
     # 2. Margin and dwell. A far move (see far_move_margin) is held to more.
+    # A shut room is no challenger, so the strongest open one challenges instead (after the lock
+    # check above, so a thing kept out of a room does not earn a lock where it is kept).
+    best = max((z for z in probs if z == incumbent or z not in closed), key=probs.get, default=incumbent)
     margin, dwell = _tuning(layout, "zone_switch_margin"), _tuning(layout, "zone_switch_secs")
     if best != incumbent and _far_move(zone_polys, incumbent, best, scale):
         margin = max(margin, _tuning(layout, "far_move_margin"))
@@ -6709,7 +6716,7 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
             shifted = max(0.05, margin + habits_mod.prior_shift(
                 _habits, entity, _habit_zone(floor_name, incumbent), _habit_zone(floor_name, best), now, gain, _local_tz))
             margin = min(shifted, max(margin, 0.9))   # a habit never makes a unanimous challenger unable to win
-    if best == incumbent or best in closed or probs[best] - probs.get(incumbent, 0.0) < margin:
+    if best == incumbent or probs[best] - probs.get(incumbent, 0.0) < margin:
         st["challenge"] = None
         return incumbent, False, speed
     ch = st["challenge"]

@@ -2736,3 +2736,23 @@ def test_closed_rooms_wait_out_the_entry_grace():
     assert sextant._closed_rooms(hass, polys, {}, 1061.0) == set()
     assert sextant._closed_rooms(hass, polys, {}, 1000.0 + 3 * 3600) == {"Hall"}
     assert sextant._closed_rooms(hass, _three_rooms(), {}, 99999.0) == set()   # no doors known
+
+
+def test_an_open_room_challenges_when_a_shut_one_has_more_evidence(monkeypatch):
+    """Codex review: 55% in a shut room, 45% in an open one, 0% where the thing was."""
+    sextant._zone_state.clear()
+    layout = {"tuning": {"zone_lock_warmup_secs": 0.0, "zone_prob_smoothing": 0.0}}
+    sextant._elect_zone("c", "F", "Kitchen", Point(50, 50), None, _three_rooms(), 100.0, layout, now=0.0)
+    monkeypatch.setattr(sextant, "_zone_membership", lambda polys, samples: {"Office": 0.55, "Hall": 0.45})
+    got = [sextant._elect_zone("c", "F", "Office", Point(450, 50), None, _three_rooms(), 100.0, layout, now=t,
+                               closed={"Office"})[0] for t in (1.0, 200.0)]
+    assert got == ["Kitchen", "Hall"]
+
+
+def test_after_a_floor_change_a_shut_room_is_not_the_first_pick(monkeypatch):
+    sextant._zone_state.clear()
+    layout = {"tuning": {"zone_lock_warmup_secs": 0.0, "zone_prob_smoothing": 0.0}}
+    sextant._elect_zone("c", "G", "Kitchen", Point(50, 50), None, _three_rooms(), 100.0, layout, now=0.0)
+    monkeypatch.setattr(sextant, "_zone_membership", lambda polys, samples: {"Office": 0.7, "Hall": 0.3})
+    assert sextant._elect_zone("c", "F", "Office", Point(450, 50), None, _three_rooms(), 100.0, layout, now=5.0,
+                               closed={"Office"})[0] == "Hall"
