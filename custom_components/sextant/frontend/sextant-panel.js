@@ -1461,21 +1461,22 @@ class SextantLive extends LitElement {
                 // A locked watch places nobody, even while a held place still names it as via.
                 const locked = this._watchLocked(p.ent);
                 const who = locked ? null : this._speaksFor(p.ent);
-                // Three states, one badge: away (long gone), waiting (heard,
-                // but not lately), or the thing its owner is read from. A
+                // Four states, one badge: away (long gone), waiting (heard,
+                // but not lately), a watch that says it is locked (off a wrist,
+                // so it places nobody), or the thing its owner is read from. A
                 // thing not being heard cannot be any owner's source.
                 const badge = st.away ? html`<ha-icon class="viabadge ghostbadge" icon="mdi:ghost-outline"></ha-icon>`
                   : st.ghost ? html`<ha-icon class="viabadge waitbadge" icon="mdi:timer-sand"></ha-icon>`
+                  : locked ? html`<ha-icon class="viabadge lockbadge" icon="mdi:lock"></ha-icon>`
                   : who ? html`<ha-icon class="viabadge" icon="mdi:map-marker"></ha-icon>` : nothing;
                 // A low battery gets its own corner: it is a separate question
                 // from the status above, and both can be true at once - a tag
                 // going quiet BECAUSE its battery is dying is the whole point.
                 const battery = this._batteryBadge(p.ent);
-                // A watch that says it is locked (off a wrist) does not place its owner.
-                const lock = locked ? html`<ha-icon class="lockbadge" icon="mdi:lock" title="Locked: not on a wrist"></ha-icon>` : nothing;
-                if (badge === nothing && battery === nothing && lock === nothing) return this._avatar(p.ent);
-                const why = badge === nothing ? "" : st.away ? lastSeen : st.ghost ? `Last heard ${fmtAge(st.age)} ago` : `Where ${who} is read from right now`;
-                return html`<span class="avslot" title=${why}>${this._avatar(p.ent)}${badge}${battery}${lock}</span>`;
+                if (badge === nothing && battery === nothing) return this._avatar(p.ent);
+                const why = badge === nothing ? "" : st.away ? lastSeen : st.ghost ? `Last heard ${fmtAge(st.age)} ago`
+                  : locked ? "Locked: not on a wrist, so it places nobody" : `Where ${who} is read from right now`;
+                return html`<span class="avslot" title=${why}>${this._avatar(p.ent)}${badge}${battery}</span>`;
               })()}
               <span class="name">${this._label(p.ent)}</span>
               <span class="where">${p.zone ? html`${this._roomIcon(p.floor, p.zone) ? html`<ha-icon class="roomicon" icon=${this._roomIcon(p.floor, p.zone)}></ha-icon>` : nothing}${p.zone}` : html`<span class="muted">away</span>`}</span>
@@ -2103,7 +2104,7 @@ class SextantLive extends LitElement {
     .list .avslot .viabadge.waitbadge { background: var(--warning-color, #e6a100); color: #23272e; }
     .list .avslot .viabadge.ghostbadge { background: var(--secondary-background-color, #666); color: var(--secondary-text-color); }
     .list .avslot .batterybadge { position: absolute; right: -3px; bottom: -3px; --mdc-icon-size: 12px; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--warning-color, #e6a100); color: #23272e; box-shadow: 0 0 0 2px var(--card-background-color, #fff); }
-    .list .avslot .lockbadge { position: absolute; left: -3px; bottom: -3px; --mdc-icon-size: 11px; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--secondary-background-color, #666); color: var(--primary-text-color); box-shadow: 0 0 0 2px var(--card-background-color, #fff); }
+    .list .avslot .viabadge.lockbadge { background: var(--secondary-background-color, #666); color: var(--primary-text-color); }
     .list .avslot .batterybadge.crit { background: var(--error-color, #db4437); color: #fff; }
     dd.warn { color: var(--warning-color, #e6a100); font-weight: 600; }
     dd.crit { color: var(--error-color, #db4437); font-weight: 600; }
