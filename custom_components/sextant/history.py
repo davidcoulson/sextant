@@ -68,6 +68,8 @@ DROPOUT_GAP_MIN = 90.0
 # interval it has perfectly good data for.
 GAP_FRAME = 1        # new polyline: floor change, clock step, retained head
 GAP_DROPOUT = 2      # ...and the device genuinely was not heard across it
+# The timeline joins a dropout up to this long when the thing is in the same place after it.
+TIMELINE_BRIDGE_SECS = 180.0
 
 
 def _finite(value):
@@ -684,6 +686,10 @@ def timeline_track(ent, track, frm, to, max_segments=200, at_start=None):
         ts = track.t[i]
         key = (track.f[i], track.z[i], track.sp[i])
         dropout = track.gap[i] == GAP_DROPOUT and stays
+        # A short silence ending where it began (an HA restart, mostly) is not
+        # worth a "not heard" stay: the thing was there either side of it.
+        if dropout and key == stays[-1]["key"] and ts - stays[-1]["end"] <= TIMELINE_BRIDGE_SECS:
+            dropout = False
         if dropout:
             last = stays[-1]
             stays.append({"key": None, "start": last["end"], "end": ts})
