@@ -495,6 +495,17 @@ def test_timeline_never_claims_a_place_across_a_silence():
     assert stays[0]["end"] - 1_000_000 == 30 and stays[1]["end"] - 1_000_000 == 3000
 
 
+def test_timeline_joins_a_restart_sized_silence_in_the_same_place():
+    h = hist(min_interval=2, heartbeat=30)
+    _walk(h, [(0, "Office", None), (30, "Office", None)])
+    h.mark_gap(ENT)                                              # HA restarted
+    _walk(h, [(150, "Office", None), (180, "Office", None)])
+    _walk(h, [(330, "Kitchen", None)])                           # a short silence ending elsewhere still shows
+    stays = h.timeline(ENT, 0, 2e6)["stays"]
+    assert [(s.get("room"), bool(s.get("unheard"))) for s in stays] == [("Office", False), (None, True), ("Kitchen", False)]
+    assert stays[0]["end"] - 1_000_000 == 180
+
+
 def test_timeline_window_and_empty_cases():
     h = hist(min_interval=2, heartbeat=60)
     assert h.timeline("nobody", 0, 1e12)["stays"] == []
