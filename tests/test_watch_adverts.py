@@ -47,3 +47,24 @@ def test_a_new_address_is_logged_once_private_ble_names_it(monkeypatch):
     stop()
     (row,) = jobs[0]
     assert row["e"] == "private_ble_device_david_s_watch" and row["ni"] == [3, 0xB, 0x1C]
+
+
+def test_worn_reads_the_unlocked_bit_from_the_latest_fresh_advert(monkeypatch):
+    import sys
+    import time
+    from types import SimpleNamespace as NS
+    import homeassistant.components as comps
+    # David's watch, 2026-11-25: 0x98 on his wrist, 0x18 off it or on the charger.
+    assert wa.worn(bytes.fromhex("10052998be4007")) is True
+    assert wa.worn(bytes.fromhex("10052918be4007")) is False
+    assert wa.worn(bytes.fromhex("0c0100")) is None
+    info = NS(time=time.monotonic(), manufacturer_data={wa.APPLE: bytes.fromhex("10052998be4007")})
+    bluetooth = NS(async_last_service_info=lambda h, a, c: info if a == "AA" else None)
+    monkeypatch.setitem(sys.modules, "homeassistant.components.bluetooth", bluetooth)
+    monkeypatch.setattr(comps, "bluetooth", bluetooth, raising=False)
+    states = {"device_tracker.w": NS(attributes={"current_address": "AA"}), "device_tracker.x": NS(attributes={})}
+    hass = NS(states=NS(get=states.get))
+    assert wa.worn_now(hass, "w", 60) is True
+    assert wa.worn_now(hass, "x", 60) is None and wa.worn_now(hass, "gone", 60) is None
+    info.time -= 120   # nothing heard for two minutes: unknown, not worn
+    assert wa.worn_now(hass, "w", 60) is None

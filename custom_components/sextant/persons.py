@@ -11,6 +11,9 @@ hour does not; the watch that just crossed the room does. So:
    (settled_since), not the tracker's own "moving" flag: a watch on its
    nightstand whose fix alternates between two points reads as moving. Among those,
    what is usually on a body wins: a pet's own tag, a watch, a phone.
+   A watch that says it is worn and unlocked beats all of this, and one that
+   says it is locked takes no part (watch_adverts.worn_now); the rules here
+   and below guess only for a watch whose lock state is unknown.
 3. When nothing is on the move, the thing that arrived where it is most
    recently wins: the phone that came downstairs this morning, not the
    watch that has sat on its charger since last night. Class does not
@@ -260,13 +263,17 @@ def pick(things, now: float, stale_after: float, watch_still: float = 14400.0):
 
     ``things`` are dicts: ent, cls, updated (epoch s),
     arrived (epoch s: when it came within STAY_RADIUS_M of where it is now),
-    zone, sub_zone, floor. ``watch_still`` is the watch_still_secs tuning.
+    zone, sub_zone, floor, and for a watch worn (True: on a wrist and unlocked,
+    False: locked, None: unknown). ``watch_still`` is the watch_still_secs tuning.
     """
     fresh = [
         t for t in things
         if isinstance(t.get("updated"), (int, float)) and now - t["updated"] <= stale_after
         and t.get("zone") not in (None, "", "unknown")
-        and not t.get("on_charger")   # a watch on its charger is not on anybody's wrist
+        # A watch that says it is locked is on nobody's wrist; one that says it is worn
+        # and unlocked is, whatever its charger sensor last said.
+        and t.get("worn") is not False
+        and (t.get("worn") or not t.get("on_charger"))   # a watch on its charger is not on anybody's wrist
     ]
     if not fresh:
         return None
@@ -277,7 +284,11 @@ def pick(things, now: float, stale_after: float, watch_still: float = 14400.0):
         recent = age <= RECENT_MOVE_SECS
         return (not recent, -CARRY_PRIORITY.get(t.get("cls"), 0) if recent else 0, age)
 
+    # A watch worn and unlocked is on its owner (watch_adverts.worn_now): it speaks for them.
+    if worn := [t for t in fresh if t.get("worn")]:
+        return min(worn, key=key)
     best = min(fresh, key=key)
+    # Below, a watch's lock state is unknown: guess from stillness and confidence.
     if best.get("cls") == "phone" and key(best)[0]:
         # Everything is stationary: a watch placed at least as well as the phone
         # beats it, since the phone is likelier to have been set down.
@@ -317,7 +328,8 @@ def considered(things, now):
     return [
         {"thing": t["ent"], "where": t.get("sub_zone") if t.get("sub_zone") not in (None, "", "unknown") else t.get("zone"),
          "here_since": _iso(t.get("arrived"), now),
-         **({"on_charger": True} if t.get("on_charger") else {})}
+         **({"on_charger": True} if t.get("on_charger") else {}),
+         **({"worn": t["worn"]} if t.get("worn") is not None else {})}
         for t in things
     ]
 

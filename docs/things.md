@@ -109,6 +109,18 @@ when the watch had already been still for four hours (`watch_still_secs`):
 that watch was left behind. If the phone is on another floor the watch only needs to have been still
 for ten minutes.
 
+An Apple Watch says whether it is on a wrist and unlocked: a bit in what it
+broadcasts, which clears when the watch locks, the moment it comes off a wrist,
+and stays clear on a table or its charger. Sextant reads it for a watch added
+through Private BLE Device (its tracker shows the address the watch uses now).
+A watch that says it is worn speaks for its owner, ahead of any phone, even
+one that just moved or is placed better; a watch that says it is locked takes no
+part, like one on its charger. The rules above, and the charger sensor below,
+decide only while the lock state is unknown: no Private BLE tracker for the
+watch, or nothing heard from it within `stale_after_secs`. A watch put on but
+not yet unlocked counts as locked, so the phone places you until you unlock it.
+The `considered` list shows `worn` true or false when it is known.
+
 A thing can also name an **On-charger sensor** - its battery state from
 iCloud3, the companion app, or any `binary_sensor` that is on while it
 charges. While that reads Charging, the thing does not
