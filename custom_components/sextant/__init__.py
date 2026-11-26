@@ -1,6 +1,7 @@
 import aiofiles
 import aiofiles.os
 import importlib
+import importlib.util
 import sys
 import time
 from pathlib import Path
@@ -8069,15 +8070,18 @@ def _register_calibration_services(hass) -> None:
 
 
 def _import_code(package: str) -> None:
-    """Import the package and the platforms it forwards; runs in the import executor.
+    """Import the new code in the import executor, not the event loop.
 
-    After an unload Home Assistant still lists "<domain>.<platform>" as loaded,
-    so it would import the new platform modules in the event loop (and warn);
+    After an unload HA still lists "<domain>.<platform>" as loaded, so it
+    would import the new modules in the event loop (and warn about it);
     once they are in sys.modules its own import is a cache hit.
     """
-    # The new module's list: the old one may name a platform the new code dropped.
-    for platform in importlib.import_module(package)._PLATFORMS:
-        importlib.import_module(f"{package}.{platform}")
+    from homeassistant.loader import BASE_PRELOAD_PLATFORMS  # noqa: PLC0415  (the test stubs have no loader)
+    module = importlib.import_module(package)
+    # The new module's list, plus what HA preloads with a package (diagnostics, ...).
+    for name in (*module._PLATFORMS, *BASE_PRELOAD_PLATFORMS):
+        if importlib.util.find_spec(f"{package}.{name}") is not None:
+            importlib.import_module(f"{package}.{name}")
 
 
 _PLATFORMS = ("sensor", "binary_sensor", "switch", "device_tracker")
