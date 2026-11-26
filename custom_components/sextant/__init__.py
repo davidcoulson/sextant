@@ -910,6 +910,10 @@ TUNING_SPEC = {
     "door_hold_max_secs": (28800.0, float, 60.0, 172800.0),
     # How long someone must keep reading in a room after its door closed to count as shut in.
     "door_settle_secs": (90.0, float, 0.0, 600.0),
+    # Once a room's door has read closed this long, nothing outside the room is moved into it
+    # (a cat read through the wall is not in a room it cannot open); a thing that went in just
+    # before the door closed, and was placed a little late, still gets this long.
+    "door_entry_grace_secs": (180.0, float, 0.0, 3600.0),
     # A repair is raised for a room's sensor (other sensors, door contact) that has been unavailable
     # this long, or a binary sensor that has read on this long (it would hold its room occupied).
     "sensor_gone_secs": (21600.0, float, 600.0, 2592000.0),
@@ -3206,6 +3210,7 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
             kf_for_election, zone_polys, scale, layout, now=now,
             hold=(_floor_challenge.get(entity) or {}).get("since") is not None,  # a margin challenge, not a small lead
             anchor_point=Point(anchor["x"], anchor["y"]) if anchor is not None else None,
+            closed=_closed_rooms(hass, zone_polys, layout, now),
         )
         # Sub-zone: only the elected zone's own sub-zones are eligible, with
         # membership smoothing, exit hysteresis, dwell and the zone lock (see
@@ -6519,7 +6524,17 @@ def _habit_zone(floor_name, zone):
     return f"{floor_name}|{zone}"
 
 
-def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, scale, layout, now=None, hold=False, anchor_point=None):
+def _closed_rooms(hass, zone_polys, layout, now):
+    """The zones whose door has read closed for door_entry_grace_secs: no thing outside one moves in."""
+    grace, out = _tuning(layout, "door_entry_grace_secs"), set()
+    for zid, door in (getattr(zone_polys, "doors", None) or {}).items():
+        st = hass.states.get(door)
+        if st is not None and rooms_mod.door_closed(st.state) and now - st.last_changed.timestamp() >= grace:
+            out.add(zid)
+    return out
+
+
+def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, scale, layout, now=None, hold=False, anchor_point=None, closed=()):
     """The zone to PUBLISH for a thing this cycle. Returns
     (zone, locked, speed_m_s).
 
@@ -6533,6 +6548,9 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
     2. Margin and dwell. The incumbent zone holds until a challenger leads
        its smoothed share by zone_switch_margin continuously for
        zone_switch_secs of wall clock.
+       A challenger in ``closed`` (its door shut past the grace) never wins:
+       the thing stays where it was. The first pick has no incumbent to keep
+       and is not held back.
     3. Stationary lock. When the filter's speed stays under stationary_speed
        for stationary_secs, the thing is on a table and the zone locks -
        but only a zone it has EARNED: held for stationary_secs already, and
@@ -6617,7 +6635,7 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
     inset = _tuning(layout, "zone_anchor_inset_m")
     if anchor_point is not None and inset > 0 and not hold and not _point_in_no_go(anchor_point, zone_polys):
         az = next((zid for zid, p, _b, no_go in zone_polys if not no_go and p.covers(anchor_point)), None)
-        if az is not None and az != incumbent and _inset_m(zone_polys, az, anchor_point, scale) >= inset:
+        if az is not None and az != incumbent and az not in closed and _inset_m(zone_polys, az, anchor_point, scale) >= inset:
             st["probs"] = {az: 1.0}
             st.update(zone=az, since=now, challenge=None, locked=False,
                       still_since=None, away_since=None, outvoted_since=None)
@@ -6691,7 +6709,7 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
             shifted = max(0.05, margin + habits_mod.prior_shift(
                 _habits, entity, _habit_zone(floor_name, incumbent), _habit_zone(floor_name, best), now, gain, _local_tz))
             margin = min(shifted, max(margin, 0.9))   # a habit never makes a unanimous challenger unable to win
-    if best == incumbent or probs[best] - probs.get(incumbent, 0.0) < margin:
+    if best == incumbent or best in closed or probs[best] - probs.get(incumbent, 0.0) < margin:
         st["challenge"] = None
         return incumbent, False, speed
     ch = st["challenge"]
@@ -7165,7 +7183,7 @@ class _FloorZones(list):
     call over the floor instead of one Python call per zone.
     """
 
-    __slots__ = ("allowed_ids", "allowed_geoms", "allowed_rings", "allowed_boundaries", "snap", "snap_own", "snap_nogo_grown")
+    __slots__ = ("allowed_ids", "allowed_geoms", "allowed_rings", "allowed_boundaries", "snap", "snap_own", "snap_nogo_grown", "doors")
 
     def __init__(self, tuples):
         super().__init__(tuples)
@@ -7218,7 +7236,7 @@ def _floor_zone_polygons(hass, data, entity, floor_name):
             key=lambda coord: np.arctan2(coord["y"] - center_y, coord["x"] - center_x)
         )
 
-    results = []
+    results, doors = [], {}
     for entity_data in data:
         if entity_data["entity"] == entity:
             for floor in entity_data["data"]["floor"]:
@@ -7254,9 +7272,12 @@ def _floor_zone_polygons(hass, data, entity, floor_name):
                         height = max(ys) - min(ys)
                         buffer_size = ((width + height) / 2) * buffer_percent
                         results.append((zone["entity_id"], polygon, buffer_size, bool(zone.get("no_go"))))
+                        if door := rooms_mod.room_options(zone)["door"]:
+                            doors[zone["entity_id"]] = door
             break
 
     results = _FloorZones(results)
+    results.doors = doors
     cache[cache_key] = (version, results)
     return results
 

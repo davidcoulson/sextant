@@ -247,3 +247,11 @@ def test_preferred_snap_target_is_memoised_on_the_cached_floor(tmp_path):
     # Same geometry as the unmemoised path on a plain list.
     plain = sextant._preferred_snap_target(list(zones), "Kitchen", nogo)
     assert plain.equals(a)
+
+
+def test_floor_zones_know_each_rooms_door(tmp_path):
+    """The room election reads a zone's door from here (sextant._closed_rooms)."""
+    layout = _layout()
+    layout["floor"][0]["zones"][0]["door"] = "binary_sensor.kitchen_door"
+    zones = sextant._floor_zone_polygons(make_hass(tmp_path), _new_global_data(layout), "pet", "Ground Floor")
+    assert zones.doors == {"Kitchen": "binary_sensor.kitchen_door"}
