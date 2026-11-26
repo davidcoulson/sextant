@@ -8053,6 +8053,12 @@ def _register_calibration_services(hass) -> None:
                 hass.data.pop(key, None)
             hass.data.pop(DOMAIN, None)
             _forget_code(hass, __name__, DOMAIN)
+        try:
+            await hass.async_add_import_executor_job(_import_code, __name__)
+        except Exception as err:
+            # This handler stays registered, so the action works again once the code is fixed.
+            raise HomeAssistantError(f"Sextant is unloaded: the new code did not load ({err}). "
+                                     "Fix it and call sextant.reload_code again, or restart Home Assistant") from err
         failed = [entry.title for entry in entries if not await hass.config_entries.async_setup(entry.entry_id)]
         if failed:
             # This handler stays registered, so the action works again once the code is fixed.
@@ -8061,6 +8067,20 @@ def _register_calibration_services(hass) -> None:
 
     async_register_admin_service(hass, DOMAIN, "reload_code", _reload_code, schema=vol.Schema({}))
 
+
+def _import_code(package: str) -> None:
+    """Import the package and the platforms it forwards; runs in the import executor.
+
+    After an unload Home Assistant still lists "<domain>.<platform>" as loaded,
+    so it would import the new platform modules in the event loop (and warn);
+    once they are in sys.modules its own import is a cache hit.
+    """
+    # The new module's list: the old one may name a platform the new code dropped.
+    for platform in importlib.import_module(package)._PLATFORMS:
+        importlib.import_module(f"{package}.{platform}")
+
+
+_PLATFORMS = ("sensor", "binary_sensor", "switch", "device_tracker")
 
 def _forget_code(hass, package: str, domain: str) -> None:
     """Drop a package's modules so the next setup imports them from disk again.
@@ -8382,7 +8402,7 @@ async def async_setup_entry(hass, entry):
         _local_tz = None
     await _restore_runtime(hass)
     # (the sensor platform removes legacy duplicated-name entities as it sets up)
-    await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "binary_sensor", "switch", "device_tracker"])
+    await hass.config_entries.async_forward_entry_setups(entry, _PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(async_update_options))
     from . import watch_adverts
     if (stop := watch_adverts.setup(hass)) is not None:
