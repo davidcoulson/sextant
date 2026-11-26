@@ -8020,7 +8020,24 @@ def _register_calibration_services(hass) -> None:
     )
 
     async def _reload_code(call: ServiceCall) -> None:
-        entries = hass.config_entries.async_entries(DOMAIN)
+        # One at a time: a second call would see the entries already unloaded
+        # and purge under the first one's setup.
+        if hass.data.get("sextant_reloading"):
+            raise HomeAssistantError("Sextant is already reloading its code")
+        hass.data["sextant_reloading"] = True
+        try:
+            await _reload_code_once()
+        finally:
+            hass.data.pop("sextant_reloading", None)
+
+    async def _reload_code_once() -> None:
+        # Disabled and ignored entries are never set up, so they are not ours to reload.
+        entries = hass.config_entries.async_entries(DOMAIN, include_ignore=False, include_disabled=False)
+        if not hass.config_entries.async_loaded_entries(DOMAIN):
+            # Nothing is running, so an earlier reload failed: Home Assistant
+            # imports the package to unload it, and a half-imported module
+            # left in the caches would fail that again after the file is fixed.
+            _forget_code(hass, __name__, DOMAIN)
         for entry in entries:
             if not await hass.config_entries.async_unload(entry.entry_id):
                 raise HomeAssistantError("Sextant did not unload; restart Home Assistant instead")
@@ -8029,11 +8046,10 @@ def _register_calibration_services(hass) -> None:
         # their flags stay: the views run the old code until a restart.
         from .storage import LAYOUT_LOCK  # noqa: PLC0415
         # Under the layout lock, and with no await inside: a layout save still
-        # in flight finishes first, instead of landing on the new code's state
-        # later through this module's lock, which the new code does not share.
+        # in flight finishes first, instead of landing on the new code's state.
         async with LAYOUT_LOCK:
             for key in [k for k in hass.data if str(k).startswith("sextant_")
-                        and k not in ("sextant_views_registered", "sextant_stop_listeners")]:
+                        and k not in ("sextant_views_registered", "sextant_stop_listeners", "sextant_reloading")]:
                 hass.data.pop(key, None)
             hass.data.pop(DOMAIN, None)
             _forget_code(hass, __name__, DOMAIN)
@@ -8077,9 +8093,9 @@ async def async_setup(hass, config):
     async def _on_stop(_event):
         # Through sys.modules: after sextant.reload_code this listener belongs
         # to the old module, whose state stopped changing at the reload.
-        # A reload whose new code failed to import leaves no module, and
-        # nothing to save: the unload already wrote the state.
-        if (live := sys.modules.get(__name__)) is not None:
+        # A reload whose new code failed leaves no module, or one that never
+        # restored its state: saving that would overwrite what the unload wrote.
+        if (live := sys.modules.get(__name__)) is not None and hass.config_entries.async_loaded_entries(DOMAIN):
             await live._save_runtime(hass, final=True)
 
     # Once per Home Assistant run: sextant_initialized is cleared on unload,

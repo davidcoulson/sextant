@@ -14,6 +14,7 @@ the single owner of that data and imports nothing from the rest of the package
 """
 from .const import DOMAIN
 import asyncio
+import sys
 import copy
 import json
 import logging
@@ -41,7 +42,10 @@ STORAGE_KEY_RUNTIME = "sextant_runtime"              # -> each thing's elections
 # Serializes read-modify-write sequences on the layout across every writer
 # (panel save + calibration). Lives here so both importers share one lock
 # without an import cycle (was previously defined in calibration.py).
-LAYOUT_LOCK = asyncio.Lock()
+# One lock for the whole Home Assistant run, kept on the parent package:
+# sextant.reload_code imports this module again, while the HTTP save view it
+# cannot replace still holds the first module's lock.
+LAYOUT_LOCK = vars(sys.modules[__name__.partition(".")[0]]).setdefault("_sextant_layout_lock", asyncio.Lock())
 # Held across each load-edit-save of the truth marks and of the KPI baselines.
 TRUTH_LOCK = asyncio.Lock()
 KPI_LOCK = asyncio.Lock()
