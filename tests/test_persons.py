@@ -59,11 +59,13 @@ def test_a_phone_that_moved_rooms_beats_a_watch_that_had_long_been_still():
     watch = dict(thing("watch", "watch", still_for=7 * 3600, zone="Basement", floor="Basement"), conf=0.9)
     phone = dict(thing("phone", "phone", still_for=3600, zone="Bedroom", floor="First Floor"), conf=0.6)
     assert persons.pick([phone, watch], NOW, 60.0)["ent"] == "phone"
-    # A watch still for less than watch_still_secs when the phone left: the phone was set down.
+    # A watch still for less than watch_still_secs when the phone left, on the same
+    # floor: the phone was set down.
+    phone_near = dict(phone, floor="Basement", zone="Laundry")
     worn = dict(watch, arrived=NOW - 2 * 3600)
-    assert persons.pick([phone, worn], NOW, 60.0)["ent"] == "watch"
+    assert persons.pick([phone_near, worn], NOW, 60.0)["ent"] == "watch"
     # However long both then sit: the stay is measured at the phone's arrival.
-    later = [dict(phone, arrived=NOW - 9 * 3600), dict(worn, arrived=NOW - 10 * 3600)]
+    later = [dict(phone_near, arrived=NOW - 9 * 3600), dict(worn, arrived=NOW - 10 * 3600)]
     assert persons.pick(later, NOW, 60.0)["ent"] == "watch"
     # Same room, another spot: nobody carried the phone away from the watch.
     near = dict(phone, zone="Basement", floor="Basement")
@@ -391,3 +393,17 @@ def test_an_outside_door_with_a_sensor_must_have_opened_for_a_quiet_person_to_ha
     assert backs(layout, {"floor": "Ground", "zone": "Sun Room"}, {}, 1000.0, 300.0)
     assert backs(layout, {"floor": "Ground", "zone": "Kitchen", "zone_raw": "Sun Room"}, {}, 1000.0, 300.0)
     assert backs(layout, foyer, {}, 1000.0, 0.0)
+
+
+def test_a_phone_on_another_floor_beats_a_watch_that_was_still_ten_minutes_before_it_arrived():
+    # Jack: watch in his room since 20:28, phone carried to the basement at 20:47. Their
+    # confidences were near equal and the pick swapped every cycle.
+    watch = dict(thing("watch", "watch", still_for=1900, zone="Jack's Room", floor="Second Floor"), conf=0.72)
+    phone = dict(thing("phone", "phone", still_for=760, zone="Basement", floor="Basement"), conf=0.70)
+    assert persons.pick([phone, watch], NOW, 60.0)["ent"] == "phone"
+    # A watch that moved less than ten minutes before the phone arrived may still be on a wrist.
+    assert persons.pick([phone, dict(watch, arrived=NOW - 1000)], NOW, 60.0)["ent"] == "watch"
+    # Same floor: the long watch_still rule still applies.
+    assert persons.pick([dict(phone, floor="Second Floor", zone="Hall"), watch], NOW, 60.0)["ent"] == "watch"
+    # A floor the layout does not name is no evidence.
+    assert persons.pick([dict(phone, floor=None), watch], NOW, 60.0)["ent"] == "watch"

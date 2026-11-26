@@ -284,11 +284,22 @@ def pick(things, now: float, stale_after: float, watch_still: float = 14400.0):
         pconf = best.get("conf") or 0.0
         # ...unless the phone went to another room when the watch had already lain
         # still for watch_still: the watch was left behind, the phone was carried.
+        # On another floor a stay of RECENT_MOVE_SECS is proof enough: nobody wearing
+        # the watch is down there with the phone, and near-equal confidences would
+        # otherwise swap the two every cycle.
         went = best.get("arrived")
         asked = watch_still > 0 and isinstance(went, (int, float))
+        known = lambda f: f not in (None, "", "unknown")
+
+        def left_behind(t):
+            if not (asked and (t.get("zone"), t.get("floor")) != (best.get("zone"), best.get("floor"))
+                    and isinstance(t.get("arrived"), (int, float))):
+                return False
+            far = known(t.get("floor")) and known(best.get("floor")) and t["floor"] != best["floor"]
+            return t["arrived"] <= went - (min(watch_still, RECENT_MOVE_SECS) if far else watch_still)
+
         watches = [t for t in fresh if t.get("cls") == "watch" and t.get("conf") is not None and t["conf"] >= pconf
-                   and not (asked and (t.get("zone"), t.get("floor")) != (best.get("zone"), best.get("floor"))
-                            and isinstance(t.get("arrived"), (int, float)) and t["arrived"] <= went - watch_still)]
+                   and not left_behind(t)]
         if watches:
             return min(watches, key=key)
     return best
