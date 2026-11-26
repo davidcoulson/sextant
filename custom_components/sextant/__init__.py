@@ -1,5 +1,6 @@
 import aiofiles
 import aiofiles.os
+import sys
 import time
 from pathlib import Path
 from aiohttp import web
@@ -8017,6 +8018,37 @@ def _register_calibration_services(hass) -> None:
         supports_response=SupportsResponse.ONLY,
     )
 
+    async def _reload_code(call: ServiceCall) -> None:
+        entries = hass.config_entries.async_entries(DOMAIN)
+        for entry in entries:
+            if not await hass.config_entries.async_unload(entry.entry_id):
+                raise HomeAssistantError("Sextant did not unload; restart Home Assistant instead")
+        # As after a restart, nothing of the old code's may be left to reuse.
+        # The HTTP views and stop listeners cannot be registered twice, so
+        # their flags stay: the views run the old code until a restart.
+        for key in [k for k in hass.data if str(k).startswith("sextant_")
+                    and k not in ("sextant_views_registered", "sextant_stop_listeners")]:
+            hass.data.pop(key, None)
+        hass.data.pop(DOMAIN, None)
+        _forget_code(hass, __name__, DOMAIN)
+        for entry in entries:
+            await hass.config_entries.async_setup(entry.entry_id)
+
+    async_register_admin_service(hass, DOMAIN, "reload_code", _reload_code, schema=vol.Schema({}))
+
+
+def _forget_code(hass, package: str, domain: str) -> None:
+    """Drop a package's modules so the next setup imports them from disk again.
+
+    Home Assistant keeps its own copy of each imported integration module
+    (loader.py: hass.data["components"], keyed "<domain>" and
+    "<domain>.<platform>") next to Python's sys.modules; both have to go.
+    """
+    for cache, root in ((sys.modules, package), (hass.data.get("components", {}), domain),
+                        (hass.data.get("missing_platforms", {}), domain)):
+        for name in [n for n in cache if n == root or n.startswith(root + ".")]:
+            del cache[name]
+
 
 async def async_setup(hass, config):
     """Set up the Sextant integration."""
@@ -8033,7 +8065,9 @@ async def async_setup(hass, config):
     # comes first and FINAL_WRITE last, which is where Home Assistant expects
     # its stores to be written; taking both costs one extra write.
     async def _on_stop(_event):
-        await _save_runtime(hass, final=True)
+        # Through sys.modules: after sextant.reload_code this listener belongs
+        # to the old module, whose state stopped changing at the reload.
+        await sys.modules[__name__]._save_runtime(hass, final=True)
 
     # Once per Home Assistant run: sextant_initialized is cleared on unload,
     # so every reload (each options change) used to add another set, and a
