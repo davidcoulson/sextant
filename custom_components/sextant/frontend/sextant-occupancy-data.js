@@ -88,6 +88,8 @@ export function chipDetail(states, name, ids, classes) {
     settled: a.presence === "here" && !outside ? a.settled_conf ?? null : null,
     accessPoint: a.access_point || null, gpsAccuracy: a.gps_accuracy ?? null,
     heardAt: heard ? Date.parse(heard) : null,
+    // A person's watches whose own advert says worn (true) or locked (false); unknown ones are left out.
+    watches: loc ? (a.considered || []).filter((c) => typeof c?.worn === "boolean").map((c) => ({ thing: c.thing, worn: c.worn })) : [],
   };
 }
 
