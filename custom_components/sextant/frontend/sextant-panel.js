@@ -1519,7 +1519,11 @@ class SextantLive extends LitElement {
     const worn = attrs?.watches?.[ent];
     if (typeof worn !== "boolean") return nothing;
     const [since, partial] = attrs?.watches_since?.[ent] || [];
-    const at = typeof since === "number" ? new Date(since * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : null;
+    const d = typeof since === "number" ? new Date(since * 1000) : null;
+    // A watch can sit locked for days: name the day when it is not today.
+    const at = !d ? null : d.toDateString() === new Date().toDateString()
+      ? d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+      : d.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
     return html`<dt>Watch</dt><dd title=${worn ? "On a wrist and unlocked, by the watch's own advert" : "Locked: off a wrist, on a table or its charger"}>${worn ? "Worn" : "Locked"}${at ? html` <span class="muted small">since ${at}${partial ? " or earlier" : ""}</span>` : nothing}</dd>`;
   }
 

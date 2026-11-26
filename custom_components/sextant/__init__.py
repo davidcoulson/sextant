@@ -4999,7 +4999,7 @@ ARRIVAL_RETRY_SECS = 600.0
 
 
 _last_charging: dict = {}   # ent -> when its on-charger sensor last began to say charging
-_watch_worn: dict = {}      # watch ent -> [worn, since, partial] (watch_adverts.since)
+_watch_worn: dict = {}      # watch ent -> [worn, since, partial, restored] (watch_adverts.since)
 _charging_asked: set = set()   # (thing, sensor) pairs whose charge sensor's history has been asked (once a run)
 CHARGE_LOOKBACK_S = 3 * 86400.0
 

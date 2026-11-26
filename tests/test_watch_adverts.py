@@ -81,3 +81,7 @@ def test_since_tracks_changes_and_restarts():
     assert wa.since(track, {"w": False}, 700) == {"w": [700, False]}
     # First sight with no matching sensor reading: now, and partial.
     assert wa.since(track, {"x": False}, 800, {"watches": {"x": True}, "watches_since": {"x": [1, False]}}) == {"x": [800, True]}
+    # A first cycle before any advert keeps the restored time for when the watch is heard.
+    track = {}
+    assert wa.since(track, {}, 900, {"watches": {"w": True}, "watches_since": {"w": [100, False]}}) == {}
+    assert wa.since(track, {"w": True}, 950, {"watches": {}, "watches_since": {}}) == {"w": [100, False]}
