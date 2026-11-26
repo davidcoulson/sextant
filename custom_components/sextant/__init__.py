@@ -8231,6 +8231,9 @@ async def async_setup_entry(hass, entry):
     # (the sensor platform removes legacy duplicated-name entities as it sets up)
     await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "binary_sensor", "switch", "device_tracker"])
     entry.async_on_unload(entry.add_update_listener(async_update_options))
+    from . import watch_adverts
+    if (stop := watch_adverts.setup(hass)) is not None:
+        entry.async_on_unload(stop)
 
     """Set up Sextant from a config entry."""
     return await async_setup(hass, entry)
