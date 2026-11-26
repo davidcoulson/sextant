@@ -271,3 +271,17 @@ def test_person_and_thing_devices_are_named_without_sextant():
     person = sn.CustomDistanceSensor("Meg Room", "sextant_person_room_meg", "sensor.meg_sextant_pet_room", "person_meg", device_name="Meg")
     thing = sn.CustomDistanceSensor("meg Sextant Room", "sextant_room_meg", "sensor.meg_sextant_room", "meg")
     assert person._attr_device_info["name"] == "Meg" and thing._attr_device_info["name"] == "meg"
+
+
+def test_setup_brings_back_a_battery_sensor_made_before_and_drops_an_untracked_ones(tmp_path, monkeypatch):
+    """Made at once, so it restores its last level: a dead collar never sends the advert that would make it."""
+    hass = _hass(tmp_path, tracked={"cat"})
+    _patch_bermuda(monkeypatch, hass)
+    reg = er.async_get(hass)
+    reg.add("sensor.cat_sextant_battery", unique_id="sextant_battery_cat")
+    reg.add("sensor.gone_sextant_battery", unique_id="sextant_battery_gone")
+    added, add = _added()
+    run(sn.async_setup_entry(hass, None, add))
+    assert "sensor.cat_sextant_battery" in {e.entity_id for e in added}
+    assert reg.async_get("sensor.gone_sextant_battery") is None
+    assert "sensor.dog_sextant_battery" not in hass.data["sextant_sensors"]

@@ -201,3 +201,15 @@ def test_a_stuck_room_sensor_raises_one_repair_and_clears_when_it_reads_normally
     hass.data["issues"][key] = {}
     sextant._update_sensor_issues(hass, {})   # nothing is broken now: an old repair is not left behind
     assert not hass.data["issues"]
+
+
+def test_the_battery_read_from_its_adverts_counts_when_no_sensor_is_set_or_it_is_gone():
+    hass = make_hass()
+    states = {"sensor.primrose_battery": types.SimpleNamespace(state="unavailable"),
+              "sensor.primrose_sextant_battery": types.SimpleNamespace(state="3")}
+    hass.states = types.SimpleNamespace(get=states.get)
+    _heard(5)
+    sextant._update_dead_issues(hass, LAYOUT)
+    assert hass.data["issues"][KEY]["translation_placeholders"]["battery"] == " Its battery last read 3%."
+    sextant._update_dead_issues(hass, {**LAYOUT, "thing_battery_entity": {}})
+    assert KEY in hass.data["issues"]

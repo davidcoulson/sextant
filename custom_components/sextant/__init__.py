@@ -83,6 +83,7 @@ from .const import ACCURACY_ENTITY_ID, HOUSEHOLD_FLOOR_ENTITY_ID, PEOPLE_HOME_EN
 from . import history as history_mod
 from . import habits as habits_mod
 from . import bermuda_source
+from . import tag_battery
 from . import layout_check
 from . import election_log
 from . import robots as robots_mod
@@ -1821,10 +1822,14 @@ async def update_tracked_entities(hass):
                 # is an orphan and goes. One set comparison per cycle.
                 from .sensor import prune_sensors_for_untracked  # noqa: PLC0415 - sensor imports this package
                 # A slug Bermuda reports now is tracked, even one the cached set has not caught up with.
-                ids = bermuda_source.async_get_tracked_unique_ids(hass)
+                devices = bermuda_source.async_get_tracked_devices(hass)
+                ids = bermuda_source.async_get_tracked_unique_ids(hass, devices)
                 # Robots are Sextant's own things, not Bermuda's: keep theirs.
                 full_tracked = set(tracked_prefixes) | set(robot_things(get_layout(hass))) | set(ids or ())
                 prune_sensors_for_untracked(hass, full_tracked)
+                # Before the guards below: a tag's battery needs no fix, only an advert.
+                from .sensor import publish_tag_batteries  # noqa: PLC0415 - sensor.py imports this package
+                publish_tag_batteries(hass, tag_battery.levels_now(hass, devices))
                 # A device Bermuda renamed under a new slug: its settings
                 # follow it there, matched by the stable unique_id thing_ids
                 # remembers - before the sweep below could delete them.
@@ -4673,10 +4678,14 @@ def _dead_things(hass, layout, now):
         updated = seen.get("updated") if isinstance(seen, dict) else None
         if not isinstance(updated, (int, float)) or _presence_of(updated, now, layout) != "away":
             continue
-        try:
-            level = float(hass.states.get(batteries[ent]).state)
-        except (KeyError, AttributeError, TypeError, ValueError):  # no sensor, or nothing to say
-            level = None
+        level = None
+        # The Battery sensor set for it, else the one Sextant reads from its adverts.
+        for bid in (batteries.get(ent), f"sensor.{ent}_sextant_battery"):
+            try:
+                level = float(hass.states.get(bid).state)
+                break
+            except (AttributeError, TypeError, ValueError):  # no sensor, or nothing to say
+                continue
         age = now - updated
         flat = level is not None and level <= DEAD_BATTERY_PCT
         # Home for as long as away_after_secs, not just now: a phone back from

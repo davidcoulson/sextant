@@ -1,4 +1,5 @@
-from homeassistant.components.sensor import SensorEntity, SensorStateClass
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
+from homeassistant.const import PERCENTAGE, EntityCategory
 from homeassistant.core import callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import device_registry as dr
@@ -27,6 +28,9 @@ SENSOR_KINDS = [
     # once per thing, and get the unknown handling right each time.
     ("sextant_location", "Sextant Location"),
 ]
+# Only for a thing whose adverts carry its battery level (tag_battery): made the
+# first cycle one is read, so a phone or a watch never gets an empty one.
+BATTERY_KIND = ("sextant_battery", "Sextant Battery")
 # What a sensor's attributes read before it has ever been published, keyed by
 # kind. A thing that has never been heard still has its entities, and an
 # automation reading state_attr(..., "kind") on one should get the same shape it
@@ -121,7 +125,7 @@ def thing_of_unique_id(unique_id):
     # as a sextant_room sensor, the prune took 21 rooms for untracked things.
     if not unique_id or unique_id.startswith(("sextant_room_occupancy_", "sextant_room_people_")):
         return None
-    for suffix, _label in SENSOR_KINDS:
+    for suffix, _label in (*SENSOR_KINDS, BATTERY_KIND):
         if unique_id.startswith(suffix + "_"):
             return unique_id[len(suffix) + 1:]
     return None
@@ -176,7 +180,7 @@ def remove_sensors_for_things(hass, things, reason="untracked"):
     states = getattr(hass, "states", None)
     removed = 0
     for thing in things:
-        for suffix, _label in SENSOR_KINDS:
+        for suffix, _label in (*SENSOR_KINDS, BATTERY_KIND):
             entity_id = f"sensor.{thing}_{suffix}"
             sensors_cache.pop(entity_id, None)
             if ent_reg.async_get(entity_id) is not None:
@@ -348,6 +352,53 @@ class CustomDistanceSensor(SensorEntity, RestoreEntity):
     def extra_state_attributes(self):
         # Used by the spot sensor to carry "room"; empty for the rest.
         return self._attrs
+
+class SextantBatterySensor(CustomDistanceSensor):
+    """A tag's battery level from its adverts (tag_battery), on the thing's device."""
+
+    _attr_device_class = SensorDeviceClass.BATTERY
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def native_value(self):
+        try:
+            return int(float(self._state))
+        except (TypeError, ValueError):   # unknown until read, or restored as such
+            return None
+
+    @property
+    def state(self):
+        return self.native_value
+
+
+def _battery_sensor(hass, thing):
+    return SextantBatterySensor(f"{thing} {BATTERY_KIND[1]}", f"{BATTERY_KIND[0]}_{thing}",
+                                f"sensor.{thing}_{BATTERY_KIND[0]}", thing, find_bermuda_via_device(hass, thing))
+
+
+@callback
+def publish_tag_batteries(hass, levels):
+    """Write each thing's battery level ({slug: %}), making its sensor the first time."""
+    sensors_cache = hass.data.get("sextant_sensors")
+    add_entities = hass.data.get("sextant_add_entities")
+    if sensors_cache is None:
+        return
+    new = []
+    for thing, pct in levels.items():
+        entity_id = f"sensor.{thing}_{BATTERY_KIND[0]}"
+        if entity_id not in sensors_cache and add_entities is not None:
+            sensor = _battery_sensor(hass, thing)
+            sensor._state, sensor._updated = pct, True   # fresher than whatever it would restore
+            sensors_cache[entity_id] = sensor
+            new.append(sensor)
+        else:
+            from . import update_sextant_sensor_state  # noqa: PLC0415 - the package imports this platform
+            update_sextant_sensor_state(hass, entity_id, pct)
+    if new:
+        add_entities(new)
+
 
 class SextantUntrackedSensor(SensorEntity):
     # Pushed by the positioning cycle; there is nothing for Home Assistant to poll.
@@ -644,7 +695,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 
     expected_entity_ids = set()
     for entity in entities:
-        for suffix, _label in SENSOR_KINDS:
+        for suffix, _label in (*SENSOR_KINDS, BATTERY_KIND):
             expected_entity_ids.add(f"sensor.{entity}_{suffix}")
 
     # Remove stale Sextant registry entries that are no longer expected.
@@ -699,6 +750,17 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         new_sensors.append(household)
     for entity in entities:
         ensure_sensors_for_entity(hass, entity, hass.data["sextant_sensors"], new_sensors)
+    # A battery sensor already made comes back now, with its last level, not at the tag's next advert:
+    # a dead tag never sends one.
+    prefix = BATTERY_KIND[0] + "_"
+    for entry in list(entity_registry.entities.values()):
+        if entry.platform != "sextant" or not str(entry.unique_id).startswith(prefix):
+            continue
+        thing = entry.unique_id[len(prefix):]
+        if thing in entities and entry.entity_id not in hass.data["sextant_sensors"]:
+            sensor = _battery_sensor(hass, thing)
+            hass.data["sextant_sensors"][sensor.entity_id] = sensor
+            new_sensors.append(sensor)
 
     if new_sensors:
         async_add_entities(new_sensors, update_before_add=True)
