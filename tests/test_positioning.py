@@ -2767,3 +2767,16 @@ def test_the_caller_says_when_the_floor_changed(monkeypatch):
                                                 now=5.0, closed={"Office"}, **kw)[0]
     assert elect("stairs", new_floor=True) == "Hall"
     assert elect("restart") == "Office"
+
+
+def test_after_a_floor_change_only_shut_rooms_leave_the_room_unknown(monkeypatch):
+    sextant._zone_state.clear()
+    layout = {"tuning": {"zone_lock_warmup_secs": 0.0, "zone_prob_smoothing": 0.0}}
+    shares = {"Office": 1.0}
+    monkeypatch.setattr(sextant, "_zone_membership", lambda polys, samples: dict(shares))
+    elect = lambda t, **kw: sextant._elect_zone("c", "F", "Office", Point(450, 50), None, _three_rooms(), 100.0, layout,
+                                                now=t, closed={"Office"}, **kw)[0]
+    assert elect(0.0, new_floor=True) == "unknown"
+    assert elect(5.0) == "unknown"          # still filtered on the next cycle
+    shares.update(Office=0.6, Hall=0.4)
+    assert elect(10.0) == "Hall"

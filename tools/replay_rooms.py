@@ -82,7 +82,7 @@ def run(tuning, sigma_k=0.5, anchor_fast=False):
             kf = {"floor": r["floor"], "P": np.diag([sig * sig, sig * sig, 1.0, 1.0]), "x": np.array([x, y, sp, 0.0])}
         # shortcut: hold (a floor challenge) is not in the log, so switches it would defer are allowed here.
         kw = {"anchor_point": PROXY.get(r["anchor"])} if anchor_fast and anchored else {}
-        z, locked, _ = ns["_elect_zone"](r["ent"], r["floor"], r["zone_raw"], Point(x, y), kf, polys, scale, layout, now=r["t"], **kw)
+        z, locked, _ = ns["_elect_zone"](r["ent"], r["floor"], r["zone_raw"], Point(x, y), kf, polys, scale, layout, now=r["t"], closed=set(r.get("closed") or ()), **kw)
         out.setdefault(r["ent"], []).append((r["t"], r["floor"], z))
     return out
 

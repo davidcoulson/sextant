@@ -33,7 +33,7 @@ LOG_DIRNAME = "sextant_election_log"
 # What is kept of a published row: everything the replay needs and nothing the
 # panel alone wants (the trilateration circles, the fingerprint telemetry).
 KEEP = (
-    "ent", "floor", "floors", "floor_cands", "speed", "zone", "zone_raw", "zone_locked",
+    "ent", "floor", "floors", "floor_cands", "speed", "zone", "zone_raw", "zone_locked", "closed",
     "nearest_zone", "sub_zone", "anchor", "conf", "cords", "raw", "rms_m", "estimator", "updated",
 )
 # One writer, compressor or clear at a time: a clear must not race a gzip in flight.

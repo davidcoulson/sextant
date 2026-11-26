@@ -3206,12 +3206,13 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
         # elect its room and spot from the point, not the filter's old
         # uncertainty ellipse, which would keep a small spot from ever winning.
         kf_for_election = None if anchor is not None else _kf_position_state.get(entity)
+        closed = _closed_rooms(hass, zone_polys, layout, now)
         zone, zone_locked, zone_speed = _elect_zone(
             entity, lowest_floor_name, instant_zone, test_point,
             kf_for_election, zone_polys, scale, layout, now=now,
             hold=(_floor_challenge.get(entity) or {}).get("since") is not None,  # a margin challenge, not a small lead
             anchor_point=Point(anchor["x"], anchor["y"]) if anchor is not None else None,
-            closed=_closed_rooms(hass, zone_polys, layout, now),
+            closed=closed,
             new_floor=came_from is not None and came_from != lowest_floor_name,
         )
         # Sub-zone: only the elected zone's own sub-zones are eligible, with
@@ -3227,6 +3228,7 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
                 "cords": [avg_x, avg_y],
                 "zone": zone,
                 "zone_raw": instant_zone,
+                "closed": sorted(closed),   # rooms shut to it this cycle, for the replay
                 # Beyond every room for long enough: "Outside", not the nearest room.
                 "outside": is_outside,
                 # What the fit looked like: proxies used, nearest one in metres
@@ -6552,8 +6554,8 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
        zone_switch_secs of wall clock.
        A room in ``closed`` (its door shut past the grace) is no challenger:
        the strongest open room challenges instead. The first pick after a
-       restart is not held back; one after a floor change is, unless only
-       shut rooms have any evidence.
+       restart is not held back; after a floor change the room is unknown
+       until an open room has evidence.
     3. Stationary lock. When the filter's speed stays under stationary_speed
        for stationary_secs, the thing is on a table and the zone locks -
        but only a zone it has EARNED: held for stationary_secs already, and
@@ -6626,9 +6628,12 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
         return (incumbent if incumbent is not None else instant_zone), False, speed
     best = max(probs, key=probs.get)
     if incumbent is None:
-        if new_floor:   # a thing arriving from another floor cannot walk into a shut room either
-            best = max((z for z in probs if z not in closed), key=probs.get, default=best)
-        st.update(zone=best, since=now, challenge=None, locked=False, away_since=None)
+        if new_floor or st.get("entering"):   # a thing arriving from another floor cannot walk into a shut room either
+            best = max((z for z in probs if z not in closed), key=probs.get, default=None)
+            if best is None:   # only shut rooms have evidence: no room until an open one does
+                st["entering"] = True
+                return "unknown", False, speed
+        st.update(zone=best, since=now, challenge=None, locked=False, away_since=None, entering=False)
         return best, False, speed
     # Anchored: the thing sits on a proxy (one reads it within anchor_max_m,
     # every other at least anchor_ratio farther, for anchor_secs), so its room
