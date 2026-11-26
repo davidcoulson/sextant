@@ -59,7 +59,6 @@ class SextantOccupancy extends LitElement {
     @media (pointer: coarse) { button.chip { min-height: 32px; padding: 4px 10px; } }
     /* One line: a long spot ends in an ellipsis rather than wrapping under the name (the popup has it whole). */
     button.chip { max-width: 100%; white-space: nowrap; }
-    .chip ha-icon.lock { --mdc-icon-size: 12px; color: var(--secondary-text-color); }
     .chip .spot { color: var(--secondary-text-color); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
     .pop { position: absolute; z-index: 5; top: 100%; left: 0; width: max-content; max-width: min(280px, 80vw); padding: 8px 10px; border-radius: 8px;
       background: var(--card-background-color); color: var(--primary-text-color); border: 1px solid var(--divider-color);
@@ -89,13 +88,11 @@ class SextantOccupancy extends LitElement {
     if (icon === "mdi:account" && d?.thingClass) icon = classIcon(d.thingClass) || icon;
     const key = `${r.floor}|${r.room}|${name}`;
     const spot = d?.spot && d.room === r.room ? spotInRoom(d.spot, r.room, name) : null;
-    // Their watch says it is locked (off a wrist, on a table or the charger): it does not place them.
-    const locked = d?.watches?.some((w) => !w.worn);
     return html`<span class="who"
         @pointerenter=${(e) => { if (e.pointerType === "mouse") this._show(key, false); }}
         @pointerleave=${(e) => { if (e.pointerType === "mouse" && !this._pinned && this._open === key) this._close(); }}>
       <button class="chip" aria-expanded=${this._open === key} @click=${() => this._show(key, true)}>
-        <ha-icon icon=${icon}></ha-icon>${label}${locked ? html`<ha-icon class="lock" icon="mdi:lock" title="Watch locked" aria-label="Watch locked"></ha-icon>` : nothing}${spot ? html`<span class="spot">&nbsp;· ${spot}</span>` : nothing}</button>
+        <ha-icon icon=${icon}></ha-icon>${label}${spot ? html`<span class="spot">&nbsp;· ${spot}</span>` : nothing}</button>
       ${this._open === key ? this._pop(name, d, pet) : nothing}
     </span>`;
   }
@@ -120,9 +117,6 @@ class SextantOccupancy extends LitElement {
         ${row("Floor", d.floor && d.floor !== "unknown" ? d.floor : null)}`}
       ${row(d.outside ? "Out for" : "Here for", d.since ? fmtAge((Date.now() - d.since) / 1000) : null)}
       ${row("Tracked by", device)}
-      ${d.watches?.length ? row(d.watches.length > 1 ? "Watches" : "Watch", d.watches.length > 1
-        ? `${d.watches.filter((w) => w.worn).length} on a wrist, ${d.watches.filter((w) => !w.worn).length} locked`
-        : d.watches[0].worn ? "On a wrist, unlocked" : "Locked: not on a wrist, so it does not place them") : nothing}
       ${row("Confidence", conf)}
       ${row("Last heard", age ? `${age}${d.presence && d.presence !== "here" ? ` (${d.presence})` : ""}` : d.presence !== "here" ? d.presence : null)}
     </div>`;

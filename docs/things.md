@@ -119,7 +119,8 @@ part, like one on its charger. The rules above, and the charger sensor below,
 decide only while the lock state is unknown: no Private BLE tracker for the
 watch, or nothing heard from it within `stale_after_secs`. A watch put on but
 not yet unlocked counts as locked, so the phone places you until you unlock it.
-The `considered` list shows `worn` true or false when it is known.
+The `considered` list shows `worn` true or false when it is known, and on the
+[Live](live.md) page a locked watch has a lock badge on its disc.
 
 A thing can also name an **On-charger sensor** - its battery state from
 iCloud3, the companion app, or any `binary_sensor` that is on while it

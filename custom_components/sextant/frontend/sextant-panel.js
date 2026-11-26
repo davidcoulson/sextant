@@ -1458,19 +1458,24 @@ class SextantLive extends LitElement {
     return html`
             <li class="${p.ent === this._selected ? "selected" : ""} ${st.ghost ? "ghost" : ""} ${st.away ? "away" : ""}" title=${st.ghost ? lastSeen : ""} @click=${() => { this._select(p.ent === this._selected ? null : p.ent); if (p.floor && p.floor !== this.floor) this.dispatchEvent(new CustomEvent("floor-changed", { detail: p.floor })); }}>
               ${(() => {
-                const who = this._speaksFor(p.ent);
-                // Three states, one badge: away (long gone), waiting (heard,
-                // but not lately), or the thing its owner is read from. A
+                // A locked watch places nobody, even while a held place still names it as via.
+                const locked = this._watchLocked(p.ent);
+                const who = locked ? null : this._speaksFor(p.ent);
+                // Four states, one badge: away (long gone), waiting (heard,
+                // but not lately), a watch that says it is locked (off a wrist,
+                // so it places nobody), or the thing its owner is read from. A
                 // thing not being heard cannot be any owner's source.
                 const badge = st.away ? html`<ha-icon class="viabadge ghostbadge" icon="mdi:ghost-outline"></ha-icon>`
                   : st.ghost ? html`<ha-icon class="viabadge waitbadge" icon="mdi:timer-sand"></ha-icon>`
+                  : locked ? html`<ha-icon class="viabadge lockbadge" icon="mdi:lock"></ha-icon>`
                   : who ? html`<ha-icon class="viabadge" icon="mdi:map-marker"></ha-icon>` : nothing;
                 // A low battery gets its own corner: it is a separate question
                 // from the status above, and both can be true at once - a tag
                 // going quiet BECAUSE its battery is dying is the whole point.
                 const battery = this._batteryBadge(p.ent);
                 if (badge === nothing && battery === nothing) return this._avatar(p.ent);
-                const why = badge === nothing ? "" : st.away ? lastSeen : st.ghost ? `Last heard ${fmtAge(st.age)} ago` : `Where ${who} is read from right now`;
+                const why = badge === nothing ? "" : st.away ? lastSeen : st.ghost ? `Last heard ${fmtAge(st.age)} ago`
+                  : locked ? "Locked: not on a wrist, so it places nobody" : `Where ${who} is read from right now`;
                 return html`<span class="avslot" title=${why}>${this._avatar(p.ent)}${badge}${battery}</span>`;
               })()}
               <span class="name">${this._label(p.ent)}</span>
@@ -1498,6 +1503,13 @@ class SextantLive extends LitElement {
     const st = this.hass?.states?.[`sensor.${person.split(".")[1]}_sextant_person_location`] || this.hass?.states?.[`sensor.${person.split(".")[1]}_sextant_pet_location`];
     if (st?.attributes?.via !== ent) return null;
     return this.hass?.states?.[person]?.attributes?.friendly_name || person.split(".")[1];
+  }
+
+  /** True when this watch's own advert says, this cycle, that it is locked (its owner's `watches`). */
+  _watchLocked(ent) {
+    const person = (this.data?.layout?.thing_owners || {})[ent];
+    const slug = person?.split(".")[1];
+    return !!slug && this.hass?.states?.[`sensor.${slug}_sextant_person_location`]?.attributes?.watches?.[ent] === false;
   }
 
   /** The icon of the Home Assistant area a room is linked to, or null. */
@@ -2092,6 +2104,7 @@ class SextantLive extends LitElement {
     .list .avslot .viabadge.waitbadge { background: var(--warning-color, #e6a100); color: #23272e; }
     .list .avslot .viabadge.ghostbadge { background: var(--secondary-background-color, #666); color: var(--secondary-text-color); }
     .list .avslot .batterybadge { position: absolute; right: -3px; bottom: -3px; --mdc-icon-size: 12px; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--warning-color, #e6a100); color: #23272e; box-shadow: 0 0 0 2px var(--card-background-color, #fff); }
+    .list .avslot .viabadge.lockbadge { background: var(--secondary-background-color, #666); color: var(--primary-text-color); }
     .list .avslot .batterybadge.crit { background: var(--error-color, #db4437); color: #fff; }
     dd.warn { color: var(--warning-color, #e6a100); font-weight: 600; }
     dd.crit { color: var(--error-color, #db4437); font-weight: 600; }
