@@ -2699,3 +2699,96 @@ def test_cross_floor_shadow_borrows_the_floor_below():
     assert sextant._solve_cross_floor([job], [((1.0, 2.0), 1, 1, {"geo": None})], borrowed) == {}   # fingerprint-only fix
     assert shadow["n"] == len(heard) and len(shadow["fix"]) == 2 and shadow["rms_m"] >= 0 and shadow["own_rms_m"] >= 0
     assert sextant._solve_cross_floor([job], [None], borrowed) == {}   # an unsolved floor gets no shadow
+
+
+def test_a_room_with_its_door_shut_is_never_entered_but_its_occupant_stays():
+    """01:04: Socks read through the wall into Eilee's Room, whose door had been
+    shut since 22:22. A closed room holds what is in it and takes nothing new."""
+    sextant._zone_state.clear()
+    layout = {"tuning": {"zone_lock_warmup_secs": 0.0, "zone_prob_smoothing": 0.0}}
+
+    def elect(entity, x, t, closed):
+        instant = "Kitchen" if x < 100 else "Hall"
+        return sextant._elect_zone(entity, "F", instant, Point(x, 50.0), _kf(x, 50.0, sigma_px=5.0), _three_rooms(), 100.0,
+                                   layout, now=t, closed=closed)[0]
+
+    assert elect("cat", 50, 0.0, set()) == "Kitchen"
+    for t in (1.0, 30.0, 600.0):
+        assert elect("cat", 250, t, {"Hall"}) == "Kitchen"
+    assert elect("cat", 250, 601.0, set()) == "Kitchen"  # the door opens: a fresh dwell starts
+    assert elect("cat", 250, 622.0, set()) == "Hall"
+    assert elect("eilee", 250, 0.0, {"Hall"}) == "Hall"  # no incumbent to keep: the first pick stands
+    assert elect("eilee", 250, 100.0, {"Hall"}) == "Hall"
+
+
+def test_closed_rooms_wait_out_the_entry_grace():
+    """22:09: the door closed and Socks was placed inside 61 s later, for real.
+    Only a door shut past door_entry_grace_secs (180 s) closes its room."""
+    from datetime import datetime, timezone
+    from types import SimpleNamespace as NS
+    shut = datetime.fromtimestamp(1000.0, timezone.utc)
+    states = {"binary_sensor.eilee_door": NS(state="off", last_changed=shut),
+              "binary_sensor.office_door": NS(state="on", last_changed=shut),
+              "binary_sensor.gone": NS(state="unavailable", last_changed=shut)}
+    hass = NS(states=NS(get=states.get))
+    polys = sextant._FloorZones(_three_rooms())
+    polys.doors = {"Hall": "binary_sensor.eilee_door", "Office": "binary_sensor.office_door", "Kitchen": "binary_sensor.gone"}
+    assert sextant._closed_rooms(hass, polys, {}, 1061.0) == set()
+    assert sextant._closed_rooms(hass, polys, {}, 1000.0 + 3 * 3600) == {"Hall"}
+    assert sextant._closed_rooms(hass, _three_rooms(), {}, 99999.0) == set()   # no doors known
+
+
+def test_an_open_room_challenges_when_a_shut_one_has_more_evidence(monkeypatch):
+    """Codex review: 55% in a shut room, 45% in an open one, 0% where the thing was."""
+    sextant._zone_state.clear()
+    layout = {"tuning": {"zone_lock_warmup_secs": 0.0, "zone_prob_smoothing": 0.0}}
+    sextant._elect_zone("c", "F", "Kitchen", Point(50, 50), None, _three_rooms(), 100.0, layout, now=0.0)
+    monkeypatch.setattr(sextant, "_zone_membership", lambda polys, samples: {"Office": 0.55, "Hall": 0.45})
+    got = [sextant._elect_zone("c", "F", "Office", Point(450, 50), None, _three_rooms(), 100.0, layout, now=t,
+                               closed={"Office"})[0] for t in (1.0, 200.0)]
+    assert got == ["Kitchen", "Hall"]
+
+
+def test_after_a_floor_change_a_shut_room_is_not_the_first_pick(monkeypatch):
+    sextant._zone_state.clear()
+    layout = {"tuning": {"zone_lock_warmup_secs": 0.0, "zone_prob_smoothing": 0.0}}
+    sextant._elect_zone("c", "G", "Kitchen", Point(50, 50), None, _three_rooms(), 100.0, layout, now=0.0)
+    monkeypatch.setattr(sextant, "_zone_membership", lambda polys, samples: {"Office": 0.7, "Hall": 0.3})
+    assert sextant._elect_zone("c", "F", "Office", Point(450, 50), None, _three_rooms(), 100.0, layout, now=5.0,
+                               closed={"Office"})[0] == "Hall"
+
+
+def test_the_caller_says_when_the_floor_changed(monkeypatch):
+    """Codex review: the live path drops the old floor's state before electing, so it passes new_floor."""
+    sextant._zone_state.clear()
+    layout = {"tuning": {"zone_lock_warmup_secs": 0.0, "zone_prob_smoothing": 0.0}}
+    monkeypatch.setattr(sextant, "_zone_membership", lambda polys, samples: {"Office": 0.7, "Hall": 0.3})
+    elect = lambda e, **kw: sextant._elect_zone(e, "F", "Office", Point(450, 50), None, _three_rooms(), 100.0, layout,
+                                                now=5.0, closed={"Office"}, **kw)[0]
+    assert elect("stairs", new_floor=True) == "Hall"
+    assert elect("restart") == "Office"
+
+
+def test_after_a_floor_change_only_shut_rooms_leave_the_room_unknown(monkeypatch):
+    sextant._zone_state.clear()
+    layout = {"tuning": {"zone_lock_warmup_secs": 0.0, "zone_prob_smoothing": 0.0}}
+    shares = {"Office": 1.0}
+    monkeypatch.setattr(sextant, "_zone_membership", lambda polys, samples: dict(shares))
+    elect = lambda t, **kw: sextant._elect_zone("c", "F", "Office", Point(450, 50), None, _three_rooms(), 100.0, layout,
+                                                now=t, closed={"Office"}, **kw)[0]
+    assert elect(0.0, new_floor=True) == "unknown"
+    assert elect(5.0) == "unknown"          # still filtered on the next cycle
+    shares.update(Office=0.6, Hall=0.4)
+    assert elect(10.0) == "Hall"
+
+
+def test_the_floor_arrival_guard_outlives_a_cycle_without_evidence(monkeypatch):
+    sextant._zone_state.clear()
+    layout = {"tuning": {"zone_lock_warmup_secs": 0.0, "zone_prob_smoothing": 0.0}}
+    shares = {}
+    monkeypatch.setattr(sextant, "_zone_membership", lambda polys, samples: dict(shares))
+    elect = lambda t, **kw: sextant._elect_zone("c", "F", "unknown", Point(450, 50), None, _three_rooms(), 100.0, layout,
+                                                now=t, closed={"Office"}, **kw)[0]
+    assert elect(0.0, new_floor=True) == "unknown"
+    shares.update(Office=1.0)
+    assert elect(5.0) == "unknown"

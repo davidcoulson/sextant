@@ -94,7 +94,8 @@ def run(core, layout, rows, tuning=None, habits=None) -> dict:
             sig = max(0.05, (r.get("rms_m") or 1.0) * SIGMA_K) * scale
             kf = {"floor": r["floor"], "P": np.diag([sig * sig, sig * sig, 1.0, 1.0]),
                   "x": np.array([x, y, (r.get("speed") or 0.0) * scale, 0.0])}
-        zone, _locked, _speed = elect(r["ent"], r["floor"], r["zone_raw"], Point(x, y), kf, polys, scale, lay, now=r["t"], anchor_point=anchor)
+        zone, _locked, _speed = elect(r["ent"], r["floor"], r["zone_raw"], Point(x, y), kf, polys, scale, lay, now=r["t"], anchor_point=anchor,
+                                     closed=set(r.get("closed") or ()))
         out.setdefault(r["ent"], []).append((r["t"], r["floor"], zone))
     return out
 
