@@ -39,3 +39,12 @@ export function personGroups(rows, owners, classes) {
     rest: rows.filter((p) => !grouped.has(p.ent) && !isPet(p)),
   };
 }
+
+/** A pet's battery badge: the battery icon nearest its level and a tone -
+ * ok over 50%, mid over 30, low over 15, crit below; none without a reading. */
+export function petBattery(level) {
+  if (level === null || level === undefined || !Number.isFinite(level)) return { icon: "mdi:battery-unknown", tone: "none" };
+  const tens = Math.round(level / 10) * 10;
+  const icon = tens >= 100 ? "mdi:battery" : tens <= 0 ? "mdi:battery-outline" : `mdi:battery-${tens}`;
+  return { icon, tone: level > 50 ? "ok" : level > 30 ? "mid" : level > 15 ? "low" : "crit" };
+}
