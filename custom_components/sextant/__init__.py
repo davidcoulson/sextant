@@ -6587,6 +6587,8 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
     new_floor = new_floor or (st is not None and st["floor"] != floor_name)
     if st is None or new_floor or (st["zone"] is not None and st["zone"] not in valid):
         st = _zone_state[entity] = _new_zone_state(floor_name, now)
+    if new_floor:
+        st["entering"] = True   # kept until an open room wins the first pick
 
     # 1. Membership, smoothed.
     center = (point.x, point.y) if isinstance(point, Point) else (point[0], point[1])
@@ -6628,10 +6630,9 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
         return (incumbent if incumbent is not None else instant_zone), False, speed
     best = max(probs, key=probs.get)
     if incumbent is None:
-        if new_floor or st.get("entering"):   # a thing arriving from another floor cannot walk into a shut room either
+        if st.get("entering"):   # a thing arriving from another floor cannot walk into a shut room either
             best = max((z for z in probs if z not in closed), key=probs.get, default=None)
             if best is None:   # only shut rooms have evidence: no room until an open one does
-                st["entering"] = True
                 return "unknown", False, speed
         st.update(zone=best, since=now, challenge=None, locked=False, away_since=None, entering=False)
         return best, False, speed
