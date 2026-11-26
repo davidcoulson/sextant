@@ -13,6 +13,9 @@ export function modeIcon(mode) {
   return "mdi:tag";
 }
 
+/** A room is active when it is on or in a mode. */
+export const isActive = (r) => Boolean(r.on || r.mode);
+
 export function occupancyByFloor(states, planFloors) {
   const rooms = new Map(), people = new Map();
   for (const [id, s] of Object.entries(states || {})) {
@@ -31,7 +34,8 @@ export function occupancyByFloor(states, planFloors) {
   const names = sortFloors(planFloors).map((f) => f.name);
   for (const n of byFloor.keys()) if (!names.includes(n)) names.push(n);
   return names.filter((n) => byFloor.has(n)).map((name) => {
-    const list = byFloor.get(name).sort((a, b) => a.room.localeCompare(b.room));
+    // Rooms with something going on first, then the empty ones; each group alphabetical.
+    const list = byFloor.get(name).sort((a, b) => (isActive(b) - isActive(a)) || a.room.localeCompare(b.room));
     return { name, rooms: list, people: new Set(list.flatMap((r) => r.people)).size, pets: new Set(list.flatMap((r) => r.pets)).size };
   });
 }
