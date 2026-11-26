@@ -494,6 +494,8 @@ FLOOR_SWITCH_SECS = 60.0
 # at least FLOOR_LASTING_LEAD_MIN_S) takes the floor whatever the margin.
 FLOOR_LASTING_LEAD_X = 4.0
 FLOOR_LASTING_LEAD_MIN_S = 120.0
+# ...and this long while the thing is still in a locked room (_elect_floor's held).
+FLOOR_HELD_LEAD_S = 900.0
 # shortcut: fixed, not a tuning value; make it one if a house needs another ratio.
 FLOOR_NEAR_RATIO = 0.5
 FLOOR_DARK_GRACE_S = 45.0    # how long a dark incumbent holds everything frozen (was 3 cycles at 15 s)
@@ -3095,9 +3097,11 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
     margin = _tuning(layout, "floor_switch_margin") + _tuning(layout, "floor_tenure_bonus") * min(
         1.0, tenure / _tuning(layout, "floor_tenure_full_secs")
     )
+    zs = _zone_state.get(entity) or {}   # last cycle's room, on the incumbent floor
     lowest_floor_name, challenge = _elect_floor(
         probs, incumbent, solved, _floor_challenge.get(entity),
         now=now, switch_secs=_tuning(layout, "floor_switch_secs"), margin=margin, scores=scores,
+        held=bool(zs.get("locked")) and zs.get("still_since") is not None,
     )
     if challenge is None:
         _floor_challenge.pop(entity, None)
@@ -6410,7 +6414,7 @@ def _update_floor_probabilities(entity, scores, valid_floors=None, now=None):
 
 
 def _elect_floor(probs, incumbent, solved, challenge, now=None,
-                 switch_secs=FLOOR_SWITCH_SECS, margin=FLOOR_SWITCH_MARGIN, scores=None):
+                 switch_secs=FLOOR_SWITCH_SECS, margin=FLOOR_SWITCH_MARGIN, scores=None, held=False):
     """Pick the floor to publish. Returns (floor, challenge_state).
 
     The caller guarantees the incumbent is either solved this cycle or None
@@ -6434,6 +6438,13 @@ def _elect_floor(probs, incumbent, solved, challenge, now=None,
     for many cycles after the scores have recovered: the switch only happens on
     a cycle whose scores also put the challenger ahead (the dwell keeps running
     meanwhile, so a real move that scores noisily still gets there).
+
+    ``held``: the thing is still and its room is locked. A lead under the
+    margin then has to last FLOOR_HELD_LEAD_S, not minutes: a cat on the
+    catwalk, heard by the receivers below it, lost its floor to a 0.01 lead
+    every few minutes. A lead over the margin still wins as before, moving
+    releases the lock, and a room locked on the wrong floor is still left
+    in the end.
     """
     now = time.time() if now is None else now
     contenders = {f: p for f, p in probs.items() if f in solved}
@@ -6454,7 +6465,7 @@ def _elect_floor(probs, incumbent, solved, challenge, now=None,
     lasting = now - led >= max(FLOOR_LASTING_LEAD_MIN_S, FLOOR_LASTING_LEAD_X * switch_secs)
     agree = not (scores and scores.get(best, 0.0) <= scores.get(incumbent, 0.0))
     if lead < margin:
-        if lasting and agree:
+        if lasting and agree and not (held and now - led < FLOOR_HELD_LEAD_S):
             return best, None
         return incumbent, {"floor": best, "led": led}  # no "since": not a margin challenge
     since = mine.get("since", now)

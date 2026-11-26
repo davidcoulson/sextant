@@ -229,6 +229,26 @@ def test_elect_hysteresis_and_dwell():
     assert floor == "b" and "since" not in ch
 
 
+def test_a_still_thing_in_a_locked_room_keeps_its_floor_against_a_small_lead():
+    # Fry on the catwalk: Ground led by 0.01-0.08 and won the floor every few minutes.
+    small, ch = {"a": 0.44, "b": 0.36}, None
+    for t in (0.0, 240.0, 899.0):
+        floor, ch = sextant._elect_floor(small, "b", {"a", "b"}, ch, now=t, switch_secs=60.0, margin=0.10, held=True)
+        assert floor == "b"
+    # Moving (the lock gone), the lead that has lasted all along wins at once.
+    assert sextant._elect_floor(small, "b", {"a", "b"}, ch, now=300.0, switch_secs=60.0, margin=0.10)[0] == "a"
+    # Held, a lead that lasts 15 min still wins: a room locked on the wrong floor is left in the end.
+    assert sextant._elect_floor(small, "b", {"a", "b"}, ch, now=900.0, switch_secs=60.0, margin=0.10, held=True)[0] == "a"
+    # A small lead that has lasted and then grows past the margin wins at once, as before.
+    assert sextant._elect_floor({"a": 0.6, "b": 0.4}, "b", {"a", "b"}, ch, now=300.0, switch_secs=60.0,
+                                margin=0.10, held=True)[0] == "a"
+    # A lead over the margin still wins while held.
+    big, ch = {"a": 0.6, "b": 0.4}, None
+    for t in (0.0, 60.0):
+        floor, ch = sextant._elect_floor(big, "b", {"a", "b"}, ch, now=t, switch_secs=60.0, margin=0.10, held=True)
+    assert floor == "a"
+
+
 def test_a_small_lead_that_lasts_wins_the_floor():
     probs, ch, seen = {"a": 0.46, "b": 0.40}, None, []
     for t in (0.0, 100.0, 239.0, 240.0):
