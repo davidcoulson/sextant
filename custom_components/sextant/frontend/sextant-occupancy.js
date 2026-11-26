@@ -118,7 +118,7 @@ class SextantOccupancy extends LitElement {
       ${row(d.outside ? "Out for" : "Here for", d.since ? fmtAge((Date.now() - d.since) / 1000) : null)}
       ${row("Tracked by", device)}
       ${row("Confidence", conf)}
-      ${d.presence === "quiet" || d.presence === "away" ? row(d.presence === "quiet" ? "Quiet for" : "Away for", d.heardAt ? fmtAge((Date.now() - d.heardAt) / 1000) : null) : row("Last heard", age)}
+      ${row("Last heard", age ? `${age}${d.presence && d.presence !== "here" ? ` (${d.presence})` : ""}` : d.presence !== "here" ? d.presence : null)}
     </div>`;
   }
 
