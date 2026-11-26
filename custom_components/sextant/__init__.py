@@ -5576,6 +5576,8 @@ def _update_person_sensors(hass):
                 "on_charger": charging,
                 "worn": watch_adverts.worn_now(hass, ent, stale) if classes.get(ent) == "watch" else None,
             })
+        # Their watches' lock state this cycle; not the held place's snapshot in considered.
+        watches_now = {c["ent"]: c["worn"] for c in candidates if c.get("worn") is not None}
         slug = person.split(".", 1)[1]
         sources, ignored = persons_mod.usable_gps(hass.states.get, layout, person, now, gps_stale, _gps_fixes)
         last_heard = max(heard.values()) if heard else None
@@ -5696,6 +5698,7 @@ def _update_person_sensors(hass):
             attrs["via_class"] = classes.get(attrs["via"]) if attrs.get("via") else None
             sensor_id = persons_mod.sensor_entity_id(slug, suffix, person in pets)
             if suffix == "sextant_person_location":
+                attrs["watches"] = watches_now
                 prev = hass.states.get(sensor_id)
                 # Away last cycle (a visit with no arrival): nothing from before carries over.
                 visit = _person_visits.get(person)

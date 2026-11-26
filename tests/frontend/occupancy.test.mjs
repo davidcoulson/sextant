@@ -159,12 +159,12 @@ test("chipDetail lists a person's watches whose lock state is known", async () =
   const { chipDetail } = await import("../../custom_components/sextant/frontend/sextant-occupancy-data.js");
   const states = {
     "person.jack": { attributes: { friendly_name: "Jack" } },
-    "sensor.jack_sextant_person_location": { attributes: { room: "Basement", via: "private_ble_jack_phone", considered: [
-      { thing: "private_ble_jack_phone", where: "Basement" },
-      { thing: "private_ble_jack_watch", where: "Jack's Room", worn: false },
-    ] } },
+    // considered is the held place's snapshot (worn: true); watches is this cycle.
+    "sensor.jack_sextant_person_location": { attributes: { room: "Basement", via: "private_ble_jack_watch",
+      considered: [{ thing: "private_ble_jack_watch", where: "Basement", worn: true }],
+      watches: { private_ble_jack_watch: false } } },
   };
   assert.deepEqual(chipDetail(states, "Jack", {}).watches, [{ thing: "private_ble_jack_watch", worn: false }]);
-  states["sensor.jack_sextant_person_location"].attributes.considered = [{ thing: "w" }];
+  states["sensor.jack_sextant_person_location"].attributes.watches = {};
   assert.deepEqual(chipDetail(states, "Jack", {}).watches, []);
 });

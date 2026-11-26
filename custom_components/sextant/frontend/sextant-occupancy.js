@@ -120,7 +120,9 @@ class SextantOccupancy extends LitElement {
         ${row("Floor", d.floor && d.floor !== "unknown" ? d.floor : null)}`}
       ${row(d.outside ? "Out for" : "Here for", d.since ? fmtAge((Date.now() - d.since) / 1000) : null)}
       ${row("Tracked by", device)}
-      ${d.watches?.length ? row("Watch", d.watches.every((w) => w.worn) ? "On a wrist, unlocked" : "Locked: not on a wrist, so it does not place them") : nothing}
+      ${d.watches?.length ? row(d.watches.length > 1 ? "Watches" : "Watch", d.watches.length > 1
+        ? `${d.watches.filter((w) => w.worn).length} on a wrist, ${d.watches.filter((w) => !w.worn).length} locked`
+        : d.watches[0].worn ? "On a wrist, unlocked" : "Locked: not on a wrist, so it does not place them") : nothing}
       ${row("Confidence", conf)}
       ${row("Last heard", age ? `${age}${d.presence && d.presence !== "here" ? ` (${d.presence})` : ""}` : d.presence !== "here" ? d.presence : null)}
     </div>`;
