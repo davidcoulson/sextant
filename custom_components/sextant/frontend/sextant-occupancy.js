@@ -100,7 +100,7 @@ class SextantOccupancy extends LitElement {
   _pop(name, d, pet = false) {
     if (!d) return html`<div class="pop" role="tooltip"><b>${name}</b>No Sextant location sensor found.</div>`;
     const row = (k, v) => (v == null || v === "" ? nothing : html`<div><span class="k">${k}</span>${v}</div>`);
-    const age = d.heardAt ? fmtAge((Date.now() - d.heardAt) / 1000) + " ago" : null;
+    const age = d.heardAt ? fmtAge((Date.now() - d.heardAt) / 1000) + " ago" : null;   // "here" says nothing more: Here for is above
     // A pet is its own tag: "Tracked by Cat" says nothing.
     const device = pet ? null : d.thing ? (THING_CLASSES.find(([k]) => k && k === d.thingClass) || [])[1] || d.thing : d.tracker;
     let src = WHERE_SOURCE[d.source] || d.source;
@@ -118,7 +118,7 @@ class SextantOccupancy extends LitElement {
       ${row(d.outside ? "Out for" : "Here for", d.since ? fmtAge((Date.now() - d.since) / 1000) : null)}
       ${row("Tracked by", device)}
       ${row("Confidence", conf)}
-      ${row("Last heard", age ? `${age}${d.presence ? ` (${d.presence})` : ""}` : d.presence)}
+      ${row("Last heard", age ? `${age}${d.presence && d.presence !== "here" ? ` (${d.presence})` : ""}` : d.presence !== "here" ? d.presence : null)}
     </div>`;
   }
 
