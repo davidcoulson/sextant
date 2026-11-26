@@ -1841,7 +1841,7 @@ class SextantLive extends LitElement {
               ${sel.robot ? html`<dt>Placed from</dt><dd>its own map <span class="muted small">(${this.hass?.states?.[sel.robot]?.state || sel.robot_state || "unknown"}; the map fits this floor to ${fmtLen(sel.rms_m, this.hass)})</span></dd>` : html`<dt>Proxies</dt><dd>${sel.radii?.length ?? 0} in the solve${sel.anchor ? html`<br><span class="pill ok" title=${`one proxy reads ${this._label(sel.ent)} within arm's reach and no other comes close: placed on that proxy`}>anchored to ${proxyName(this.data, sel.anchor)}</span>` : nothing}${sel.radar ? html`<br><span class="pill ok" title=${`an mmWave sensor sees someone where Bluetooth puts ${this._label(sel.ent)}: placed on the radar's target, to a few tens of centimetres`}>placed by ${sel.radar}</span>` : nothing}</dd>`}
               ${this._renderHere(sel)}
               ${this._renderWorn(sel.ent)}
-              ${this._battery(sel.ent) === null ? nothing : html`<dt>Battery</dt><dd class=${this._batteryTone(sel.ent)}>${this._batteryIcon(sel.ent)}${Math.round(this._battery(sel.ent))}%</dd>`}
+              ${this._battery(sel.ent) === null ? nothing : html`<dt>Battery</dt><dd class="battery ${this._batteryTone(sel.ent)}">${this._batteryIcon(sel.ent)}${Math.round(this._battery(sel.ent))}%</dd>`}
               <dt>Updated</dt><dd>${typeof sel.updated === "number" && sel.updated > 0 ? html`${fmtAge(Date.now() / 1000 - sel.updated)} ago` : html`<span class="muted">not heard since the last restart</span>`}${staleness(sel, this._staleAfter()).ghost ? html` <span class="pill warn" title=${`Nothing has heard ${this._label(sel.ent)} since; this is where ${this._pn(sel.ent).subj} ${this._pn(sel.ent).was} last placed`}>not heard</span>` : nothing}</dd>
             </dl>
             ${this._renderTimeline(sel)}
@@ -2152,7 +2152,8 @@ class SextantLive extends LitElement {
     .list .avslot .batterybadge.pet.none { background: var(--disabled-color, #9e9e9e); color: #fff; }
     dd.warn { color: var(--warning-color, #e6a100); font-weight: 600; }
     dd.crit { color: var(--error-color, #db4437); font-weight: 600; }
-    .batteryicon { --mdc-icon-size: 18px; margin-right: 4px; vertical-align: -3px; }
+    dd.battery { display: flex; align-items: center; }
+    .batteryicon { --mdc-icon-size: 16px; margin-right: 4px; display: inline-flex; }  /* no taller than the line, so the Battery label stays level */
     .batteryicon.ok { color: var(--success-color, #43a047); }
     .batteryicon.mid { color: #fdd835; }
     .batteryicon.low { color: var(--orange-color, #ff9800); }
