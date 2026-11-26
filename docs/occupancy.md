@@ -143,7 +143,7 @@ All of these are on the Tuning page, or set with `sextant.set_tuning`. See
 | `room_extended_secs` | 600 s (30 to 86400) | How long a stay lasts before `state` reads `extended`. |
 | `door_settle_secs` | 90 s (0 to 600) | How long someone must keep reading in a room after its door closes to count as shut in. |
 | `door_hold_max_secs` | 28800 s, 8 hours (60 to 172800) | A door hold lets go after this long even if the door never opens. |
-| `door_entry_grace_secs` | 180 s (0 to 3600) | Once a room's door has been closed this long, no thing outside the room is placed in it: a cat read through the wall is not in a room it cannot open. Things already inside stay. A thing that slipped in just before the door closed and was placed late still makes it within this time. |
+| `door_entry_grace_secs` | 180 s (0 to 3600) | Once a room's door has been closed this long, no thing outside the room is placed in it: a cat read through the wall is not in a room it cannot open. Things already inside stay. A thing that slipped in just before the door closed and was placed late still makes it within this time. A door that comes back closed after a restart, or after reading unavailable, closes its room at once. |
 | `mmwave_rooms` | on | Whether radar tracks and presence sensors count towards rooms at all. |
 | `mmwave_hold_s` | 10 s (0 to 3600) | How long a room stays on after the radar loses everyone in it. |
 | `mmwave_verify_s` | 2 s (0 to 30) | How long a new radar target must be seen before it counts. |

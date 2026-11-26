@@ -6537,13 +6537,25 @@ def _habit_zone(floor_name, zone):
     return f"{floor_name}|{zone}"
 
 
+_door_open_seen: dict[str, float] = {}  # door entity -> last cycle it read open
+
+
 def _closed_rooms(hass, zone_polys, layout, now):
-    """The zones whose door has read closed for door_entry_grace_secs: no thing outside one moves in."""
+    """The zones whose door has read closed for door_entry_grace_secs: no thing outside one moves in.
+
+    The grace is for a door seen closing. A door that comes back closed from unavailable or
+    unknown (every HA restart does this) was not seen open just before, so it closes its room at once."""
     grace, out = _tuning(layout, "door_entry_grace_secs"), set()
     for zid, door in (getattr(zone_polys, "doors", None) or {}).items():
         st = hass.states.get(door)
-        if st is not None and rooms_mod.door_closed(st.state) and now - st.last_changed.timestamp() >= grace:
-            out.add(zid)
+        closed = rooms_mod.door_closed(st.state) if st is not None else None
+        if closed is False:
+            _door_open_seen[door] = now
+        elif closed:
+            shut = st.last_changed.timestamp()
+            seen_closing = _door_open_seen.get(door, float("-inf")) >= shut - 60.0
+            if not seen_closing or now - shut >= grace:
+                out.add(zid)
     return out
 
 
