@@ -642,3 +642,14 @@ def test_a_source_that_is_out_counts_only_for_what_it_saw_since_they_were_last_h
     assert _choose([{**near, "out": "unavailable"}]) is None
     # Nor is it a return: the app's zone-exit fix lands there after the other source's road fix, on the way out.
     assert _choose([_other("device_tracker.first", lat=51.5012, reported=NOW - 5), far]) is far
+
+
+def test_a_watch_heard_saying_it_is_worn_is_never_left_behind_by_gps():
+    worn = {"ent": "watch", "cls": "watch", "arrived": NOW - 40000, "updated": NOW - 5, "worn": True, "zone": "Den"}
+    assert persons.without_left_behind([worn], _fix(), NOW, 120, HOME) == ([worn], [])
+    # Locked, or not heard lately: the fix still rules it out.
+    assert persons.without_left_behind([dict(worn, worn=False)], _fix(), NOW, 120, HOME)[1]
+    assert persons.without_left_behind([dict(worn, updated=NOW - 500)], _fix(), NOW, 120, HOME)[1]
+    # Worn but not placed: it cannot speak, so it vouches for nothing else.
+    assert persons.without_left_behind([dict(worn, zone="unknown"), dict(worn, ent="tag", cls="tag", worn=None)],
+                                       _fix(), NOW, 120, HOME)[1]

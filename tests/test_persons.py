@@ -407,3 +407,22 @@ def test_a_phone_on_another_floor_beats_a_watch_that_was_still_ten_minutes_befor
     assert persons.pick([dict(phone, floor="Second Floor", zone="Hall"), watch], NOW, 60.0)["ent"] == "watch"
     # A floor the layout does not name is no evidence.
     assert persons.pick([dict(phone, floor=None), watch], NOW, 60.0)["ent"] == "watch"
+
+
+def test_a_watch_that_says_it_is_worn_speaks_for_its_owner_and_a_locked_one_drops_out():
+    # The watch's own lock bit (watch_adverts.worn_now) settles what stillness can only guess.
+    watch = dict(thing("watch", "watch", still_for=1900, zone="Jack's Room", floor="Second Floor"), conf=0.9)
+    phone = dict(thing("phone", "phone", still_for=760, zone="Basement", floor="Basement"), conf=0.5)
+    # Unknown: the old rule (phone carried to another floor) stands.
+    assert persons.pick([phone, watch], NOW, 60.0)["ent"] == "phone"
+    # Worn: beats a phone that moved just now, and placed worse than the phone.
+    moving = dict(phone, arrived=NOW - 30, conf=0.95)
+    assert persons.pick([moving, dict(watch, worn=True, conf=0.4)], NOW, 60.0)["ent"] == "watch"
+    # Worn beats a charger sensor still saying Charged.
+    assert persons.pick([phone, dict(watch, worn=True, on_charger=True)], NOW, 60.0)["ent"] == "watch"
+    # Locked: out, even where the old rule would have picked it over a still phone.
+    still = dict(phone, zone="Jack's Room", floor="Second Floor", arrived=NOW - 900)
+    assert persons.pick([still, watch], NOW, 60.0)["ent"] == "watch"
+    assert persons.pick([still, dict(watch, worn=False)], NOW, 60.0)["ent"] == "phone"
+    assert persons.pick([dict(watch, worn=False)], NOW, 60.0) is None
+    assert persons.considered([dict(watch, worn=False)], NOW)[0]["worn"] is False

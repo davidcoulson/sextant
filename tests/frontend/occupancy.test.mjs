@@ -154,3 +154,17 @@ test("rooms with activity come first, then empty ones, each alphabetical", () =>
   const out = occupancyByFloor({ "binary_sensor.a": st("off", "Attic", "G"), "binary_sensor.b": st("on", "Study", "G"), "binary_sensor.c": st("off", "Den", "G", { mode: "Movie" }), "binary_sensor.d": st("on", "Hall", "G"), "binary_sensor.e": st("off", "Bath", "G") }, []);
   assert.deepEqual(out[0].rooms.map((r) => r.room), ["Den", "Hall", "Study", "Attic", "Bath"]);
 });
+
+test("chipDetail lists a person's watches whose lock state is known", async () => {
+  const { chipDetail } = await import("../../custom_components/sextant/frontend/sextant-occupancy-data.js");
+  const states = {
+    "person.jack": { attributes: { friendly_name: "Jack" } },
+    // considered is the held place's snapshot (worn: true); watches is this cycle.
+    "sensor.jack_sextant_person_location": { attributes: { room: "Basement", via: "private_ble_jack_watch",
+      considered: [{ thing: "private_ble_jack_watch", where: "Basement", worn: true }],
+      watches: { private_ble_jack_watch: false } } },
+  };
+  assert.deepEqual(chipDetail(states, "Jack", {}).watches, [{ thing: "private_ble_jack_watch", worn: false }]);
+  states["sensor.jack_sextant_person_location"].attributes.watches = {};
+  assert.deepEqual(chipDetail(states, "Jack", {}).watches, []);
+});

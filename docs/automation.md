@@ -115,7 +115,8 @@ with the coordinates kept.
 | `source` | `ble`, `held`, `wifi`, `gps` or `none` |
 | `access_point` | with `source: wifi`, the access point the phone or watch is joined to |
 | `presence` | as for things: the most present of the person's things |
-| `via`, `considered` | the thing that placed them, and every thing that was in the running: `thing`, `where`, `here_since` (when it arrived there, UTC) and `on_charger` |
+| `via`, `considered` | the thing that placed them, and every thing that was in the running: `thing`, `where`, `here_since` (when it arrived there, UTC), `on_charger`, and for a watch `worn` (true when on a wrist and unlocked, false when locked, missing when unknown) |
+| `watches` | each of their watches whose lock state is known this cycle: `true` on a wrist and unlocked, `false` locked (`considered` can be the snapshot from when a held place was set) |
 | `zone`, `latitude`, `longitude`, `gps_accuracy`, `tracker` | the GPS side, carried whichever source is speaking |
 | `distance_m` | from Home Assistant's home location, when there are coordinates |
 | `gps_ignored` | `[{entity, reason}, …]` |

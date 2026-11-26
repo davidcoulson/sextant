@@ -10,9 +10,12 @@ Apple's manufacturer data is a run of type, length, payload messages; Nearby
 Info (type 0x10) starts with a status nibble and an action nibble, then a flags
 byte, which ``ni`` lists as [status, action, flags]. The unlocked flag is
 believed to be in one of these.
-shortcut: watches are found by entity name, the log has no switch and old files
-are pruned only when a line is written; remove
-this module once the on/off test is read, or move it behind a tuning."""
+The flags byte's 0x80 bit is set while the watch is on a wrist and unlocked,
+and clear when it is locked: off a wrist, on a table or its charger (tested on
+two watches 2026-11-25). ``worn_now`` reads it for persons.pick.
+shortcut: the log (setup) has no switch, watches are found by entity name and old
+files are pruned only when a line is written; remove the log once the bit has
+held for a few days, keeping the parsers and worn_now."""
 import logging
 import time
 
@@ -43,6 +46,35 @@ def nearby_info(data: bytes):
         if kind == 0x10 and len(p) >= 2:
             return [p[0] >> 4, p[0] & 0x0F, p[1]]
     return None
+
+
+WORN = 0x80
+
+
+def worn(data: bytes):
+    """True when the advert says on a wrist and unlocked, False when locked, None without Nearby Info."""
+    ni = nearby_info(data)
+    return None if ni is None else bool(ni[2] & WORN)
+
+
+def worn_now(hass, ent: str, max_age: float):
+    """Whether the watch ``device_tracker.<ent>`` is worn and unlocked, from the latest
+    advert at the address Private BLE Device says it uses now; None when unknown
+    (no such tracker, no advert in max_age seconds, no Nearby Info)."""
+    st = hass.states.get(f"device_tracker.{ent}")
+    addr = st.attributes.get("current_address") if st else None
+    if not addr:
+        return None
+    try:
+        from homeassistant.components import bluetooth
+        info = bluetooth.async_last_service_info(hass, str(addr), False)
+    except Exception:  # noqa: BLE001 - no bluetooth: the bit is unknown, the old rules decide
+        return None
+    # info.time is Home Assistant's monotonic clock, as time.monotonic.
+    if info is None or not isinstance(getattr(info, "time", None), (int, float)) or time.monotonic() - info.time > max_age:
+        return None
+    data = (info.manufacturer_data or {}).get(APPLE)
+    return None if data is None else worn(bytes(data))
 
 
 def setup(hass):

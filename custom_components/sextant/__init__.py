@@ -5513,6 +5513,7 @@ def _update_person_sensors(hass):
     sensor_mod.ensure_person_sensors(hass, list(by_person), pets)
     rows = {r.get("ent"): r for r in (hass.data.get(DOMAIN, {}).get("apitricords") or []) if isinstance(r, dict)}
     chargers = layout.get("thing_charging_entity") or {}
+    from . import watch_adverts  # noqa: PLC0415
     now, stale = time.time(), _tuning(layout, "stale_after_secs")
     home = (getattr(hass.config, "latitude", None), getattr(hass.config, "longitude", None))
     gps_stale = _tuning(layout, "gps_stale_secs")
@@ -5573,7 +5574,10 @@ def _update_person_sensors(hass):
                 "outside": bool(row.get("outside")), **{k: row.get(k) for k in persons_mod.FIT_KEYS},
                 "area": room_area(layout, row.get("floor"), row.get("zone")),
                 "on_charger": charging,
+                "worn": watch_adverts.worn_now(hass, ent, stale) if classes.get(ent) == "watch" else None,
             })
+        # Their watches' lock state this cycle; not the held place's snapshot in considered.
+        watches_now = {c["ent"]: c["worn"] for c in candidates if c.get("worn") is not None}
         slug = person.split(".", 1)[1]
         sources, ignored = persons_mod.usable_gps(hass.states.get, layout, person, now, gps_stale, _gps_fixes)
         last_heard = max(heard.values()) if heard else None
@@ -5694,6 +5698,7 @@ def _update_person_sensors(hass):
             attrs["via_class"] = classes.get(attrs["via"]) if attrs.get("via") else None
             sensor_id = persons_mod.sensor_entity_id(slug, suffix, person in pets)
             if suffix == "sextant_person_location":
+                attrs["watches"] = watches_now
                 prev = hass.states.get(sensor_id)
                 # Away last cycle (a visit with no arrival): nothing from before carries over.
                 visit = _person_visits.get(person)
@@ -5733,6 +5738,7 @@ def _update_person_sensors(hass):
                     best=(best or {}).get("ent"), held=bool(held), left_behind=sorted(c["ent"] for c in left_behind),
                     place=_person_places.get(person), gps_src=(gps or {}).get("entity"),
                     things=[{"e": e, "cls": classes.get(e), "pres": pr, "zone": (cand.get(e) or {}).get("zone"),
+                             "worn": (cand.get(e) or {}).get("worn"),
                              "age": None if not cand.get(e) or cand[e].get("updated") is None else round(now - cand[e]["updated"])}
                             for e, pr in presence_by_ent.items()],
                     trk=trackers_in)
