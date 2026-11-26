@@ -31,7 +31,7 @@ def test_a_new_address_is_logged_once_private_ble_names_it(monkeypatch):
     monkeypatch.setattr(bluetooth, "async_last_service_info", lambda h, a, c: info if a == info.address else None, raising=False)
     tracker = NS(entity_id="device_tracker.private_ble_device_david_s_watch", attributes={"current_address": "11:22:33:44:55:66"})
     hass = NS(states=NS(async_all=lambda d: [tracker]), config=NS(path=lambda n: n),
-              bus=NS(async_listen=lambda ev, cb: listeners.append(cb) or (lambda: None)),
+              bus=NS(async_listen=lambda ev, cb, event_filter: listeners.append((event_filter, cb)) or (lambda: None)),
               loop=NS(call_later=lambda s, cb: NS(cancel=lambda: None)),
               async_add_executor_job=lambda fn, *a: jobs.append(a[1]))
     stop = wa.setup(hass)
@@ -39,7 +39,11 @@ def test_a_new_address_is_logged_once_private_ble_names_it(monkeypatch):
     assert not jobs
     old = NS(attributes=dict(tracker.attributes))
     tracker.attributes = {"current_address": info.address}
-    listeners[0](NS(data={"entity_id": tracker.entity_id, "old_state": old, "new_state": tracker}))
+    keep, moved = listeners[0]
+    data = {"entity_id": tracker.entity_id, "old_state": old, "new_state": tracker}
+    assert not keep({**data, "old_state": tracker}) and not keep({**data, "entity_id": "sensor.watch"})
+    assert keep(data)
+    moved(NS(data=data))
     stop()
     (row,) = jobs[0]
     assert row["e"] == "private_ble_device_david_s_watch" and row["ni"] == [3, 0xB, 0x1C]

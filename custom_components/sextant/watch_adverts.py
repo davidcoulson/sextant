@@ -99,15 +99,19 @@ def setup(hass):
         elif timer[0] is None:
             timer[0] = hass.loop.call_later(15, flush)
 
+    def address_of(state):
+        return state.attributes.get("current_address") if state else None
+
+    @callback   # runs for every state change, so cheap checks only
+    def is_move(data):
+        eid = data.get("entity_id", "")
+        return (eid.startswith("device_tracker.private_ble_") and "watch" in eid
+                and bool(address_of(data.get("new_state")))
+                and address_of(data.get("new_state")) != address_of(data.get("old_state")))
+
     @callback   # on the event loop: a plain listener would run in a worker thread
     def moved(event):
-        eid, new = event.data.get("entity_id", ""), event.data.get("new_state")
-        if not (eid.startswith("device_tracker.private_ble_") and "watch" in eid and new):
-            return
-        addr = new.attributes.get("current_address")
-        old = event.data.get("old_state")
-        if not addr or (old and old.attributes.get("current_address") == addr):
-            return
+        addr = address_of(event.data["new_state"])
         refresh(time.time())
         if (info := bluetooth.async_last_service_info(hass, addr, False)) is not None:
             seen(info, None)
@@ -123,7 +127,7 @@ def setup(hass):
         # connectable=False: every scanner, as Private BLE Device listens.
         return stop(bluetooth.async_register_callback(
             hass, seen, bluetooth.BluetoothCallbackMatcher(manufacturer_id=APPLE, connectable=False),
-            bluetooth.BluetoothScanningMode.PASSIVE), hass.bus.async_listen("state_changed", moved))
+            bluetooth.BluetoothScanningMode.PASSIVE), hass.bus.async_listen("state_changed", moved, event_filter=is_move))
     except Exception as e:  # noqa: BLE001
         _LOGGER.warning("Watch advertisement log not started: %s", e)
         return None
