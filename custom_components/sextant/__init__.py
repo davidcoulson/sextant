@@ -6537,25 +6537,30 @@ def _habit_zone(floor_name, zone):
     return f"{floor_name}|{zone}"
 
 
-_door_open_seen: dict[str, float] = {}  # door entity -> last cycle it read open
+_door_seen: dict[str, tuple] = {}  # door entity -> (door_closed() last cycle, last_changed then, close earns grace)
 
 
 def _closed_rooms(hass, zone_polys, layout, now):
     """The zones whose door has read closed for door_entry_grace_secs: no thing outside one moves in.
 
-    The grace is for a door seen closing. A door that comes back closed from unavailable or
-    unknown (every HA restart does this) was not seen open just before, so it closes its room at once."""
+    The grace is for a real close: the door read open, or closed and then changed again (open and
+    shut between cycles), on the cycle before. A door that comes back closed from unavailable or
+    unknown, or is closed when Sextant starts (every HA restart does both), closes its room at once."""
     grace, out = _tuning(layout, "door_entry_grace_secs"), set()
     for zid, door in (getattr(zone_polys, "doors", None) or {}).items():
         st = hass.states.get(door)
-        closed = rooms_mod.door_closed(st.state) if st is not None else None
-        if closed is False:
-            _door_open_seen[door] = now
-        elif closed:
-            shut = st.last_changed.timestamp()
-            seen_closing = _door_open_seen.get(door, float("-inf")) >= shut - 60.0
-            if not seen_closing or now - shut >= grace:
-                out.add(zid)
+        if st is None:
+            _door_seen.pop(door, None)
+            continue
+        closed, changed = rooms_mod.door_closed(st.state), st.last_changed.timestamp()
+        prev = _door_seen.get(door)
+        if prev is not None and prev[1] == changed:
+            earns = prev[2]
+        else:
+            earns = prev is not None and (prev[0] is False or (prev[0] is True and closed))
+        _door_seen[door] = (closed, changed, earns)
+        if closed and (not earns or now - changed >= grace):
+            out.add(zid)
     return out
 
 

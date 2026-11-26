@@ -2733,18 +2733,20 @@ def test_closed_rooms_wait_out_the_entry_grace():
     hass = NS(states=NS(get=states.get))
     polys = sextant._FloorZones(_three_rooms())
     polys.doors = {"Hall": "binary_sensor.eilee_door", "Office": "binary_sensor.office_door", "Kitchen": "binary_sensor.gone"}
-    sextant._door_open_seen.clear()
-    assert sextant._closed_rooms(hass, polys, {}, 1061.0) == {"Hall"}   # never seen open: closed at once
-    sextant._door_open_seen["binary_sensor.eilee_door"] = 998.0           # seen open just before it shut
-    assert sextant._closed_rooms(hass, polys, {}, 1061.0) == set()
-    assert sextant._closed_rooms(hass, polys, {}, 1000.0 + 3 * 3600) == {"Hall"}
-    sextant._door_open_seen["binary_sensor.eilee_door"] = 400.0           # open long before; back from unavailable
-    assert sextant._closed_rooms(hass, polys, {}, 1061.0) == {"Hall"}
-    sextant._door_open_seen.clear()
-    states["binary_sensor.eilee_door"] = NS(state="on", last_changed=shut)
-    sextant._closed_rooms(hass, polys, {}, 1050.0)
-    assert sextant._door_open_seen["binary_sensor.eilee_door"] == 1050.0  # open sightings are recorded
-    sextant._door_open_seen.clear()
+    def at(state, changed, now):
+        states["binary_sensor.eilee_door"] = NS(state=state, last_changed=datetime.fromtimestamp(changed, timezone.utc))
+        return "Hall" in sextant._closed_rooms(hass, polys, {}, now)
+    sextant._door_seen.clear()
+    assert at("off", 1000.0, 1061.0)                      # closed when Sextant starts: closed at once
+    sextant._door_seen.clear()
+    assert not at("on", 900.0, 990.0)
+    assert not at("off", 1000.0, 1061.0)                  # seen open, then shut: the grace runs
+    assert not at("off", 1000.0, 1179.0)
+    assert at("off", 1000.0, 1180.0)
+    assert not at("off", 2000.0, 2010.0)                  # opened and shut between cycles: a real close
+    assert at("unavailable", 2100.0, 2100.0) is False
+    assert at("off", 2110.0, 2111.0)                      # back from unavailable: closed at once
+    sextant._door_seen.clear()
     assert sextant._closed_rooms(hass, _three_rooms(), {}, 99999.0) == set()   # no doors known
 
 
