@@ -6537,12 +6537,30 @@ def _habit_zone(floor_name, zone):
     return f"{floor_name}|{zone}"
 
 
+_door_seen: dict[str, tuple] = {}  # door entity -> (state last cycle, last_changed then, close earns grace)
+
+
 def _closed_rooms(hass, zone_polys, layout, now):
-    """The zones whose door has read closed for door_entry_grace_secs: no thing outside one moves in."""
+    """The zones whose door has read closed for door_entry_grace_secs: no thing outside one moves in.
+
+    The grace is for a real close: the door read open, or closed and then changed again (open and
+    shut between cycles), on the cycle before. A door that comes back closed from unavailable or
+    unknown, or is closed when Sextant starts (every HA restart does both), closes its room at once."""
     grace, out = _tuning(layout, "door_entry_grace_secs"), set()
     for zid, door in (getattr(zone_polys, "doors", None) or {}).items():
         st = hass.states.get(door)
-        if st is not None and rooms_mod.door_closed(st.state) and now - st.last_changed.timestamp() >= grace:
+        if st is None:
+            _door_seen.pop(door, None)
+            continue
+        closed, changed = rooms_mod.door_closed(st.state), st.last_changed.timestamp()
+        prev = _door_seen.get(door)
+        if prev is not None and prev[1] == changed:
+            earns = prev[2]
+        else:  # a cover's opening/closing counts as open; only unavailable/unknown is no sighting
+            earns = prev is not None and str(prev[0]).lower() not in ("unavailable", "unknown", "none", "") and (
+                rooms_mod.door_closed(prev[0]) is not True or bool(closed))
+        _door_seen[door] = (st.state, changed, earns)
+        if closed and (not earns or now - changed >= grace):
             out.add(zid)
     return out
 
