@@ -11,10 +11,13 @@ HOLY = "0000180a-0000-1000-8000-00805f9b34fb"
 
 def test_level_reads_holy_iot_and_the_standard_battery_service():
     # Leela's collar, 2026-11-26: byte 8 is 0x64, 100 %.
-    assert tb.level({HOLY: bytes.fromhex("01da36ee887bda0464")}) == 100
-    assert tb.level({HOLY: bytes.fromhex("01da36ee887bda04ff")}) == 100   # capped
-    assert tb.level({"0000180f-0000-1000-8000-00805f9b34fb": b"\x2a"}) == 42
-    assert tb.level({HOLY: b"\x01\x02"}) is None and tb.level({}) is None and tb.level(None) is None
+    leela = "DA:36:EE:88:7B:DA"
+    assert tb.level({HOLY: bytes.fromhex("01da36ee887bda0464")}, leela) == 100
+    assert tb.level({HOLY: bytes.fromhex("01da36ee887bda04ff")}, leela) == 100   # capped
+    # Device Information that is not Holy-IoT's (no MAC in it) is no level.
+    assert tb.level({HOLY: bytes.fromhex("01aabbccddeeff0464")}, leela) is None
+    assert tb.level({"0000180f-0000-1000-8000-00805f9b34fb": b"\x2a"}, leela) == 42
+    assert tb.level({HOLY: b"\x01\x02"}, leela) is None and tb.level({}, leela) is None and tb.level(None, leela) is None
 
 
 def test_levels_now_reads_each_tracked_address(monkeypatch):

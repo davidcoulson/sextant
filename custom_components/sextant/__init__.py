@@ -1822,10 +1822,14 @@ async def update_tracked_entities(hass):
                 # is an orphan and goes. One set comparison per cycle.
                 from .sensor import prune_sensors_for_untracked  # noqa: PLC0415 - sensor imports this package
                 # A slug Bermuda reports now is tracked, even one the cached set has not caught up with.
-                ids = bermuda_source.async_get_tracked_unique_ids(hass)
+                devices = bermuda_source.async_get_tracked_devices(hass)
+                ids = bermuda_source.async_get_tracked_unique_ids(hass, devices)
                 # Robots are Sextant's own things, not Bermuda's: keep theirs.
                 full_tracked = set(tracked_prefixes) | set(robot_things(get_layout(hass))) | set(ids or ())
                 prune_sensors_for_untracked(hass, full_tracked)
+                # Before the guards below: a tag's battery needs no fix, only an advert.
+                from .sensor import publish_tag_batteries  # noqa: PLC0415 - sensor.py imports this package
+                publish_tag_batteries(hass, tag_battery.levels_now(hass, devices))
                 # A device Bermuda renamed under a new slug: its settings
                 # follow it there, matched by the stable unique_id thing_ids
                 # remembers - before the sweep below could delete them.
@@ -1870,9 +1874,6 @@ async def update_tracked_entities(hass):
             # A thing added to Bermuda since setup has no sensors yet.
             from .sensor import ensure_sensors_for_things  # sensor.py imports this package
             ensure_sensors_for_things(hass, unique_values)
-            if tracked_prefixes is not None:
-                from .sensor import publish_tag_batteries  # noqa: PLC0415 - sensor.py imports this package
-                publish_tag_batteries(hass, tag_battery.levels_now(hass, bermuda_source.async_get_tracked_devices(hass)))
             # Use a separate copy per entity to avoid cross-entity mutation side effects.
             layout = get_layout(hass)
             _refresh_fingerprint_references(hass, layout, now_ts)

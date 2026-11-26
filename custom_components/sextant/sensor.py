@@ -373,6 +373,11 @@ class SextantBatterySensor(CustomDistanceSensor):
         return self.native_value
 
 
+def _battery_sensor(hass, thing):
+    return SextantBatterySensor(f"{thing} {BATTERY_KIND[1]}", f"{BATTERY_KIND[0]}_{thing}",
+                                f"sensor.{thing}_{BATTERY_KIND[0]}", thing, find_bermuda_via_device(hass, thing))
+
+
 @callback
 def publish_tag_batteries(hass, levels):
     """Write each thing's battery level ({slug: %}), making its sensor the first time."""
@@ -384,8 +389,7 @@ def publish_tag_batteries(hass, levels):
     for thing, pct in levels.items():
         entity_id = f"sensor.{thing}_{BATTERY_KIND[0]}"
         if entity_id not in sensors_cache and add_entities is not None:
-            sensor = SextantBatterySensor(f"{thing} {BATTERY_KIND[1]}", f"{BATTERY_KIND[0]}_{thing}", entity_id, thing,
-                                          find_bermuda_via_device(hass, thing))
+            sensor = _battery_sensor(hass, thing)
             sensor._state, sensor._updated = pct, True   # fresher than whatever it would restore
             sensors_cache[entity_id] = sensor
             new.append(sensor)
@@ -746,6 +750,17 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         new_sensors.append(household)
     for entity in entities:
         ensure_sensors_for_entity(hass, entity, hass.data["sextant_sensors"], new_sensors)
+    # A battery sensor already made comes back now, with its last level, not at the tag's next advert:
+    # a dead tag never sends one.
+    prefix = BATTERY_KIND[0] + "_"
+    for entry in list(entity_registry.entities.values()):
+        if entry.platform != "sextant" or not str(entry.unique_id).startswith(prefix):
+            continue
+        thing = entry.unique_id[len(prefix):]
+        if thing in entities and entry.entity_id not in hass.data["sextant_sensors"]:
+            sensor = _battery_sensor(hass, thing)
+            hass.data["sextant_sensors"][sensor.entity_id] = sensor
+            new_sensors.append(sensor)
 
     if new_sensors:
         async_add_entities(new_sensors, update_before_add=True)
