@@ -1841,7 +1841,7 @@ class SextantLive extends LitElement {
               ${sel.robot ? html`<dt>Placed from</dt><dd>its own map <span class="muted small">(${this.hass?.states?.[sel.robot]?.state || sel.robot_state || "unknown"}; the map fits this floor to ${fmtLen(sel.rms_m, this.hass)})</span></dd>` : html`<dt>Proxies</dt><dd>${sel.radii?.length ?? 0} in the solve${sel.anchor ? html`<br><span class="pill ok" title=${`one proxy reads ${this._label(sel.ent)} within arm's reach and no other comes close: placed on that proxy`}>anchored to ${proxyName(this.data, sel.anchor)}</span>` : nothing}${sel.radar ? html`<br><span class="pill ok" title=${`an mmWave sensor sees someone where Bluetooth puts ${this._label(sel.ent)}: placed on the radar's target, to a few tens of centimetres`}>placed by ${sel.radar}</span>` : nothing}</dd>`}
               ${this._renderHere(sel)}
               ${this._renderWorn(sel.ent)}
-              ${this._battery(sel.ent) === null ? nothing : html`<dt>Battery</dt><dd class=${this._batteryTone(sel.ent)}>${Math.round(this._battery(sel.ent))}%</dd>`}
+              ${this._battery(sel.ent) === null ? nothing : html`<dt>Battery</dt><dd class=${this._batteryTone(sel.ent)}>${this._batteryIcon(sel.ent)}${Math.round(this._battery(sel.ent))}%</dd>`}
               <dt>Updated</dt><dd>${typeof sel.updated === "number" && sel.updated > 0 ? html`${fmtAge(Date.now() / 1000 - sel.updated)} ago` : html`<span class="muted">not heard since the last restart</span>`}${staleness(sel, this._staleAfter()).ghost ? html` <span class="pill warn" title=${`Nothing has heard ${this._label(sel.ent)} since; this is where ${this._pn(sel.ent).subj} ${this._pn(sel.ent).was} last placed`}>not heard</span>` : nothing}</dd>
             </dl>
             ${this._renderTimeline(sel)}
@@ -1892,12 +1892,20 @@ class SextantLive extends LitElement {
     return null;
   }
 
-  /** The Battery row's colour: a pet's by the badge's bands (petBattery), anything
-   * else amber from BATTERY_LOW and red from BATTERY_CRITICAL. */
+  /** The Battery row's text colour: amber from BATTERY_LOW, red from BATTERY_CRITICAL.
+   * A pet's text stays plain; its band is the coloured icon (_batteryIcon), as
+   * yellow or orange text would not read on a light card. */
   _batteryTone(ent) {
     const level = this._battery(ent);
-    if (PET_CLASSES.includes(this.data?.layout?.thing_classes?.[ent])) return `pet ${petBattery(level).tone}`;
+    if (PET_CLASSES.includes(this.data?.layout?.thing_classes?.[ent])) return "";
     return level === null ? "" : level <= BATTERY_CRITICAL ? "crit" : level <= BATTERY_LOW ? "warn" : "";
+  }
+
+  /** A pet's Battery row leads with the list badge's icon and colour (petBattery). */
+  _batteryIcon(ent) {
+    if (!PET_CLASSES.includes(this.data?.layout?.thing_classes?.[ent])) return nothing;
+    const { icon, tone } = petBattery(this._battery(ent));
+    return html`<ha-icon class="batteryicon ${tone}" icon=${icon}></ha-icon>`;
   }
 
   /** A pet always has a badge: its battery level as an icon, green, yellow,
@@ -2144,10 +2152,11 @@ class SextantLive extends LitElement {
     .list .avslot .batterybadge.pet.none { background: var(--disabled-color, #9e9e9e); color: #fff; }
     dd.warn { color: var(--warning-color, #e6a100); font-weight: 600; }
     dd.crit { color: var(--error-color, #db4437); font-weight: 600; }
-    dd.pet { font-weight: 600; }
-    dd.pet.ok { color: var(--success-color, #43a047); }
-    dd.pet.mid { color: #c9a700; }
-    dd.pet.low { color: var(--orange-color, #ff9800); }
+    .batteryicon { --mdc-icon-size: 18px; margin-right: 4px; vertical-align: -3px; }
+    .batteryicon.ok { color: var(--success-color, #43a047); }
+    .batteryicon.mid { color: #fdd835; }
+    .batteryicon.low { color: var(--orange-color, #ff9800); }
+    .batteryicon.crit { color: var(--error-color, #db4437); }
     .list .avslot .viabadge { position: absolute; right: -3px; top: -3px; --mdc-icon-size: 13px; width: 17px; height: 17px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--primary-color, #03a9f4); color: var(--text-primary-color, #fff); box-shadow: 0 0 0 2px var(--card-background-color, #fff); }
     /* A flex row so the icon centres on the text instead of sitting on its baseline. */
     .list .where { grid-column: 3; display: flex; align-items: center; justify-content: flex-end; gap: 4px; text-align: right; font-size: 12px; }
