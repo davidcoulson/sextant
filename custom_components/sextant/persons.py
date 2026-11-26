@@ -594,9 +594,10 @@ def without_left_behind(candidates, gps, now, stale, home=None, min_distance_m=2
     the phone is down the road. One that moved recently is never ruled out: it
     may be the very thing walking out, and one stray fix must not evict it.
     Only when the two agree: a phone still heard at home says GPS is wrong (or
-    the phone is the thing left behind), so nothing is ruled out then."""
-    if any(c.get("cls") == "phone" and isinstance(c.get("updated"), (int, float)) and now - c["updated"] <= stale
-           for c in candidates):
+    the phone is the thing left behind), so nothing is ruled out then. Nor
+    when a watch heard now says it is worn: it is on them, here."""
+    if any((c.get("cls") == "phone" or c.get("worn")) and isinstance(c.get("updated"), (int, float))
+           and now - c["updated"] <= stale for c in candidates):
         return candidates, []
     left = [
         c for c in candidates
