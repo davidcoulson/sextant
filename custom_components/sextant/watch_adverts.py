@@ -80,6 +80,26 @@ def worn_now(hass, ent: str, max_age: float):
     return None if data is None else worn(bytes(data))
 
 
+def since(track: dict, worn_by_ent: dict, now: float, before=None) -> dict:
+    """{ent: [since, partial]}: when each watch in ``worn_by_ent`` last turned worn or locked.
+    ``track`` (ent -> [worn, since, partial]) carries it from cycle to cycle; an
+    unknown reading (absent from ``worn_by_ent``) changes nothing. A watch first
+    seen since a restart takes the time its owner's sensor last published
+    (``before``: that sensor's attributes) when that said the same, and otherwise
+    now, marked partial: it was already so before then."""
+    before = before or {}
+    for ent, worn in worn_by_ent.items():
+        cur = track.get(ent)
+        if cur is not None and cur[0] == worn:
+            continue
+        old = (before.get("watches_since") or {}).get(ent)
+        if cur is None and (before.get("watches") or {}).get(ent) == worn and isinstance(old, (list, tuple)) and len(old) == 2:
+            track[ent] = [worn, old[0], bool(old[1])]
+        else:
+            track[ent] = [worn, now, cur is None]
+    return {ent: track[ent][1:] for ent in worn_by_ent}
+
+
 def _logged(eid: str) -> bool:
     return eid.startswith("device_tracker.private_ble_") and ("watch" in eid or "phone" in eid)
 

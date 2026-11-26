@@ -1512,6 +1512,17 @@ class SextantLive extends LitElement {
     return !!slug && this.hass?.states?.[`sensor.${slug}_sextant_person_location`]?.attributes?.watches?.[ent] === false;
   }
 
+  /** "Worn since 8:27 AM" / "Locked since 8:27 AM" from the owner's `watches` and `watches_since`; nothing when unknown. */
+  _renderWorn(ent) {
+    const slug = (this.data?.layout?.thing_owners || {})[ent]?.split(".")[1];
+    const attrs = slug && this.hass?.states?.[`sensor.${slug}_sextant_person_location`]?.attributes;
+    const worn = attrs?.watches?.[ent];
+    if (typeof worn !== "boolean") return nothing;
+    const [since, partial] = attrs?.watches_since?.[ent] || [];
+    const at = typeof since === "number" ? new Date(since * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : null;
+    return html`<dt>Watch</dt><dd title=${worn ? "On a wrist and unlocked, by the watch's own advert" : "Locked: off a wrist, on a table or its charger"}>${worn ? "Worn" : "Locked"}${at ? html` <span class="muted small">since ${at}${partial ? " or earlier" : ""}</span>` : nothing}</dd>`;
+  }
+
   /** The icon of the Home Assistant area a room is linked to, or null. */
   _roomIcon(floorName, roomName) {
     const f = (this.data?.layout?.floor || []).find((x) => x.name === floorName);
@@ -1825,6 +1836,7 @@ class SextantLive extends LitElement {
               <dt>Floor</dt><dd>${sel.floor}</dd>
               ${sel.robot ? html`<dt>Placed from</dt><dd>its own map <span class="muted small">(${this.hass?.states?.[sel.robot]?.state || sel.robot_state || "unknown"}; the map fits this floor to ${fmtLen(sel.rms_m, this.hass)})</span></dd>` : html`<dt>Proxies</dt><dd>${sel.radii?.length ?? 0} in the solve${sel.anchor ? html`<br><span class="pill ok" title=${`one proxy reads ${this._label(sel.ent)} within arm's reach and no other comes close: placed on that proxy`}>anchored to ${proxyName(this.data, sel.anchor)}</span>` : nothing}${sel.radar ? html`<br><span class="pill ok" title=${`an mmWave sensor sees someone where Bluetooth puts ${this._label(sel.ent)}: placed on the radar's target, to a few tens of centimetres`}>placed by ${sel.radar}</span>` : nothing}</dd>`}
               ${this._renderHere(sel)}
+              ${this._renderWorn(sel.ent)}
               ${this._battery(sel.ent) === null ? nothing : html`<dt>Battery</dt><dd class=${this._battery(sel.ent) <= BATTERY_CRITICAL ? "crit" : this._battery(sel.ent) <= BATTERY_LOW ? "warn" : ""}>${Math.round(this._battery(sel.ent))}%</dd>`}
               <dt>Updated</dt><dd>${typeof sel.updated === "number" && sel.updated > 0 ? html`${fmtAge(Date.now() / 1000 - sel.updated)} ago` : html`<span class="muted">not heard since the last restart</span>`}${staleness(sel, this._staleAfter()).ghost ? html` <span class="pill warn" title=${`Nothing has heard ${this._label(sel.ent)} since; this is where ${this._pn(sel.ent).subj} ${this._pn(sel.ent).was} last placed`}>not heard</span>` : nothing}</dd>
             </dl>
