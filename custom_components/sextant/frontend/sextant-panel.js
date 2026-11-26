@@ -1967,7 +1967,7 @@ class SextantLive extends LitElement {
       <details class="timeline" open>
         <summary>Timeline <span class="muted small">last ${fmtAge(span)}${stays[0].partial ? " (all that is kept)" : ""}</span></summary>
         <div class="band" role="img" aria-label=${`Where ${this._label(sel.ent)} has been, oldest on the left`}>
-          ${stays.map((s) => html`<span class="seg ${s.unheard ? "unheard" : ""}" style="left: ${(100 * (s.start - from)) / span}%; width: ${(100 * (s.end - s.start)) / span}%; background: ${colour(s)}" title="${at(s.start)}–${at(s.end)} · ${place(s)} · ${fmtAge(s.end - s.start)}"></span>`)}
+          ${stays.map((s) => html`<span class="seg ${s.unheard ? "unheard" : ""}" style="left: min(${(100 * (s.start - from)) / span}%, calc(100% - 1px)); width: ${(100 * (s.end - s.start)) / span}%; background: ${colour(s)}" title="${at(s.start)}–${at(s.end)} · ${place(s)} · ${fmtAge(s.end - s.start)}"></span>`)}
         </div>
         <div class="band-ends muted small"><span>${at(from)}</span><span>${to >= now - 5 ? "now" : at(to)}</span></div>
         <ol class="stays">
