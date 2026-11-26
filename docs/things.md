@@ -106,7 +106,8 @@ watch on its charger since last night. One exception: a watch placed at
 least as well as that phone still wins, since a phone is set down more
 often than a watch is taken off - unless the phone went to another room
 when the watch had already been still for four hours (`watch_still_secs`):
-that watch was left behind.
+that watch was left behind. If the phone is on another floor the watch only needs to have been still
+for ten minutes.
 
 A thing can also name an **On-charger sensor** - its battery state from
 iCloud3, the companion app, or any `binary_sensor` that is on while it
