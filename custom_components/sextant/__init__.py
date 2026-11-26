@@ -494,6 +494,8 @@ FLOOR_SWITCH_SECS = 60.0
 # at least FLOOR_LASTING_LEAD_MIN_S) takes the floor whatever the margin.
 FLOOR_LASTING_LEAD_X = 4.0
 FLOOR_LASTING_LEAD_MIN_S = 120.0
+# ...and this long while the thing is still in a locked room (_elect_floor's held).
+FLOOR_HELD_LEAD_S = 900.0
 # shortcut: fixed, not a tuning value; make it one if a house needs another ratio.
 FLOOR_NEAR_RATIO = 0.5
 FLOOR_DARK_GRACE_S = 45.0    # how long a dark incumbent holds everything frozen (was 3 cycles at 15 s)
@@ -6438,9 +6440,11 @@ def _elect_floor(probs, incumbent, solved, challenge, now=None,
     meanwhile, so a real move that scores noisily still gets there).
 
     ``held``: the thing is still and its room is locked. A lead under the
-    margin then never wins on its own: a cat on the catwalk, heard by the
-    receivers below it, lost its floor to a 0.01 lead every few minutes. A
-    lead over the margin still wins, and moving releases the lock.
+    margin then has to last FLOOR_HELD_LEAD_S, not minutes: a cat on the
+    catwalk, heard by the receivers below it, lost its floor to a 0.01 lead
+    every few minutes. A lead over the margin still wins as before, moving
+    releases the lock, and a room locked on the wrong floor is still left
+    in the end.
     """
     now = time.time() if now is None else now
     contenders = {f: p for f, p in probs.items() if f in solved}
@@ -6458,10 +6462,11 @@ def _elect_floor(probs, incumbent, solved, challenge, now=None,
     # "led" is how long the incumbent has been behind anyone, so two challengers
     # trading first place cannot keep restarting it.
     led = (challenge or {}).get("led", now)
-    lasting = now - led >= max(FLOOR_LASTING_LEAD_MIN_S, FLOOR_LASTING_LEAD_X * switch_secs)
+    lasting = now - led >= max(FLOOR_LASTING_LEAD_MIN_S, FLOOR_LASTING_LEAD_X * switch_secs,
+                               FLOOR_HELD_LEAD_S if held else 0.0)
     agree = not (scores and scores.get(best, 0.0) <= scores.get(incumbent, 0.0))
     if lead < margin:
-        if lasting and agree and not held:
+        if lasting and agree:
             return best, None
         return incumbent, {"floor": best, "led": led}  # no "since": not a margin challenge
     since = mine.get("since", now)
