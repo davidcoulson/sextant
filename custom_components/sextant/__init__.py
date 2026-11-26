@@ -3095,9 +3095,11 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
     margin = _tuning(layout, "floor_switch_margin") + _tuning(layout, "floor_tenure_bonus") * min(
         1.0, tenure / _tuning(layout, "floor_tenure_full_secs")
     )
+    zs = _zone_state.get(entity) or {}   # last cycle's room, on the incumbent floor
     lowest_floor_name, challenge = _elect_floor(
         probs, incumbent, solved, _floor_challenge.get(entity),
         now=now, switch_secs=_tuning(layout, "floor_switch_secs"), margin=margin, scores=scores,
+        held=bool(zs.get("locked")) and zs.get("still_since") is not None,
     )
     if challenge is None:
         _floor_challenge.pop(entity, None)
@@ -6410,7 +6412,7 @@ def _update_floor_probabilities(entity, scores, valid_floors=None, now=None):
 
 
 def _elect_floor(probs, incumbent, solved, challenge, now=None,
-                 switch_secs=FLOOR_SWITCH_SECS, margin=FLOOR_SWITCH_MARGIN, scores=None):
+                 switch_secs=FLOOR_SWITCH_SECS, margin=FLOOR_SWITCH_MARGIN, scores=None, held=False):
     """Pick the floor to publish. Returns (floor, challenge_state).
 
     The caller guarantees the incumbent is either solved this cycle or None
@@ -6434,6 +6436,11 @@ def _elect_floor(probs, incumbent, solved, challenge, now=None,
     for many cycles after the scores have recovered: the switch only happens on
     a cycle whose scores also put the challenger ahead (the dwell keeps running
     meanwhile, so a real move that scores noisily still gets there).
+
+    ``held``: the thing is still and its room is locked. A lead under the
+    margin then never wins on its own: a cat on the catwalk, heard by the
+    receivers below it, lost its floor to a 0.01 lead every few minutes. A
+    lead over the margin still wins, and moving releases the lock.
     """
     now = time.time() if now is None else now
     contenders = {f: p for f, p in probs.items() if f in solved}
@@ -6454,7 +6461,7 @@ def _elect_floor(probs, incumbent, solved, challenge, now=None,
     lasting = now - led >= max(FLOOR_LASTING_LEAD_MIN_S, FLOOR_LASTING_LEAD_X * switch_secs)
     agree = not (scores and scores.get(best, 0.0) <= scores.get(incumbent, 0.0))
     if lead < margin:
-        if lasting and agree:
+        if lasting and agree and not held:
             return best, None
         return incumbent, {"floor": best, "led": led}  # no "since": not a margin challenge
     since = mine.get("since", now)
