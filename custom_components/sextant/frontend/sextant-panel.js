@@ -1967,7 +1967,7 @@ class SextantLive extends LitElement {
       <details class="timeline" open>
         <summary>Timeline <span class="muted small">last ${fmtAge(span)}${stays[0].partial ? " (all that is kept)" : ""}</span></summary>
         <div class="band" role="img" aria-label=${`Where ${this._label(sel.ent)} has been, oldest on the left`}>
-          ${stays.map((s) => html`<span class="seg ${s.unheard ? "unheard" : ""}" style="flex-grow: ${Math.max(0.002, (s.end - s.start) / span)}; background: ${colour(s)}" title="${at(s.start)}–${at(s.end)} · ${place(s)} · ${fmtAge(s.end - s.start)}"></span>`)}
+          ${stays.map((s) => html`<span class="seg ${s.unheard ? "unheard" : ""}" style="left: ${(100 * (s.start - from)) / span}%; width: ${(100 * (s.end - s.start)) / span}%; background: ${colour(s)}" title="${at(s.start)}–${at(s.end)} · ${place(s)} · ${fmtAge(s.end - s.start)}"></span>`)}
         </div>
         <div class="band-ends muted small"><span>${at(from)}</span><span>${to >= now - 5 ? "now" : at(to)}</span></div>
         <ol class="stays">
@@ -2173,8 +2173,10 @@ class SextantLive extends LitElement {
     .list li.ghost .avatar { filter: grayscale(0.6); outline: 1px dashed var(--secondary-text-color); outline-offset: 1px; }
     details.timeline { margin: 8px 0; }
     details.timeline summary { cursor: pointer; font-weight: 500; }
-    .band { display: flex; height: 14px; border-radius: 4px; overflow: hidden; margin-top: 8px; background: var(--secondary-background-color); gap: 1px; }
-    .band .seg { min-width: 1px; }
+    /* Placed by time: a flex row with a minimum width per stay ran past the band once there
+       were a couple of hundred stays, giving every stay the same sliver and clipping the newest. */
+    .band { position: relative; height: 14px; border-radius: 4px; overflow: hidden; margin-top: 8px; background: var(--secondary-background-color); }
+    .band .seg { position: absolute; top: 0; bottom: 0; min-width: 1px; }
     .band .seg.unheard { background: repeating-linear-gradient(45deg, transparent 0 3px, var(--divider-color) 3px 5px) !important; }
     .band-ends { display: flex; justify-content: space-between; margin-top: 2px; }
     ol.stays { list-style: none; padding: 0; margin: 6px 0 0; display: grid; gap: 3px; }
