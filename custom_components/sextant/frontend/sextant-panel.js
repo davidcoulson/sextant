@@ -2104,7 +2104,7 @@ class SextantLive extends LitElement {
     .list .avslot .viabadge.waitbadge { background: var(--warning-color, #e6a100); color: #23272e; }
     .list .avslot .viabadge.ghostbadge { background: var(--secondary-background-color, #666); color: var(--secondary-text-color); }
     .list .avslot .batterybadge { position: absolute; right: -3px; bottom: -3px; --mdc-icon-size: 12px; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--warning-color, #e6a100); color: #23272e; box-shadow: 0 0 0 2px var(--card-background-color, #fff); }
-    .list .avslot .viabadge.lockbadge { background: var(--secondary-background-color, #666); color: var(--primary-text-color); }
+    .list .avslot .viabadge.lockbadge { background: var(--primary-text-color, #e1e1e1); color: var(--card-background-color, #1c1c1c); }
     .list .avslot .batterybadge.crit { background: var(--error-color, #db4437); color: #fff; }
     dd.warn { color: var(--warning-color, #e6a100); font-weight: 600; }
     dd.crit { color: var(--error-color, #db4437); font-weight: 600; }
