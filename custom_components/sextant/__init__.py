@@ -8054,7 +8054,7 @@ def _register_calibration_services(hass) -> None:
             hass.data.pop(DOMAIN, None)
             _forget_code(hass, __name__, DOMAIN)
         try:
-            await hass.async_add_import_executor_job(_import_code, __name__, _PLATFORMS)
+            await hass.async_add_import_executor_job(_import_code, __name__)
         except Exception as err:
             # This handler stays registered, so the action works again once the code is fixed.
             raise HomeAssistantError(f"Sextant is unloaded: the new code did not load ({err}). "
@@ -8068,15 +8068,15 @@ def _register_calibration_services(hass) -> None:
     async_register_admin_service(hass, DOMAIN, "reload_code", _reload_code, schema=vol.Schema({}))
 
 
-def _import_code(package: str, platforms) -> None:
-    """Import the package and its platforms; runs in the import executor.
+def _import_code(package: str) -> None:
+    """Import the package and the platforms it forwards; runs in the import executor.
 
     After an unload Home Assistant still lists "<domain>.<platform>" as loaded,
     so it would import the new platform modules in the event loop (and warn);
     once they are in sys.modules its own import is a cache hit.
     """
-    importlib.import_module(package)
-    for platform in platforms:
+    # The new module's list: the old one may name a platform the new code dropped.
+    for platform in importlib.import_module(package)._PLATFORMS:
         importlib.import_module(f"{package}.{platform}")
 
 
