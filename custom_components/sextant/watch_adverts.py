@@ -1,4 +1,4 @@
-"""Diagnostic: every Apple advertisement heard from a watch, in hourly files under
+"""Diagnostic: every Apple advertisement heard from a watch or phone, in hourly files under
 config/sextant_watch_log (kept 48 h), to find out whether a watch says it is
 locked (off a wrist). A watch is a ``device_tracker.private_ble_*watch*`` entity;
 Private BLE Device puts the address the watch uses now in ``current_address``.
@@ -9,7 +9,10 @@ watch's ``current_address`` changes its latest advert is fetched and logged.
 Apple's manufacturer data is a run of type, length, payload messages; Nearby
 Info (type 0x10) starts with a status nibble and an action nibble, then a flags
 byte, which ``ni`` lists as [status, action, flags]. The unlocked flag is
-believed to be in one of these.
+believed to be in one of these. Phones (``*phone*``) are logged too, since
+2026-11-26, to test whether an iPhone's action nibble follows its use (screen
+on 0x07, recent use 0x0B, call 0x0E, idle 0x03, driving 0x0D, per furiousMAC's
+continuity notes); on watches it does not.
 The flags byte's 0x80 bit is set while the watch is on a wrist and unlocked,
 and clear when it is locked: off a wrist, on a table or its charger (tested on
 two watches 2026-11-25). ``worn_now`` reads it for persons.pick.
@@ -77,6 +80,10 @@ def worn_now(hass, ent: str, max_age: float):
     return None if data is None else worn(bytes(data))
 
 
+def _logged(eid: str) -> bool:
+    return eid.startswith("device_tracker.private_ble_") and ("watch" in eid or "phone" in eid)
+
+
 def setup(hass):
     """Start logging; returns the callable that stops it, or None without bluetooth."""
     try:
@@ -92,7 +99,7 @@ def setup(hass):
     def refresh(now):
         watches.clear()
         for s in hass.states.async_all("device_tracker"):
-            if s.entity_id.startswith("device_tracker.private_ble_") and "watch" in s.entity_id:
+            if _logged(s.entity_id):
                 addr = s.attributes.get("current_address")
                 if addr:
                     watches[str(addr).upper()] = s.entity_id[len("device_tracker."):]
@@ -137,7 +144,7 @@ def setup(hass):
     @callback   # runs for every state change, so cheap checks only
     def is_move(data):
         eid = data.get("entity_id", "")
-        return (eid.startswith("device_tracker.private_ble_") and "watch" in eid
+        return (_logged(eid)
                 and bool(address_of(data.get("new_state")))
                 and address_of(data.get("new_state")) != address_of(data.get("old_state")))
 

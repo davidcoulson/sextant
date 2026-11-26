@@ -42,6 +42,8 @@ def test_a_new_address_is_logged_once_private_ble_names_it(monkeypatch):
     keep, moved = listeners[0]
     data = {"entity_id": tracker.entity_id, "old_state": old, "new_state": tracker}
     assert not keep({**data, "old_state": tracker}) and not keep({**data, "entity_id": "sensor.watch"})
+    assert keep({**data, "entity_id": "device_tracker.private_ble_jack_phone"})   # phones are logged too
+    assert not keep({**data, "entity_id": "device_tracker.private_ble_keys"})
     assert keep(data)
     moved(NS(data=data))
     stop()
