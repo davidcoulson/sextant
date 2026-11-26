@@ -1469,9 +1469,11 @@ class SextantLive extends LitElement {
                 // from the status above, and both can be true at once - a tag
                 // going quiet BECAUSE its battery is dying is the whole point.
                 const battery = this._batteryBadge(p.ent);
-                if (badge === nothing && battery === nothing) return this._avatar(p.ent);
+                // A watch that says it is locked (off a wrist) does not place its owner.
+                const lock = this._watchLocked(p.ent) ? html`<ha-icon class="lockbadge" icon="mdi:lock" title="Locked: not on a wrist"></ha-icon>` : nothing;
+                if (badge === nothing && battery === nothing && lock === nothing) return this._avatar(p.ent);
                 const why = badge === nothing ? "" : st.away ? lastSeen : st.ghost ? `Last heard ${fmtAge(st.age)} ago` : `Where ${who} is read from right now`;
-                return html`<span class="avslot" title=${why}>${this._avatar(p.ent)}${badge}${battery}</span>`;
+                return html`<span class="avslot" title=${why}>${this._avatar(p.ent)}${badge}${battery}${lock}</span>`;
               })()}
               <span class="name">${this._label(p.ent)}</span>
               <span class="where">${p.zone ? html`${this._roomIcon(p.floor, p.zone) ? html`<ha-icon class="roomicon" icon=${this._roomIcon(p.floor, p.zone)}></ha-icon>` : nothing}${p.zone}` : html`<span class="muted">away</span>`}</span>
@@ -1498,6 +1500,13 @@ class SextantLive extends LitElement {
     const st = this.hass?.states?.[`sensor.${person.split(".")[1]}_sextant_person_location`] || this.hass?.states?.[`sensor.${person.split(".")[1]}_sextant_pet_location`];
     if (st?.attributes?.via !== ent) return null;
     return this.hass?.states?.[person]?.attributes?.friendly_name || person.split(".")[1];
+  }
+
+  /** True when this watch's own advert says, this cycle, that it is locked (its owner's `watches`). */
+  _watchLocked(ent) {
+    const person = (this.data?.layout?.thing_owners || {})[ent];
+    const slug = person?.split(".")[1];
+    return !!slug && this.hass?.states?.[`sensor.${slug}_sextant_person_location`]?.attributes?.watches?.[ent] === false;
   }
 
   /** The icon of the Home Assistant area a room is linked to, or null. */
@@ -2092,6 +2101,7 @@ class SextantLive extends LitElement {
     .list .avslot .viabadge.waitbadge { background: var(--warning-color, #e6a100); color: #23272e; }
     .list .avslot .viabadge.ghostbadge { background: var(--secondary-background-color, #666); color: var(--secondary-text-color); }
     .list .avslot .batterybadge { position: absolute; right: -3px; bottom: -3px; --mdc-icon-size: 12px; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--warning-color, #e6a100); color: #23272e; box-shadow: 0 0 0 2px var(--card-background-color, #fff); }
+    .list .avslot .lockbadge { position: absolute; left: -3px; bottom: -3px; --mdc-icon-size: 11px; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--secondary-background-color, #666); color: var(--primary-text-color); box-shadow: 0 0 0 2px var(--card-background-color, #fff); }
     .list .avslot .batterybadge.crit { background: var(--error-color, #db4437); color: #fff; }
     dd.warn { color: var(--warning-color, #e6a100); font-weight: 600; }
     dd.crit { color: var(--error-color, #db4437); font-weight: 600; }

@@ -116,7 +116,8 @@ and on the right the room it is in with its Home Assistant area's icon, the
 spot underneath.
 A small badge on the disc says what is special about it: a location marker
 for the thing its owner's location is being read from, an hourglass while
-it is late, a ghost once it is away.
+it is late, a ghost once it is away. A watch that says it is locked (off a
+wrist, so it does not place its owner) has a lock in the bottom-left corner.
 
 ## Grouped by person
 
