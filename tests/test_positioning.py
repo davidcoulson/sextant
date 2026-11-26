@@ -2756,3 +2756,14 @@ def test_after_a_floor_change_a_shut_room_is_not_the_first_pick(monkeypatch):
     monkeypatch.setattr(sextant, "_zone_membership", lambda polys, samples: {"Office": 0.7, "Hall": 0.3})
     assert sextant._elect_zone("c", "F", "Office", Point(450, 50), None, _three_rooms(), 100.0, layout, now=5.0,
                                closed={"Office"})[0] == "Hall"
+
+
+def test_the_caller_says_when_the_floor_changed(monkeypatch):
+    """Codex review: the live path drops the old floor's state before electing, so it passes new_floor."""
+    sextant._zone_state.clear()
+    layout = {"tuning": {"zone_lock_warmup_secs": 0.0, "zone_prob_smoothing": 0.0}}
+    monkeypatch.setattr(sextant, "_zone_membership", lambda polys, samples: {"Office": 0.7, "Hall": 0.3})
+    elect = lambda e, **kw: sextant._elect_zone(e, "F", "Office", Point(450, 50), None, _three_rooms(), 100.0, layout,
+                                                now=5.0, closed={"Office"}, **kw)[0]
+    assert elect("stairs", new_floor=True) == "Hall"
+    assert elect("restart") == "Office"

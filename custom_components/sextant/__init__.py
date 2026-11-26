@@ -3101,7 +3101,8 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
     if lowest_floor_name is None:
         return  # nothing electable this cycle: keep last values
 
-    if update_trilateration_and_zone.last_floor.get(entity) != lowest_floor_name:
+    came_from = update_trilateration_and_zone.last_floor.get(entity)
+    if came_from != lowest_floor_name:
         # The Kalman state holds pixel coordinates in the previously elected
         # floor's map space; it must not carry over to the newly elected floor.
         # Neither may the zone election: its polygons are that floor's.
@@ -3211,6 +3212,7 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
             hold=(_floor_challenge.get(entity) or {}).get("since") is not None,  # a margin challenge, not a small lead
             anchor_point=Point(anchor["x"], anchor["y"]) if anchor is not None else None,
             closed=_closed_rooms(hass, zone_polys, layout, now),
+            new_floor=came_from is not None and came_from != lowest_floor_name,
         )
         # Sub-zone: only the elected zone's own sub-zones are eligible, with
         # membership smoothing, exit hysteresis, dwell and the zone lock (see
@@ -6534,7 +6536,7 @@ def _closed_rooms(hass, zone_polys, layout, now):
     return out
 
 
-def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, scale, layout, now=None, hold=False, anchor_point=None, closed=()):
+def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, scale, layout, now=None, hold=False, anchor_point=None, closed=(), new_floor=False):
     """The zone to PUBLISH for a thing this cycle. Returns
     (zone, locked, speed_m_s).
 
@@ -6579,7 +6581,8 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
         return instant_zone, False, None
 
     st = _zone_state.get(entity)
-    new_floor = st is not None and st["floor"] != floor_name   # come up or down the stairs, not a first sighting
+    # Come up or down the stairs, not a first sighting (the caller has usually dropped the old state already).
+    new_floor = new_floor or (st is not None and st["floor"] != floor_name)
     if st is None or new_floor or (st["zone"] is not None and st["zone"] not in valid):
         st = _zone_state[entity] = _new_zone_state(floor_name, now)
 
