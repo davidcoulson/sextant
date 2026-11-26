@@ -6462,11 +6462,10 @@ def _elect_floor(probs, incumbent, solved, challenge, now=None,
     # "led" is how long the incumbent has been behind anyone, so two challengers
     # trading first place cannot keep restarting it.
     led = (challenge or {}).get("led", now)
-    lasting = now - led >= max(FLOOR_LASTING_LEAD_MIN_S, FLOOR_LASTING_LEAD_X * switch_secs,
-                               FLOOR_HELD_LEAD_S if held else 0.0)
+    lasting = now - led >= max(FLOOR_LASTING_LEAD_MIN_S, FLOOR_LASTING_LEAD_X * switch_secs)
     agree = not (scores and scores.get(best, 0.0) <= scores.get(incumbent, 0.0))
     if lead < margin:
-        if lasting and agree:
+        if lasting and agree and not (held and now - led < FLOOR_HELD_LEAD_S):
             return best, None
         return incumbent, {"floor": best, "led": led}  # no "since": not a margin challenge
     since = mine.get("since", now)

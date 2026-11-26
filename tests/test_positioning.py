@@ -239,6 +239,9 @@ def test_a_still_thing_in_a_locked_room_keeps_its_floor_against_a_small_lead():
     assert sextant._elect_floor(small, "b", {"a", "b"}, ch, now=300.0, switch_secs=60.0, margin=0.10)[0] == "a"
     # Held, a lead that lasts 15 min still wins: a room locked on the wrong floor is left in the end.
     assert sextant._elect_floor(small, "b", {"a", "b"}, ch, now=900.0, switch_secs=60.0, margin=0.10, held=True)[0] == "a"
+    # A small lead that has lasted and then grows past the margin wins at once, as before.
+    assert sextant._elect_floor({"a": 0.6, "b": 0.4}, "b", {"a", "b"}, ch, now=300.0, switch_secs=60.0,
+                                margin=0.10, held=True)[0] == "a"
     # A lead over the margin still wins while held.
     big, ch = {"a": 0.6, "b": 0.4}, None
     for t in (0.0, 60.0):
