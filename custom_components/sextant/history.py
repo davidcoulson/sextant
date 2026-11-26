@@ -69,7 +69,7 @@ DROPOUT_GAP_MIN = 90.0
 GAP_FRAME = 1        # new polyline: floor change, clock step, retained head
 GAP_DROPOUT = 2      # ...and the device genuinely was not heard across it
 # The timeline joins a dropout up to this long when the thing is in the same place after it.
-TIMELINE_BRIDGE_SECS = 300.0
+TIMELINE_BRIDGE_SECS = 180.0
 
 
 def _finite(value):
