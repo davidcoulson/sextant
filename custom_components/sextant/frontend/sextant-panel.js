@@ -15,7 +15,7 @@
 import { LitElement, html, css, nothing } from "./lit.js";
 import { signalColour, distanceColour, SextantMap, thingColor, thingHue, staleness, shortAge, heatCells, pointInPolygon, polygonCentroid } from "./sextant-map.js";
 import { sharedStyles, widgetStyles, fmtAge, fmtNum, toast, confirmAsync, ensureHaComponents, uiSelect, uiButton, callWS, sortFloors, thingName, proxyName, fmtLen, fmtSpeed, classIcon, pronounsFor, uiIconButton, uiSegmented, uiMenu, expertMode, setExpertMode, isImperial, mapOverlayStyles, renderScaleBar, signalLegend, mapUrlFor, retryWait, loadLayout, subscribePositions } from "./sextant-ui.js";
-import { personGroups } from "./sextant-groups.js";
+import { personGroups, petBattery, PET_CLASSES } from "./sextant-groups.js";
 import { spotInRoom, askStrimmer } from "./sextant-occupancy-data.js";
 
 // What this page is running: the version of the files it was loaded from
@@ -1892,10 +1892,16 @@ class SextantLive extends LitElement {
     return null;
   }
 
-  /** A badge only once the battery is low: a full one would put a badge on
-   * every pet and say nothing. Amber from BATTERY_LOW, red from BATTERY_CRITICAL. */
+  /** A pet always has a badge: its battery level as an icon, green, yellow,
+   * orange or red (petBattery), grey with no reading. Anything else gets one only
+   * once its battery is low: amber from BATTERY_LOW, red from BATTERY_CRITICAL. */
   _batteryBadge(ent) {
     const level = this._battery(ent);
+    if (PET_CLASSES.includes(this.data?.layout?.thing_classes?.[ent])) {
+      const { icon, tone } = petBattery(level);
+      return html`<ha-icon class="batterybadge pet ${tone}" icon=${icon}
+        title=${level === null ? "No battery reading" : `Battery ${Math.round(level)}%`}></ha-icon>`;
+    }
     if (level === null || level > BATTERY_LOW) return nothing;
     const crit = level <= BATTERY_CRITICAL;
     return html`<ha-icon class="batterybadge ${crit ? "crit" : ""}" icon=${crit ? "mdi:battery-alert-variant-outline" : "mdi:battery-low"}
@@ -2124,6 +2130,10 @@ class SextantLive extends LitElement {
     .list .avslot .batterybadge { position: absolute; right: -3px; bottom: -3px; --mdc-icon-size: 12px; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--warning-color, #e6a100); color: #23272e; box-shadow: 0 0 0 2px var(--card-background-color, #fff); }
     .list .avslot .viabadge.lockbadge { background: var(--primary-text-color, #e1e1e1); color: var(--card-background-color, #1c1c1c); }
     .list .avslot .batterybadge.crit { background: var(--error-color, #db4437); color: #fff; }
+    .list .avslot .batterybadge.pet.ok { background: var(--success-color, #43a047); color: #fff; }
+    .list .avslot .batterybadge.pet.mid { background: #fdd835; color: #23272e; }
+    .list .avslot .batterybadge.pet.low { background: var(--orange-color, #ff9800); color: #23272e; }
+    .list .avslot .batterybadge.pet.none { background: var(--disabled-color, #9e9e9e); color: #fff; }
     dd.warn { color: var(--warning-color, #e6a100); font-weight: 600; }
     dd.crit { color: var(--error-color, #db4437); font-weight: 600; }
     .list .avslot .viabadge { position: absolute; right: -3px; top: -3px; --mdc-icon-size: 13px; width: 17px; height: 17px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--primary-color, #03a9f4); color: var(--text-primary-color, #fff); box-shadow: 0 0 0 2px var(--card-background-color, #fff); }
