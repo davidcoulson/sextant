@@ -81,5 +81,6 @@ the ones that were loaded.
 While developing, the `sextant.reload_code` action (admins only) replaces
 that restart: it unloads Sextant, imports the Python files from disk again
 and sets it up. It leans on Home Assistant internals, so a restart remains
-the supported way to load a release. The `/api/sextant/...` HTTP endpoints,
+the supported way to load a release. Reload any open Sextant page
+afterwards: a map that stays open keeps its old data feed. The `/api/sextant/...` HTTP endpoints,
 the config flow and anything in `manifest.json` still need a restart.

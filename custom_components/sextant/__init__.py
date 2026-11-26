@@ -1,5 +1,6 @@
 import aiofiles
 import aiofiles.os
+import importlib
 import sys
 import time
 from pathlib import Path
@@ -8026,13 +8027,21 @@ def _register_calibration_services(hass) -> None:
         # As after a restart, nothing of the old code's may be left to reuse.
         # The HTTP views and stop listeners cannot be registered twice, so
         # their flags stay: the views run the old code until a restart.
-        for key in [k for k in hass.data if str(k).startswith("sextant_")
-                    and k not in ("sextant_views_registered", "sextant_stop_listeners")]:
-            hass.data.pop(key, None)
-        hass.data.pop(DOMAIN, None)
-        _forget_code(hass, __name__, DOMAIN)
-        for entry in entries:
-            await hass.config_entries.async_setup(entry.entry_id)
+        from .storage import LAYOUT_LOCK  # noqa: PLC0415
+        # Under the layout lock, and with no await inside: a layout save still
+        # in flight finishes first, instead of landing on the new code's state
+        # later through this module's lock, which the new code does not share.
+        async with LAYOUT_LOCK:
+            for key in [k for k in hass.data if str(k).startswith("sextant_")
+                        and k not in ("sextant_views_registered", "sextant_stop_listeners")]:
+                hass.data.pop(key, None)
+            hass.data.pop(DOMAIN, None)
+            _forget_code(hass, __name__, DOMAIN)
+        failed = [entry.title for entry in entries if not await hass.config_entries.async_setup(entry.entry_id)]
+        if failed:
+            # This handler stays registered, so the action works again once the code is fixed.
+            raise HomeAssistantError("Sextant is unloaded: the new code did not set up (see the log). "
+                                     "Fix it and call sextant.reload_code again, or restart Home Assistant")
 
     async_register_admin_service(hass, DOMAIN, "reload_code", _reload_code, schema=vol.Schema({}))
 
@@ -8048,6 +8057,7 @@ def _forget_code(hass, package: str, domain: str) -> None:
                         (hass.data.get("missing_platforms", {}), domain)):
         for name in [n for n in cache if n == root or n.startswith(root + ".")]:
             del cache[name]
+    importlib.invalidate_caches()  # or a file added since the last import may not be found
 
 
 async def async_setup(hass, config):
@@ -8067,7 +8077,10 @@ async def async_setup(hass, config):
     async def _on_stop(_event):
         # Through sys.modules: after sextant.reload_code this listener belongs
         # to the old module, whose state stopped changing at the reload.
-        await sys.modules[__name__]._save_runtime(hass, final=True)
+        # A reload whose new code failed to import leaves no module, and
+        # nothing to save: the unload already wrote the state.
+        if (live := sys.modules.get(__name__)) is not None:
+            await live._save_runtime(hass, final=True)
 
     # Once per Home Assistant run: sextant_initialized is cleared on unload,
     # so every reload (each options change) used to add another set, and a
@@ -8260,6 +8273,13 @@ async def async_unload_entry(hass: HomeAssistant, entry):
         if task:
             task.cancel()
     await _save_runtime(hass, final=True)
+    # The cancelled loop flushes the election log only at the end of a cycle.
+    try:
+        layout = get_layout(hass)
+        await election_log.get(hass).flush(
+            _tuning(layout, "election_log_hours") if isinstance(layout, dict) and layout else None)
+    except Exception as e:  # noqa: BLE001 - a log must never stop the unload
+        _LOGGER.debug("Election log not flushed on unload: %s", e)
     for domain, issue_id in list(ir.async_get(hass).issues):
         if domain == DOMAIN and issue_id.startswith(SENSOR_ISSUE_PREFIX):
             ir.async_delete_issue(hass, DOMAIN, issue_id)

@@ -299,5 +299,6 @@ reload_code:
   description: >-
     For development. Unloads Sextant, imports its Python files from disk
     again and sets it up, so a code change takes effect in seconds without
-    restarting Home Assistant. The /api/sextant HTTP endpoints, the config
-    flow and manifest changes (version, requirements) still need a restart.
+    restarting Home Assistant. Reload open Sextant pages afterwards. The
+    /api/sextant HTTP endpoints, the config flow and manifest changes
+    (version, requirements) still need a restart.
