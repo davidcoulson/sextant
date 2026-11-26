@@ -83,6 +83,7 @@ from .const import ACCURACY_ENTITY_ID, HOUSEHOLD_FLOOR_ENTITY_ID, PEOPLE_HOME_EN
 from . import history as history_mod
 from . import habits as habits_mod
 from . import bermuda_source
+from . import tag_battery
 from . import layout_check
 from . import election_log
 from . import robots as robots_mod
@@ -1869,6 +1870,9 @@ async def update_tracked_entities(hass):
             # A thing added to Bermuda since setup has no sensors yet.
             from .sensor import ensure_sensors_for_things  # sensor.py imports this package
             ensure_sensors_for_things(hass, unique_values)
+            if tracked_prefixes is not None:
+                from .sensor import publish_tag_batteries  # noqa: PLC0415 - sensor.py imports this package
+                publish_tag_batteries(hass, tag_battery.levels_now(hass, bermuda_source.async_get_tracked_devices(hass)))
             # Use a separate copy per entity to avoid cross-entity mutation side effects.
             layout = get_layout(hass)
             _refresh_fingerprint_references(hass, layout, now_ts)
@@ -4673,10 +4677,14 @@ def _dead_things(hass, layout, now):
         updated = seen.get("updated") if isinstance(seen, dict) else None
         if not isinstance(updated, (int, float)) or _presence_of(updated, now, layout) != "away":
             continue
-        try:
-            level = float(hass.states.get(batteries[ent]).state)
-        except (KeyError, AttributeError, TypeError, ValueError):  # no sensor, or nothing to say
-            level = None
+        level = None
+        # The Battery sensor set for it, else the one Sextant reads from its adverts.
+        for bid in (batteries.get(ent), f"sensor.{ent}_sextant_battery"):
+            try:
+                level = float(hass.states.get(bid).state)
+                break
+            except (AttributeError, TypeError, ValueError):  # no sensor, or nothing to say
+                continue
         age = now - updated
         flat = level is not None and level <= DEAD_BATTERY_PCT
         # Home for as long as away_after_secs, not just now: a phone back from

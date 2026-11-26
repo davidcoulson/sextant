@@ -1866,12 +1866,14 @@ class SextantLive extends LitElement {
     return stays;
   }
 
-  /** The thing's battery level (0-100), or null when it has no battery sensor
-   * or the sensor has nothing to say. */
+  /** The thing's battery level (0-100) from its Battery sensor, else from the one
+   * Sextant reads from its adverts; null when neither has anything to say. */
   _battery(ent) {
-    const id = this.data?.layout?.thing_battery_entity?.[ent];
-    const v = id ? parseFloat(this.hass?.states?.[id]?.state) : NaN;
-    return Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : null;
+    for (const id of [this.data?.layout?.thing_battery_entity?.[ent], `sensor.${ent}_sextant_battery`]) {
+      const v = id ? parseFloat(this.hass?.states?.[id]?.state) : NaN;
+      if (Number.isFinite(v)) return Math.max(0, Math.min(100, v));
+    }
+    return null;
   }
 
   /** A badge only once the battery is low: a full one would put a badge on

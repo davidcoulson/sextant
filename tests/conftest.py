@@ -300,7 +300,8 @@ def _install_homeassistant_stubs():
     # Enough of the sensor platform for sensor.py to import (sensor tests
     # exercise the cache/creation logic, never HA's entity machinery).
     _module("homeassistant.components.sensor", SensorEntity=type("SensorEntity", (), {}),  # a class, so RestoreEntity can follow it in an MRO
-            SensorStateClass=types.SimpleNamespace(MEASUREMENT="measurement"))
+            SensorStateClass=types.SimpleNamespace(MEASUREMENT="measurement"),
+            SensorDeviceClass=types.SimpleNamespace(BATTERY="battery"))
     _module("homeassistant.components.binary_sensor", BinarySensorEntity=type("BinarySensorEntity", (), {}),
             BinarySensorDeviceClass=types.SimpleNamespace(OCCUPANCY="occupancy"))
     _module("homeassistant.components.switch", SwitchEntity=type("SwitchEntity", (), {}))
@@ -349,6 +350,7 @@ def _install_homeassistant_stubs():
             AbortFlow=_AbortFlow, ConfigEntryState=enum.Enum("ConfigEntryState", "LOADED NOT_LOADED SETUP_ERROR"))
     sys.modules["homeassistant.helpers.event"].async_call_later = lambda *a, **k: None
     _module("homeassistant.const", UnitOfLength=types.SimpleNamespace(METERS="m"),
+            PERCENTAGE="%", EntityCategory=types.SimpleNamespace(DIAGNOSTIC="diagnostic"),
             EVENT_HOMEASSISTANT_STOP="homeassistant_stop",
             EVENT_HOMEASSISTANT_FINAL_WRITE="homeassistant_final_write")
     _module("homeassistant.util", slugify=lambda s: s)

@@ -82,6 +82,16 @@ be true at once, and usually are: a tag that has gone quiet because its
 battery is dying looks exactly like a thing that has left, until the battery
 says why.
 
+A tag that puts its level in its own adverts needs no sensor set: Sextant
+reads it from the last advert Home Assistant heard and publishes it as
+`sensor.<thing>_sextant_battery`, on the thing's device, for automations too.
+That covers Holy-IoT tags (byte 8 of their 0x180A service data, sent only in
+a scan response, so at least one proxy must scan actively) and any tag with
+the standard Battery Service (0x180F). The sensor appears the first time a
+level is read and keeps its last value while the tag is out of range. A
+Battery sensor set on the thing wins while it has a number to give; when it
+goes unavailable, Sextant's own is used.
+
 What you see while a thing is late or away is where it *was*; its room and
 spot sensors still say the same, because nothing has contradicted them yet.
 Every thing Sextant knows stays in the list, so a phone that left the house
