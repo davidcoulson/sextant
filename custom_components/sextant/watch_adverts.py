@@ -2,7 +2,10 @@
 config/sextant_watch_log (kept 48 h), to find out whether a watch says it is
 locked (off a wrist). A watch is a ``device_tracker.private_ble_*watch*`` entity;
 Private BLE Device puts the address the watch uses now in ``current_address``.
-A line is written when a watch's Apple data changes, and every 30 s otherwise.
+A line is written when a watch's Apple data changes (Home Assistant passes on
+only adverts whose data changed, so the 30 s heartbeat rarely fires). A new
+address's first advert reaches us before Private BLE Device names it, so when a
+watch's ``current_address`` changes its latest advert is fetched and logged.
 Apple's manufacturer data is a run of type, length, payload messages; Nearby
 Info (type 0x10) starts with a status nibble and an action nibble, then a flags
 byte, which ``ni`` lists as [status, action, flags]. The unlocked flag is
@@ -46,6 +49,7 @@ def setup(hass):
     """Start logging; returns the callable that stops it, or None without bluetooth."""
     try:
         from homeassistant.components import bluetooth
+        from homeassistant.core import callback
     except ImportError:
         return None
     watches = {}          # address (upper case) -> entity_id
@@ -82,22 +86,40 @@ def setup(hass):
         data = (info.manufacturer_data or {}).get(APPLE)
         if not ent or data is None:
             return
-        hexed = bytes(data).hex()
+        hexed = bytes(data).hex() + "@" + str(info.address).upper()   # a new address is news even with the same data
         prev = last.get(ent)
         if prev and prev[0] == hexed and now - prev[1] < HEARTBEAT:
             return
         last[ent] = (hexed, now)
         pending.append({"t": round(now, 1), "e": ent, "addr": info.address, "src": info.source, "rssi": info.rssi,
-                        "apple": hexed, "types": [k for k, _ in messages(bytes(data))], "ni": nearby_info(bytes(data)),
+                        "apple": bytes(data).hex(), "types": [k for k, _ in messages(bytes(data))], "ni": nearby_info(bytes(data)),
                         "chg": not prev or prev[0] != hexed})
         if len(pending) >= 20:
             flush()
         elif timer[0] is None:
             timer[0] = hass.loop.call_later(15, flush)
 
-    def stop(unregister):
+    def address_of(state):
+        return state.attributes.get("current_address") if state else None
+
+    @callback   # runs for every state change, so cheap checks only
+    def is_move(data):
+        eid = data.get("entity_id", "")
+        return (eid.startswith("device_tracker.private_ble_") and "watch" in eid
+                and bool(address_of(data.get("new_state")))
+                and address_of(data.get("new_state")) != address_of(data.get("old_state")))
+
+    @callback   # on the event loop: a plain listener would run in a worker thread
+    def moved(event):
+        addr = address_of(event.data["new_state"])
+        refresh(time.time())
+        if (info := bluetooth.async_last_service_info(hass, addr, False)) is not None:
+            seen(info, None)
+
+    def stop(*unsubs):
         def _stop():
-            unregister()
+            for u in unsubs:
+                u()
             flush()
         return _stop
 
@@ -105,7 +127,7 @@ def setup(hass):
         # connectable=False: every scanner, as Private BLE Device listens.
         return stop(bluetooth.async_register_callback(
             hass, seen, bluetooth.BluetoothCallbackMatcher(manufacturer_id=APPLE, connectable=False),
-            bluetooth.BluetoothScanningMode.PASSIVE))
+            bluetooth.BluetoothScanningMode.PASSIVE), hass.bus.async_listen("state_changed", moved, event_filter=is_move))
     except Exception as e:  # noqa: BLE001
         _LOGGER.warning("Watch advertisement log not started: %s", e)
         return None
