@@ -1458,7 +1458,9 @@ class SextantLive extends LitElement {
     return html`
             <li class="${p.ent === this._selected ? "selected" : ""} ${st.ghost ? "ghost" : ""} ${st.away ? "away" : ""}" title=${st.ghost ? lastSeen : ""} @click=${() => { this._select(p.ent === this._selected ? null : p.ent); if (p.floor && p.floor !== this.floor) this.dispatchEvent(new CustomEvent("floor-changed", { detail: p.floor })); }}>
               ${(() => {
-                const who = this._speaksFor(p.ent);
+                // A locked watch places nobody, even while a held place still names it as via.
+                const locked = this._watchLocked(p.ent);
+                const who = locked ? null : this._speaksFor(p.ent);
                 // Three states, one badge: away (long gone), waiting (heard,
                 // but not lately), or the thing its owner is read from. A
                 // thing not being heard cannot be any owner's source.
@@ -1470,7 +1472,7 @@ class SextantLive extends LitElement {
                 // going quiet BECAUSE its battery is dying is the whole point.
                 const battery = this._batteryBadge(p.ent);
                 // A watch that says it is locked (off a wrist) does not place its owner.
-                const lock = this._watchLocked(p.ent) ? html`<ha-icon class="lockbadge" icon="mdi:lock" title="Locked: not on a wrist"></ha-icon>` : nothing;
+                const lock = locked ? html`<ha-icon class="lockbadge" icon="mdi:lock" title="Locked: not on a wrist"></ha-icon>` : nothing;
                 if (badge === nothing && battery === nothing && lock === nothing) return this._avatar(p.ent);
                 const why = badge === nothing ? "" : st.away ? lastSeen : st.ghost ? `Last heard ${fmtAge(st.age)} ago` : `Where ${who} is read from right now`;
                 return html`<span class="avslot" title=${why}>${this._avatar(p.ent)}${badge}${battery}${lock}</span>`;
