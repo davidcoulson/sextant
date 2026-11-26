@@ -70,3 +70,18 @@ def test_worn_reads_the_unlocked_bit_from_the_latest_fresh_advert(monkeypatch):
     assert wa.worn_now(hass, "x", 60) is None and wa.worn_now(hass, "gone", 60) is None
     info.time -= 120   # nothing heard for two minutes: unknown, not worn
     assert wa.worn_now(hass, "w", 60) is None
+
+
+def test_since_tracks_changes_and_restarts():
+    track = {}
+    # First sight after a restart, the sensor said the same at 100: keep it.
+    assert wa.since(track, {"w": True}, 500, {"watches": {"w": True}, "watches_since": {"w": [100, False]}}) == {"w": [100, False]}
+    assert wa.since(track, {"w": True}, 600) == {"w": [100, False]}
+    assert wa.since(track, {}, 650) == {}                        # unknown: nothing changes
+    assert wa.since(track, {"w": False}, 700) == {"w": [700, False]}
+    # First sight with no matching sensor reading: now, and partial.
+    assert wa.since(track, {"x": False}, 800, {"watches": {"x": True}, "watches_since": {"x": [1, False]}}) == {"x": [800, True]}
+    # A first cycle before any advert keeps the restored time for when the watch is heard.
+    track = {}
+    assert wa.since(track, {}, 900, {"watches": {"w": True}, "watches_since": {"w": [100, False]}}) == {}
+    assert wa.since(track, {"w": True}, 950, {"watches": {}, "watches_since": {}}) == {"w": [100, False]}

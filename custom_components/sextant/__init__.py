@@ -4999,6 +4999,7 @@ ARRIVAL_RETRY_SECS = 600.0
 
 
 _last_charging: dict = {}   # ent -> when its on-charger sensor last began to say charging
+_watch_worn: dict = {}      # watch ent -> [worn, since, partial, restored] (watch_adverts.since)
 _charging_asked: set = set()   # (thing, sensor) pairs whose charge sensor's history has been asked (once a run)
 CHARGE_LOOKBACK_S = 3 * 86400.0
 
@@ -5716,8 +5717,9 @@ def _update_person_sensors(hass):
             attrs["via_class"] = classes.get(attrs["via"]) if attrs.get("via") else None
             sensor_id = persons_mod.sensor_entity_id(slug, suffix, person in pets)
             if suffix == "sextant_person_location":
-                attrs["watches"] = watches_now
                 prev = hass.states.get(sensor_id)
+                attrs["watches"] = watches_now
+                attrs["watches_since"] = watch_adverts.since(_watch_worn, watches_now, now, prev.attributes if prev else None)
                 # Away last cycle (a visit with no arrival): nothing from before carries over.
                 visit = _person_visits.get(person)
                 arrived = (visit.get("arrived") or now) if visit else None

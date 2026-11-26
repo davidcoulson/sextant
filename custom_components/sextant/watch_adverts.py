@@ -80,6 +80,30 @@ def worn_now(hass, ent: str, max_age: float):
     return None if data is None else worn(bytes(data))
 
 
+def since(track: dict, worn_by_ent: dict, now: float, before=None) -> dict:
+    """{ent: [since, partial]}: when each watch in ``worn_by_ent`` last turned worn or locked.
+    ``track`` (ent -> [worn, since, partial, restored]) carries it from cycle to cycle; an
+    unknown reading (absent from ``worn_by_ent``) changes nothing. A watch first
+    seen since a restart takes the time its owner's sensor last published
+    (``before``: that sensor's attributes) when that said the same, and otherwise
+    now, marked partial: it was already so before then."""
+    before = before or {}
+    # Seed from the sensor even for watches not heard this cycle, so a first cycle
+    # with no advert yet does not lose what it said before the restart.
+    for ent, worn in (before.get("watches") or {}).items():
+        old = (before.get("watches_since") or {}).get(ent)
+        if ent not in track and isinstance(worn, bool) and isinstance(old, (list, tuple)) and len(old) == 2:
+            track[ent] = [worn, old[0], bool(old[1]), True]
+    for ent, worn in worn_by_ent.items():
+        cur = track.get(ent)
+        if cur is not None and cur[0] == worn:
+            cur[3] = False   # heard live: a flip from here on is seen when it happens
+        else:
+            # Not heard live before (none, or only what the sensor said): it may have flipped earlier.
+            track[ent] = [worn, now, cur is None or cur[3], False]
+    return {ent: track[ent][1:3] for ent in worn_by_ent}
+
+
 def _logged(eid: str) -> bool:
     return eid.startswith("device_tracker.private_ble_") and ("watch" in eid or "phone" in eid)
 
