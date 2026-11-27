@@ -72,24 +72,24 @@ class SextantWhereCard extends LitElement {
   }
 
   // The headline: where they are, or with precise only the most precise place. On the move with a
-  // town, the town heads (split) and the activity goes under it: the badge already shows which.
+  // town, only the town (split): the badge already shows the activity.
   _where(r, split = true) {
     if (r.away) return split && r.moving && r.place ? r.place : r.where;
     return this._config.precise ? preciseWhere(r) : r.where;
   }
-  // The line under it: the activity when away, the spot, else the floor when show_floor is on; none with precise.
+  // The line under it: the spot, else the floor when show_floor is on; none with precise, and none
+  // away, where the place takes both lines (a long address) and the badge shows the activity.
   _sub(r) {
-    if (r.away) return r.moving && r.place ? r.moving.label : "";
+    if (r.away) return "";
     return this._config.precise ? "" : r.spot || (this._config.show_floor ? r.floor : null) || "";
   }
 
   _tiles(rows) {
-    // Away, the town takes both lines: a third would not fit a phone-width tile, and the badge shows the activity.
-    const sub = (r) => (r.away ? "" : this._sub(r));
+    const sub = (r) => this._sub(r);
     return html`<div class="tiles" style="--cols:${this._config.columns || 2}">${rows.map((r) => html`
       <button class="tile" @click=${() => this._more(r.id)}>${this._avatar(r, "", true)}
         <span class="txt"><span class="n"><span class="nm">${r.name}</span><span class="stay">${fmtStay(r.stay, true)}</span></span>
-        <span class="room ${sub(r) ? "" : "two"}" title=${r.where}>${this._where(r)}</span>
+        <span class="room ${sub(r) ? "" : "two"}" title=${this._where(r, false)}>${this._where(r)}</span>
         ${sub(r) ? html`<span class="sub" title=${sub(r)}>${sub(r)}</span>` : nothing}</span></button>`)}</div>`;
   }
 
@@ -112,7 +112,8 @@ class SextantWhereCard extends LitElement {
     const people = rows.filter((r) => !r.pet), pets = rows.filter((r) => r.pet);
     return html`<div><div class="rings" style="--cols:${this._config.columns || 4}">${people.map((r) => html`
       <button class="cell" @click=${() => this._more(r.id)}>${this._avatar(r, "lg", true)}${r.stay != null ? html`<span class="t">${fmtStay(r.stay, true)}</span>` : nothing}
-        <span class="n">${r.name}</span><span class="room">${this._where(r)}</span><span class="sub">${this._sub(r)}</span></button>`)}</div>
+        <span class="n">${r.name}</span><span class="room ${this._sub(r) ? "" : "two"}" title=${this._where(r, false)}>${this._where(r)}</span>
+        ${this._sub(r) ? html`<span class="sub">${this._sub(r)}</span>` : nothing}</button>`)}</div>
       ${pets.length ? html`<div class="pets">${pets.map((r) => html`<button class="pet" @click=${() => this._more(r.id)}>${this._avatar(r, "xs")}${r.name} <span class="sub">${this._config.precise ? preciseWhere(r) : r.spot || r.where}</span></button>`)}</div>` : nothing}</div>`;
   }
 
@@ -151,8 +152,8 @@ class SextantWhereCard extends LitElement {
     .tile { display: flex; gap: 10px; align-items: center; min-width: 0; overflow: hidden; padding: 6px 10px; border-radius: var(--ha-card-border-radius, 12px);
       background: var(--ha-card-background, var(--card-background-color)); border: var(--ha-card-border-width, 1px) solid var(--ha-card-border-color, var(--divider-color)); }
     .tile .txt { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.2; }
-    /* Away has no spot line: "Driving near Middleburg Heights, OH" gets both lines. */
-    .tile .room.two { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+    /* No line under it (away, or precise): a long place, "Valley Parkway Connector, Ohio", gets both lines. */
+    .room.two { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
     .tile .n { font-weight: 600; display: flex; gap: 6px; align-items: baseline; }
     .tile .nm { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .tile .stay { margin-left: auto; flex: none; font-weight: 400; font-size: 11px; }
