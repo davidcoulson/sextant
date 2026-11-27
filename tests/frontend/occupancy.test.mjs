@@ -195,6 +195,11 @@ test("subjectHistory lists a person's stays, or everyone's in a room or on a flo
   assert.deepEqual(subjectHistory(people, { kind: "person", name: "Michelle" }).map((r) => r.room), ["Master Bedroom", null, "Great Room"]);
   assert.deepEqual(subjectHistory(people, { kind: "room", room: "Master Bedroom", floor: "Second" }).map((r) => [r.name, r.start]), [["Michelle", 300], ["Meg", 50]]);
   assert.deepEqual(subjectHistory(people, { kind: "room", room: "Master Bedroom", floor: "Ground" }), []);
+  // Each row knows the room it came from: not placed and the first stay have none.
+  assert.deepEqual(subjectHistory(people, { kind: "floor", floor: "Second" }).map((r) => r.from), ["Master Bedroom", null, null]);
+  assert.deepEqual(subjectHistory(people, { kind: "person", name: "Michelle" }).map((r) => r.from), [null, "Great Room", null]);
+  const halls = [{ name: "Jack", pet: false, stays: [{ start: 0, end: 5, room: "Hall", floor: "Ground" }, { start: 5, end: 9, room: "Hall", floor: "Second" }] }];
+  assert.equal(subjectHistory(halls, { kind: "person", name: "Jack" })[0].from, "Hall (Ground)");
   assert.deepEqual(subjectHistory(people, { kind: "floor", floor: "Second" }).map((r) => r.room), ["Catwalk", "Master Bedroom", "Master Bedroom"]);
   assert.equal(subjectHistory(people, { kind: "floor", floor: "Second" }, 1).length, 1);
   // Outside keeps the floor it left from, but is not on that floor.
@@ -212,12 +217,12 @@ test("clockAt says the day when it is not today, and a room carries its since", 
   assert.equal(out[0].rooms.find((r) => r.room === "B").since, null);
 });
 
-test("confidenceLevel turns a confidence into a word and bars", async () => {
+test("confidenceLevel turns a confidence into a word and a crosshairs icon", async () => {
   const { confidenceLevel } = await import("../../custom_components/sextant/frontend/sextant-occupancy-data.js");
-  assert.equal(confidenceLevel(0.77).word, "Sure");
-  assert.equal(confidenceLevel(0.7).word, "Sure");
+  assert.equal(confidenceLevel(0.77).word, "Confident");
+  assert.equal(confidenceLevel(0.7).word, "Confident");
   assert.equal(confidenceLevel(0.53).word, "Likely");
-  assert.equal(confidenceLevel(0.1).icon, "mdi:signal-cellular-1");
+  assert.equal(confidenceLevel(0.1).icon, "mdi:crosshairs-question");
   assert.equal(confidenceLevel(null), null);
   assert.equal(confidenceLevel(NaN), null);
 });

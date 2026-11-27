@@ -41,7 +41,7 @@ export function occupancyByFloor(states, planFloors) {
 }
 
 export const WHERE_SOURCE = { ble: "Bluetooth", wifi: "Wi-Fi", gps: "GPS", held: "Bluetooth (held)", none: "None" };
-export const WHERE_ICON = { ble: "mdi:bluetooth", wifi: "mdi:wifi", gps: "mdi:crosshairs-gps", held: "mdi:bluetooth-off", none: "mdi:help-circle-outline" };
+export const WHERE_ICON = { ble: "mdi:bluetooth", wifi: "mdi:wifi", gps: "mdi:map-marker-radius", held: "mdi:bluetooth-off", none: "mdi:help-circle-outline" };
 
 /** People and pets whose Sextant location is Outside (beyond every room, still at home). */
 // shortcut: only pets with a person.* entity are listed; a tag-only pet outside shows nowhere. Add layout thing_classes if one appears.
@@ -145,12 +145,16 @@ export function subjectHistory(people, subject, limit = 100) {
   const rows = [];
   for (const p of people || []) {
     if (subject.kind === "person" && p.name !== subject.name) continue;
-    for (const s of p.stays || []) {
-      if (subject.kind === "room" && !(s.room === subject.room && s.floor === subject.floor)) continue;
+    (p.stays || []).forEach((s, i) => {
+      if (subject.kind === "room" && !(s.room === subject.room && s.floor === subject.floor)) return;
       // Outside keeps the floor it left from, but is on no floor.
-      if (subject.kind === "floor" && !(s.room && s.room !== "Outside" && s.floor === subject.floor)) continue;
-      rows.push({ name: p.name, pet: p.pet, ...s });
-    }
+      if (subject.kind === "floor" && !(s.room && s.room !== "Outside" && s.floor === subject.floor)) return;
+      // ``from``: the room they came from, for "Great Room → Kitchen"; null when unplaced or the first stay.
+      // The same room name on another floor says which floor, or it would read "Hall → Hall".
+      const prev = p.stays[i - 1];
+      const from = !prev?.room ? null : prev.room === s.room && prev.floor ? `${prev.room} (${prev.floor})` : prev.room;
+      rows.push({ name: p.name, pet: p.pet, from, ...s });
+    });
   }
   return rows.sort((a, b) => b.start - a.start || a.name.localeCompare(b.name)).slice(0, limit);
 }
@@ -164,11 +168,12 @@ export function clockAt(t, now = Date.now() / 1000) {
   return `${d.toDateString() === y.toDateString() ? "Yesterday" : d.toLocaleDateString([], { weekday: "short" })} ${hm}`;
 }
 
-/** How sure Sextant is, as a word and a bars icon: Sure from 70%, Likely from 40%, else Unsure. */
+/** How sure Sextant is of the room, as a word and a crosshairs icon (not bars, which read as signal strength):
+ *  Confident from 70%, Likely from 40%, else Unsure. */
 export function confidenceLevel(conf) {
   if (conf == null || !Number.isFinite(conf)) return null;
-  return conf >= 0.7 ? { word: "Sure", icon: "mdi:signal-cellular-3" }
-    : conf >= 0.4 ? { word: "Likely", icon: "mdi:signal-cellular-2" } : { word: "Unsure", icon: "mdi:signal-cellular-1" };
+  return conf >= 0.7 ? { word: "Confident", icon: "mdi:crosshairs-gps" }
+    : conf >= 0.4 ? { word: "Likely", icon: "mdi:crosshairs" } : { word: "Unsure", icon: "mdi:crosshairs-question" };
 }
 
 /** A person's chip label: the first word of their name, capitalised ("david coulson" -> "David"). */
