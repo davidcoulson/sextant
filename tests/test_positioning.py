@@ -1878,6 +1878,8 @@ def test_anchor_lets_go_when_another_proxy_reads_closer():
     sextant._anchor_state.pop("w", None)
     sextant._elect_anchor("w", "F", rx(0.5, 1.5), layout, now=0.0)
     assert sextant._elect_anchor("w", "F", rx(0.6, 1.5), layout, now=21.0)["slug"] == "tablet"
+    assert sextant._elect_anchor("w", "F", rx(0.60, 0.59), layout, now=25.0)["slug"] == "tablet"  # a near-tie is not beaten
+    assert sextant._anchor_state["w"]["away_since"] is None
     assert sextant._elect_anchor("w", "F", rx(1.0, 0.9), layout, now=30.0)["slug"] == "tablet"   # beaten, held for the dwell
     assert sextant._elect_anchor("w", "F", rx(1.0, 1.2), layout, now=35.0)["slug"] == "tablet"   # nearest again: away clock resets
     assert sextant._elect_anchor("w", "F", rx(1.0, 0.9), layout, now=40.0)["slug"] == "tablet"
