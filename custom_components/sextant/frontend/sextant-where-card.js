@@ -63,7 +63,7 @@ class SextantWhereCard extends LitElement {
   _tiles(rows) {
     return html`<div class="tiles" style="--cols:${this._config.columns || 2}">${rows.map((r) => html`
       <button class="tile" @click=${() => this._more(r.id)}>${this._avatar(r, "", true)}
-        <span class="txt"><span class="n">${r.name}<span class="stay">${fmtStay(r.stay, true)}</span></span>
+        <span class="txt"><span class="n"><span class="nm">${r.name}</span><span class="stay">${fmtStay(r.stay, true)}</span></span>
         <span class="room">${r.where}</span><span class="sub">${r.spot || r.floor || ""}</span></span></button>`)}</div>`;
   }
 
@@ -122,11 +122,12 @@ class SextantWhereCard extends LitElement {
     .fact ha-icon { color: var(--purple-color, #926bc7); }
 
     .tiles { display: grid; grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); gap: 8px; }
-    .tile { display: flex; gap: 10px; align-items: center; min-width: 0; padding: 8px 10px; border-radius: var(--ha-card-border-radius, 12px);
+    .tile { display: flex; gap: 10px; align-items: center; min-width: 0; overflow: hidden; padding: 8px 10px; border-radius: var(--ha-card-border-radius, 12px);
       background: var(--ha-card-background, var(--card-background-color)); border: var(--ha-card-border-width, 1px) solid var(--ha-card-border-color, var(--divider-color)); }
     .tile .txt { display: flex; flex-direction: column; min-width: 0; flex: 1; }
     .tile .n { font-weight: 600; display: flex; gap: 6px; align-items: baseline; }
-    .tile .stay { margin-left: auto; font-weight: 400; font-size: 11px; }
+    .tile .nm { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .tile .stay { margin-left: auto; flex: none; font-weight: 400; font-size: 11px; }
     .tile .sub { font-size: 12px; }
 
     .rrow { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-top: 1px solid var(--divider-color); }
