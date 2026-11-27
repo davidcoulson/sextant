@@ -132,10 +132,29 @@ export function staysFromHistory(roomRows, floorRows, now) {
     if (last) last.end = e.t;
     stays.push({ start: e.t, end: now, room: cur.room, floor: cur.floor });
   }
+  // A short spell with the room or the floor missing is Sextant reloading or restarting (its sensors read
+  // unavailable for a few seconds), not a move: drop it, give its time to the stay before, and join the same
+  // room either side. A run of such stays counts as one spell, and the current state stays however short.
+  const kept = [];
+  const keep = (s) => {
+    const last = kept[kept.length - 1];
+    if (last && last.room === s.room && last.floor === s.floor) { last.end = s.end; return; }
+    if (last) last.end = s.start;
+    kept.push(s);
+  };
+  const missing = (s) => s.room === null || s.floor === null;
+  for (let i = 0; i < stays.length;) {
+    if (!missing(stays[i])) { keep(stays[i++]); continue; }
+    let j = i;
+    while (j < stays.length && missing(stays[j])) j++;
+    if (j === stays.length || stays[j - 1].end - stays[i].start >= BLIP_SECS) stays.slice(i, j).forEach(keep);
+    i = j;
+  }
   // The last stay is still going: the sheet shows it as "now" and counts it to the moment it draws.
-  if (stays.length) stays[stays.length - 1].ongoing = true;
-  return stays;
+  if (kept.length) kept[kept.length - 1].ongoing = true;
+  return kept;
 }
+const BLIP_SECS = 120;
 
 /** The history rows for one subject, newest first: a person's or pet's own stays
  *  ({kind: "person", name}), everyone's stays in a room ({kind: "room", room, floor}),
@@ -159,11 +178,12 @@ export function subjectHistory(people, subject, limit = 100) {
   return rows.sort((a, b) => b.start - a.start || a.name.localeCompare(b.name)).slice(0, limit);
 }
 
-/** A time of day for a history row; "yesterday" or the weekday when it is not today. */
+/** A time of day for a history row. Within the last 24 hours a clock time names one moment, so it needs no
+ *  day ("11:50 PM" at 6 AM is last night); older (a stay begun before the window) says "Yesterday" or the weekday. */
 export function clockAt(t, now = Date.now() / 1000) {
   const d = new Date(t * 1000), n = new Date(now * 1000);
   const hm = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  if (d.toDateString() === n.toDateString()) return hm;
+  if (now - t < 86400) return hm;
   const y = new Date(n); y.setDate(n.getDate() - 1);
   return `${d.toDateString() === y.toDateString() ? "Yesterday" : d.toLocaleDateString([], { weekday: "short" })} ${hm}`;
 }
@@ -172,8 +192,9 @@ export function clockAt(t, now = Date.now() / 1000) {
  *  Confident from 70%, Likely from 40%, else Unsure. */
 export function confidenceLevel(conf) {
   if (conf == null || !Number.isFinite(conf)) return null;
-  return conf >= 0.7 ? { word: "Confident", icon: "mdi:crosshairs-gps" }
-    : conf >= 0.4 ? { word: "Likely", icon: "mdi:crosshairs" } : { word: "Unsure", icon: "mdi:crosshairs-question" };
+  return conf >= 0.7 ? { word: "Confident", icon: "mdi:crosshairs-gps", colour: "var(--green-color, #4caf50)" }
+    : conf >= 0.4 ? { word: "Likely", icon: "mdi:crosshairs", colour: "var(--amber-color, #ffc107)" }
+      : { word: "Unsure", icon: "mdi:crosshairs-question", colour: "var(--red-color, #f44336)" };
 }
 
 /** A person's chip label: the first word of their name, capitalised ("david coulson" -> "David"). */

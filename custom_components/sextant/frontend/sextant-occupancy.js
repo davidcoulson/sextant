@@ -75,16 +75,27 @@ class SextantOccupancy extends LitElement {
     .pop { position: absolute; z-index: 5; top: calc(100% + 4px); left: 0; width: max-content; min-width: 180px; max-width: min(300px, 80vw); padding: 10px 12px; border-radius: 10px;
       background: var(--card-background-color); color: var(--primary-text-color); border: 1px solid var(--divider-color);
       box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25); pointer-events: none; }
-    .pop b { display: block; font-size: 12px; font-weight: 500; color: var(--secondary-text-color); margin-bottom: 2px; }
-    /* The summary: the place large, its floor under it, then small facts with icons. */
+    /* The summary: a round icon (amber for a pet), the name, the place large and its floor, then the facts as tinted
+       chips, each its own colour; how sure is green, amber or red. A chip's text mixes its colour with the text
+       colour, so it reads on a light theme and a dark one. */
+    .head { display: flex; align-items: center; gap: 10px; }
+    .head > div { min-width: 0; overflow-wrap: anywhere; }
+    .avatar { flex: none; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+      color: var(--c); background: color-mix(in srgb, var(--c) 20%, transparent); --mdc-icon-size: 20px; }
+    .who-name { font-size: 12px; font-weight: 500; color: color-mix(in srgb, var(--c) 45%, var(--primary-text-color)); }
     .place { font-size: 15px; font-weight: 500; line-height: 1.3; }
     .place .muted, .floorname { color: var(--secondary-text-color); }
     .floorname { font-size: 12px; }
-    .facts { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; font-size: 12px; color: var(--secondary-text-color); }
-    .fact { display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
-    .fact ha-icon { flex: none; }
+    .facts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; font-size: 12px; }
+    .fact { display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow-wrap: anywhere; padding: 2px 8px 2px 6px; border-radius: 999px;
+      color: color-mix(in srgb, var(--c) 40%, var(--primary-text-color)); background: color-mix(in srgb, var(--c) 16%, transparent); }
+    /* No color-mix (Safari before 16.4): plain text on a grey chip, the icons keep their colours. */
+    @supports not (color: color-mix(in srgb, red, blue)) {
+      .fact, .avatar { background: var(--secondary-background-color); }
+      .fact, .who-name { color: var(--primary-text-color); }
+    }
+    .fact ha-icon { flex: none; color: var(--c); --mdc-icon-size: 15px; }
     .why { margin-top: 6px; font-size: 12px; color: var(--secondary-text-color); }
-    .fact ha-icon { --mdc-icon-size: 15px; }
     .hint.more { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--divider-color); }
 
     /* The history sheet: up from the bottom on a phone, a panel on the right when wide. */
@@ -133,15 +144,25 @@ class SextantOccupancy extends LitElement {
       <button class="chip" aria-label=${`${label}: details and history`}
           @click=${() => { this._hover = null; this._openHistory({ kind: "person", name, label, pet, ids: r.ids }); }}>
         <ha-icon icon=${icon}></ha-icon>${label}${spot ? html`<span class="spot">&nbsp;· ${spot}</span>` : nothing}</button>
-      ${this._hover === key ? html`<div class="pop" role="tooltip"><b>${name}</b>${this._details(d, pet)}<div class="hint more">Click for the last ${HISTORY_HOURS} hours</div></div>` : nothing}
+      ${this._hover === key ? html`<div class="pop" role="tooltip">${this._details(d, pet, false, name, icon)}<div class="hint more">Click for the last ${HISTORY_HOURS} hours</div></div>` : nothing}
     </span>`;
+  }
+
+  /** The summary's head: a round icon (amber for a pet), the name when given, then ``body``. */
+  _head(pet, name, icon, body) {
+    const who = pet ? "var(--amber-color, #ffc107)" : "var(--primary-color)";
+    return html`<div class="head">
+        <span class="avatar" style=${`--c: ${who}`}><ha-icon icon=${icon || (pet ? "mdi:paw" : "mdi:account")}></ha-icon></span>
+        <div>${name ? html`<div class="who-name" style=${`--c: ${who}`}>${name}</div>` : nothing}${body}</div>
+      </div>`;
   }
 
   /** Where a person or pet is now, as a short summary: the place in large type, then small facts with icons.
    *  The numbers behind "Confident" are in its tooltip, and written out under the facts when ``full`` (the history sheet,
-   *  where a phone has no hover). */
-  _details(d, pet = false, full = false) {
-    if (!d) return html`<div class="hint">No Sextant location sensor found.</div>`;
+   *  where a phone has no hover). ``name`` heads it in the popup; the sheet's own title names them. */
+  _details(d, pet = false, full = false, name = null, icon = null) {
+    if (!d) return this._head(pet, name, icon, html`<div class="hint">No Sextant location sensor found.</div>`);
+
     const room = d.outside ? "Outside" : d.room && d.room !== "unknown" ? d.room : "Somewhere unknown";
     const floor = !d.outside && d.floor && d.floor !== "unknown" ? d.floor : null;
     // A pet is its own tag: "Tracked by Cat" says nothing.
@@ -156,14 +177,15 @@ class SextantOccupancy extends LitElement {
     const shown = d.settled ?? d.conf;
     const level = shown == null ? null : confidenceLevel(Math.round(shown * 100) / 100);   // the word agrees with the rounded figure
     const why = d.conf == null ? "" : d.settled == null || pct(d.settled) === pct(d.conf) ? `Confidence ${pct(d.conf)}` : `Confidence ${pct(d.settled)} over the stay, ${pct(d.conf)} this moment`;
-    const fact = (icon, text, title = text) => text ? html`<span class="fact" title=${title}><ha-icon icon=${icon}></ha-icon>${text}</span>` : nothing;
-    return html`<div class="place">${room}${d.spot && !d.outside ? html`<span class="muted"> · ${d.spot}</span>` : nothing}</div>
-      ${floor ? html`<div class="floorname">${floor}</div>` : nothing}
+    const fact = (icon, text, colour, title = text) => text ? html`<span class="fact" style=${`--c: ${colour}`} title=${title}><ha-icon icon=${icon}></ha-icon>${text}</span>` : nothing;
+    return html`${this._head(pet, name, icon || classIcon(d.thingClass), html`
+          <div class="place">${room}${d.spot && !d.outside ? html`<span class="muted"> · ${d.spot}</span>` : nothing}</div>
+          ${floor ? html`<div class="floorname">${floor}</div>` : nothing}`)}
       <div class="facts">
-        ${fact("mdi:clock-outline", d.since ? fmtAge((Date.now() - d.since) / 1000) : null, d.outside ? "Out for" : "Here for")}
-        ${fact(WHERE_ICON[d.source] || "mdi:help-circle-outline", heard, `${heard} · ${src}`)}
-        ${level ? fact(level.icon, level.word, why) : nothing}
-        ${fact(pet ? "mdi:paw" : classIcon(d.thingClass) || "mdi:cellphone", device, `Tracked by ${device}`)}
+        ${fact("mdi:clock-outline", d.since ? fmtAge((Date.now() - d.since) / 1000) : null, "var(--blue-color, #2196f3)", d.outside ? "Out for" : "Here for")}
+        ${fact(WHERE_ICON[d.source] || "mdi:help-circle-outline", heard, "var(--purple-color, #926bc7)", `${heard} · ${src}`)}
+        ${level ? fact(level.icon, level.word, level.colour, why) : nothing}
+        ${fact(pet ? "mdi:paw" : classIcon(d.thingClass) || "mdi:cellphone", device, "var(--secondary-text-color)", `Tracked by ${device}`)}
       </div>
       ${full && why ? html`<div class="why">${why}</div>` : nothing}`;
   }

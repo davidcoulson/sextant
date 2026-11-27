@@ -172,14 +172,26 @@ test("trackedPeople finds each person's or pet's room and floor sensors", async 
 
 test("staysFromHistory joins room and floor changes into stays, one move per cycle", async () => {
   const { staysFromHistory } = await import("../../custom_components/sextant/frontend/sextant-occupancy-data.js");
-  const room = [{ s: "Great Room", lu: 100 }, { s: "Great Room", lu: 150 }, { s: "Master Bedroom", lu: 200.5 }, { s: "unavailable", lu: 400 }, { s: "Master Bedroom", lc: 500, lu: 510 }];
+  const room = [{ s: "Great Room", lu: 100 }, { s: "Great Room", lu: 150 }, { s: "Master Bedroom", lu: 200.5 }, { s: "unavailable", lu: 400 }, { s: "Master Bedroom", lc: 700, lu: 710 }];
   const floor = [{ s: "Ground Floor", lu: 100 }, { s: "Second Floor", lu: 200 }];
   assert.deepEqual(staysFromHistory(room, floor, 1000), [
     { start: 100, end: 200, room: "Great Room", floor: "Ground Floor" },
     { start: 200, end: 400, room: "Master Bedroom", floor: "Second Floor" },
-    { start: 400, end: 500, room: null, floor: "Second Floor" },
-    { start: 500, end: 1000, room: "Master Bedroom", floor: "Second Floor", ongoing: true },
+    { start: 400, end: 700, room: null, floor: "Second Floor" },
+    { start: 700, end: 1000, room: "Master Bedroom", floor: "Second Floor", ongoing: true },
   ]);
+  // A reload: both sensors unavailable for 14 s. No stay of its own; the room either side is one stay.
+  const reload = staysFromHistory(
+    [{ s: "Eilee's Room", lu: 0 }, { s: "unavailable", lu: 300 }, { s: "Eilee's Room", lu: 314 }, { s: "Kitchen", lu: 400 }, { s: "unavailable", lu: 500 }, { s: "Hall", lu: 513 }],
+    [{ s: "Second Floor", lu: 0 }, { s: "unavailable", lu: 300 }, { s: "Second Floor", lu: 314 }, { s: "unavailable", lu: 500 }, { s: "Second Floor", lu: 513 }], 600);
+  assert.deepEqual(reload.map((s) => [s.room, s.start, s.end]), [["Eilee's Room", 0, 400], ["Kitchen", 400, 513], ["Hall", 513, 600]]);
+  // Only the floor dropping out is a reload too: no "A → A".
+  assert.deepEqual(staysFromHistory([{ s: "A", lu: 0 }], [{ s: "F", lu: 0 }, { s: "unavailable", lu: 50 }, { s: "F", lu: 63 }], 100).map((s) => [s.room, s.floor]), [["A", "F"]]);
+  // Two short pieces of one long outage (the floor changed in between) are one spell of 150 s, so they stay.
+  const long = staysFromHistory([{ s: "A", lu: 0 }, { s: "unavailable", lu: 100 }, { s: "A", lu: 250 }], [{ s: "F", lu: 0 }, { s: "G", lu: 175 }, { s: "F", lu: 250 }], 400);
+  assert.deepEqual(long.map((s) => [s.room, s.start]), [["A", 0], [null, 100], [null, 175], ["A", 250]]);
+  // Unplaced right now is shown, however short.
+  assert.equal(staysFromHistory([{ s: "A", lu: 0 }, { s: "unknown", lu: 95 }], [], 100).at(-1).room, null);
   // A floor change a moment before the room flips back is not a stay of its own.
   assert.deepEqual(staysFromHistory([{ s: "A", lu: 0 }, { s: "A", lu: 10.5 }], [{ s: "F", lu: 0 }, { s: "G", lu: 10 }, { s: "F", lu: 11 }], 50),
     [{ start: 0, end: 50, room: "A", floor: "F", ongoing: true }]);
@@ -212,6 +224,7 @@ test("clockAt says the day when it is not today, and a room carries its since", 
   const now = new Date(2026, 10, 27, 9, 0).getTime() / 1000;
   assert.doesNotMatch(clockAt(now - 3600, now), /Yesterday/);
   assert.match(clockAt(now - 86400, now), /^Yesterday /);
+  assert.doesNotMatch(clockAt(now - 10 * 3600, now), /Yesterday/);   // 11 PM last night, at 9 AM
   const out = occupancyByFloor({ "binary_sensor.a": st("on", "A", "F", { since: "2026-11-27T08:00:00+00:00" }), "binary_sensor.b": st("off", "B", "F", { since: "garbage" }) }, []);
   assert.equal(out[0].rooms.find((r) => r.room === "A").since, Date.parse("2026-11-27T08:00:00+00:00") / 1000);
   assert.equal(out[0].rooms.find((r) => r.room === "B").since, null);
@@ -223,6 +236,8 @@ test("confidenceLevel turns a confidence into a word and a crosshairs icon", asy
   assert.equal(confidenceLevel(0.7).word, "Confident");
   assert.equal(confidenceLevel(0.53).word, "Likely");
   assert.equal(confidenceLevel(0.1).icon, "mdi:crosshairs-question");
+  assert.match(confidenceLevel(0.7).colour, /green/);
+  assert.match(confidenceLevel(0.1).colour, /red/);
   assert.equal(confidenceLevel(null), null);
   assert.equal(confidenceLevel(NaN), null);
 });
