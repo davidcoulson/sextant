@@ -8436,6 +8436,13 @@ async def async_setup(hass, config):
         if "sextant" in panels:
             async_remove_panel(hass, "sextant")
 
+        from . import ws as ws_running  # noqa: PLC0415
+
+        # The Python this import is, hashed once: an options reload runs setup again on the same modules,
+        # and reload_code imports a fresh ws module, so it is hashed again only when the code really changed.
+        if ws_running.RUNNING_CODE is None:
+            ws_running.RUNNING_CODE = await hass.async_add_executor_job(ws_running.code_signature)
+
         if show_sidebar_panel:
             try:
                 _LOGGER.debug("Registering the custom panel for Sextant...")
@@ -8455,7 +8462,6 @@ async def async_setup(hass, config):
                 from . import ws as ws_mod  # noqa: PLC0415
 
                 ws_mod.RUNNING_VERSION = str(integration.version) if integration.version else None
-                ws_mod.RUNNING_CODE = await hass.async_add_executor_job(ws_mod.code_signature)
                 await panel_custom.async_register_panel(
                     hass,
                     frontend_url_path="sextant",
@@ -8666,16 +8672,16 @@ async def async_setup_entry(hass, entry):
     """Set up Sextant from a config entry."""
     ok = await async_setup(hass, entry)
     if ok:
-        _clear_marketplace_restart(hass)
-        await _clear_restart_if_same_code(hass)
-
         # Marketplace raises its repair after it has written the files, so the check then sees the new Python.
+        # Listening before the sweep, so a repair raised in between is not missed; a re-download updates it.
         async def _on_issue(event) -> None:
-            if (event.data.get("action") == "create" and event.data.get("domain") == "marketplace"
+            if (event.data.get("action") in ("create", "update") and event.data.get("domain") == "marketplace"
                     and str(event.data.get("issue_id", "")).startswith("restart_required_")):
                 await _clear_restart_if_same_code(hass)
 
         entry.async_on_unload(hass.bus.async_listen("repairs_issue_registry_updated", _on_issue))
+        _clear_marketplace_restart(hass)
+        await _clear_restart_if_same_code(hass)
     return ok
 
 
