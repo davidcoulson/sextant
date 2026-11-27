@@ -71,7 +71,7 @@ class SextantWhereCard extends LitElement {
     const badgeIcon = typeof badge === "string" ? badge : r.moving?.icon || (r.away ? SOURCE_ICONS[r.source] || "mdi:home-export-outline" : classIcon(r.via));
     // As on the house's Mushroom person cards: green home, blue in a named zone, orange on the move, red away.
     const bc = !r.away ? "" : r.zone ? "var(--blue-color, #2196f3)" : r.moving ? "var(--orange-color, #ff9800)" : "var(--red-color, #f44336)";
-    // Away has no Sextant confidence (GPS or a geocoder placed them): a full grey ring, the badge keeps its colour.
+    // Away has no Sextant confidence (GPS placed them, or nothing did): a full grey ring, the badge keeps its colour.
     const ring = r.level ? `--c:${r.level.color};--p:${Math.round(r.conf * 100)}` : bc ? "--c:var(--disabled-text-color, #bdbdbd);--p:100" : "--c:var(--divider-color);--p:0";
     return html`<span class="ring ${size}" style=${ring} title=${r.level ? `${r.level.label} ${Math.round(r.conf * 100)}%` : ""}>
       <span class="av">${r.picture ? html`<img src=${r.picture} alt="">` : fallback}</span>
