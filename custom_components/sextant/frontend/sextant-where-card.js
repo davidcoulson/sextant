@@ -60,27 +60,37 @@ class SextantWhereCard extends LitElement {
   _more(id) { this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: id }, bubbles: true, composed: true })); }
 
   _avatar(r, size = "", badge = false) {
-    const ring = r.level ? `--c:${r.level.color};--p:${Math.round(r.conf * 100)}` : "--c:var(--divider-color);--p:0";
     const fallback = r.pet ? html`<ha-icon icon=${classIcon(r.via) || "mdi:paw"}></ha-icon>` : r.name[0];
     const badgeIcon = r.moving?.icon || (r.away ? SOURCE_ICONS[r.source] || "mdi:home-export-outline" : classIcon(r.via));
     // As on the house's Mushroom person cards: green home, blue in a named zone, orange on the move, red away.
     const bc = !r.away ? "" : r.zone ? "var(--blue-color, #2196f3)" : r.moving ? "var(--orange-color, #ff9800)" : "var(--red-color, #f44336)";
+    // Away has no confidence: a full ring in the badge colour.
+    const ring = r.level ? `--c:${r.level.color};--p:${Math.round(r.conf * 100)}` : bc ? `--c:${bc};--p:100` : "--c:var(--divider-color);--p:0";
     return html`<span class="ring ${size}" style=${ring} title=${r.level ? `${r.level.label} ${Math.round(r.conf * 100)}%` : ""}>
       <span class="av">${r.picture ? html`<img src=${r.picture} alt="">` : fallback}</span>
       ${badge && badgeIcon ? html`<span class="badge" style=${bc ? `background:${bc}` : ""}><ha-icon icon=${badgeIcon}></ha-icon></span>` : nothing}</span>`;
   }
 
-  // The headline: where they are, or with precise only the most precise place.
-  _where(r) { return this._config.precise ? preciseWhere(r) : r.where; }
-  // The line under it: the spot, else the floor when show_floor is on; none with precise.
-  _sub(r) { return this._config.precise ? "" : r.spot || (this._config.show_floor ? r.floor : null) || ""; }
+  // The headline: where they are, or with precise only the most precise place. On the move with a
+  // town, the town heads (split) and the activity goes under it: the badge already shows which.
+  _where(r, split = true) {
+    if (r.away) return split && r.moving && r.place ? r.place : r.where;
+    return this._config.precise ? preciseWhere(r) : r.where;
+  }
+  // The line under it: the activity when away, the spot, else the floor when show_floor is on; none with precise.
+  _sub(r) {
+    if (r.away) return r.moving && r.place ? r.moving.label : "";
+    return this._config.precise ? "" : r.spot || (this._config.show_floor ? r.floor : null) || "";
+  }
 
   _tiles(rows) {
+    // Away, the town takes both lines: a third would not fit a phone-width tile, and the badge shows the activity.
+    const sub = (r) => (r.away ? "" : this._sub(r));
     return html`<div class="tiles" style="--cols:${this._config.columns || 2}">${rows.map((r) => html`
       <button class="tile" @click=${() => this._more(r.id)}>${this._avatar(r, "", true)}
         <span class="txt"><span class="n"><span class="nm">${r.name}</span><span class="stay">${fmtStay(r.stay, true)}</span></span>
-        <span class="room ${this._sub(r) ? "" : "two"}" title=${this._where(r)}>${this._where(r)}</span>
-        ${this._sub(r) ? html`<span class="sub" title=${this._sub(r)}>${this._sub(r)}</span>` : nothing}</span></button>`)}</div>`;
+        <span class="room ${sub(r) ? "" : "two"}" title=${r.where}>${this._where(r)}</span>
+        ${sub(r) ? html`<span class="sub" title=${sub(r)}>${sub(r)}</span>` : nothing}</span></button>`)}</div>`;
   }
 
   _rooms(rows) {
@@ -94,7 +104,7 @@ class SextantWhereCard extends LitElement {
 
   _strip(rows) {
     return html`<div class="strip">${stripChips(rows).map((c) => c.kind === "one"
-      ? html`<button class="chip" @click=${() => this._more(c.row.id)}>${this._avatar(c.row, "xs")}${c.row.name} · ${this._where(c.row)}<span class="stay">${fmtStay(c.row.stay, true)}</span></button>`
+      ? html`<button class="chip" @click=${() => this._more(c.row.id)}>${this._avatar(c.row, "xs")}${c.row.name} · ${this._where(c.row, false)}<span class="stay">${fmtStay(c.row.stay, true)}</span></button>`
       : html`<span class="chip" title=${c.rows.map((r) => `${r.name}: ${r.spot || r.where}`).join("\n")}><span class="stack">${c.rows.map((r) => this._avatar(r, "xs"))}</span>${c.rows.length} ${c.cls}s · ${c.floor || "?"}</span>`)}</div>`;
   }
 

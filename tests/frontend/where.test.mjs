@@ -143,3 +143,18 @@ test("precise: spot, else room, else floor, else Home; away and unavailable keep
   assert.equal(preciseWhere({ where: "Driving near Avon, OH", away: true, room: null, spot: null, floor: null }), "Driving near Avon, OH");
   assert.equal(preciseWhere({ where: "Unavailable", room: null, spot: null, floor: null }), "Unavailable");
 });
+
+test("away: the town on its own for the tile headline, and time away from the sensor's last change", () => {
+  const st = {
+    "sensor.mi_sextant_person_location": { ...loc("away", { kind: "zone", zone: "not_home", presence: "away" }), last_changed: new Date((NOW - 3600) * 1000).toISOString() },
+    "sensor.mi_phone_activity": loc("Walking", {}),
+    "sensor.mi_phone_geocoded_location": loc("6800 Pearl Rd", { Locality: "Middleburg Heights", "Administrative Area": "OH" }),
+    "sensor.work_sextant_person_location": loc("away", { kind: "zone", zone: "work", presence: "away" }),
+  };
+  const e = { entity: "sensor.mi_sextant_person_location", activity: "sensor.mi_phone_activity", place: "sensor.mi_phone_geocoded_location" };
+  const [d, z] = whereRows(st, [e, { entity: "sensor.work_sextant_person_location" }], NOW);
+  assert.deepEqual([d.place, d.where, d.stay], ["Middleburg Heights, OH", "Walking near Middleburg Heights, OH", 3600]);
+  assert.deepEqual([z.place, z.stay], [null, null]);  // a zone is the place itself; no last_changed, no time
+  st["sensor.mi_phone_geocoded_location"] = loc("unavailable", {});
+  assert.equal(whereRows(st, [e], NOW)[0].place, null);
+});
