@@ -121,14 +121,18 @@ def test_the_floor_election_comes_back_so_the_floor_is_not_new():
     sextant._thing_floors()["watch"] = "Second Floor"
     sextant._floor_since["watch"] = 4100.0
     sextant._floor_probability["watch"] = {"Second Floor": 0.96, "Ground Floor": 0.04}
+    sextant._floor_challenge.clear()
+    sextant._floor_challenge["watch"] = {"floor": "Ground Floor", "led": 4800.0}
 
     saved = json.loads(json.dumps(runtime.snapshot(5000.0, floors=sextant._floor_elections())))
     back = runtime.restore(saved, 5030.0)
 
-    sextant._floor_since.clear(); sextant._floor_probability.clear()
+    sextant._floor_since.clear(); sextant._floor_probability.clear(); sextant._floor_challenge.clear()
     sextant._thing_floors().clear()
     sextant._restore_floor_elections(back["floors"])
 
+    # The challenger's clock too: a code reload no longer restarts a floor change in progress.
+    assert sextant._floor_challenge.pop("watch") == {"floor": "Ground Floor", "led": 4800.0}
     assert sextant._thing_floors()["watch"] == "Second Floor"      # not a floor change
     assert sextant._floor_since["watch"] == 4100.0                 # keeps its tenure
     assert sextant._floor_probability["watch"]["Second Floor"] == 0.96

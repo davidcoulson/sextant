@@ -232,15 +232,15 @@ def test_elect_hysteresis_and_dwell():
 def test_a_still_thing_in_a_locked_room_keeps_its_floor_against_a_small_lead():
     # Fry on the catwalk: Ground led by 0.01-0.08 and won the floor every few minutes.
     small, ch = {"a": 0.44, "b": 0.36}, None
-    for t in (0.0, 240.0, 899.0):
+    for t in (0.0, 240.0, 299.0):
         floor, ch = sextant._elect_floor(small, "b", {"a", "b"}, ch, now=t, switch_secs=60.0, margin=0.10, held=True)
         assert floor == "b"
     # Moving (the lock gone), the lead that has lasted all along wins at once.
-    assert sextant._elect_floor(small, "b", {"a", "b"}, ch, now=300.0, switch_secs=60.0, margin=0.10)[0] == "a"
-    # Held, a lead that lasts 15 min still wins: a room locked on the wrong floor is left in the end.
-    assert sextant._elect_floor(small, "b", {"a", "b"}, ch, now=900.0, switch_secs=60.0, margin=0.10, held=True)[0] == "a"
+    assert sextant._elect_floor(small, "b", {"a", "b"}, ch, now=290.0, switch_secs=60.0, margin=0.10)[0] == "a"
+    # Held, a lead that lasts 5 min still wins: David's watch, up from the basement, read Basement for 9 min at 15.
+    assert sextant._elect_floor(small, "b", {"a", "b"}, ch, now=300.0, switch_secs=60.0, margin=0.10, held=True)[0] == "a"
     # A small lead that has lasted and then grows past the margin wins at once, as before.
-    assert sextant._elect_floor({"a": 0.6, "b": 0.4}, "b", {"a", "b"}, ch, now=300.0, switch_secs=60.0,
+    assert sextant._elect_floor({"a": 0.6, "b": 0.4}, "b", {"a", "b"}, ch, now=290.0, switch_secs=60.0,
                                 margin=0.10, held=True)[0] == "a"
     # A lead over the margin still wins while held.
     big, ch = {"a": 0.6, "b": 0.4}, None
