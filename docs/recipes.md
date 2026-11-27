@@ -343,7 +343,8 @@ how long they have been there, and a ring that fills and colours with how sure
 Sextant is (green confident, amber likely, red unsure). The badge on the photo
 is the device that placed them (phone, watch, collar tag). Tap anyone for the
 location sensor's details. Add the resource `/sextant/sextant-where-card.js`
-(JavaScript module) first.
+(JavaScript module) first. The card has a visual editor; a person or pet picked
+there brings their photo and name.
 
 ```yaml
 type: custom:sextant-where-card
@@ -378,7 +379,7 @@ it three times) to the room's own.
 The chip: faces of who is in the room, how long it has been on, and the
 mode's icon. An empty room shows how long it has been empty and who was in
 it last (from the recorder). Add the resource `/sextant/sextant-room-chip.js`
-(JavaScript module) once.
+(JavaScript module) once. The chip has a visual editor.
 
 ```yaml
 type: custom:sextant-room-chip
@@ -586,6 +587,34 @@ card:
   type: markdown
   content: "🐈 Leela is at the litter boxes"
 ```
+
+### Cards for the room you are in
+
+The Sextant conditional card shows another card only while the person
+viewing the dashboard is in one of some rooms or on one of some floors, so
+one dashboard can show the kitchen's cards in the kitchen and the theater's
+in the theater. Add the resource `/sextant/sextant-conditional-card.js`
+(JavaScript module) once; it has a visual editor like Home Assistant's own
+conditional card.
+
+```yaml
+type: custom:sextant-conditional-card
+rooms: [Kitchen, Butler Pantry]   # in any of these rooms...
+floors: [Basement]                # ...or anywhere on these floors
+users: [<user id>]                # only for these dashboard users (optional)
+person: person.alex_smith         # whose place (optional; default: whoever is viewing)
+card:
+  type: markdown
+  content: "Today's recipes"
+```
+
+- The viewer is the person linked to the Home Assistant user (Settings →
+  People → the person's user). A user with no linked person, or someone away,
+  matches no room or floor.
+- Rooms and floors are names as Sextant shows them, either case. A room in
+  `rooms` or a floor in `floors` is enough; `users`, when set, must match too.
+- With no rooms or floors it is a per-user card.
+- While editing the dashboard the inner card always shows.
 
 ### Away people on the map
 
