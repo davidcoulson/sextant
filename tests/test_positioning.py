@@ -1892,6 +1892,13 @@ def test_anchor_lets_go_when_another_proxy_reads_closer():
     for t, (tab, kit) in zip((130, 136, 141, 147), ((1.04, 0.93), (1.03, 1.0), (1.03, 1.11), (1.02, 0.93))):
         assert sextant._elect_anchor("w", "F", rx(tab, kit), layout, now=float(t))["slug"] == "tablet"
     assert sextant._elect_anchor("w", "F", rx(1.02, 0.95), layout, now=151.0) is None
+    # A clock the release distance started does not survive a tie once the
+    # reading is back under it.
+    sextant._elect_anchor("w", "F", rx(0.5, 1.5), layout, now=200.0)
+    assert sextant._elect_anchor("w", "F", rx(0.5, 1.5), layout, now=221.0)["slug"] == "tablet"
+    assert sextant._elect_anchor("w", "F", rx(1.60, 1.65), layout, now=225.0)["slug"] == "tablet"  # far: clock starts
+    assert sextant._elect_anchor("w", "F", rx(1.00, 1.04), layout, now=230.0)["slug"] == "tablet"  # back, tied: clock stops
+    assert sextant._elect_anchor("w", "F", rx(1.00, 1.04), layout, now=250.0)["slug"] == "tablet"
 
 
 def test_anchor_needs_a_clear_nearest_and_can_be_disabled():

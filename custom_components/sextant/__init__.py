@@ -7187,11 +7187,13 @@ def _elect_anchor(entity, floor_name, receivers, layout, now=None):
     rival = next((d for d, rx in ranked if rx.get("entity_id") != st["slug"]), None)
     beaten = current is not None and rival is not None and rival * 1.1 < current[0]
     tied = current is not None and rival is not None and not beaten and rival < current[0] * 1.1
-    if current is not None and current[0] <= release_m and not beaten and not (tied and st.get("away_since")):
+    # Only a clock a rival started survives a tie; one the release distance started does not.
+    if current is not None and current[0] <= release_m and not beaten and not (tied and st.get("away_since") and st.get("away_beaten")):
         st["away_since"] = None
         return _place(current[1])
     # Reading gone, opened past the release distance, or beaten: let go after the dwell.
-    st["away_since"] = st.get("away_since") or now
+    if not st.get("away_since"):
+        st["away_since"], st["away_beaten"] = now, beaten
     if now - st["away_since"] >= dwell:
         _anchor_state.pop(entity, None)
         return None
