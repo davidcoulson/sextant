@@ -391,6 +391,9 @@ async def ws_tuning_set(hass, connection, msg):
     # How far this class's usual rooms by hour ease a close room switch (layout
     # class_habit_gain, 0..0.3); None goes back to the default.
     vol.Optional("class_habit_gain"): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=0.0, max=0.3))),
+    # How hard its usual floor at this hour pulls the floor election (layout
+    # class_habit_floor_weight, 0..1); None goes back to the default.
+    vol.Optional("class_habit_floor_weight"): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=0.0, max=1.0))),
     # A tracker of the thing's own (a car's or a phone's GPS): home there while
     # away here raises the dead-thing repair.
     vol.Optional("home_entity"): vol.Any(None, str),
@@ -536,14 +539,16 @@ async def ws_thing_tune(hass, connection, msg):
             values = data.get("class_always_home")
             data["class_always_home"] = {**(values if isinstance(values, dict) else {}), cls: msg["class_always_home"]}
             changes["class_always_home"] = msg["class_always_home"]
-        if "class_habit_gain" in msg and cls:
-            values = dict(data.get("class_habit_gain") if isinstance(data.get("class_habit_gain"), dict) else {})
-            if msg["class_habit_gain"] is None:
+        for key in ("class_habit_gain", "class_habit_floor_weight"):
+            if key not in msg or not cls:
+                continue
+            values = dict(data.get(key) if isinstance(data.get(key), dict) else {})
+            if msg[key] is None:
                 values.pop(cls, None)
             else:
-                values[cls] = msg["class_habit_gain"]
-            data["class_habit_gain"] = values
-            changes["class_habit_gain"] = msg["class_habit_gain"]
+                values[cls] = msg[key]
+            data[key] = values
+            changes[key] = msg[key]
         for key in ("charging_entity", "battery_entity", "home_entity"):
             if key not in msg:
                 continue

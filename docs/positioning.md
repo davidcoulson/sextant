@@ -187,3 +187,20 @@ per-scanner RSSI offset in Bermuda's model, which is how
 Sextant counts the time each thing spends in each room, by weekday or weekend and hour of the day, from the rooms it is confident about, and forgets with a half-life of three weeks. A thing on the line between two rooms then switches a little more easily into the room it is usually in at that hour and a little less easily out of it (`habit_margin_gain`, 0.1: at most that much on the lead a challenger needs). It never overrides clear evidence, needs about 20 minutes in an hour slot before it says anything, and is kept in `.storage/sextant_habits`. Set `habit_margin_gain` to 0 to turn it off; delete that file to start over.
 
 The pull is set per class: in a thing's dialog on the Things page, "Routine pull for every <class>" (0 to 0.3). Blank uses `habit_margin_gain`, except pets, which default to none because a tag on a dog or cat has no routine to lean on. Every thing still learns its own history either way.
+
+The same history can weigh the floor election too (`habit_floor_weight`, 0 = off by default). Each floor's score is multiplied by the share of this hour the thing is usually on that floor, raised to the weight, and a floor it is never on at that hour still counts as 5%. At 0.25 a dog asleep upstairs at 03:00 nine nights in ten has its upstairs score multiplied by about 0.97 and the ground floor's by about 0.56, which holds it upstairs through the readings that dip, while a plain walk downstairs still wins. It is set per class in a thing's dialog ("Floor routine for every <class>", 0 to 1; blank uses `habit_floor_weight`), so it can be tried on the dogs first. It is skipped while the thing's charging sensor says it is charging, and for a watch whose advert says it is off a wrist: either sits where it was put, not where its owner usually is. The election log shows each floor's factor as `habit`. It only applies at an hour when one floor has at least `habit_floor_min_share` (0.7) of the thing's time: a cat that roams the house in the afternoon has no floor to be held to then. Replayed over 40 hours of the election log at weight 0.2, a gate of 0.6 to 0.75 kept a dog's nights upstairs right and halved the extra cat moves the prior missed without it; 0.8 lost the nights.
+
+Spots are counted the same way, inside rooms the room election is sure of. They pull nothing yet; with the rooms and floors they show as the `usual_*` attributes on a thing's sensors (see [automation](automation.md)).
+
+A holiday or a day off is not the routine. `sextant.pause_habits` stops both pulls and the learning until a time (`until`) or for a number of `hours`, for some `things` or `classes` or, with neither, for everything; `sextant.resume_habits` ends every pause. Pauses are stored with the floor plan, so they survive a restart. `sensor.sextant_habit_pauses` counts the pauses running; its `pauses` attribute lists each one's end and the things or classes it covers, and `until` is when the last one ends. An automation can call it from a holiday calendar:
+
+```yaml
+triggers:
+  - trigger: calendar
+    event: start
+    entity_id: calendar.holidays
+actions:
+  - action: sextant.pause_habits
+    data:
+      until: "{{ trigger.calendar_event.end }}"
+```
