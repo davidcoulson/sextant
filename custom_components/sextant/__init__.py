@@ -8102,6 +8102,8 @@ def _register_calibration_services(hass) -> None:
             raise HomeAssistantError("pause_habits needs until or hours")
         if until <= now:
             raise HomeAssistantError("pause_habits: until is already past")
+        if until - now > habits_mod.MAX_PAUSE_S:
+            raise HomeAssistantError("pause_habits: a pause can last at most a year")
         pause = {"until": until, **{k: list(call.data[k]) for k in ("things", "classes") if call.data.get(k)}}
         async with LAYOUT_LOCK:
             data = get_layout_for_edit(hass)

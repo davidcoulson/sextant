@@ -135,4 +135,5 @@ def test_a_floor_name_with_a_bar_gets_its_own_share():
 def test_running_pauses_are_the_live_ones_soonest_first():
     layout = {"habit_pauses": [{"until": 90.0}, {"until": 10.0}, {"until": 50.0, "things": ["m"]}, {"until": True}, "x"]}
     assert [p["until"] for p in habits.running_pauses(layout, 20)] == [50.0, 90.0]
+    assert habits.running_pauses({"habit_pauses": [{"until": 1e20}]}, 0) == []   # hand-edited nonsense: not shown
     assert habits.running_pauses({}, 0) == [] and habits.running_pauses({"habit_pauses": "x"}, 0) == []

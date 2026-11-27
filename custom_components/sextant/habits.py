@@ -105,6 +105,7 @@ def gain_for(layout, ent: str, default: float, pet_classes=frozenset({"cat", "do
 
 
 MAX_PAUSES = 20
+MAX_PAUSE_S = 366 * 86400.0   # longer is a typo, and a date past year 9999 cannot be shown
 
 
 def paused(layout, ent: str, now: float) -> bool:
@@ -130,7 +131,7 @@ def running_pauses(layout, now: float) -> list:
     """The pauses not over yet, soonest end first: what the habit pauses sensor shows."""
     pauses = (layout or {}).get("habit_pauses") if isinstance(layout, dict) else None
     live = [p for p in pauses if isinstance(p, dict) and isinstance(p.get("until"), (int, float))
-            and not isinstance(p.get("until"), bool) and p["until"] > now] if isinstance(pauses, list) else []
+            and not isinstance(p.get("until"), bool) and now < p["until"] < now + MAX_PAUSE_S] if isinstance(pauses, list) else []
     return sorted(live, key=lambda p: p["until"])
 
 
