@@ -33,7 +33,6 @@ import { forwardHaContext, loadHaEditors, entityOptions } from "./sextant-ha-edi
 const MODE_ICONS = { sleep: "mdi:sleep", tv: "mdi:television", cooking: "mdi:chef-hat", gaming: "mdi:controller" };
 const SOURCE_ICONS = { ble: "mdi:bluetooth", wifi: "mdi:wifi", gps: "mdi:map-marker-radius" };
 const LAYOUTS = ["tiles", "rooms", "strip", "rings", "pets"];
-const SOURCE_NAMES = { ble: "Bluetooth", wifi: "Wi-Fi", gps: "GPS", held: "Last heard" };
 
 class SextantWhereCard extends LitElement {
   static properties = { hass: { attribute: false }, _config: { state: true }, _tick: { state: true } };
@@ -69,7 +68,7 @@ class SextantWhereCard extends LitElement {
 
   _avatar(r, size = "", badge = false) {
     const fallback = r.pet ? html`<ha-icon icon=${classIcon(r.via) || "mdi:paw"}></ha-icon>` : r.name[0];
-    const badgeIcon = r.moving?.icon || (r.away ? SOURCE_ICONS[r.source] || "mdi:home-export-outline" : classIcon(r.via));
+    const badgeIcon = typeof badge === "string" ? badge : r.moving?.icon || (r.away ? SOURCE_ICONS[r.source] || "mdi:home-export-outline" : classIcon(r.via));
     // As on the house's Mushroom person cards: green home, blue in a named zone, orange on the move, red away.
     const bc = !r.away ? "" : r.zone ? "var(--blue-color, #2196f3)" : r.moving ? "var(--orange-color, #ff9800)" : "var(--red-color, #f44336)";
     // Away has no confidence: a full ring in the badge colour.
@@ -130,9 +129,9 @@ class SextantWhereCard extends LitElement {
   _pets(rows) {
     const company = petCompany(rows), pets = rows.filter((r) => r.pet);
     const dogs = pets.filter((r) => r.roams), rest = pets.filter((r) => !r.roams);
-    const face = (r, size) => {
+    const face = (r, size, badge) => {
       const w = company.get(r.id) || [];
-      return html`<span class="pface">${this._avatar(r, size)}${w[0] ? html`<span class="with-face" title=${w[0].name}>
+      return html`<span class="pface">${this._avatar(r, size, badge)}${w[0] ? html`<span class="with-face" title=${w[0].name}>
         ${w[0].picture ? html`<img src=${w[0].picture} alt="">` : w[0].name[0]}</span>` : nothing}</span>`;
     };
     const withChip = (r) => {
@@ -142,12 +141,12 @@ class SextantWhereCard extends LitElement {
     const where = (r) => r.away ? this._where(r) : r.spot || r.where;
     const dog = (r) => {
       const state = r.where === "Unavailable" ? null : r.away ? "away" : r.outside ? "outside" : "inside";
-      const how = [SOURCE_NAMES[r.source], r.distance != null ? `${fmtDistance(r.distance)} from home` : ""].filter(Boolean).join(" · ");
-      return html`<button class="dog" @click=${() => this._more(r.id)}>${face(r, "xl")}
+      // The badge says how she was placed (Bluetooth, Wi-Fi, GPS); away it is the usual away badge.
+      return html`<button class="dog" @click=${() => this._more(r.id)}>${face(r, "xl", r.away || r.moving ? true : SOURCE_ICONS[r.source] || false)}
         <span class="txt"><span class="n">${r.name}</span>
           <span class="states">${["inside", "outside", "away"].map((s) => html`<span class="st ${s === state ? `on ${s}` : ""}">${s[0].toUpperCase() + s.slice(1)}</span>`)}</span>
-          <span class="room ${r.away ? "two" : ""}" title=${this._where(r, false)}>${where(r)}${r.stay != null ? html` <span class="stay">· ${fmtStay(r.stay, true)}</span>` : nothing}</span>
-          ${withChip(r)}${how ? html`<span class="sub">${how}</span>` : nothing}</span></button>`;
+          <span class="room ${r.away ? "two" : ""}" title=${this._where(r, false)}>${where(r)}${r.stay != null ? html` <span class="stay">· ${fmtStay(r.stay, true)}</span>` : nothing}${r.distance != null ? html` <span class="stay">· ${fmtDistance(r.distance)}</span>` : nothing}</span>
+          ${withChip(r)}</span></button>`;
     };
     return html`${dogs.map(dog)}${rest.length ? html`<div class="ptiles ${dogs.length ? "below" : ""}" style="--cols:${this._config.columns || 2}">${rest.map((r) => html`
       <button class="ptile" @click=${() => this._more(r.id)}>${face(r, "")}
@@ -234,7 +233,8 @@ class SextantWhereCard extends LitElement {
     .dog + .dog { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--divider-color); }
     .dog .txt, .ptile .txt { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.25; }
     .dog .n { font-weight: 600; font-size: 17px; }
-    .dog .room { font-size: 15px; } .dog .sub { font-size: 12px; margin-top: 2px; }
+    .dog .room { font-size: 15px; }
+    .ring.xl .badge { width: 22px; height: 22px; }
     .states { display: flex; gap: 4px; margin: 4px 0; }
     .st { font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--divider-color); color: var(--secondary-text-color); }
     .st.on { border-color: transparent; color: #fff; } .st.inside { background: var(--green-color, #4caf50); }
