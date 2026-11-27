@@ -581,7 +581,7 @@ def _zone_lookup(core, hass, data, entity, floor):
 
 
 def _mark_public(mark):
-    return {k: v for k, v in mark.items() if k != "samples"} | {"samples": len(mark.get("samples") or [])}
+    return {k: v for k, v in mark.items() if k not in ("samples", "origin")} | {"samples": len(mark.get("samples") or [])}
 
 
 def _mark_setup(hass, core, mark, exclude=()):
@@ -678,6 +678,7 @@ async def ws_truth_mark(hass, connection, msg):
             m for m in store.get("marks", [])
             if (m.get("entity"), m.get("floor"), m.get("x"), m.get("y")) == (msg["entity"], msg["floor"], x, y)
             and m.get("samples") and (m["samples"][0].get("t"), m["samples"][-1].get("t")) == span
+            and not m.get("refreshed")   # a kept pin's fresh window is not this submit
         ), None)
         if mark is None:
             mark = {"id": int(store.get("next_id") or 1), "entity": msg["entity"], "floor": msg["floor"], "x": x, "y": y, "t": time.time(), "samples": samples}
@@ -710,6 +711,30 @@ async def ws_truth_delete(hass, connection, msg):
         await save_truth(hass, store)
         _refresh_mark_refs(core, store)
     connection.send_result(msg["id"], {"removed": before - len(store["marks"])})
+
+
+@websocket_api.websocket_command({vol.Required("type"): "sextant/truth/keep", vol.Required("mark_id"): vol.Coerce(int), vol.Required("keep"): bool})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_truth_keep(hass, connection, msg):
+    """Keep a pin fresh (it re-takes its readings hourly while its thing sits
+    still there, see truth.refresh), or stop."""
+    core = _core()
+    async with TRUTH_LOCK:
+        store = await load_truth(hass)
+        mark = next((m for m in store.get("marks", []) if m.get("id") == msg["mark_id"]), None)
+        if mark is None:
+            return _error(connection, msg, f"No pin {msg['mark_id']}")
+        if msg["keep"]:
+            mark["keep"] = True
+            mark["origin"] = truth_mod.origin(mark.get("samples") or [])
+            mark.pop("stale", None)
+        else:
+            for k in ("keep", "stale", "origin"):
+                mark.pop(k, None)
+        await save_truth(hass, store)
+        _refresh_mark_refs(core, store)
+    connection.send_result(msg["id"], {"mark": _mark_public(mark)})
 
 
 @websocket_api.websocket_command({vol.Required("type"): "sextant/truth/evaluate", vol.Optional("entity"): str, vol.Optional("mark_id"): vol.Coerce(int)})
@@ -2333,7 +2358,7 @@ COMMANDS = (
     ws_calibration_status, ws_calibration_action, ws_selftest, ws_replay, ws_scanner_linking, ws_receivers, ws_beacon_links,
     ws_proxy_info,
     ws_adjust_zones, ws_registration, ws_scanner_ignore, ws_kpi, ws_kpi_baselines, ws_kpi_baseline_save, ws_kpi_baseline_delete,
-    ws_truth_mark, ws_truth_list, ws_truth_delete, ws_truth_evaluate, ws_truth_health, ws_truth_apply,
+    ws_truth_mark, ws_truth_list, ws_truth_delete, ws_truth_keep, ws_truth_evaluate, ws_truth_health, ws_truth_apply,
     ws_bermuda_candidates, ws_bermuda_tracked, ws_bermuda_track, ws_bermuda_findmy, ws_bermuda_findmy_add,
     ws_bermuda_findmy_remove, ws_bermuda_options, ws_bermuda_options_set, ws_bermuda_scanners, ws_bermuda_tiles,
     ws_bermuda_scanner_ranging, ws_bermuda_tile_identities, ws_bermuda_tile_bind, ws_bermuda_tile_adopt,

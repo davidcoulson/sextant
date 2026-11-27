@@ -277,6 +277,71 @@ def mark_reference(mark, samples=None):
     }
 
 
+# A kept pin ("keep": true) takes fresh readings at most this often, while
+# its thing has been still long enough for every one of them to be from there.
+KEEP_EVERY_S = 3600.0
+# How far fresh readings may differ from the pin's before it stops taking
+# them: the median |log ratio| over the nearest proxies both heard. A still
+# thing's hourly wander was p90 0.17 (41 h of the wallet, purse, backpack
+# and tile); two things a metre or two apart differ by a median 0.29.
+KEEP_MAX_DRIFT = 0.25
+# And from the readings it had when it was first kept: each hourly step
+# passing on its own must not walk a pin's readings away from its point.
+KEEP_MAX_TOTAL = 0.5
+KEEP_NEAREST = 8
+
+
+def _medians(samples, key):
+    # The thing's own ranges: the reference gain scales the references they are matched to, not them.
+    per = {}
+    for s in samples or ():
+        for rx, d in (s.get(key) or {}).items():
+            if isinstance(d, (int, float)) and not isinstance(d, bool) and d > 0:
+                per.setdefault(rx, []).append(float(d))
+    return {rx: fingerprint._median(v) for rx, v in per.items()}
+
+
+def origin(samples):
+    """The readings a pin is kept against, as one sample-shaped dict of medians (see ``refresh``)."""
+    out = {"thing_vec": _medians(samples, "thing_vec")}
+    if samples and all(s.get("raw_vec") for s in samples):
+        out["raw_vec"] = _medians(samples, "raw_vec")
+    return out
+
+
+def drift(old, new):
+    """How different two sets of samples look: the median |log ratio| of
+    their readings over the nearest KEEP_NEAREST proxies both heard, raw
+    (before calibration) where both have it. None with fewer than three shared."""
+    key = "raw_vec" if all(s.get("raw_vec") for s in (*old, *new)) else "thing_vec"
+    a, b = _medians(old, key), _medians(new, key)
+    shared = sorted((rx for rx in a if rx in b), key=lambda rx: min(a[rx], b[rx]))[:KEEP_NEAREST]
+    if len(shared) < 3:
+        return None
+    return fingerprint._median([abs(math.log(a[rx] / b[rx])) for rx in shared])
+
+
+def refresh(mark, samples, now, max_drift=KEEP_MAX_DRIFT):
+    """Give a kept pin fresh samples when they still look like its own.
+    Readings that drifted too far mean the thing moved (or the spot changed):
+    the pin keeps its old samples, which still describe that spot, and is
+    marked ``stale`` until fresh ones match again; so are readings more than
+    KEEP_MAX_TOTAL from its ``origin`` (taken when it was kept), however
+    slowly they got there. Returns the drift, or None when there was nothing to compare."""
+    d = drift(mark.get("samples") or [], samples)
+    if d is None:
+        return None
+    base = mark.get("origin")
+    total = drift([base], samples) if isinstance(base, dict) else None
+    if d <= max_drift and (total is None or total <= KEEP_MAX_TOTAL):
+        mark["samples"] = list(samples)
+        mark["refreshed"] = now
+        mark.pop("stale", None)
+    else:
+        mark.setdefault("stale", now)
+    return d
+
+
 def summarize(rows_by_mark):
     """Per-thing accuracy from {mark id: (entity, row)} evaluated at the
     current settings: marks, mean of the mean errors, share of cycles in the
