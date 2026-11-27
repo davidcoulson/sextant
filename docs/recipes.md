@@ -336,6 +336,111 @@ entities:
 height: 300
 ```
 
+### A room at a glance
+
+Three ways to show who is in a room and what it is doing, for a room's own
+dashboard view. Each takes the room's occupancy sensor as `entity`; copy the
+block and change that one line for each room.
+
+The chip: faces of who is in the room, how long it has been on, and the
+mode's icon. An empty room shows how long it has been empty and who was in
+it last (from the recorder). Add the resource `/sextant/sextant-room-chip.js`
+(JavaScript module) once.
+
+```yaml
+type: custom:sextant-room-chip
+entity: binary_sensor.kitchen_sextant_occupancy
+max: 3          # faces before "+N"
+```
+
+Mushroom chips for a view's chip row: who is in the room ("2 people · 1
+cat"), then the mode and how long ("Cooking · on for 12m", or "Empty since
+2:14 PM").
+
+```yaml
+type: custom:mushroom-chips-card
+chips:
+  - type: conditional
+    conditions:
+      - entity: binary_sensor.kitchen_sextant_occupancy
+        state: "on"
+    chip:
+      type: template
+      entity: binary_sensor.kitchen_sextant_occupancy
+      icon: mdi:account-multiple
+      icon_color: green
+      tap_action:
+        action: more-info
+      content: >
+        {%- set a = states[entity].attributes -%}
+        {%- set p = a.get('people', []) | count -%}
+        {%- set ns = namespace(k={}, out=([p ~ (' person' if p == 1 else ' people')] if p else [])) -%}
+        {%- for n in a.get('pets', []) -%}
+          {%- set c = state_attr('sensor.' ~ (n | slugify) ~ '_sextant_pet_location', 'via_class') or 'pet' -%}
+          {%- set ns.k = dict(ns.k, **{c: ns.k.get(c, 0) + 1}) -%}
+        {%- endfor -%}
+        {%- for c, n in ns.k.items() -%}{%- set ns.out = ns.out + [n ~ ' ' ~ c ~ ('' if n == 1 else 's')] -%}{%- endfor -%}
+        {{ ns.out | join(' · ') or 'On' }}
+  - type: template
+    entity: binary_sensor.kitchen_sextant_occupancy
+    tap_action:
+      action: more-info
+    icon: >
+      {%- set ns = namespace(i='') -%}
+      {%- for w in (state_attr(entity, 'mode') or '') | lower | regex_findall('[a-z0-9]+') if not ns.i -%}
+        {%- for re, ic in [['^(movie|film|cinema|theat)', 'mdi:movie-open'], ['^(tv|watch)', 'mdi:television-play'], ['^gam', 'mdi:controller'], ['^(music|party|listen)', 'mdi:music'], ['^(sleep|night|bed)', 'mdi:sleep'], ['^read', 'mdi:book-open-variant'], ['^(work|meeting|call|office)', 'mdi:briefcase'], ['^(cook|dinner|meal|bak)', 'mdi:silverware-fork-knife'], ['^(away|vacation)', 'mdi:airplane'], ['^guest', 'mdi:account-multiple']] if not ns.i and w is match(re) -%}
+          {%- set ns.i = ic -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ ns.i or ('mdi:tag' if state_attr(entity, 'mode') else ('mdi:clock-outline' if is_state(entity, 'on') else 'mdi:account-off-outline')) }}
+    icon_color: >
+      {{ 'amber' if state_attr(entity, 'mode') else ('green' if is_state(entity, 'on') else 'disabled') }}
+    content: >
+      {%- set mode = state_attr(entity, 'mode') -%}
+      {%- set s = as_datetime(state_attr(entity, 'since')) -%}
+      {%- set m = ((now() - s).total_seconds() // 60) | int if s else 0 -%}
+      {%- set d = (m // 60) ~ 'h ' ~ (m % 60) ~ 'm' if m >= 60 else m ~ 'm' -%}
+      {{ (mode ~ ' · ' if mode else '') ~ (('on for ' ~ d) if is_state(entity, 'on') else ('Empty since ' ~ (s | as_local).strftime('%-I:%M %p') if s else 'Empty')) }}
+```
+
+A one-row card: the room and its mode, who is there and for how long, the
+mode as the icon (amber), and why the room is on as the badge.
+
+```yaml
+type: custom:mushroom-template-card
+entity: binary_sensor.kitchen_sextant_occupancy
+tap_action:
+  action: more-info
+primary: >
+  {{ state_attr(entity, 'room') }} · {{ state_attr(entity, 'mode') or ('Occupied' if is_state(entity, 'on') else 'Empty') }}
+secondary: >
+  {%- set a = states[entity].attributes -%}
+  {%- set s = as_datetime(a.get('since')) -%}
+  {%- set m = ((now() - s).total_seconds() // 60) | int if s else 0 -%}
+  {%- set d = (m // 60) ~ 'h ' ~ (m % 60) ~ 'm' if m >= 60 else m ~ 'm' -%}
+  {%- if is_state(entity, 'on') -%}
+    {{ (a.get('people', []) | map('regex_replace', ' .*', '') | list + a.get('pets', [])) | join(', ') or 'Someone' }} · {{ d }}
+  {%- else -%}
+    since {{ (s | as_local).strftime('%-I:%M %p') if s else '?' }}
+  {%- endif %}
+icon: >
+  {%- set ns = namespace(i='') -%}
+  {%- for w in (state_attr(entity, 'mode') or '') | lower | regex_findall('[a-z0-9]+') if not ns.i -%}
+    {%- for re, ic in [['^(movie|film|cinema|theat)', 'mdi:movie-open'], ['^(tv|watch)', 'mdi:television-play'], ['^gam', 'mdi:controller'], ['^(music|party|listen)', 'mdi:music'], ['^(sleep|night|bed)', 'mdi:sleep'], ['^read', 'mdi:book-open-variant'], ['^(work|meeting|call|office)', 'mdi:briefcase'], ['^(cook|dinner|meal|bak)', 'mdi:silverware-fork-knife'], ['^(away|vacation)', 'mdi:airplane'], ['^guest', 'mdi:account-multiple']] if not ns.i and w is match(re) -%}
+      {%- set ns.i = ic -%}
+    {%- endfor -%}
+  {%- endfor -%}
+  {{ ns.i or ('mdi:tag' if state_attr(entity, 'mode') else ('mdi:home' if is_state(entity, 'on') else 'mdi:home-outline')) }}
+icon_color: >
+  {{ 'amber' if state_attr(entity, 'mode') else ('green' if is_state(entity, 'on') else 'disabled') }}
+badge_icon: >
+  {%- set s = (state_attr(entity, 'sources') or [none])[0] -%}
+  {{ {'bluetooth': 'mdi:bluetooth', 'radar': 'mdi:radar', 'media_player': 'mdi:television-play', 'sensor': 'mdi:motion-sensor', 'door': 'mdi:door', 'forced': 'mdi:toggle-switch', 'keep': 'mdi:pin', 'hold': 'mdi:timer-sand', 'restored': 'mdi:restart'}.get(s, '') }}
+badge_color: grey
+```
+
+The mode icons match the Occupancy page's.
+
 ### Who is where
 
 An entities card, one line per person, with how long they have been there:

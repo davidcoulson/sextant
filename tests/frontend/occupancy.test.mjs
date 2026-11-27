@@ -279,3 +279,18 @@ test("review fixes: ongoing row, label spells, recent outage, mode entity", () =
   assert.equal(modeEntityOf("binary_sensor.a_asleep, switch.b"), "binary_sensor.a_asleep");
   assert.equal(modeEntityOf(null), null);
 });
+
+test("roomChip lists people before pets with their person pictures; lastOccupants finds the newest names", async () => {
+  const { roomChip, fmtFor, lastOccupants } = await import("../../custom_components/sextant/frontend/sextant-occupancy-data.js");
+  const states = {
+    "binary_sensor.kitchen_sextant_occupancy": { state: "on", attributes: { room: "Kitchen", people: ["Michelle Bauer"], pets: ["Socks"], mode: "Cooking", since: "2026-11-27T10:00:00+00:00" } },
+    "person.michelle_bauer": { state: "home", attributes: { entity_picture: "/api/image/m" } },
+  };
+  const r = roomChip(states, "binary_sensor.kitchen_sextant_occupancy");
+  assert.deepEqual(r.faces, [{ name: "Michelle Bauer", pet: false, picture: "/api/image/m" }, { name: "Socks", pet: true, picture: null }]);
+  assert.equal(r.on, true); assert.equal(r.mode, "Cooking"); assert.equal(r.since, Date.parse("2026-11-27T10:00:00Z") / 1000);
+  assert.equal(roomChip(states, "binary_sensor.nope"), null);
+  assert.deepEqual([fmtFor(59), fmtFor(720), fmtFor(5280), fmtFor(3 * 86400)], ["0m", "12m", "1h 28m", "3d"]);
+  assert.deepEqual(lastOccupants([{ a: { people: ["Jack"] } }, { a: { people: ["Michelle"], pets: ["Meg"] } }, { a: { people: [], pets: [] } }]), ["Michelle", "Meg"]);
+  assert.deepEqual(lastOccupants(undefined), []);
+});
