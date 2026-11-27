@@ -351,6 +351,7 @@ type: custom:sextant-where-card
 layout: tiles          # tiles | rooms | strip | rings
 columns: 2             # tiles (default 2) and rings (default 4)
 show_floor: true       # optional: the floor under the room when there is no spot
+precise: true          # optional: one line, the spot, else room, else floor, else Home
 entities:
   - entity: sensor.alex_smith_sextant_person_location
     person: person.alex_smith      # photo and name

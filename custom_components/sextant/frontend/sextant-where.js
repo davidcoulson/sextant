@@ -115,6 +115,11 @@ export function whereRows(states, entries, now) {
   return rows;
 }
 
+/** The one most precise place for a row: its spot, room, floor, else "Home"; away keeps its away line. */
+export function preciseWhere(r) {
+  return r.away || r.where === "Unavailable" ? r.where : r.spot || r.room || r.floor || "Home";
+}
+
 /** Occupied rooms in order of first appearance, each with its rows and room mode. Away people are left out: away is not a room. */
 export function groupRooms(rows, roomStates = []) {
   const modes = new Map(roomStates.filter(Boolean).map((s) => [s.attributes?.room, s.attributes?.mode]));

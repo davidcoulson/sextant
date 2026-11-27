@@ -1,7 +1,7 @@
 // The "where is everyone" card's model, on the shapes Sextant's sensors really have.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { confLevel, fmtStay, whereRows, groupRooms, stripChips, withPerson } from "../../custom_components/sextant/frontend/sextant-where.js";
+import { confLevel, fmtStay, whereRows, groupRooms, stripChips, withPerson, preciseWhere } from "../../custom_components/sextant/frontend/sextant-where.js";
 import { entityOptions } from "../../custom_components/sextant/frontend/sextant-ha-editors.js";
 
 const NOW = 1795775000;
@@ -133,4 +133,13 @@ test("Life360: a tracker gives driving and its place or address", () => {
   assert.equal(whereRows(st, [e], NOW)[0].where, "Silver Tree Trail, Ohio");
   st["device_tracker.j"] = loc("unavailable", { driving: true, address: "Pearl Road, Ohio" });
   assert.equal(whereRows(st, [e], NOW)[0].where, "Away");
+});
+
+test("precise: spot, else room, else floor, else Home; away and unavailable keep their line", () => {
+  assert.equal(preciseWhere({ where: "Great Room", room: "Great Room", spot: "Couch", floor: "Ground Floor" }), "Couch");
+  assert.equal(preciseWhere({ where: "Great Room", room: "Great Room", spot: null, floor: "Ground Floor" }), "Great Room");
+  assert.equal(preciseWhere({ where: "Home", room: null, spot: null, floor: "Ground Floor" }), "Ground Floor");
+  assert.equal(preciseWhere({ where: "Quiet", room: null, spot: null, floor: null }), "Home");
+  assert.equal(preciseWhere({ where: "Driving near Avon, OH", away: true, room: null, spot: null, floor: null }), "Driving near Avon, OH");
+  assert.equal(preciseWhere({ where: "Unavailable", room: null, spot: null, floor: null }), "Unavailable");
 });
