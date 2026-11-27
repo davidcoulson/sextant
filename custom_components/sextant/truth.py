@@ -285,17 +285,28 @@ KEEP_EVERY_S = 3600.0
 # thing's hourly wander was p90 0.17 (41 h of the wallet, purse, backpack
 # and tile); two things a metre or two apart differ by a median 0.29.
 KEEP_MAX_DRIFT = 0.25
+# And from the readings it had when it was first kept: each hourly step
+# passing on its own must not walk a pin's readings away from its point.
+KEEP_MAX_TOTAL = 0.5
 KEEP_NEAREST = 8
 
 
 def _medians(samples, key):
+    # The thing's own ranges: the reference gain scales the references they are matched to, not them.
     per = {}
     for s in samples or ():
-        gain = float(s.get("gain") or 1.0) if key == "thing_vec" else 1.0
         for rx, d in (s.get(key) or {}).items():
             if isinstance(d, (int, float)) and not isinstance(d, bool) and d > 0:
-                per.setdefault(rx, []).append(float(d) / max(gain, 1e-6))
+                per.setdefault(rx, []).append(float(d))
     return {rx: fingerprint._median(v) for rx, v in per.items()}
+
+
+def origin(samples):
+    """The readings a pin is kept against, as one sample-shaped dict of medians (see ``refresh``)."""
+    out = {"thing_vec": _medians(samples, "thing_vec")}
+    if samples and all(s.get("raw_vec") for s in samples):
+        out["raw_vec"] = _medians(samples, "raw_vec")
+    return out
 
 
 def drift(old, new):
@@ -314,12 +325,15 @@ def refresh(mark, samples, now, max_drift=KEEP_MAX_DRIFT):
     """Give a kept pin fresh samples when they still look like its own.
     Readings that drifted too far mean the thing moved (or the spot changed):
     the pin keeps its old samples, which still describe that spot, and is
-    marked ``stale`` until fresh ones match again. Returns the drift, or None
-    when there was nothing to compare."""
+    marked ``stale`` until fresh ones match again; so are readings more than
+    KEEP_MAX_TOTAL from its ``origin`` (taken when it was kept), however
+    slowly they got there. Returns the drift, or None when there was nothing to compare."""
     d = drift(mark.get("samples") or [], samples)
     if d is None:
         return None
-    if d <= max_drift:
+    base = mark.get("origin")
+    total = drift([base], samples) if isinstance(base, dict) else None
+    if d <= max_drift and (total is None or total <= KEEP_MAX_TOTAL):
         mark["samples"] = list(samples)
         mark["refreshed"] = now
         mark.pop("stale", None)

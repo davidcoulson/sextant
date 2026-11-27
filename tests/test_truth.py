@@ -250,10 +250,23 @@ def test_drift_is_the_median_log_ratio_over_shared_proxies():
     assert truth.drift([{"raw_vec": {"a": 1.0, "b": 2.0}}], [{"raw_vec": {"a": 1.0, "b": 2.0}}]) is None
 
 
-def test_drift_falls_back_to_thing_vec_by_gain_when_a_sample_has_no_raw():
-    old = [{"gain": 2.0, "thing_vec": {"a": 2.0, "b": 4.0, "c": 6.0}}]
-    new = [{"gain": 1.0, "thing_vec": {"a": 1.0, "b": 2.0, "c": 3.0}, "raw_vec": {"a": 9.0, "b": 9.0, "c": 9.0}}]
+def test_drift_falls_back_to_thing_vec_and_ignores_the_reference_gain():
+    # A pin from before raw_vec: compared on the thing's ranges, which the gain does not touch.
+    old = [{"gain": 1.0, "thing_vec": {"a": 1.0, "b": 2.0, "c": 3.0}}]
+    new = [{"gain": 1.4, "thing_vec": {"a": 1.0, "b": 2.0, "c": 3.0}, "raw_vec": {"a": 9.0, "b": 9.0, "c": 9.0}}]
     assert truth.drift(old, new) == 0.0
+
+
+def test_a_slow_walk_is_caught_by_the_origin():
+    mark = {"id": 1, "samples": [_raw(0)]}
+    mark["origin"] = truth.origin(mark["samples"])
+    scale, t = 1.0, 0
+    while "stale" not in mark and t < 20:
+        t += 1
+        scale *= 1.2              # each step passes on its own
+        truth.refresh(mark, [_raw(t, scale=scale)], now=t)
+    assert "stale" in mark and scale <= math.exp(truth.KEEP_MAX_TOTAL) * 1.2 + 1e-9
+    assert mark["refreshed"] < t
 
 
 def test_refresh_takes_matching_samples_and_marks_a_moved_thing_stale():
@@ -278,18 +291,18 @@ class _Hass:
 
 
 def test_kept_pins_refresh_only_when_due_and_still_a_whole_window(monkeypatch):
-    monkeypatch.setattr(sextant, "_truth_marks", [{"id": 7, "entity": "w", "keep": True}, {"id": 8, "entity": "w"}, {"id": 9, "entity": "x", "keep": True}])
+    monkeypatch.setattr(sextant, "_truth_marks", [{"id": 7, "entity": "w", "floor": "F", "keep": True}, {"id": 8, "entity": "w", "floor": "F"}, {"id": 9, "entity": "x", "floor": "F", "keep": True}, {"id": 10, "entity": "w", "floor": "G", "keep": True}])
     monkeypatch.setattr(sextant, "_kept_pin_tried", {})
     monkeypatch.setattr(sextant, "_zone_state", {"w": {"still_since": 1000.0}})
     hass = _Hass()
-    sextant._keep_pins_fresh(hass, "w", 1000.0 + truth.DEFAULT_WINDOW_SECS - 1)
+    sextant._keep_pins_fresh(hass, "w", "F", 1000.0 + truth.DEFAULT_WINDOW_SECS - 1)
     assert not hass.tasks                      # not still long enough
-    sextant._keep_pins_fresh(hass, "w", 1000.0 + truth.DEFAULT_WINDOW_SECS)
+    sextant._keep_pins_fresh(hass, "w", "F", 1000.0 + truth.DEFAULT_WINDOW_SECS)
     assert len(hass.tasks) == 1 and sextant._kept_pin_tried == {7: 1000.0 + truth.DEFAULT_WINDOW_SECS}
-    sextant._keep_pins_fresh(hass, "w", 2000.0)
+    sextant._keep_pins_fresh(hass, "w", "F", 2000.0)
     assert len(hass.tasks) == 1                # tried within the hour
     sextant._zone_state["w"]["still_since"] = None
-    sextant._keep_pins_fresh(hass, "w", 1000.0 + truth.KEEP_EVERY_S + truth.DEFAULT_WINDOW_SECS)
+    sextant._keep_pins_fresh(hass, "w", "F", 1000.0 + truth.KEEP_EVERY_S + truth.DEFAULT_WINDOW_SECS)
     assert len(hass.tasks) == 1                # moving
     for c in hass.tasks:
         c.close()

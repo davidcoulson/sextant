@@ -211,9 +211,11 @@ sat still for the whole five-minute window, so it follows the house as
 furniture, doors and proxies change instead of describing the day it was
 placed. The fresh readings are taken only while they still look like the
 pin's own (the nearest proxies within about 28% of what they read
-before): a thing that has been moved, or a spot that changed overnight,
+last time, and about 65% of what they read when it was first kept, so
+nothing walks a pin away an hour at a time): a thing that has been moved, or a spot that changed overnight,
 leaves the pin as it was and marks it *readings changed - moved? Re-pin
-it*. The mark clears itself when the readings match again.
+it*. The mark clears itself when the readings match again; turning keep
+fresh off and on again accepts the pin's readings as they are now.
 
 Pins stay, with their samples, in `.storage/sextant_truth`, and do two
 more jobs. The Tuning page's **Accuracy** card re-solves every pin under

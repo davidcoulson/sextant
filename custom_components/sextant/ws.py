@@ -581,7 +581,7 @@ def _zone_lookup(core, hass, data, entity, floor):
 
 
 def _mark_public(mark):
-    return {k: v for k, v in mark.items() if k != "samples"} | {"samples": len(mark.get("samples") or [])}
+    return {k: v for k, v in mark.items() if k not in ("samples", "origin")} | {"samples": len(mark.get("samples") or [])}
 
 
 def _mark_setup(hass, core, mark, exclude=()):
@@ -678,6 +678,7 @@ async def ws_truth_mark(hass, connection, msg):
             m for m in store.get("marks", [])
             if (m.get("entity"), m.get("floor"), m.get("x"), m.get("y")) == (msg["entity"], msg["floor"], x, y)
             and m.get("samples") and (m["samples"][0].get("t"), m["samples"][-1].get("t")) == span
+            and not m.get("refreshed")   # a kept pin's fresh window is not this submit
         ), None)
         if mark is None:
             mark = {"id": int(store.get("next_id") or 1), "entity": msg["entity"], "floor": msg["floor"], "x": x, "y": y, "t": time.time(), "samples": samples}
@@ -726,8 +727,10 @@ async def ws_truth_keep(hass, connection, msg):
             return _error(connection, msg, f"No pin {msg['mark_id']}")
         if msg["keep"]:
             mark["keep"] = True
+            mark["origin"] = truth_mod.origin(mark.get("samples") or [])
+            mark.pop("stale", None)
         else:
-            for k in ("keep", "stale"):
+            for k in ("keep", "stale", "origin"):
                 mark.pop(k, None)
         await save_truth(hass, store)
         _refresh_mark_refs(core, store)
