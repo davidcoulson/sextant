@@ -30,17 +30,25 @@ def test_forget_code_makes_the_next_import_read_the_disk(tmp_path, monkeypatch):
     assert sys.modules.pop("reloadme_other") is other  # a name that only starts the same is left alone
 
 
-def test_reload_clears_only_marketplaces_sextant_restart_repairs():
+
+def test_setup_clears_only_the_running_versions_marketplace_repair(monkeypatch):
+    monkeypatch.setattr(sextant, "_CODE_VERSION", "2026.11.27.2")
     issue = lambda domain: types.SimpleNamespace(issue_domain=domain)  # noqa: E731
     hass = types.SimpleNamespace(data={"issues": {
         ("marketplace", "restart_required_1366403240_tags/2026.11.27.2"): issue("sextant"),
-        ("marketplace", "restart_required_1365808237_tags/2026.11.26.01"): issue("ssh"),
-        ("marketplace", "critical_x"): issue("sextant"),
-        ("sextant", "restart_required_x"): issue("sextant"),
+        ("marketplace", "restart_required_1366403240_tags/2026.11.27.3"): issue("sextant"),  # downloaded later
+        ("marketplace", "restart_required_1366403240_tags/2026.11.27.12"): issue("sextant"),
+        ("marketplace", "restart_required_1365808237_tags/2026.11.27.2"): issue("ssh"),
+        ("marketplace", "critical_tags/2026.11.27.2"): issue("sextant"),
+        ("sextant", "restart_required_tags/2026.11.27.2"): issue("sextant"),
     }})
     sextant._clear_marketplace_restart(hass)
-    assert set(hass.data["issues"]) == {
-        ("marketplace", "restart_required_1365808237_tags/2026.11.26.01"),
-        ("marketplace", "critical_x"),
-        ("sextant", "restart_required_x"),
-    }
+    assert ("marketplace", "restart_required_1366403240_tags/2026.11.27.2") not in hass.data["issues"]
+    assert len(hass.data["issues"]) == 5
+
+
+def test_code_version_is_the_manifests():
+    import json
+    from pathlib import Path
+    manifest = Path(sextant.__file__).parent / "manifest.json"
+    assert sextant._CODE_VERSION == json.loads(manifest.read_text())["version"]
