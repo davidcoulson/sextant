@@ -338,7 +338,7 @@ height: 300
 
 ### Where everyone is
 
-The where card shows each person and pet with the room, the spot, the floor,
+The where card shows each person and pet with the room, the spot,
 how long they have been there, and a ring that fills and colours with how sure
 Sextant is (green confident, amber likely, red unsure). The badge on the photo
 is the device that placed them (phone, watch, collar tag). Tap anyone for the
@@ -350,6 +350,7 @@ there brings their photo and name.
 type: custom:sextant-where-card
 layout: tiles          # tiles | rooms | strip | rings
 columns: 2             # tiles (default 2) and rings (default 4)
+show_floor: true       # optional: the floor under the room when there is no spot
 entities:
   - entity: sensor.alex_smith_sextant_person_location
     person: person.alex_smith      # photo and name
@@ -360,6 +361,7 @@ rooms:                 # optional, rooms layout: shows each room's mode
 ```
 
 - `tiles`: a grid of tiles, room as the headline and the spot under it.
+  Someone away gets both lines for where they are ("Driving near Avon, OH").
 - `rooms`: one line per occupied room, avatars stacked, with its mode.
   Anyone away is left out.
 - `strip`: one wrapping row of chips; pets of one kind on one floor fold
