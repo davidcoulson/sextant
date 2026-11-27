@@ -332,6 +332,15 @@ class SextantEdit extends LitElement {
   /** Whether the draft holds changes that are not saved. */
   get unsaved() { return !!this._dirty || this._drawing(); }
 
+  /** Nothing in hand that a reload would lose: no unsaved draft, no tool or placement
+   * waiting for a click, nothing to redo, no Add-a-floor form half filled, no question open. */
+  get atRest() {
+    return !this.unsaved && this._tool === "select" && !this._wizard && !this._measure && !this._placing
+      && !this._placingAp && !this._calib && !this._proposal && !this._busy && !this._redo?.length
+      && !document.querySelector('[role="alertdialog"]')
+      && ![...(this.renderRoot?.querySelectorAll("form input") || [])].some((i) => i.value);
+  }
+
   /** Corners of a room or spot drawn but not yet closed (they live in the map). */
   _drawing() { return !!this._map?.draft?.length; }
 

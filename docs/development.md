@@ -93,8 +93,10 @@ pytest tests
 - The panel is plain Lit modules under `custom_components/sextant/frontend/`
   with no build step. The backend registers the panel module with the
   manifest version in its URL, so a Live or Occupancy page loaded before an
-  update reloads itself the next time it is in view, once per version. Other
-  pages may hold a draft, so they offer a Reload button instead. Both first
+  update reloads itself the next time it is in view, once per version. Edit
+  does too when it comes back into view with nothing in hand (no unsaved draft,
+  tool or placement waiting, redo, half-filled form or open question). Other pages may hold a draft, so they offer a
+  Reload button instead. Both first
   drop Sextant's files from Home Assistant's service-worker cache, which
   otherwise serves the old panel once more before refreshing its copy.
 
