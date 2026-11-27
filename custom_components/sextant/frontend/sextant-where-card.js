@@ -115,6 +115,7 @@ class SextantWhereCard extends LitElement {
     .av img { width: 100%; height: 100%; object-fit: cover; }
     .badge { position: absolute; right: -3px; top: -3px; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center;
       background: var(--green-color, #4caf50); color: #fff; border: 2px solid var(--card-background-color, var(--ha-card-background)); --mdc-icon-size: 12px; }
+    .badge ha-icon { display: flex; } /* inline ha-icon sits on the text baseline, off centre */
     .stack { display: flex; flex: none; } .stack .ring + .ring { margin-left: -9px; }
     .fact { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px 1px 6px; border-radius: 999px; font-size: 12px; font-weight: 400;
       color: color-mix(in srgb, var(--purple-color, #926bc7) 40%, var(--primary-text-color)); background: color-mix(in srgb, var(--purple-color, #926bc7) 16%, transparent); --mdc-icon-size: 14px; }
