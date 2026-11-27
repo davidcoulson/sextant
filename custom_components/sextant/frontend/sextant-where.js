@@ -98,7 +98,9 @@ export function whereRows(states, entries, now) {
       const g = gs && !BLANK.has(gs.state) ? gs.attributes || {} : {};  // a dead geocoder keeps its last town
       // A geocoder's town and state; a Life360 tracker's named place, else its street and state.
       place = [g.Locality ?? g.locality, g["Administrative Area"] ?? g.administrative_area ?? g.admin_area].filter((x) => x && x !== "N/A").join(", ")
-        || (gs?.state !== "home" && g.place) || g.address || "";  // Life360 lagging at its home place: not a place to show
+        // Life360 lagging at its home place: not a place to show. Its places end in " (<circle name>)": dropped.
+        || (gs?.state !== "home" && typeof g.place === "string" && ("driving" in g ? g.place.replace(/\s*\([^()]*\)$/, "") : g.place))
+        || g.address || "";
       place ||= null;
       where = zone || (moving ? `${moving.label}${place ? ` near ${place}` : ""}` : place || "Away");
     } else where = room || title(st.state);

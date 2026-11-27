@@ -498,7 +498,9 @@ FLOOR_SWITCH_SECS = 60.0
 FLOOR_LASTING_LEAD_X = 4.0
 FLOOR_LASTING_LEAD_MIN_S = 120.0
 # ...and this long while the thing is still in a locked room (_elect_floor's held).
-FLOOR_HELD_LEAD_S = 900.0
+# Was 900: David's watch, up from the basement to the kitchen, read Basement for nine
+# minutes. A 24 h replay at 300 s cost Meg and Willow two more floor changes each.
+FLOOR_HELD_LEAD_S = 300.0
 # shortcut: fixed, not a tuning value; make it one if a house needs another ratio.
 FLOOR_NEAR_RATIO = 0.5
 FLOOR_DARK_GRACE_S = 45.0    # how long a dark incumbent holds everything frozen (was 3 cycles at 15 s)
@@ -4937,7 +4939,7 @@ async def _restore_runtime(hass):
     # room and spot elections - which is exactly what used to happen to every
     # restored thing on the first cycle after a restart, a second after the
     # restore had put it all back.
-    _restore_floor_elections(back["floors"])
+    _restore_floor_elections(back["floors"], gap=back["age"] or 0.0)
     if back["age"] is None:
         _LOGGER.info("No saved state to resume from; starting cold")
     elif back["kf"] or back["zone"]:
@@ -4963,8 +4965,10 @@ def _thing_floors():
     return update_trilateration_and_zone.last_floor
 
 
-def _restore_floor_elections(saved):
-    """Put back each thing's elected floor, its tenure and its probabilities."""
+def _restore_floor_elections(saved, gap=0.0):
+    """Put back each thing's elected floor, its tenure, its probabilities and any
+    challenger's clock, moved on by ``gap`` (the downtime): nothing was heard then,
+    so it must not count as a lead held."""
     last_floor = _thing_floors()
     for entity, state in (saved or {}).items():
         if not isinstance(state, dict):
@@ -4978,15 +4982,21 @@ def _restore_floor_elections(saved):
             kept = {f: float(p) for f, p in probs.items() if isinstance(p, (int, float))}
             if kept:
                 _floor_probability[entity] = kept
+        # The challenger's clock: without it a code reload restarted every floor change in progress.
+        ch = state.get("challenge")
+        if isinstance(ch, dict) and isinstance(ch.get("floor"), str) and isinstance(ch.get("led"), (int, float)):
+            _floor_challenge[entity] = {"floor": ch["floor"], "led": float(ch["led"]) + gap,
+                                        **({"since": float(ch["since"]) + gap} if isinstance(ch.get("since"), (int, float)) else {})}
 
 
 def _floor_elections():
-    """Each thing's elected floor, when it was elected, and its smoothed
-    probabilities: {ent: {"name", "since", "probs"}}, for the snapshot."""
+    """Each thing's elected floor, when it was elected, its smoothed
+    probabilities and any challenger's clock: {ent: {"name", "since", "probs",
+    "challenge"}}, for the snapshot."""
     last_floor = _thing_floors()
     return {
         entity: {"name": last_floor.get(entity), "since": _floor_since.get(entity),
-                 "probs": _floor_probability.get(entity)}
+                 "probs": _floor_probability.get(entity), "challenge": _floor_challenge.get(entity)}
         for entity in set(last_floor) | set(_floor_since) | set(_floor_probability)
     }
 

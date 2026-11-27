@@ -98,7 +98,7 @@ def snapshot(now, kf=None, zones=None, spots=None, arrivals=None, rows=None, flo
 
     ``rows`` are the published positions (ent, zone, sub_zone, floor, updated,
     cords): their last sighting is kept even when the rest is not.
-    ``floors`` are the floor elections: {ent: {"name", "since", "probs"}}.
+    ``floors`` are the floor elections: {ent: {"name", "since", "probs", "challenge"}}.
     Without them a restart elects every thing's floor from one cold cycle,
     and a floor that comes out differently discards the room and spot
     elections that were just restored - the floor change is what clears them.
