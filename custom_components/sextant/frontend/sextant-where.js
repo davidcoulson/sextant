@@ -55,7 +55,9 @@ export function withPerson(states, id, entities = {}) {
   const person = m && states?.[`person.${m[1]}`] ? `person.${m[1]}` : null;
   const dev = entities[states?.[id]?.attributes?.tracker]?.device_id;
   const mine = dev ? Object.keys(entities).filter((x) => entities[x]?.device_id === dev) : [];
-  const activity = mine.find((x) => /^sensor\..+_activity$/.test(x));
+  // Android also has sleep activity sensors; its motion one is *_detected_activity, iOS's *_activity.
+  const acts = mine.filter((x) => /^sensor\..+_activity$/.test(x) && !/sleep/.test(x));
+  const activity = acts.find((x) => /_detected_activity$/.test(x)) || acts[0];
   const place = mine.find((x) => /^sensor\..+_geocoded_location$/.test(x));
   const entry = { entity: id, ...(person && { person }), ...(activity && { activity }), ...(place && { place }) };
   return Object.keys(entry).length > 1 ? entry : id;
@@ -85,8 +87,9 @@ export function whereRows(states, entries, now) {
       away = true;
       zone = a.zone && a.zone !== "not_home" ? title(a.zone) : null;
       moving = e.activity ? MOVING[String(states?.[e.activity]?.state).toLowerCase()] || null : null;
-      const g = e.place ? states?.[e.place]?.attributes || {} : {};
-      const place = [g.Locality ?? g.locality, g["Administrative Area"] ?? g.admin_area].filter((x) => x && x !== "N/A").join(", ");
+      const gs = e.place ? states?.[e.place] : null;
+      const g = gs && !BLANK.has(gs.state) ? gs.attributes || {} : {};  // a dead geocoder keeps its last town
+      const place = [g.Locality ?? g.locality, g["Administrative Area"] ?? g.administrative_area ?? g.admin_area].filter((x) => x && x !== "N/A").join(", ");
       where = zone || (moving ? `${moving.label}${place ? ` near ${place}` : ""}` : place || "Away");
     } else where = room || title(st.state);
     rows.push({

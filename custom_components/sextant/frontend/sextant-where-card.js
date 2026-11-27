@@ -59,7 +59,7 @@ class SextantWhereCard extends LitElement {
   _avatar(r, size = "", badge = false) {
     const ring = r.level ? `--c:${r.level.color};--p:${Math.round(r.conf * 100)}` : "--c:var(--divider-color);--p:0";
     const fallback = r.pet ? html`<ha-icon icon=${classIcon(r.via) || "mdi:paw"}></ha-icon>` : r.name[0];
-    const badgeIcon = r.moving?.icon || (r.away ? SOURCE_ICONS[r.source] : classIcon(r.via));
+    const badgeIcon = r.moving?.icon || (r.away ? SOURCE_ICONS[r.source] || "mdi:home-export-outline" : classIcon(r.via));
     // As on the house's Mushroom person cards: green home, blue in a named zone, orange on the move, red away.
     const bc = !r.away ? "" : r.zone ? "var(--blue-color, #2196f3)" : r.moving ? "var(--orange-color, #ff9800)" : "var(--red-color, #f44336)";
     return html`<span class="ring ${size}" style=${ring} title=${r.level ? `${r.level.label} ${Math.round(r.conf * 100)}%` : ""}>
