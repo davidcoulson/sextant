@@ -201,6 +201,13 @@ test("pets: company is the people in the pet's room, never other pets or anyone 
   assert.deepEqual([...c.keys()], ["sensor.meg_sextant_pet_location", "sensor.fry_sextant_pet_location", "sensor.leela_sextant_pet_location"]);
   assert.deepEqual(c.get("sensor.leela_sextant_pet_location").map((r) => r.name), ["David"]);
   assert.deepEqual([c.get("sensor.fry_sextant_pet_location"), c.get("sensor.meg_sextant_pet_location")], [[], []]);
+  // A long stay lifts the ring: the backend's settled_conf wins over the live conf, for the level and the company.
+  const states2 = { ...states, "sensor.fry_sextant_pet_location": loc("Great Room", { ...states["sensor.fry_sextant_pet_location"].attributes, conf: 0.56, settled_conf: 0.78 }) };
+  const rows2 = whereRows(states2, ["sensor.david_coulson_sextant_person_location", "sensor.fry_sextant_pet_location"], NOW);
+  rows2[0].room = "Great Room";
+  const fry2 = rows2.find((r) => r.id === "sensor.fry_sextant_pet_location");
+  assert.deepEqual([fry2.conf, fry2.level.key], [0.78, "confident"]);
+  assert.deepEqual(petCompany(rows2).get(fry2.id).map((r) => r.name), ["David"]);
   // A held fix keeps its old confidence: no company. Nor a room of the same name on another floor.
   const leela = rows.find((r) => r.id === "sensor.leela_sextant_pet_location");
   assert.deepEqual(petCompany(rows.map((r) => r === leela ? { ...r, source: "held" } : r)).get(leela.id), []);

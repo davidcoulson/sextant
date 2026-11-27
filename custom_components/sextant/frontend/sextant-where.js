@@ -116,8 +116,9 @@ export function whereRows(states, entries, now) {
       floor: away ? null : floor,
       // Away has no since: time since the sensor last changed, when they left or reached the zone.
       stay: typeof a.since === "number" ? now - a.since : (away || outside) && st?.last_changed ? now - Date.parse(st.last_changed) / 1000 : null,
-      conf: typeof a.conf === "number" ? a.conf : null,
-      level: away ? null : confLevel(a.conf),
+      // settled_conf is conf lifted by a long stay while heard (rooms.settled_confidence); the backend omits it otherwise.
+      conf: typeof a.settled_conf === "number" ? a.settled_conf : typeof a.conf === "number" ? a.conf : null,
+      level: away ? null : confLevel(typeof a.settled_conf === "number" ? a.settled_conf : a.conf),
       via: a.via_class || null, source: a.source || null,
       // A GPS collar: the dog's card even when no tag is heard (via_class comes from the tag, so it is null then).
       roams: pet && (a.via_class === "dog" || !!a.tracker),
