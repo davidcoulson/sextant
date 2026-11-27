@@ -97,7 +97,7 @@ test("chipDetail reports how long it has been there and what tracks it", async (
   };
   const classes = { david_phone: "phone", michelle_watch: "watch" };
   const d = chipDetail(states, "David", {}, classes);
-  assert.equal(d.since, 2000000); assert.equal(d.thingClass, "phone");
+  assert.equal(d.since, 1000000); assert.equal(d.spotSince, 2000000); assert.equal(d.thingClass, "phone");   // the room's time; the spot has its own
   const m = chipDetail(states, "Michelle", {}, classes);
   assert.equal(m.since, 1500000); assert.equal(m.thingClass, "watch");
   const j = chipDetail(states, "Jack", {}, classes);
@@ -242,7 +242,7 @@ test("confidenceLevel turns a confidence into a word and a crosshairs icon", asy
   assert.equal(confidenceLevel(NaN), null);
 });
 
-import { joinRepeats, modeStays } from "../../custom_components/sextant/frontend/sextant-occupancy-data.js";
+import { joinRepeats, modeStays, modeEntityOf } from "../../custom_components/sextant/frontend/sextant-occupancy-data.js";
 
 test("back-to-back repeats of one move are one row", () => {
   const v = (start, end, name = "Willow", from = "Jack's Room") => ({ name, from, room: "Catwalk", floor: "Second", start, end });
@@ -266,4 +266,16 @@ test("mode spells from a mode entity's history", () => {
   assert.deepEqual(modeStays([{ s: "idle", lu: 0 }, { s: "Gaming", lu: 60 }], "X", false, 100).map((s) => s.mode), ["Gaming"]);
   // A long outage ends the mode.
   assert.deepEqual(modeStays([{ s: "on", lu: 0 }, { s: "unavailable", lu: 100 }, { s: "on", lu: 400 }], "Sleep", false, 500).map((s) => [s.start, s.end]), [[0, 100], [400, 500]]);
+});
+
+test("review fixes: ongoing row, label spells, recent outage, mode entity", () => {
+  const v = (start, end, ongoing) => ({ name: "A", from: "Hall", room: "Kitchen", floor: "G", start, end, ongoing });
+  assert.equal(joinRepeats([v(500, 800, true), v(100, 300)]).length, 2);
+  // "on" then "playing" are both the label: one spell that runs to now.
+  assert.deepEqual(modeStays([{ s: "on", lu: 100 }, { s: "playing", lu: 200 }], "TV", false, 500).map((s) => [s.start, s.end, s.ongoing]), [[100, 500, true]]);
+  // Unavailable 20 s ago: still in the mode.
+  assert.deepEqual(modeStays([{ s: "on", lu: 100 }, { s: "unavailable", lu: 480 }], "Sleep", false, 500).map((s) => [s.mode, s.end, !!s.ongoing]), [["Sleep", 500, true]]);
+  assert.equal(modeEntityOf(["bogus", "input_select.theater"]), "input_select.theater");
+  assert.equal(modeEntityOf("binary_sensor.a_asleep, switch.b"), "binary_sensor.a_asleep");
+  assert.equal(modeEntityOf(null), null);
 });

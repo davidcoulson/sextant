@@ -3,7 +3,7 @@
 import { LitElement, html, css, nothing, repeat } from "./lit.js";
 import { sharedStyles, fmtAge, fmtLen, classIcon, THING_CLASSES } from "./sextant-ui.js";
 import { occupancyByFloor, isActive, outsideNow, chipDetail, firstName, spotInRoom, SOURCE_ICON, SOURCE_LABEL, WHERE_SOURCE, WHERE_ICON, modeIcon,
-  trackedPeople, staysFromHistory, subjectHistory, joinRepeats, modeStays, clockAt, confidenceLevel } from "./sextant-occupancy-data.js";
+  trackedPeople, staysFromHistory, subjectHistory, joinRepeats, modeStays, modeEntityOf, clockAt, confidenceLevel } from "./sextant-occupancy-data.js";
 import { thingColor } from "./sextant-map.js";
 
 const HISTORY_HOURS = 24;
@@ -180,7 +180,7 @@ class SextantOccupancy extends LitElement {
     const why = d.conf == null ? "" : d.settled == null || pct(d.settled) === pct(d.conf) ? `Confidence ${pct(d.conf)}` : `Confidence ${pct(d.settled)} over the stay, ${pct(d.conf)} this moment`;
     const fact = (icon, text, colour, title = text) => text ? html`<span class="fact" style=${`--c: ${colour}`} title=${title}><ha-icon icon=${icon}></ha-icon>${text}</span>` : nothing;
     return html`${this._head(pet, name, icon || classIcon(d.thingClass), html`
-          <div class="place">${room}${d.spot && !d.outside ? html`<span class="muted"> · ${d.spot}</span>` : nothing}</div>
+          <div class="place">${room}${d.spot && !d.outside ? html`<span class="muted"> · ${d.spot}${d.spotSince ? ` (${fmtAge((Date.now() - d.spotSince) / 1000)})` : ""}</span>` : nothing}</div>
           ${floor ? html`<div class="floorname">${floor}</div>` : nothing}`)}
       <div class="facts">
         ${fact("mdi:clock-outline", d.since ? fmtAge((Date.now() - d.since) / 1000) : null, "var(--blue-color, #2196f3)", d.outside ? "Out for" : "Here for")}
@@ -202,9 +202,9 @@ class SextantOccupancy extends LitElement {
     if (subject.kind === "person" && !people.length) { this._hist = { untracked: true }; return; }
     // A room's or floor's sheet also shows its rooms' modes ("Eilee's Room → Sleep"), from each mode entity.
     const modes = subject.kind === "person" ? [] : (this.data?.layout?.floor || []).flatMap((f) => (f.zones || []).map((z) => {
-      const ent = [z.mode_entity].flat()[0];
-      return typeof ent === "string" && ent && z.entity_id && (subject.kind === "floor" ? f.name === subject.floor : f.name === subject.floor && z.entity_id === subject.room)
-        ? { room: z.entity_id, floor: f.name, ent, label: z.mode_label, option: /^(input_)?select\./.test(ent) } : null;
+      const ent = modeEntityOf(z.mode_entity), label = typeof z.mode_label === "string" ? z.mode_label.trim().slice(0, 40) || null : null;
+      return ent && z.entity_id && (subject.kind === "floor" ? f.name === subject.floor : f.name === subject.floor && z.entity_id === subject.room)
+        ? { room: z.entity_id, floor: f.name, ent, label, option: /^(input_)?select\./.test(ent) } : null;
     })).filter(Boolean);
     const now = Date.now() / 1000;
     try {
@@ -239,7 +239,8 @@ class SextantOccupancy extends LitElement {
   _renderHistory() {
     const s = this._subject, h = this._hist, now = Date.now() / 1000;
     const title = s.kind === "person" ? s.label : s.kind === "room" ? s.room : s.floor;
-    const rows = h?.people ? joinRepeats([...subjectHistory(h.people, s), ...(h.modes || [])].sort((a, b) => b.start - a.start)) : [];
+    // Joined before the limit, so a long run of one move counts every visit.
+    const rows = h?.people ? joinRepeats([...subjectHistory(h.people, s, Infinity), ...(h.modes || [])].sort((a, b) => b.start - a.start)).slice(0, 100) : [];
     const floors = new Set(rows.map((r) => r.floor).filter(Boolean));
     // "Michelle Great Room → Master Bedroom": the name only when the sheet is not one person's.
     const what = (r) => r.mode ? html`<span class="from">${r.room} →</span> <span class="to">${r.mode}</span>${r.count > 1
