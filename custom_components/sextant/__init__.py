@@ -2786,6 +2786,16 @@ async def update_receiver_radii(hass, eids):
                     entity_id, age, limit,
                 )
                 continue
+            # Near-only proxy (``near_only_m`` on the receiver, "Counts only
+            # within" on the Edit page): a wall tablet or phone panel that
+            # reads things metres away as under a metre is only trusted when
+            # someone stands right at it. Past the cut-off - on Bermuda's own
+            # distance, before any correction or trim - it drops out of the
+            # solve, the floor election and the anchor, like a missed reading.
+            near_only = receiver.get("near_only_m")
+            if isinstance(near_only, (int, float)) and not isinstance(near_only, bool) and near_only > 0 and distance_m >= near_only:
+                receiver.pop("distance", None)
+                continue
             try:
                 distance = distance_m
                 # Per-receiver correction factor learned by the

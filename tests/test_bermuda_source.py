@@ -285,6 +285,25 @@ def test_a_near_zero_distance_is_no_reading(monkeypatch):
     assert abs(_run_radii_direct(monkeypatch, 0.2)["distance"] - 0.2) < 1e-9
 
 
+def test_near_only_proxy_counts_only_inside_its_cut_off(monkeypatch):
+    """near_only_m compares Bermuda's raw distance, before correction: a raw
+    reading past the cut-off is dropped even when the correction shrinks it."""
+    def go(distance, **rx):
+        _install_bermuda_api(monkeypatch, _snapshot(distance=distance))
+        rec = {"entity_id": "probe", "cords": {"x": 0, "y": 0}, "distance": 9.9, **rx}
+        data = {"floor": [{"name": "F", "scale": SCALE, "receivers": [rec]}]}
+        run(sextant.update_receiver_radii(_NoStates(), {"entity": "phone", "data": data}))
+        return rec
+
+    assert "distance" not in go(0.8, near_only_m=0.4)
+    assert "distance" not in go(0.4, near_only_m=0.4)
+    assert abs(go(0.3, near_only_m=0.4)["distance"] - 0.3) < 1e-9
+    # Corrected to 0.25 m, but Bermuda read 0.5 m: still past the cut-off.
+    assert "distance" not in go(0.5, near_only_m=0.4, correction=0.5)
+    assert abs(go(0.8, near_only_m=0)["distance"] - 0.8) < 1e-9
+    assert abs(go(0.8, near_only_m=True)["distance"] - 0.8) < 1e-9
+
+
 def test_direct_path_drops_receiver_when_bermuda_reports_no_distance(monkeypatch):
     """distance None is Bermuda's own 'this scanner can no longer hear it'
     timeout, and must take the receiver out of the solve."""
