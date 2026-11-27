@@ -61,7 +61,8 @@ export function withPerson(states, id, entities = {}) {
   // No Companion app sensors on the tracker's device: a Life360 tracker answers both itself.
   const tracker = states?.[id]?.attributes?.tracker;
   const l360 = "driving" in (states?.[tracker]?.attributes || {}) ? tracker : undefined;
-  const place = mine.find((x) => /^sensor\..+_geocoded_location$/.test(x)) || l360;
+  // A phone's geocoder, else a pet collar's address sensor (Tractive/TryFi: *_current_place_address).
+  const place = mine.find((x) => /^sensor\..+_geocoded_location$/.test(x)) || mine.find((x) => /^sensor\..+_place_address$/.test(x)) || l360;
   const entry = { entity: id, ...(person && { person }), ...((activity || l360) && { activity: activity || l360 }), ...(place && { place }) };
   return Object.keys(entry).length > 1 ? entry : id;
 }
@@ -84,8 +85,10 @@ export function whereRows(states, entries, now) {
     const pet = e.pet ?? (/_pet_location$/.test(e.entity) || PET_CLASSES.has(a.via_class));
     const room = BLANK.has(a.room) ? null : a.room;
     const floor = BLANK.has(a.floor) ? null : a.floor;
-    let where, away = false, zone = null, moving = null, place = null;
+    let where, away = false, zone = null, moving = null, place = null, outside = false;
     if (!st || st.state === "unavailable") where = "Unavailable";
+    // A dog in the garden: home, in no room (heard faintly, or her collar says home while no proxy hears her).
+    else if (a.kind === "outside") { outside = true; where = "Outside"; }
     else if (a.kind === "zone" || a.presence === "away") {
       away = true;
       zone = a.zone && a.zone !== "not_home" ? title(a.zone) : null;
@@ -100,20 +103,23 @@ export function whereRows(states, entries, now) {
       place = [g.Locality ?? g.locality, g["Administrative Area"] ?? g.administrative_area ?? g.admin_area].filter((x) => x && x !== "N/A").join(", ")
         // Life360 lagging at its home place: not a place to show. Its places end in " (<circle name>)": dropped.
         || (gs?.state !== "home" && typeof g.place === "string" && ("driving" in g ? g.place.replace(/\s*\([^()]*\)$/, "") : g.place))
-        || g.address || "";
+        || g.address
+        // A sensor whose state is the address itself (a pet collar's).
+        || (gs && !BLANK.has(gs.state) && !e.place.startsWith("device_tracker.") ? gs.state : "");
       place ||= null;
       where = zone || (moving ? `${moving.label}${place ? ` near ${place}` : ""}` : place || "Away");
     } else where = room || title(st.state);
     rows.push({
-      id: e.entity, name, pet, away, zone: !!zone, moving, place: zone ? null : place,
+      id: e.entity, name, pet, away, outside, zone: !!zone, moving, place: zone ? null : place,
       picture: person?.attributes?.entity_picture || null,
-      where, room: away ? null : room, spot: away ? null : (a.spot || null),
+      where, room: away ? null : outside ? "Outside" : room, spot: away ? null : (a.spot || null),
       floor: away ? null : floor,
       // Away has no since: time since the sensor last changed, when they left or reached the zone.
-      stay: typeof a.since === "number" ? now - a.since : away && st?.last_changed ? now - Date.parse(st.last_changed) / 1000 : null,
+      stay: typeof a.since === "number" ? now - a.since : (away || outside) && st?.last_changed ? now - Date.parse(st.last_changed) / 1000 : null,
       conf: typeof a.conf === "number" ? a.conf : null,
       level: away ? null : confLevel(a.conf),
       via: a.via_class || null, source: a.source || null,
+      distance: away && typeof a.distance_m === "number" ? a.distance_m : null,
     });
   }
   return rows;
@@ -150,4 +156,21 @@ export function stripChips(rows, fold = 2) {
     groups.get(key).rows.push(r);
   }
   return chips.flatMap((c) => c.kind === "many" && c.rows.length < fold ? c.rows.map((row) => ({ kind: "one", row })) : [c]);
+}
+
+/** People (not pets, not away) in the same room as each pet, by pet id: "Fry is with David". */
+export function petCompany(rows) {
+  const people = rows.filter((r) => !r.pet && !r.away && r.room);
+  return new Map(rows.filter((r) => r.pet).map((p) => [p.id, p.away || !p.room ? [] : people.filter((r) => r.room === p.room)]));
+}
+
+/** "David", "David and Michelle", "David, Michelle +1". */
+export function joinNames(names) {
+  return names.length < 3 ? names.join(" and ") : `${names[0]}, ${names[1]} +${names.length - 2}`;
+}
+
+/** Distance from home, short: "800 m", "3.2 km", "41 km". */
+export function fmtDistance(m) {
+  if (typeof m !== "number" || !(m >= 0)) return "";
+  return m < 1000 ? `${Math.round(m / 10) * 10} m` : m < 10000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m / 1000)} km`;
 }

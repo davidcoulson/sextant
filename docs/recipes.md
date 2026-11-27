@@ -348,8 +348,8 @@ there brings their photo and name.
 
 ```yaml
 type: custom:sextant-where-card
-layout: tiles          # tiles | rooms | strip | rings
-columns: 2             # tiles (default 2) and rings (default 4)
+layout: tiles          # tiles | rooms | strip | rings | pets
+columns: 2             # tiles and pets (default 2), rings (default 4)
 show_floor: true       # optional: the floor under the room when there is no spot
 entities:
   - entity: sensor.alex_smith_sextant_person_location
@@ -373,6 +373,13 @@ rooms:                 # optional, rooms layout: shows each room's mode
 - `rings`: people's faces four across with the time there; pets on one line.
   Someone away gets two lines for their place, as on tiles; the badge shows
   driving or walking.
+- `pets`: the pets only. Each dog gets a card of its own: Inside, Outside
+  or Away, the spot or room and the time there, the collar's address when
+  away (pick its `*_current_place_address` sensor as `place`), and how she
+  was placed (Bluetooth, GPS) with the distance from home. The other pets
+  are tiles, two across, with their spot or room. People listed are not
+  drawn; a pet in the same room as one shows their face on its photo and
+  "with David" under it.
 
 The card reads only the entities its config names, so it works on
 dashboards served through Strimmer without an override rule.
