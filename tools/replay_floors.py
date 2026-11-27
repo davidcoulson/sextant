@@ -146,6 +146,8 @@ def replay(seq, tuning, switch=None, margin=None, tenure_bonus=None, weight=None
     margin for a thing slower than stationary_speed. ``habit`` (see
     with_habit) replays the floor habit prior from a habits table; note the
     table already holds the nights being replayed, so it flatters a little.
+    shortcut: the replayed prior ignores pauses and charging, and a logged score
+    rounded to 0 cannot be divided back out; read a holiday's replay with that in mind.
     """
     smooth = float(tuning["floor_prob_smoothing"])
     switch = float(tuning["floor_switch_secs"]) if switch is None else switch

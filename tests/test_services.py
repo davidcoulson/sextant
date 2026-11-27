@@ -175,3 +175,12 @@ def test_habit_pauses_are_stored_dropped_when_over_and_resumed(tmp_path):
         run(h["pause_habits"](_Call()))
     run(h["resume_habits"](_Call()))
     assert "habit_pauses" not in st.get_layout(hass)
+
+
+def test_a_full_set_of_pauses_refuses_rather_than_ending_one(tmp_path):
+    hass, h = _hass(tmp_path)
+    for i in range(20):
+        run(h["pause_habits"](_Call(hours=1, things=[f"t{i}"])))
+    with pytest.raises(Exception, match="already running"):
+        run(h["pause_habits"](_Call(hours=1)))
+    assert len(st.get_layout(hass)["habit_pauses"]) == 20

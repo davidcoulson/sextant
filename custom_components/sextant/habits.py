@@ -145,8 +145,10 @@ def floor_factors(store: dict, ent: str, floors, now: float, weight: float, tz=N
         return {}
     on: dict = {}
     for key, secs in row["z"].items():
-        floor = key.split("|", 1)[0]
-        on[floor] = on.get(floor, 0.0) + secs / total
+        # A floor's own name may hold a "|": match the floors standing, longest first.
+        floor = next((f for f in sorted(floors, key=len, reverse=True) if key.startswith(f"{f}|")), None)
+        if floor is not None:
+            on[floor] = on.get(floor, 0.0) + secs / total
     return {f: max(on.get(f, 0.0), FLOOR_FLOOR_SHARE) ** weight for f in floors}
 
 

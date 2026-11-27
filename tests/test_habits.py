@@ -123,3 +123,10 @@ def test_the_floor_prior_skips_charging_things_unworn_watches_and_pauses(monkeyp
     assert core._habit_floor_factors(hass, layout, "w", ["Second"]) != {}               # unknown: the habit stands
     layout["habit_pauses"] = [{"until": now + 60, "classes": ["watch"]}]
     assert core._habit_floor_factors(hass, layout, "w", ["Second"]) == {}               # paused
+
+
+def test_a_floor_name_with_a_bar_gets_its_own_share():
+    s = habits.new_store()
+    _spend(s, "m", "West|Upper|Bed", MON_7AM, 30 * 60)
+    f = habits.floor_factors(s, "m", ["West", "West|Upper"], MON_7AM + 30 * 60, 1.0, timezone.utc)
+    assert f["West|Upper"] > 0.99 and f["West"] == habits.FLOOR_FLOOR_SHARE

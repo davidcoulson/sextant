@@ -8089,7 +8089,9 @@ def _register_calibration_services(hass) -> None:
             until = call.data["until"]
             if not isinstance(until, _dt):   # an all-day calendar event ends on a date: its local midnight
                 until = _dt(until.year, until.month, until.day)
-            until = dt_util.as_timestamp(until)   # a time without a zone is local
+            if until.tzinfo is None:   # Home Assistant's zone, not the process's (UTC on HA OS)
+                until = until.replace(tzinfo=dt_util.get_default_time_zone())
+            until = until.timestamp()
         elif call.data.get("hours") is not None:
             until = now + 3600.0 * call.data["hours"]
         else:
@@ -8102,7 +8104,9 @@ def _register_calibration_services(hass) -> None:
             if not isinstance(data, dict):
                 raise HomeAssistantError("No Sextant layout saved yet; place receivers first.")
             live = [p for p in data.get("habit_pauses") or [] if isinstance(p, dict) and (p.get("until") or 0) > now]
-            data["habit_pauses"] = (live + [pause])[-habits_mod.MAX_PAUSES:]
+            if len(live) >= habits_mod.MAX_PAUSES:   # never end a running pause to make room
+                raise HomeAssistantError(f"pause_habits: {len(live)} pauses already running; resume_habits ends them")
+            data["habit_pauses"] = live + [pause]
             await save_layout(hass, data)
         _LOGGER.info("sextant.pause_habits: %s", pause)
 
