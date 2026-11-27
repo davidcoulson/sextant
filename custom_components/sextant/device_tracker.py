@@ -33,7 +33,9 @@ class SextantPersonTracker(TrackerEntity):
         self._attr_name = f"{name} Sextant"
         self._attr_unique_id = f"{UNIQUE_PREFIX}{slug}"
         self.entity_id = f"device_tracker.{slug}_sextant"
-        self._fix = {"location_name": "not_home", "source_type": "gps", "source": "none", "presence": "away"}
+        # Unknown until the first cycle: no name, zones or coordinates. A made-up not_home here
+        # read as "left" then "arrived" on every code reload (2026-11-27).
+        self._fix = {"location_name": None, "source_type": "gps", "source": "none", "presence": None}
         self._attr_device_info = DeviceInfo(
             identifiers={("sextant", f"person_{slug}")},
             name=name, manufacturer="Sextant", model=device_model(is_pet),   # as the person's sensors name it
