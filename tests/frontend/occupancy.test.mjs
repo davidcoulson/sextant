@@ -178,11 +178,11 @@ test("staysFromHistory joins room and floor changes into stays, one move per cyc
     { start: 100, end: 200, room: "Great Room", floor: "Ground Floor" },
     { start: 200, end: 400, room: "Master Bedroom", floor: "Second Floor" },
     { start: 400, end: 500, room: null, floor: "Second Floor" },
-    { start: 500, end: 1000, room: "Master Bedroom", floor: "Second Floor" },
+    { start: 500, end: 1000, room: "Master Bedroom", floor: "Second Floor", ongoing: true },
   ]);
   // A floor change a moment before the room flips back is not a stay of its own.
   assert.deepEqual(staysFromHistory([{ s: "A", lu: 0 }, { s: "A", lu: 10.5 }], [{ s: "F", lu: 0 }, { s: "G", lu: 10 }, { s: "F", lu: 11 }], 50),
-    [{ start: 0, end: 50, room: "A", floor: "F" }]);
+    [{ start: 0, end: 50, room: "A", floor: "F", ongoing: true }]);
   assert.deepEqual(staysFromHistory(undefined, undefined, 5), []);
 });
 
@@ -197,6 +197,9 @@ test("subjectHistory lists a person's stays, or everyone's in a room or on a flo
   assert.deepEqual(subjectHistory(people, { kind: "room", room: "Master Bedroom", floor: "Ground" }), []);
   assert.deepEqual(subjectHistory(people, { kind: "floor", floor: "Second" }).map((r) => r.room), ["Catwalk", "Master Bedroom", "Master Bedroom"]);
   assert.equal(subjectHistory(people, { kind: "floor", floor: "Second" }, 1).length, 1);
+  // Outside keeps the floor it left from, but is not on that floor.
+  const out = [{ name: "Primrose", pet: true, stays: [{ start: 0, end: 10, room: "Outside", floor: "Ground" }, { start: 10, end: 20, room: "Kitchen", floor: "Ground" }] }];
+  assert.deepEqual(subjectHistory(out, { kind: "floor", floor: "Ground" }).map((r) => r.room), ["Kitchen"]);
 });
 
 test("clockAt says the day when it is not today, and a room carries its since", async () => {

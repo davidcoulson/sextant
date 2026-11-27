@@ -132,6 +132,8 @@ export function staysFromHistory(roomRows, floorRows, now) {
     if (last) last.end = e.t;
     stays.push({ start: e.t, end: now, room: cur.room, floor: cur.floor });
   }
+  // The last stay is still going: the sheet shows it as "now" and counts it to the moment it draws.
+  if (stays.length) stays[stays.length - 1].ongoing = true;
   return stays;
 }
 
@@ -145,7 +147,8 @@ export function subjectHistory(people, subject, limit = 100) {
     if (subject.kind === "person" && p.name !== subject.name) continue;
     for (const s of p.stays || []) {
       if (subject.kind === "room" && !(s.room === subject.room && s.floor === subject.floor)) continue;
-      if (subject.kind === "floor" && !(s.room && s.floor === subject.floor)) continue;
+      // Outside keeps the floor it left from, but is on no floor.
+      if (subject.kind === "floor" && !(s.room && s.room !== "Outside" && s.floor === subject.floor)) continue;
       rows.push({ name: p.name, pet: p.pet, ...s });
     }
   }

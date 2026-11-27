@@ -16,7 +16,7 @@ class SextantOccupancy extends LitElement {
     this._subject = null;       // what the history sheet is for: {kind: "person"|"room"|"floor", ...}
     this._hist = null;          // {people: [{name, pet, stays}]} | {error} | null while loading
     // On the document: the hover popup has no focus inside this element for Escape to reach.
-    this._onKey = (e) => { if (e.key !== "Escape") return; if (this._subject) this._closeHistory(); else this._hover = null; };
+    this._onKey = (e) => { if (e.key === "Escape" && !this._subject) this._hover = null; };   // the dialog closes itself on Escape
   }
 
   connectedCallback() { super.connectedCallback(); document.addEventListener("keydown", this._onKey); }
@@ -81,16 +81,20 @@ class SextantOccupancy extends LitElement {
     .place .muted, .floorname { color: var(--secondary-text-color); }
     .floorname { font-size: 12px; }
     .facts { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; font-size: 12px; color: var(--secondary-text-color); }
-    .fact { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+    .fact { display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+    .fact ha-icon { flex: none; }
+    .why { margin-top: 6px; font-size: 12px; color: var(--secondary-text-color); }
     .fact ha-icon { --mdc-icon-size: 15px; }
     .hint.more { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--divider-color); }
 
     /* The history sheet: up from the bottom on a phone, a panel on the right when wide. */
-    .scrim { position: fixed; inset: 0; z-index: 10; background: rgba(0, 0, 0, 0.4); }
-    .sheet { position: fixed; z-index: 11; left: 0; right: 0; bottom: 0; max-height: 80vh; display: flex; flex-direction: column;
+    /* A modal <dialog>: it keeps Tab inside and closes on Escape. */
+    .sheet { position: fixed; inset: auto 0 0 0; margin: 0; padding: 0; border: 0; width: 100%; max-width: none; box-sizing: border-box; max-height: 80vh; flex-direction: column;
       background: var(--card-background-color); color: var(--primary-text-color); border-radius: 16px 16px 0 0; box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.3);
       padding-bottom: env(safe-area-inset-bottom, 0px); }
-    @media (min-width: 601px) { .sheet { left: auto; top: 0; width: 400px; max-height: none; border-radius: 0; box-shadow: -4px 0 20px rgba(0, 0, 0, 0.3); } }
+    @media (min-width: 601px) { .sheet { inset: 0 0 0 auto; width: 400px; height: 100%; max-height: none; border-radius: 0; box-shadow: -4px 0 20px rgba(0, 0, 0, 0.3); } }
+    .sheet[open] { display: flex; }
+    .sheet::backdrop { background: rgba(0, 0, 0, 0.4); }
     .sh { display: flex; align-items: flex-start; gap: 8px; padding: 14px 16px 8px; border-bottom: 1px solid var(--divider-color); }
     .sh div { flex: 1; min-width: 0; }
     .sh b { display: block; font-size: 16px; }
@@ -126,8 +130,9 @@ class SextantOccupancy extends LitElement {
   }
 
   /** Where a person or pet is now, as a short summary: the place in large type, then small facts with icons.
-   *  The numbers behind "Sure" (the fit's and the stay-lifted confidence) are in its tooltip. */
-  _details(d, pet = false) {
+   *  The numbers behind "Sure" are in its tooltip, and written out under the facts when ``full`` (the history sheet,
+   *  where a phone has no hover). */
+  _details(d, pet = false, full = false) {
     if (!d) return html`<div class="hint">No Sextant location sensor found.</div>`;
     const room = d.outside ? "Outside" : d.room && d.room !== "unknown" ? d.room : "Somewhere unknown";
     const floor = !d.outside && d.floor && d.floor !== "unknown" ? d.floor : null;
@@ -137,10 +142,11 @@ class SextantOccupancy extends LitElement {
     if (d.source === "wifi" && d.accessPoint) src += ` (${d.accessPoint})`;
     if (d.source === "gps" && d.gpsAccuracy != null) src += ` (±${fmtLen(d.gpsAccuracy, this.hass, 0)})`;
     const ago = d.heardAt ? (Date.now() - d.heardAt) / 1000 : null;
-    const heard = ago == null ? (d.presence && d.presence !== "here" ? d.presence : null) : ago < 60 ? "Heard just now" : `Heard ${fmtAge(ago).split(" ")[0]} ago`;
+    const status = d.presence && d.presence !== "here" ? d.presence : null;   // quiet or away: say so beside the age
+    const heard = ago == null ? status || src : `${ago < 60 ? "Heard just now" : `Heard ${fmtAge(ago).split(" ")[0]} ago`}${status ? ` (${status})` : ""}`;
     const pct = (x) => `${Math.round(x * 100)}%`;
     const shown = d.settled ?? d.conf;
-    const level = confidenceLevel(shown);
+    const level = shown == null ? null : confidenceLevel(Math.round(shown * 100) / 100);   // the word agrees with the rounded figure
     const why = d.conf == null ? "" : d.settled == null || pct(d.settled) === pct(d.conf) ? `Confidence ${pct(d.conf)}` : `Confidence ${pct(d.settled)} over the stay, ${pct(d.conf)} this moment`;
     const fact = (icon, text, title = text) => text ? html`<span class="fact" title=${title}><ha-icon icon=${icon}></ha-icon>${text}</span>` : nothing;
     return html`<div class="place">${room}${d.spot && !d.outside ? html`<span class="muted"> · ${d.spot}</span>` : nothing}</div>
@@ -150,7 +156,8 @@ class SextantOccupancy extends LitElement {
         ${fact(WHERE_ICON[d.source] || "mdi:help-circle-outline", heard, `${heard} · ${src}`)}
         ${level ? fact(level.icon, level.word, why) : nothing}
         ${fact(pet ? "mdi:paw" : classIcon(d.thingClass) || "mdi:cellphone", device, `Tracked by ${device}`)}
-      </div>`;
+      </div>
+      ${full && why ? html`<div class="why">${why}</div>` : nothing}`;
   }
 
   async _openHistory(subject) {
@@ -160,6 +167,8 @@ class SextantOccupancy extends LitElement {
     const token = (this._token = {});
     const all = trackedPeople(this.hass?.states);
     const people = subject.kind === "person" ? all.filter((p) => p.name === subject.name) : all;
+    // A pet known only by its tag has no room sensors of its own, so no history to read.
+    if (subject.kind === "person" && !people.length) { this._hist = { untracked: true }; return; }
     const now = Date.now() / 1000;
     try {
       // Home Assistant's recorder keeps every state of the room and floor sensors, and any user may read it.
@@ -177,11 +186,15 @@ class SextantOccupancy extends LitElement {
 
   _closeHistory() {
     this._subject = null; this._hist = null; this._token = null;
-    this._opener?.focus?.();
+    if (this._opener?.isConnected) this._opener.focus();   // gone when its row changed while the sheet was open
   }
 
   updated(changed) {
-    if (changed.get("_subject") === null && this._subject) this.shadowRoot?.querySelector(".sheet .close")?.focus();
+    if (changed.get("_subject") === null && this._subject) {
+      const dlg = this.shadowRoot?.querySelector("dialog.sheet");
+      if (dlg && !dlg.open) dlg.showModal();
+      dlg?.querySelector(".close")?.focus();
+    }
   }
 
   _renderHistory() {
@@ -195,24 +208,26 @@ class SextantOccupancy extends LitElement {
     let body;
     if (!h) body = html`<div class="hint">Loading…</div>`;
     else if (h.error) body = html`<div class="hint">History is not available (${h.error}). It comes from Home Assistant's recorder, so the people's and pets' room and floor sensors need to be recorded.</div>`;
+    else if (h.untracked) body = html`<div class="hint">Sextant keeps no room history for ${title}: only people and pets with a person entity have one.</div>`;
     else if (!rows.length) body = html`<div class="hint">${s.kind === "person" ? "No history" : "Nobody"} in the last ${HISTORY_HOURS} hours.</div>`;
     else body = rows.map((r) => {
-      const cur = r.end >= now - 1;
+      const cur = r.ongoing;
       return html`<div class="hr ${cur ? "cur" : ""} ${r.room ? "" : "nowhere"}">
         <span class="t">${clockAt(r.start, now)}</span>
         <span class="what">${what(r)}</span>
         <span class="d">${cur ? `now · ${fmtAge(now - r.start)}` : fmtAge(r.end - r.start)}</span></div>`;
     });
     const d = s.kind === "person" ? chipDetail(this.hass?.states, s.name, s.ids, this.data?.layout?.thing_classes) : null;
-    return html`<div class="scrim" @click=${() => this._closeHistory()}></div>
-      <div class="sheet" role="dialog" aria-modal="true" aria-label=${`${title}: history`}>
+    return html`<dialog class="sheet" aria-label=${`${title}: history`}
+        @cancel=${(e) => { e.preventDefault(); this._closeHistory(); }}
+        @click=${(e) => { if (e.target === e.currentTarget) this._closeHistory(); }}>
         <div class="sh"><div><b>${title}</b><small>${s.kind === "room" ? `${s.floor} · ` : ""}last ${HISTORY_HOURS} hours</small></div>
           <button class="iconbtn close" title="Close" aria-label="Close" @click=${() => this._closeHistory()}><ha-icon icon="mdi:close"></ha-icon></button></div>
         <div class="sb">
-          ${s.kind === "person" ? html`<div class="now">${this._details(d, s.pet)}</div>` : nothing}
+          ${s.kind === "person" ? html`<div class="now">${this._details(d, s.pet, true)}</div>` : nothing}
           ${body}
         </div>
-      </div>`;
+      </dialog>`;
   }
 
   _room(f, r) {
