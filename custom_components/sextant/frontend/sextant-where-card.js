@@ -89,7 +89,7 @@ class SextantWhereCard extends LitElement {
     return html`<div class="tiles" style="--cols:${this._config.columns || 2}">${rows.map((r) => html`
       <button class="tile" @click=${() => this._more(r.id)}>${this._avatar(r, "", true)}
         <span class="txt"><span class="n"><span class="nm">${r.name}</span><span class="stay">${fmtStay(r.stay, true)}</span></span>
-        <span class="room ${sub(r) ? "" : "two"}" title=${r.where}>${this._where(r)}</span>
+        <span class="room ${sub(r) ? "" : "two"}" title=${this._where(r, false)}>${this._where(r)}</span>
         ${sub(r) ? html`<span class="sub" title=${sub(r)}>${sub(r)}</span>` : nothing}</span></button>`)}</div>`;
   }
 
@@ -112,7 +112,7 @@ class SextantWhereCard extends LitElement {
     const people = rows.filter((r) => !r.pet), pets = rows.filter((r) => r.pet);
     return html`<div><div class="rings" style="--cols:${this._config.columns || 4}">${people.map((r) => html`
       <button class="cell" @click=${() => this._more(r.id)}>${this._avatar(r, "lg", true)}${r.stay != null ? html`<span class="t">${fmtStay(r.stay, true)}</span>` : nothing}
-        <span class="n">${r.name}</span><span class="room ${this._sub(r) ? "" : "two"}" title=${r.where}>${this._where(r)}</span>
+        <span class="n">${r.name}</span><span class="room ${this._sub(r) ? "" : "two"}" title=${this._where(r, false)}>${this._where(r)}</span>
         ${this._sub(r) ? html`<span class="sub">${this._sub(r)}</span>` : nothing}</button>`)}</div>
       ${pets.length ? html`<div class="pets">${pets.map((r) => html`<button class="pet" @click=${() => this._more(r.id)}>${this._avatar(r, "xs")}${r.name} <span class="sub">${this._config.precise ? preciseWhere(r) : r.spot || r.where}</span></button>`)}</div>` : nothing}</div>`;
   }
