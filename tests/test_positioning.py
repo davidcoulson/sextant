@@ -2939,3 +2939,27 @@ def test_arriving_on_a_floor_into_a_room_shut_unseen_waits_out_the_long_lead(mon
                                closed={"Hall"}, doors_shut={"Hall": seen}, new_floor=(t == 0.0))[0]
            for t, seen in ((0.0, False), (300.0, False), (600.0, False), (601.0, True))]
     assert got == ["unknown", "unknown", "Hall", "Hall"]
+
+
+def test_a_thing_shut_in_keeps_its_floor_against_a_small_lead():
+    """Meg, 02:48: Ground led by about +0.1 for 10 minutes and took him off Eilee's bed."""
+    solved = {"Second": {}, "Ground": {}}
+    probs, scores = {"Second": 0.45, "Ground": 0.55}, {"Second": 0.65, "Ground": 0.82}
+    ch, out = None, []
+    for t in (0.0, 600.0, 3600.0):
+        floor, ch = sextant._elect_floor(probs, "Second", solved, ch, now=t, switch_secs=600.0, margin=0.25,
+                                         scores=scores, shut_in=True)
+        out.append(floor)
+    assert out == ["Second"] * 3
+    probs = {"Second": 0.3, "Ground": 0.7}   # a strong lead, held door_leave_secs, still moves it
+    ch, out = None, []
+    for t in (0.0, 599.0, 600.0):
+        floor, ch = sextant._elect_floor(probs, "Second", solved, ch, now=t, switch_secs=600.0, margin=0.25,
+                                         scores=scores, shut_in=True)
+        out.append(floor)
+    assert out == ["Second", "Second", "Ground"]
+    probs = {"Second": 0.45, "Ground": 0.55}   # not shut in: the lasting lead wins as before
+    ch = None
+    for t in (0.0, 3600.0):
+        floor, ch = sextant._elect_floor(probs, "Second", solved, ch, now=t, switch_secs=30.0, margin=0.25, scores=scores)
+    assert floor == "Ground"
