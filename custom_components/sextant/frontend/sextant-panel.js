@@ -49,6 +49,7 @@ const EXPERT_MODES = ["tuning"];   // pages shown only in expert mode
 const FLOOR_MODES = new Set(["live", "edit", "proxies", "calibration"]);
 // Pages with no form to lose: they reload themselves into a new version (Edit too, with no draft).
 const AUTO_RELOAD_MODES = new Set(["live", "occupancy"]);
+const EDIT_RELOAD_MS = 15000;   // how long after the tab comes back Edit may still reload itself
 
 /** Reload into the installed version. Home Assistant's service worker answers
  *  same-site files from its cache and refreshes that copy behind the scenes, so a
@@ -124,7 +125,12 @@ class SextantPanel extends LitElement {
     this._subscribe();
     this._clock = setInterval(() => { this._now = Date.now() / 1000; }, 1000);
     // Back in view: fetch the layout again, which carries the installed version.
-    this._onVisible = () => { if (document.visibilityState === "visible" && this._nothingToLose()) this._load(); };
+    // Edit too, even with a draft: new data never replaces a draft (sextant-edit _syncDraft).
+    this._onVisible = () => {
+      if (document.visibilityState !== "visible" || !(AUTO_RELOAD_MODES.has(this._mode) || this._mode === "edit")) return;
+      this._shownAt = Date.now();
+      this._load();
+    };
     document.addEventListener("visibilitychange", this._onVisible);
   }
 
@@ -150,9 +156,12 @@ class SextantPanel extends LitElement {
     this._autoReload();
   }
 
-  /** Live, Occupancy, or Edit with no unsaved draft: a reload loses nothing. */
+  /** Live, Occupancy, or Edit at rest (sextant-edit atRest) just after the tab came back
+   * into view: nobody is mid-drag or mid-word on a page they were not looking at. */
   _nothingToLose() {
-    return AUTO_RELOAD_MODES.has(this._mode) || (this._mode === "edit" && !this.renderRoot?.querySelector("sextant-edit")?.unsaved);
+    if (AUTO_RELOAD_MODES.has(this._mode)) return true;
+    return this._mode === "edit" && Date.now() - (this._shownAt || 0) < EDIT_RELOAD_MS
+      && !!this.renderRoot?.querySelector("sextant-edit")?.atRest;
   }
 
   /** A newer version is installed: reload into it while the tab is in view on
@@ -169,7 +178,7 @@ class SextantPanel extends LitElement {
     } catch { return; }
     // Moved to a page with a draft while the cache was cleared: stay, and try again on the way back.
     reloadFresh(() => {
-      if (this.isConnected && this._nothingToLose()) return true;
+      if (this.isConnected && document.visibilityState === "visible" && this._nothingToLose()) return true;
       try { sessionStorage.removeItem("sextant.autoReloaded"); } catch { /* reload offered by the banner */ }
       return false;
     });
