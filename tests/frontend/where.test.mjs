@@ -208,6 +208,10 @@ test("pets: company is the people in the pet's room, never other pets or anyone 
   const fry2 = rows2.find((r) => r.id === "sensor.fry_sextant_pet_location");
   assert.deepEqual([fry2.conf, fry2.level.key], [0.78, "confident"]);
   assert.deepEqual(petCompany(rows2).get(fry2.id).map((r) => r.name), ["David"]);
+  // ...but not for a held fix: its position is frozen, so the stay proves nothing.
+  states2["sensor.fry_sextant_pet_location"].attributes.source = "held";
+  const fry3 = whereRows(states2, ["sensor.fry_sextant_pet_location"], NOW)[0];
+  assert.deepEqual([fry3.conf, fry3.level.key], [0.56, "likely"]);
   // A held fix keeps its old confidence: no company. Nor a room of the same name on another floor.
   const leela = rows.find((r) => r.id === "sensor.leela_sextant_pet_location");
   assert.deepEqual(petCompany(rows.map((r) => r === leela ? { ...r, source: "held" } : r)).get(leela.id), []);

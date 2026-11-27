@@ -109,6 +109,9 @@ export function whereRows(states, entries, now) {
       place ||= null;
       where = zone || (moving ? `${moving.label}${place ? ` near ${place}` : ""}` : place || "Away");
     } else where = room || title(st.state);
+    // settled_conf is conf lifted by a long stay while heard (rooms.settled_confidence); a held fix is a frozen
+    // position, so its stay is no fresh evidence and only its own conf counts.
+    const shown = typeof a.settled_conf === "number" && a.source !== "held" ? a.settled_conf : a.conf;
     rows.push({
       id: e.entity, name, pet, away, outside, zone: !!zone, moving, place: zone ? null : place,
       picture: person?.attributes?.entity_picture || null,
@@ -116,9 +119,8 @@ export function whereRows(states, entries, now) {
       floor: away ? null : floor,
       // Away has no since: time since the sensor last changed, when they left or reached the zone.
       stay: typeof a.since === "number" ? now - a.since : (away || outside) && st?.last_changed ? now - Date.parse(st.last_changed) / 1000 : null,
-      // settled_conf is conf lifted by a long stay while heard (rooms.settled_confidence); the backend omits it otherwise.
-      conf: typeof a.settled_conf === "number" ? a.settled_conf : typeof a.conf === "number" ? a.conf : null,
-      level: away ? null : confLevel(typeof a.settled_conf === "number" ? a.settled_conf : a.conf),
+      conf: typeof shown === "number" ? shown : null,
+      level: away ? null : confLevel(shown),
       via: a.via_class || null, source: a.source || null,
       // A GPS collar: the dog's card even when no tag is heard (via_class comes from the tag, so it is null then).
       roams: pet && (a.via_class === "dog" || !!a.tracker),
