@@ -185,6 +185,11 @@ test("staysFromHistory joins room and floor changes into stays, one move per cyc
     [{ s: "Eilee's Room", lu: 0 }, { s: "unavailable", lu: 300 }, { s: "Eilee's Room", lu: 314 }, { s: "Kitchen", lu: 400 }, { s: "unavailable", lu: 500 }, { s: "Hall", lu: 513 }],
     [{ s: "Second Floor", lu: 0 }, { s: "unavailable", lu: 300 }, { s: "Second Floor", lu: 314 }, { s: "unavailable", lu: 500 }, { s: "Second Floor", lu: 513 }], 600);
   assert.deepEqual(reload.map((s) => [s.room, s.start, s.end]), [["Eilee's Room", 0, 400], ["Kitchen", 400, 513], ["Hall", 513, 600]]);
+  // Only the floor dropping out is a reload too: no "A → A".
+  assert.deepEqual(staysFromHistory([{ s: "A", lu: 0 }], [{ s: "F", lu: 0 }, { s: "unavailable", lu: 50 }, { s: "F", lu: 63 }], 100).map((s) => [s.room, s.floor]), [["A", "F"]]);
+  // Two short pieces of one long outage (the floor changed in between) are one spell of 150 s, so they stay.
+  const long = staysFromHistory([{ s: "A", lu: 0 }, { s: "unavailable", lu: 100 }, { s: "A", lu: 250 }], [{ s: "F", lu: 0 }, { s: "G", lu: 175 }, { s: "F", lu: 250 }], 400);
+  assert.deepEqual(long.map((s) => [s.room, s.start]), [["A", 0], [null, 100], [null, 175], ["A", 250]]);
   // Unplaced right now is shown, however short.
   assert.equal(staysFromHistory([{ s: "A", lu: 0 }, { s: "unknown", lu: 95 }], [], 100).at(-1).room, null);
   // A floor change a moment before the room flips back is not a stay of its own.

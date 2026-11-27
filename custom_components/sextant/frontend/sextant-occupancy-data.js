@@ -132,17 +132,24 @@ export function staysFromHistory(roomRows, floorRows, now) {
     if (last) last.end = e.t;
     stays.push({ start: e.t, end: now, room: cur.room, floor: cur.floor });
   }
-  // A short spell unplaced is Sextant reloading or restarting (its sensors read unavailable for a few
-  // seconds), not a move: drop it, give its time to the stay before, and join the same room either side.
-  // The current state stays as it is, however short.
+  // A short spell with the room or the floor missing is Sextant reloading or restarting (its sensors read
+  // unavailable for a few seconds), not a move: drop it, give its time to the stay before, and join the same
+  // room either side. A run of such stays counts as one spell, and the current state stays however short.
   const kept = [];
-  stays.forEach((s, i) => {
-    if (s.room === null && i < stays.length - 1 && s.end - s.start < BLIP_SECS) return;
+  const keep = (s) => {
     const last = kept[kept.length - 1];
     if (last && last.room === s.room && last.floor === s.floor) { last.end = s.end; return; }
     if (last) last.end = s.start;
     kept.push(s);
-  });
+  };
+  const missing = (s) => s.room === null || s.floor === null;
+  for (let i = 0; i < stays.length;) {
+    if (!missing(stays[i])) { keep(stays[i++]); continue; }
+    let j = i;
+    while (j < stays.length && missing(stays[j])) j++;
+    if (j === stays.length || stays[j - 1].end - stays[i].start >= BLIP_SECS) stays.slice(i, j).forEach(keep);
+    i = j;
+  }
   // The last stay is still going: the sheet shows it as "now" and counts it to the moment it draws.
   if (kept.length) kept[kept.length - 1].ongoing = true;
   return kept;
