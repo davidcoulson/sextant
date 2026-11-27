@@ -2892,3 +2892,38 @@ def test_being_shut_in_starts_when_the_door_shuts_not_after_the_entry_grace(monk
         got.append(sextant._elect_zone("meg", "F", None, Point(250, 50), None, _three_rooms(), 100.0, layout,
                                        now=t, closed=closed, doors_shut={"Hall"} if t else set())[0])
     assert got == ["Hall"] * 4
+
+
+def test_a_room_shut_unseen_lets_a_thing_in_on_a_long_clear_lead(monkeypatch):
+    """After a restart the door was already shut: if the first pick put Meg outside, ten
+    minutes of clear readings put him back in. A shutting seen live keeps him out."""
+    layout = {"tuning": {"zone_lock_warmup_secs": 0.0, "zone_prob_smoothing": 0.0, "stationary_secs": 99999.0}}
+    for seen, want in ((False, ["Office", "Office", "Office", "Hall"]), (True, ["Office"] * 4)):
+        sextant._zone_state.clear()
+        sextant._shut_in.clear()
+        got = []
+        for t, shares in [(0.0, {"Office": 1.0}), (10.0, {"Hall": 1.0}), (609.0, {"Hall": 1.0}), (610.0, {"Hall": 1.0})]:
+            monkeypatch.setattr(sextant, "_zone_membership", lambda polys, samples, s=shares: dict(s))
+            got.append(sextant._elect_zone("meg", "F", None, Point(250, 50), None, _three_rooms(), 100.0, layout,
+                                           now=t, closed={"Hall"}, doors_shut={"Hall": seen})[0])
+        assert got == want, seen
+    assert sextant._shut_in.get("meg") is None
+
+
+def test_doors_shut_says_whether_the_shutting_was_seen():
+    from datetime import datetime, timezone
+    from types import SimpleNamespace as NS
+    at = datetime.fromtimestamp(1000.0, timezone.utc)
+    states = {"binary_sensor.a": NS(state="off", last_changed=at), "binary_sensor.b": NS(state="on", last_changed=at)}
+    hass = NS(states=NS(get=states.get))
+    polys = sextant._FloorZones(_three_rooms())
+    polys.doors = {"Hall": "binary_sensor.a", "Office": "binary_sensor.b"}
+    sextant._door_seen.clear()
+    sextant._closed_rooms(hass, polys, {}, 1001.0)
+    assert sextant._doors_shut(hass, polys) == {"Hall": False}   # closed at start: unseen
+    states["binary_sensor.a"] = NS(state="on", last_changed=datetime.fromtimestamp(1100.0, timezone.utc))
+    sextant._closed_rooms(hass, polys, {}, 1101.0)
+    states["binary_sensor.a"] = NS(state="off", last_changed=datetime.fromtimestamp(1200.0, timezone.utc))
+    sextant._closed_rooms(hass, polys, {}, 1201.0)
+    assert sextant._doors_shut(hass, polys) == {"Hall": True}
+    sextant._door_seen.clear()
