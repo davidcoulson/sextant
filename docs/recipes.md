@@ -371,6 +371,8 @@ rooms:                 # optional, rooms layout: shows each room's mode
 - `strip`: one wrapping row of chips; pets of one kind on one floor fold
   into one chip ("3 cats · Ground Floor").
 - `rings`: people's faces four across with the time there; pets on one line.
+  Someone away gets two lines for their place, as on tiles; the badge shows
+  driving or walking.
 
 The card reads only the entities its config names, so it works on
 dashboards served through Strimmer without an override rule.
