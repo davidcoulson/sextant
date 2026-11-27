@@ -355,7 +355,7 @@ A person's chip shows their first name (the full name is in the details), and a 
 
 **History.** Tap or click a person's or pet's chip, a room's name (empty ones too) or a floor's name to see the last 24 hours of it as a timeline, newest first. Each move reads like "Michelle Great Room → Master Bedroom": the room they came from, then the room they went to, with how long they stayed on the right.
 
-- a person or pet: their details as above, then each room they were in, when they arrived and how long they stayed ("Not placed" while Sextant had no room for them);
+- a person or pet: their details as above, then each room they were in, when they arrived and how long they stayed ("Not placed" while Sextant had no room for them; a gap under two minutes, such as Sextant reloading, is left out and the stays either side are joined);
 - a room: who was in it, when and for how long;
 - a floor: who was on it, in which room, when and for how long.
 

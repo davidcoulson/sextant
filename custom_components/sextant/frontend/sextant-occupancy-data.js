@@ -132,10 +132,22 @@ export function staysFromHistory(roomRows, floorRows, now) {
     if (last) last.end = e.t;
     stays.push({ start: e.t, end: now, room: cur.room, floor: cur.floor });
   }
+  // A short spell unplaced is Sextant reloading or restarting (its sensors read unavailable for a few
+  // seconds), not a move: drop it, give its time to the stay before, and join the same room either side.
+  // The current state stays as it is, however short.
+  const kept = [];
+  stays.forEach((s, i) => {
+    if (s.room === null && i < stays.length - 1 && s.end - s.start < BLIP_SECS) return;
+    const last = kept[kept.length - 1];
+    if (last && last.room === s.room && last.floor === s.floor) { last.end = s.end; return; }
+    if (last) last.end = s.start;
+    kept.push(s);
+  });
   // The last stay is still going: the sheet shows it as "now" and counts it to the moment it draws.
-  if (stays.length) stays[stays.length - 1].ongoing = true;
-  return stays;
+  if (kept.length) kept[kept.length - 1].ongoing = true;
+  return kept;
 }
+const BLIP_SECS = 120;
 
 /** The history rows for one subject, newest first: a person's or pet's own stays
  *  ({kind: "person", name}), everyone's stays in a room ({kind: "room", room, floor}),
