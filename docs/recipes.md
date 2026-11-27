@@ -297,6 +297,37 @@ entities:
 height: 300
 ```
 
+### Where everyone is
+
+The where card shows each person and pet with the room, the spot, the floor,
+how long they have been there, and a ring that fills and colours with how sure
+Sextant is (green confident, amber likely, red unsure). The badge on the photo
+is the device that placed them (phone, watch, collar tag). Tap anyone for the
+location sensor's details. Add the resource `/sextant/sextant-where-card.js`
+(JavaScript module) first.
+
+```yaml
+type: custom:sextant-where-card
+layout: tiles          # tiles | rooms | strip | rings
+columns: 2             # tiles (default 2) and rings (default 4)
+entities:
+  - entity: sensor.alex_smith_sextant_person_location
+    person: person.alex_smith      # photo and name
+  - entity: sensor.socks_sextant_pet_location
+    person: person.socks
+rooms:                 # optional, rooms layout: shows each room's mode
+  - binary_sensor.great_room_sextant_occupancy
+```
+
+- `tiles`: a grid of tiles, room as the headline and the spot under it.
+- `rooms`: one line per occupied room, avatars stacked, with its mode.
+- `strip`: one wrapping row of chips; pets of one kind on one floor fold
+  into one chip ("3 cats · Ground Floor").
+- `rings`: people's faces four across with the time there; pets on one line.
+
+The card reads only the entities its config names, so it works on
+dashboards served through Strimmer without an override rule.
+
 ### Who is where
 
 An entities card, one line per person, with how long they have been there:
