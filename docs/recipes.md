@@ -586,6 +586,34 @@ card:
   content: "🐈 Leela is at the litter boxes"
 ```
 
+### Cards for the room you are in
+
+The Sextant conditional card shows another card only while the person
+viewing the dashboard is in one of some rooms or on one of some floors, so
+one dashboard can show the kitchen's cards in the kitchen and the theater's
+in the theater. Add the resource `/sextant/sextant-conditional-card.js`
+(JavaScript module) once; it has a visual editor like Home Assistant's own
+conditional card.
+
+```yaml
+type: custom:sextant-conditional-card
+rooms: [Kitchen, Butler Pantry]   # in any of these rooms...
+floors: [Basement]                # ...or anywhere on these floors
+users: [<user id>]                # only for these dashboard users (optional)
+person: person.alex_smith         # whose place (optional; default: whoever is viewing)
+card:
+  type: markdown
+  content: "Today's recipes"
+```
+
+- The viewer is the person linked to the Home Assistant user (Settings →
+  People → the person's user). A user with no linked person, or someone away,
+  matches no room or floor.
+- Rooms and floors are names as Sextant shows them, either case. A room in
+  `rooms` or a floor in `floors` is enough; `users`, when set, must match too.
+- With no rooms or floors it is a per-user card.
+- While editing the dashboard the inner card always shows.
+
 ### Away people on the map
 
 Home Assistant's own map card takes the Sextant device_trackers, so someone
