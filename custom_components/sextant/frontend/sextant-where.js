@@ -37,6 +37,13 @@ export function normEntry(e) {
   return typeof e === "string" ? { entity: e } : { ...(e || {}) };
 }
 
+/** A new `entities:` entry for a location sensor, with its person (for photo and name) when person.<same slug> exists. */
+export function withPerson(states, id) {
+  const m = /^sensor\.(.+)_sextant_(?:person|pet)_location$/.exec(id || "");
+  const person = m && `person.${m[1]}`;
+  return person && states?.[person] ? { entity: id, person } : id;
+}
+
 /**
  * A row per configured entity: name, picture, where, how long, how sure.
  * `now` is epoch seconds.

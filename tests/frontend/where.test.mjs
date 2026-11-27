@@ -1,7 +1,8 @@
 // The "where is everyone" card's model, on the shapes Sextant's sensors really have.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { confLevel, fmtStay, whereRows, groupRooms, stripChips } from "../../custom_components/sextant/frontend/sextant-where.js";
+import { confLevel, fmtStay, whereRows, groupRooms, stripChips, withPerson } from "../../custom_components/sextant/frontend/sextant-where.js";
+import { entityOptions } from "../../custom_components/sextant/frontend/sextant-ha-editors.js";
 
 const NOW = 1795775000;
 const loc = (state, attrs) => ({ state, attributes: attrs });
@@ -68,4 +69,15 @@ test("Strimmer: the model reads only the entities the config names", () => {
   const entities = [{ entity: "sensor.david_coulson_sextant_person_location", person: "person.david_coulson" }, "sensor.fry_sextant_pet_location"];
   groupRooms(whereRows(spy, entities, NOW), []);
   assert.deepEqual([...read].sort(), ["person.david_coulson", "sensor.david_coulson_sextant_person_location", "sensor.fry_sextant_pet_location"]);
+});
+
+test("editor: a sensor picked in the editor brings its person, when there is one", () => {
+  assert.deepEqual(withPerson(states, "sensor.david_coulson_sextant_person_location"), { entity: "sensor.david_coulson_sextant_person_location", person: "person.david_coulson" });
+  assert.equal(withPerson(states, "sensor.meg_sextant_pet_location"), "sensor.meg_sextant_pet_location");
+  assert.equal(withPerson(states, "sensor.other"), "sensor.other");
+});
+
+test("editor: options by label, and configured ids kept even when missing", () => {
+  const opts = entityOptions(states, (id) => /_sextant_pet_location$/.test(id), (id, s) => s.attributes.friendly_name || id, ["sensor.gone_sextant_pet_location"]);
+  assert.deepEqual(opts.map((o) => o.label), ["Meg Location", "sensor.fry_sextant_pet_location", "sensor.gone_sextant_pet_location", "sensor.leela_sextant_pet_location"]);
 });

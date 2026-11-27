@@ -14,9 +14,12 @@
  */
 import { LitElement, html, css, nothing } from "./lit.js";
 import { roomChip, fmtFor, lastOccupants, modeIcon, firstName, askStrimmer } from "./sextant-occupancy-data.js";
+import { loadHaEditors, entityOptions } from "./sextant-ha-editors.js";
 
 class SextantRoomChip extends LitElement {
   static properties = { hass: { attribute: false }, _config: { state: true }, _last: { state: true } };
+
+  static getConfigElement() { return document.createElement("sextant-room-chip-editor"); }
 
   static getStubConfig(hass) {
     return { entity: Object.keys(hass?.states || {}).find((id) => id.startsWith("binary_sensor.") && id.endsWith("_sextant_occupancy")) || "" };
@@ -107,7 +110,37 @@ class SextantRoomChip extends LitElement {
   `;
 }
 
+class SextantRoomChipEditor extends LitElement {
+  static properties = { hass: { attribute: false }, _config: { state: true }, _ready: { state: true } };
+
+  setConfig(config) { this._config = config; }
+
+  connectedCallback() { super.connectedCallback(); loadHaEditors().then(() => { this._ready = true; }); }
+
+  _changed(e) {
+    e.stopPropagation();
+    const config = { ...this._config, ...e.detail.value };
+    this._config = config;
+    this.dispatchEvent(new CustomEvent("config-changed", { detail: { config }, bubbles: true, composed: true }));
+  }
+
+  render() {
+    if (!this.hass || !this._config) return nothing;
+    if (!this._ready) return html`<div class="wait">Loading…</div>`;
+    const c = this._config;
+    const schema = [
+      { name: "entity", required: true, selector: { select: { mode: "dropdown", options: entityOptions(this.hass.states, (id) => /^binary_sensor\..+_sextant_occupancy$/.test(id), (id, s) => s.attributes.room || id, [c.entity]) } } },
+      { name: "max", selector: { number: { min: 1, max: 10, mode: "box" } } },
+    ];
+    return html`<ha-form .hass=${this.hass} .data=${{ entity: c.entity || "", max: c.max ?? 3 }} .schema=${schema}
+      .computeLabel=${(s) => ({ entity: "Room", max: "Faces before +N" })[s.name]} @value-changed=${this._changed}></ha-form>`;
+  }
+
+  static styles = css`.wait { padding: 16px; color: var(--secondary-text-color); }`;
+}
+
 if (!customElements.get("sextant-room-chip")) customElements.define("sextant-room-chip", SextantRoomChip);
+if (!customElements.get("sextant-room-chip-editor")) customElements.define("sextant-room-chip-editor", SextantRoomChipEditor);
 
 window.customCards = window.customCards || [];
 window.customCards.push({ type: "sextant-room-chip", name: "Sextant Room Chip", description: "Who is in a room, how long, and its mode, as one chip.", preview: true, documentationURL: "https://github.com/davidcoulson/sextant" });

@@ -23,6 +23,7 @@
 import { LitElement, html, css, nothing } from "./lit.js";
 import { askStrimmer } from "./sextant-occupancy-data.js";
 import { personForUser, placeOf, shows, testsPlace, choices } from "./sextant-conditional.js";
+import { loadHaEditors } from "./sextant-ha-editors.js";
 
 class SextantConditionalCard extends LitElement {
   static properties = { hass: { attribute: false }, preview: { type: Boolean }, editMode: { type: Boolean }, _card: { state: true } };
@@ -37,16 +38,26 @@ class SextantConditionalCard extends LitElement {
   setConfig(config) {
     if (!config?.card?.type) throw new Error("card: the card to show");
     this._config = config;
-    this._person = undefined;
     this._build();
   }
 
   async _build() {
     const config = this._config;
-    const helpers = await window.loadCardHelpers();
-    if (config !== this._config) return;
-    const el = helpers.createCardElement(config.card);
-    el.addEventListener("ll-rebuild", (e) => { e.stopPropagation(); this._build(); });
+    let el;
+    if (customElements.get("hui-card")) {
+      // HA's own card wrapper, as its stack cards use: it loads the card, keeps its grid size and applies the
+      // inner card's own visibility conditions. Built at once, so the section reads the right size.
+      el = document.createElement("hui-card");
+      if (this.hass) el.hass = this.hass;
+      el.preview = this.preview;
+      el.config = config.card;
+      el.load?.();
+    } else {
+      const helpers = await window.loadCardHelpers();
+      if (config !== this._config) return;
+      el = helpers.createCardElement(config.card);
+      el.addEventListener("ll-rebuild", (e) => { e.stopPropagation(); this._build(); });
+    }
     if (this.hass) el.hass = this.hass;
     el.preview = this.preview;
     this._card = el;
@@ -64,8 +75,8 @@ class SextantConditionalCard extends LitElement {
     if (testsPlace(this._config)) {
       let person = this._config.person;
       if (!person) {
-        // Cached per user: finding it scans every entity.
-        if (this._personFor !== userId || !this._person) { this._person = personForUser(states, userId); this._personFor = userId; }
+        // Cached: finding it scans every entity. Looked up again when the person is no longer linked to this user.
+        if (!userId || states?.[this._person]?.attributes?.user_id !== userId) this._person = personForUser(states, userId);
         person = this._person;
       }
       place = placeOf(states, person);
@@ -95,20 +106,6 @@ class SextantConditionalCard extends LitElement {
   render() { return this._on && this._card ? html`${this._card}` : nothing; }
 
   static styles = css`:host([hidden]) { display: none; }`;
-}
-
-// HA's card picker and card editor are lazy; opening its own conditional card's editor loads them.
-let _haEditors = null;
-function loadHaEditors() {
-  return _haEditors ||= (async () => {
-    const tags = ["ha-form", "hui-card-picker", "hui-card-element-editor"];
-    if (!tags.every((t) => customElements.get(t))) {
-      const helpers = await window.loadCardHelpers();
-      const card = helpers.createCardElement({ type: "conditional", conditions: [], card: { type: "markdown", content: "" } });
-      await card?.constructor?.getConfigElement?.();
-    }
-    await Promise.race([Promise.all(tags.map((t) => customElements.whenDefined(t))), new Promise((r) => setTimeout(r, 5000))]);
-  })();
 }
 
 const LABELS = {

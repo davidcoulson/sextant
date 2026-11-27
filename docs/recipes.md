@@ -343,7 +343,8 @@ how long they have been there, and a ring that fills and colours with how sure
 Sextant is (green confident, amber likely, red unsure). The badge on the photo
 is the device that placed them (phone, watch, collar tag). Tap anyone for the
 location sensor's details. Add the resource `/sextant/sextant-where-card.js`
-(JavaScript module) first.
+(JavaScript module) first. The card has a visual editor; a person or pet picked
+there brings their photo and name.
 
 ```yaml
 type: custom:sextant-where-card
@@ -377,7 +378,7 @@ it three times) to the room's own.
 The chip: faces of who is in the room, how long it has been on, and the
 mode's icon. An empty room shows how long it has been empty and who was in
 it last (from the recorder). Add the resource `/sextant/sextant-room-chip.js`
-(JavaScript module) once.
+(JavaScript module) once. The chip has a visual editor.
 
 ```yaml
 type: custom:sextant-room-chip

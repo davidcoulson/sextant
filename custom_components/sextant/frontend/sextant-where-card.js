@@ -20,7 +20,8 @@
  */
 import { LitElement, html, css, nothing } from "./lit.js";
 import { classIcon } from "./sextant-ui.js";
-import { whereRows, groupRooms, stripChips, fmtStay } from "./sextant-where.js";
+import { whereRows, groupRooms, stripChips, fmtStay, normEntry, withPerson } from "./sextant-where.js";
+import { loadHaEditors, entityOptions } from "./sextant-ha-editors.js";
 
 const MODE_ICONS = { sleep: "mdi:sleep", tv: "mdi:television", cooking: "mdi:chef-hat", gaming: "mdi:controller" };
 const SOURCE_ICONS = { ble: "mdi:bluetooth", wifi: "mdi:wifi", gps: "mdi:map-marker-radius" };
@@ -28,6 +29,8 @@ const LAYOUTS = ["tiles", "rooms", "strip", "rings"];
 
 class SextantWhereCard extends LitElement {
   static properties = { hass: { attribute: false }, _config: { state: true }, _tick: { state: true } };
+
+  static getConfigElement() { return document.createElement("sextant-where-card-editor"); }
 
   static getStubConfig(hass) {
     const ids = Object.keys(hass?.states || {}).filter((id) => /_sextant_(person|pet)_location$/.test(id));
@@ -158,6 +161,51 @@ class SextantWhereCard extends LitElement {
   `;
 }
 
+const WHERE_LABELS = {
+  layout: "Layout",
+  entities: "People and pets",
+  columns: "Columns (blank: 2)",
+  rooms: "Rooms whose mode to show (rooms layout)",
+};
+
+class SextantWhereCardEditor extends LitElement {
+  static properties = { hass: { attribute: false }, _config: { state: true }, _ready: { state: true } };
+
+  setConfig(config) { this._config = config; }
+
+  connectedCallback() { super.connectedCallback(); loadHaEditors().then(() => { this._ready = true; }); }
+
+  _changed(e) {
+    e.stopPropagation();
+    const v = e.detail.value;
+    // A sensor already listed keeps its entry (name, person); a new one gets its person when there is one.
+    const had = new Map((this._config.entities || []).map((x) => [normEntry(x).entity, x]));
+    const config = { ...this._config, layout: v.layout || "tiles", entities: (v.entities || []).map((id) => had.get(id) ?? withPerson(this.hass.states, id)) };
+    for (const k of ["columns", "rooms"]) { if (v[k] == null || (Array.isArray(v[k]) && !v[k].length)) delete config[k]; else config[k] = v[k]; }
+    this._config = config;
+    this.dispatchEvent(new CustomEvent("config-changed", { detail: { config }, bubbles: true, composed: true }));
+  }
+
+  render() {
+    if (!this.hass || !this._config) return nothing;
+    if (!this._ready) return html`<div class="wait">Loading…</div>`;
+    const c = this._config, layout = c.layout || "tiles", states = this.hass.states;
+    const ids = (c.entities || []).map((x) => normEntry(x).entity);
+    const schema = [
+      { name: "layout", selector: { select: { mode: "dropdown", options: LAYOUTS.map((l) => ({ value: l, label: l[0].toUpperCase() + l.slice(1) })) } } },
+      { name: "entities", selector: { select: { multiple: true, mode: "dropdown", options: entityOptions(states, (id) => /^sensor\..+_sextant_(person|pet)_location$/.test(id), (id, s) => (s.attributes.friendly_name || id).replace(/ Location$/, ""), ids) } } },
+      ...(layout === "tiles" || layout === "rings" ? [{ name: "columns", selector: { number: { min: 1, max: 6, mode: "box" } } }] : []),
+      ...(layout === "rooms" ? [{ name: "rooms", selector: { select: { multiple: true, mode: "dropdown", options: entityOptions(states, (id) => /^binary_sensor\..+_sextant_occupancy$/.test(id), (id, s) => s.attributes.room || id, c.rooms || []) } } }] : []),
+    ];
+    const data = { layout, entities: ids, columns: c.columns, rooms: c.rooms || [] };
+    return html`<ha-form .hass=${this.hass} .data=${data} .schema=${schema} .computeLabel=${(s) => WHERE_LABELS[s.name] || s.name} @value-changed=${this._changed}></ha-form>
+      <p class="hint">Names and photos come from each person; set <code>name</code> or <code>person</code> on an entry in YAML to change them.</p>`;
+  }
+
+  static styles = css`.hint { color: var(--secondary-text-color); font-size: 13px; } .wait { padding: 16px; color: var(--secondary-text-color); }`;
+}
+
 if (!customElements.get("sextant-where-card")) customElements.define("sextant-where-card", SextantWhereCard);
+if (!customElements.get("sextant-where-card-editor")) customElements.define("sextant-where-card-editor", SextantWhereCardEditor);
 window.customCards = window.customCards || [];
 window.customCards.push({ type: "sextant-where-card", name: "Sextant Where", description: "Where everyone is: room, spot, floor, time there and how sure.", documentationURL: "https://github.com/davidcoulson/sextant" });
