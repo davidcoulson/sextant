@@ -3,7 +3,7 @@
  *
  *   type: custom:sextant-where-card
  *   layout: tiles                # tiles | rooms | strip | rings
- *   columns: 2                   # tiles and rings
+ *   columns: 2                   # tiles (2) and rings (4)
  *   show_floor: true             # optional: the floor when there is no spot (tiles, rings, rooms)
  *   precise: true                # optional: one line, the spot, else room, else floor, else Home (tiles, rings, strip)
  *   entities:
@@ -26,7 +26,7 @@
 import { LitElement, html, css, nothing } from "./lit.js";
 import { classIcon } from "./sextant-ui.js";
 import { whereRows, groupRooms, stripChips, fmtStay, normEntry, withPerson, preciseWhere } from "./sextant-where.js";
-import { loadHaEditors, entityOptions } from "./sextant-ha-editors.js";
+import { forwardHaContext, loadHaEditors, entityOptions } from "./sextant-ha-editors.js";
 
 const MODE_ICONS = { sleep: "mdi:sleep", tv: "mdi:television", cooking: "mdi:chef-hat", gaming: "mdi:controller" };
 const SOURCE_ICONS = { ble: "mdi:bluetooth", wifi: "mdi:wifi", gps: "mdi:map-marker-radius" };
@@ -191,7 +191,6 @@ class SextantWhereCard extends LitElement {
 const WHERE_LABELS = {
   layout: "Layout",
   entities: "People and pets",
-  columns: "Columns (blank: 2)",
   rooms: "Rooms whose mode to show (rooms layout)",
   show_floor: "Show the floor",
   precise: "Only the most precise place (spot, room, floor, home)",
@@ -199,6 +198,8 @@ const WHERE_LABELS = {
 
 class SextantWhereCardEditor extends LitElement {
   static properties = { hass: { attribute: false }, _config: { state: true }, _ready: { state: true } };
+
+  constructor() { super(); forwardHaContext(this); }
 
   setConfig(config) { this._config = config; }
 
@@ -232,7 +233,7 @@ class SextantWhereCardEditor extends LitElement {
       ...(layout === "rooms" ? [{ name: "rooms", selector: { select: { multiple: true, mode: "dropdown", options: entityOptions(states, (id) => /^binary_sensor\..+_sextant_occupancy$/.test(id), (id, s) => s.attributes.room || id, c.rooms || []) } } }] : []),
     ];
     const data = { layout, entities: ids, columns: c.columns, rooms: c.rooms || [], show_floor: !!c.show_floor, precise: !!c.precise };
-    return html`<ha-form .hass=${this.hass} .data=${data} .schema=${schema} .computeLabel=${(s) => WHERE_LABELS[s.name] || s.name} @value-changed=${this._changed}></ha-form>
+    return html`<ha-form .hass=${this.hass} .data=${data} .schema=${schema} .computeLabel=${(s) => s.name === "columns" ? `Columns (blank: ${layout === "rings" ? 4 : 2})` : WHERE_LABELS[s.name] || s.name} @value-changed=${this._changed}></ha-form>
       <p class="hint">Names and photos come from each person; set <code>name</code> or <code>person</code> on an entry in YAML to change them.</p>`;
   }
 

@@ -14,7 +14,7 @@
  */
 import { LitElement, html, css, nothing } from "./lit.js";
 import { roomChip, fmtFor, lastOccupants, modeIcon, firstName, askStrimmer } from "./sextant-occupancy-data.js";
-import { loadHaEditors, entityOptions } from "./sextant-ha-editors.js";
+import { forwardHaContext, loadHaEditors, entityOptions } from "./sextant-ha-editors.js";
 
 class SextantRoomChip extends LitElement {
   static properties = { hass: { attribute: false }, _config: { state: true }, _last: { state: true } };
@@ -112,6 +112,8 @@ class SextantRoomChip extends LitElement {
 
 class SextantRoomChipEditor extends LitElement {
   static properties = { hass: { attribute: false }, _config: { state: true }, _ready: { state: true } };
+
+  constructor() { super(); forwardHaContext(this); }
 
   setConfig(config) { this._config = config; }
 

@@ -23,7 +23,7 @@
 import { LitElement, html, css, nothing } from "./lit.js";
 import { askStrimmer } from "./sextant-occupancy-data.js";
 import { personForUser, placeOf, shows, testsPlace, choices } from "./sextant-conditional.js";
-import { loadHaEditors } from "./sextant-ha-editors.js";
+import { forwardHaContext, loadHaEditors } from "./sextant-ha-editors.js";
 
 class SextantConditionalCard extends LitElement {
   static properties = { hass: { attribute: false }, preview: { type: Boolean }, editMode: { type: Boolean }, _card: { state: true } };
@@ -121,6 +121,8 @@ const LABELS = {
 
 class SextantConditionalCardEditor extends LitElement {
   static properties = { hass: { attribute: false }, lovelace: { attribute: false }, _config: { state: true }, _ready: { state: true }, _picking: { state: true } };
+
+  constructor() { super(); forwardHaContext(this); }
 
   setConfig(config) { this._config = config; }
 
