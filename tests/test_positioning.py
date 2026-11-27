@@ -1885,6 +1885,13 @@ def test_anchor_lets_go_when_another_proxy_reads_closer():
     assert sextant._elect_anchor("w", "F", rx(1.0, 0.9), layout, now=40.0)["slug"] == "tablet"
     assert sextant._elect_anchor("w", "F", rx(1.0, 0.9), layout, now=61.0) is None
     assert "w" not in sextant._anchor_state
+    # The live purse readings: beaten, then jittering near equal (the tablet
+    # even leading by a hair). The near-ties keep the release clock running.
+    sextant._elect_anchor("w", "F", rx(0.5, 1.5), layout, now=100.0)
+    assert sextant._elect_anchor("w", "F", rx(0.5, 1.5), layout, now=121.0)["slug"] == "tablet"
+    for t, (tab, kit) in zip((130, 136, 141, 147), ((1.04, 0.93), (1.03, 1.0), (1.03, 1.11), (1.02, 0.93))):
+        assert sextant._elect_anchor("w", "F", rx(tab, kit), layout, now=float(t))["slug"] == "tablet"
+    assert sextant._elect_anchor("w", "F", rx(1.02, 0.95), layout, now=151.0) is None
 
 
 def test_anchor_needs_a_clear_nearest_and_can_be_disabled():
