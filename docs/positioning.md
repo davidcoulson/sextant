@@ -174,7 +174,8 @@ not satisfied by something classed merely Person.
 with every other proxy at least `anchor_ratio` times farther, for
 `anchor_secs`, is placed on that proxy: a watch on the bedside table next
 to its proxy, not 1.7 m away where the far proxies' errors pull the fit.
-Released once the reading opens past `anchor_release_m`.
+Released once the reading opens past `anchor_release_m`, or another proxy
+reads the thing closer, for `anchor_secs`.
 
 **Calibration.** Probe-to-probe ranges against the placed positions (3D
 when both proxies have heights) solve a per-proxy multiplier, normalised so
