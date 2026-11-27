@@ -351,7 +351,6 @@ type: custom:sextant-where-card
 layout: tiles          # tiles | rooms | strip | rings
 columns: 2             # tiles (default 2) and rings (default 4)
 show_floor: true       # optional: the floor under the room when there is no spot
-precise: true          # optional: one line, the spot, else room, else floor, else Home
 entities:
   - entity: sensor.alex_smith_sextant_person_location
     person: person.alex_smith      # photo and name
@@ -365,6 +364,8 @@ rooms:                 # optional, rooms layout: shows each room's mode
   Someone away gets both lines for where they are ("Driving near Avon, OH").
 - `rooms`: one line per occupied room, avatars stacked, with its mode.
   Anyone away is left out.
+- `precise: true` (tiles, rings, strip) shows one line instead: the spot,
+  else the room, else the floor, else Home. Someone away keeps their away line.
 - `strip`: one wrapping row of chips; pets of one kind on one floor fold
   into one chip ("3 cats · Ground Floor").
 - `rings`: people's faces four across with the time there; pets on one line.

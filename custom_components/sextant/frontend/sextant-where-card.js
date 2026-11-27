@@ -103,7 +103,7 @@ class SextantWhereCard extends LitElement {
     return html`<div><div class="rings" style="--cols:${this._config.columns || 4}">${people.map((r) => html`
       <button class="cell" @click=${() => this._more(r.id)}>${this._avatar(r, "lg", true)}${r.stay != null ? html`<span class="t">${fmtStay(r.stay, true)}</span>` : nothing}
         <span class="n">${r.name}</span><span class="room">${this._where(r)}</span><span class="sub">${this._sub(r)}</span></button>`)}</div>
-      ${pets.length ? html`<div class="pets">${pets.map((r) => html`<button class="pet" @click=${() => this._more(r.id)}>${this._avatar(r, "xs")}${r.name} <span class="sub">${r.spot || r.where}</span></button>`)}</div>` : nothing}</div>`;
+      ${pets.length ? html`<div class="pets">${pets.map((r) => html`<button class="pet" @click=${() => this._more(r.id)}>${this._avatar(r, "xs")}${r.name} <span class="sub">${this._config.precise ? preciseWhere(r) : r.spot || r.where}</span></button>`)}</div>` : nothing}</div>`;
   }
 
   render() {
