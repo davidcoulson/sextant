@@ -196,6 +196,9 @@ test("pets: company is the people in the pet's room, never other pets or anyone 
     "sensor.sherry_wayne_sextant_person_location", "sensor.meg_sextant_pet_location", "sensor.fry_sextant_pet_location", "sensor.leela_sextant_pet_location",
   ], NOW);
   rows.find((r) => r.name === "David").room = "Great Room";
+  // Only a pet placed confidently has company: Fry at 30% is in the Great Room with David, but not surely.
+  assert.deepEqual(petCompany(rows).get("sensor.fry_sextant_pet_location"), []);
+  rows.find((r) => r.id === "sensor.fry_sextant_pet_location").level = { key: "confident" };
   const c = petCompany(rows);
   assert.deepEqual([...c.keys()], ["sensor.meg_sextant_pet_location", "sensor.fry_sextant_pet_location", "sensor.leela_sextant_pet_location"]);
   assert.deepEqual(c.get("sensor.fry_sextant_pet_location").map((r) => r.name), ["David"]);
