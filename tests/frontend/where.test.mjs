@@ -59,3 +59,13 @@ test("the strip folds same-class pets on a floor, people stay single", () => {
   const chips = stripChips(rows);
   assert.deepEqual(chips.map((c) => c.kind === "one" ? c.row.name : `${c.rows.length} ${c.cls} ${c.floor}`), ["David", "2 cat Ground Floor", "Meg"]);
 });
+
+test("Strimmer: the model reads only the entities the config names", () => {
+  // Behind Strimmer a dashboard gets just the entity ids its config names; an id the card
+  // worked out for itself would read as missing. So no lookups beyond the config.
+  const read = new Set();
+  const spy = new Proxy(states, { get: (t, k) => { read.add(k); return t[k]; }, ownKeys: () => { throw new Error("scanned hass.states"); } });
+  const entities = [{ entity: "sensor.david_coulson_sextant_person_location", person: "person.david_coulson" }, "sensor.fry_sextant_pet_location"];
+  groupRooms(whereRows(spy, entities, NOW), []);
+  assert.deepEqual([...read].sort(), ["person.david_coulson", "sensor.david_coulson_sextant_person_location", "sensor.fry_sextant_pet_location"]);
+});
