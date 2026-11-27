@@ -441,6 +441,15 @@ badge_color: grey
 
 The mode icons match the Occupancy page's.
 
+Behind Strimmer: the room sensor named in `entity` is forwarded because
+the card names it. The chip also reads each occupant's `person.<name>` for
+the picture; it asks Strimmer for `*_sextant_*` and `person.*` itself, and
+shows "Waiting for …" until the reconnect brings them. The Mushroom
+templates read the pets' `sensor.<pet>_sextant_pet_location`, but Home
+Assistant renders templates itself, so they need nothing forwarded. To
+avoid the ask and reconnect, list the `person.*` entities in Strimmer's
+`always_forward`.
+
 ### Who is where
 
 An entities card, one line per person, with how long they have been there:

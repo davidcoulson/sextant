@@ -7,9 +7,13 @@
  *   max: 3                      # faces before "+N"
  *
  * Resource: /sextant/sextant-room-chip.js (module).
+ *
+ * Reads the room sensor named in `entity` (and its recorder history, for who was last there) and each
+ * occupant's person.<slug> for the picture. Behind Strimmer the person entities are not in the card's
+ * config, so the card asks for them; or list them in Strimmer's always_forward.
  */
 import { LitElement, html, css, nothing } from "./lit.js";
-import { roomChip, fmtFor, lastOccupants, modeIcon, firstName } from "./sextant-occupancy-data.js";
+import { roomChip, fmtFor, lastOccupants, modeIcon, firstName, askStrimmer } from "./sextant-occupancy-data.js";
 
 class SextantRoomChip extends LitElement {
   static properties = { hass: { attribute: false }, _config: { state: true }, _last: { state: true } };
@@ -34,7 +38,9 @@ class SextantRoomChip extends LitElement {
     return changed.get("hass")?.states?.[this._config?.entity] !== this.hass?.states?.[this._config?.entity];
   }
 
-  updated() {
+  updated(changed) {
+    // Strimmer forwards only what dashboards name; the occupants' person entities are found at runtime.
+    if (changed.has("hass")) askStrimmer(this.hass?.connection);
     const r = roomChip(this.hass?.states, this._config.entity);
     // Empty: who was here last comes from the recorder, once per time the room turns off.
     if (r && !r.on && r.since && this._lastFor !== r.since) { this._lastFor = r.since; this._last = null; this._loadLast(r.since); }
@@ -62,7 +68,8 @@ class SextantRoomChip extends LitElement {
 
   render() {
     const r = roomChip(this.hass?.states, this._config.entity);
-    if (!r) return html`<ha-card class="chip warn">${this._config.entity} not found</ha-card>`;
+    // Missing or unavailable: not loaded yet, or a proxy (Strimmer) still reconnecting with it. Quiet, not an error.
+    if (!r || this.hass.states[this._config.entity].state === "unavailable") return html`<ha-card class="chip warn"><ha-icon icon="mdi:timer-sand"></ha-icon>Waiting for ${this._config.entity}</ha-card>`;
     const age = r.since ? fmtFor(Date.now() / 1000 - r.since) : "";
     if (!r.on) {
       const last = this._last?.length ? this._last.map(firstName).join(", ") : "";

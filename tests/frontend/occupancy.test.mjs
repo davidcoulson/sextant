@@ -294,3 +294,11 @@ test("roomChip lists people before pets with their person pictures; lastOccupant
   assert.deepEqual(lastOccupants([{ a: { people: ["Jack"] } }, { a: { people: ["Michelle"], pets: ["Meg"] } }, { a: { people: [], pets: [] } }]), ["Michelle", "Meg"]);
   assert.deepEqual(lastOccupants(undefined), []);
 });
+
+test("the room chip asks Strimmer for the person entities it finds at runtime", async () => {
+  // The card needs a DOM to load, so this checks its source: the ask must run on every hass update.
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../../custom_components/sextant/frontend/sextant-room-chip.js", import.meta.url), "utf8");
+  assert.match(src, /import \{[^}]*\baskStrimmer\b[^}]*\} from "\.\/sextant-occupancy-data\.js"/);
+  assert.match(src, /updated\(changed\) \{[^}]*if \(changed\.has\("hass"\)\) askStrimmer\(this\.hass\?\.connection\);/);
+});
