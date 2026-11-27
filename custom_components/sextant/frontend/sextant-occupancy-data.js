@@ -145,12 +145,13 @@ export function subjectHistory(people, subject, limit = 100) {
   const rows = [];
   for (const p of people || []) {
     if (subject.kind === "person" && p.name !== subject.name) continue;
-    for (const s of p.stays || []) {
-      if (subject.kind === "room" && !(s.room === subject.room && s.floor === subject.floor)) continue;
+    (p.stays || []).forEach((s, i) => {
+      if (subject.kind === "room" && !(s.room === subject.room && s.floor === subject.floor)) return;
       // Outside keeps the floor it left from, but is on no floor.
-      if (subject.kind === "floor" && !(s.room && s.room !== "Outside" && s.floor === subject.floor)) continue;
-      rows.push({ name: p.name, pet: p.pet, ...s });
-    }
+      if (subject.kind === "floor" && !(s.room && s.room !== "Outside" && s.floor === subject.floor)) return;
+      // ``from``: the room they came from, for "Great Room → Kitchen"; null when unplaced or the first stay.
+      rows.push({ name: p.name, pet: p.pet, from: p.stays[i - 1]?.room ?? null, ...s });
+    });
   }
   return rows.sort((a, b) => b.start - a.start || a.name.localeCompare(b.name)).slice(0, limit);
 }

@@ -101,14 +101,21 @@ class SextantOccupancy extends LitElement {
     .sh small { color: var(--secondary-text-color); font-size: 12px; }
     .sb { overflow-y: auto; padding: 8px 16px 16px; font-size: 13px; }
     .now { padding: 10px 0 12px; margin-bottom: 4px; border-bottom: 1px solid var(--divider-color); }
-    .hr { display: grid; grid-template-columns: 96px minmax(0, 1fr) auto; gap: 8px; padding: 7px 0; border-top: 1px solid var(--divider-color); align-items: baseline; }
-    .hr:first-child { border-top: 0; }
-    .hr .t, .hr .d, .hr .what small, .hint { color: var(--secondary-text-color); font-size: 12px; }
-    .hr .t { font-variant-numeric: tabular-nums; }
-    .hr .d { white-space: nowrap; }
-    .hr .what { overflow-wrap: anywhere; }
-    .hr.cur .d { color: var(--primary-color); }
-    .hr.nowhere .what { color: var(--secondary-text-color); font-style: italic; }
+    /* The history: a timeline, a ring on a line for each move, newest at the top. */
+    .tl { position: relative; list-style: none; margin: 6px 0 0; padding: 0 0 0 22px; font-size: 14px; }
+    .tl::before { content: ""; position: absolute; left: 6px; top: 14px; bottom: 14px; width: 2px; border-radius: 1px; background: var(--divider-color); }
+    .ev { position: relative; display: flex; align-items: baseline; gap: 10px; padding: 7px 0; }
+    .ev::before { content: ""; position: absolute; left: -21px; top: 12px; width: 8px; height: 8px; border-radius: 50%;
+      border: 2px solid var(--primary-color); background: var(--card-background-color); }
+    .ev.cur::before { background: var(--primary-color); }
+    .ev.nowhere::before { border-color: var(--secondary-text-color); }
+    .ev .t, .ev .d, .ev .from, .ev small, .hint { color: var(--secondary-text-color); }
+    .ev .t { flex: none; min-width: 64px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .ev .what { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+    .ev .d { flex: none; white-space: nowrap; font-size: 12px; }
+    .ev.cur .d { color: var(--primary-color); }
+    .ev.nowhere .to { color: var(--secondary-text-color); font-style: italic; }
+    .hint { font-size: 12px; }
   `];
 
   /** A chip: hovering with a mouse shows its details; a tap or click opens the person's or pet's history. */
@@ -202,21 +209,21 @@ class SextantOccupancy extends LitElement {
     const title = s.kind === "person" ? s.label : s.kind === "room" ? s.room : s.floor;
     const rows = h?.people ? subjectHistory(h.people, s) : [];
     const floors = new Set(rows.map((r) => r.floor).filter(Boolean));
-    const what = (r) => s.kind === "person"
-      ? (r.room ? html`${r.room}${floors.size > 1 && r.floor ? html` <small>· ${r.floor}</small>` : nothing}` : "Not placed")
-      : html`${r.pet ? r.name : firstName(r.name)}${s.kind === "floor" ? html` <small>· ${r.room}</small>` : nothing}`;
+    // "Michelle Great Room → Master Bedroom": the name only when the sheet is not one person's.
+    const what = (r) => html`${s.kind === "person" ? nothing : html`<b>${r.pet ? r.name : firstName(r.name)}</b> `}${r.from
+      ? html`<span class="from">${r.from} →</span> ` : nothing}<span class="to">${r.room || "Not placed"}</span>${s.kind === "person" && floors.size > 1 && r.floor ? html` <small>· ${r.floor}</small>` : nothing}`;
     let body;
     if (!h) body = html`<div class="hint">Loading…</div>`;
     else if (h.error) body = html`<div class="hint">History is not available (${h.error}). It comes from Home Assistant's recorder, so the people's and pets' room and floor sensors need to be recorded.</div>`;
     else if (h.untracked) body = html`<div class="hint">Sextant keeps no room history for ${title}: only people and pets with a person entity have one.</div>`;
     else if (!rows.length) body = html`<div class="hint">${s.kind === "person" ? "No history" : "Nobody"} in the last ${HISTORY_HOURS} hours.</div>`;
-    else body = rows.map((r) => {
+    else body = html`<ol class="tl">${rows.map((r) => {
       const cur = r.ongoing;
-      return html`<div class="hr ${cur ? "cur" : ""} ${r.room ? "" : "nowhere"}">
+      return html`<li class="ev ${cur ? "cur" : ""} ${r.room ? "" : "nowhere"}">
         <span class="t">${clockAt(r.start, now)}</span>
         <span class="what">${what(r)}</span>
-        <span class="d">${cur ? `now · ${fmtAge(now - r.start)}` : fmtAge(r.end - r.start)}</span></div>`;
-    });
+        <span class="d">${cur ? `now · ${fmtAge(now - r.start)}` : fmtAge(r.end - r.start)}</span></li>`;
+    })}</ol>`;
     const d = s.kind === "person" ? chipDetail(this.hass?.states, s.name, s.ids, this.data?.layout?.thing_classes) : null;
     return html`<dialog class="sheet" aria-label=${`${title}: history`}
         @cancel=${(e) => { e.preventDefault(); this._closeHistory(); }}

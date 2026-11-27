@@ -94,7 +94,9 @@ pytest tests
   with no build step. The backend registers the panel module with the
   manifest version in its URL, so a Live or Occupancy page loaded before an
   update reloads itself the next time it is in view, once per version. Other
-  pages may hold a draft, so they offer a Reload button instead.
+  pages may hold a draft, so they offer a Reload button instead. Both first
+  drop Sextant's files from Home Assistant's service-worker cache, which
+  otherwise serves the old panel once more before refreshing its copy.
 
 Issues and pull requests are welcome on
 [davidcoulson/sextant](https://github.com/davidcoulson/sextant).

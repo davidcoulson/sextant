@@ -49,6 +49,19 @@ const EXPERT_MODES = ["tuning"];   // pages shown only in expert mode
 const FLOOR_MODES = new Set(["live", "edit", "proxies", "calibration"]);
 // Pages with no form to lose: they reload themselves into a new version.
 const AUTO_RELOAD_MODES = new Set(["live", "occupancy"]);
+
+/** Reload into the installed version. Home Assistant's service worker answers
+ *  same-site files from its cache and refreshes that copy behind the scenes, so a
+ *  plain reload brings the old panel back once more: drop Sextant's files first. */
+async function reloadFresh() {
+  try {
+    for (const name of await caches.keys()) {
+      const cache = await caches.open(name);
+      for (const req of await cache.keys()) if (new URL(req.url).pathname.startsWith("/sextant/")) await cache.delete(req);
+    }
+  } catch { /* no Cache Storage (plain http): nothing cached there to drop */ }
+  window.location.reload();
+}
 // Pages that change the layout, the things or Bermuda, or expose every
 // address the house hears: administrators only (the backend refuses the
 // commands too; this just keeps the tabs out of a non-admin's way).
@@ -146,7 +159,7 @@ class SextantPanel extends LitElement {
       if (sessionStorage.getItem("sextant.autoReloaded") === installed) return;
       sessionStorage.setItem("sextant.autoReloaded", installed);
     } catch { return; }
-    window.location.reload();
+    reloadFresh();
   }
 
   async _load() {
@@ -245,7 +258,7 @@ class SextantPanel extends LitElement {
         ${this.hass?.user?.is_admin ? html`<button @click=${() => this._restartHa()}>Restart</button>` : nothing}</div>`;
     }
     if (installed && PANEL_VERSION && installed !== PANEL_VERSION) {
-      return html`<div class="banner update">Sextant ${installed} is installed; this page is still ${PANEL_VERSION}. <button @click=${() => window.location.reload()}>Reload</button></div>`;
+      return html`<div class="banner update">Sextant ${installed} is installed; this page is still ${PANEL_VERSION}. <button @click=${reloadFresh}>Reload</button></div>`;
     }
     return nothing;
   }

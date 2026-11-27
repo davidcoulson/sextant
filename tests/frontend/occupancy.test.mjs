@@ -195,6 +195,9 @@ test("subjectHistory lists a person's stays, or everyone's in a room or on a flo
   assert.deepEqual(subjectHistory(people, { kind: "person", name: "Michelle" }).map((r) => r.room), ["Master Bedroom", null, "Great Room"]);
   assert.deepEqual(subjectHistory(people, { kind: "room", room: "Master Bedroom", floor: "Second" }).map((r) => [r.name, r.start]), [["Michelle", 300], ["Meg", 50]]);
   assert.deepEqual(subjectHistory(people, { kind: "room", room: "Master Bedroom", floor: "Ground" }), []);
+  // Each row knows the room it came from: not placed and the first stay have none.
+  assert.deepEqual(subjectHistory(people, { kind: "floor", floor: "Second" }).map((r) => r.from), ["Master Bedroom", null, null]);
+  assert.deepEqual(subjectHistory(people, { kind: "person", name: "Michelle" }).map((r) => r.from), [null, "Great Room", null]);
   assert.deepEqual(subjectHistory(people, { kind: "floor", floor: "Second" }).map((r) => r.room), ["Catwalk", "Master Bedroom", "Master Bedroom"]);
   assert.equal(subjectHistory(people, { kind: "floor", floor: "Second" }, 1).length, 1);
   // Outside keeps the floor it left from, but is not on that floor.
