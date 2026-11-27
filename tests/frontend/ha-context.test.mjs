@@ -7,9 +7,9 @@ const node = (localName, parentNode = null) => Object.assign(new EventTarget(), 
 
 test("a request from an editor outside HA is stopped and asked again from HA's root", () => {
   const seen = [];
-  const probe = Object.assign(node("span"), { isConnected: true });
+  const probe = node("span");
   probe.addEventListener("context-request", (e) => seen.push(e));
-  const root = { appendChild: () => {} };
+  const root = { appendChild: (el) => { el.parentNode = root; el.isConnected = true; } };
   globalThis.document = { querySelector: () => ({ shadowRoot: root }), createElement: () => probe };
   const host = node("sextant-where-card-editor", node("ha-dialog"));
   forwardHaContext(host);
@@ -20,6 +20,7 @@ test("a request from an editor outside HA is stopped and asked again from HA's r
   ev.stopPropagation = () => { stopped = true; };
   host.dispatchEvent(ev);
   assert.ok(stopped);
+  assert.equal(probe.parentNode, root);
   assert.equal(seen.length, 1);
   assert.deepEqual([seen[0].context, seen[0].callback, seen[0].subscribe, seen[0].contextTarget], ["hassInternationalization", callback, true, "picker"]);
 });
