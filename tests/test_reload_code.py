@@ -47,6 +47,34 @@ def test_setup_clears_only_the_running_versions_marketplace_repair(monkeypatch):
     assert len(hass.data["issues"]) == 5
 
 
+def test_a_frontend_only_update_clears_every_sextant_restart_repair(monkeypatch):
+    import asyncio
+
+    from sextant import ws
+
+    monkeypatch.setattr(sextant, "_CODE_VERSION", "2026.11.27.2")
+    issue = lambda domain: types.SimpleNamespace(issue_domain=domain)  # noqa: E731
+    issues = {
+        ("marketplace", "restart_required_1366403240_tags/2026.11.27.9"): issue("sextant"),
+        ("marketplace", "restart_required_1366403240_tags/2026.11.27.10"): issue("sextant"),
+        ("marketplace", "restart_required_1365808237_tags/2026.11.27.10"): issue("ssh"),
+    }
+
+    async def executor(fn, *args):
+        return fn(*args)
+
+    hass = types.SimpleNamespace(data={"issues": dict(issues)}, async_add_executor_job=executor)
+    # The Python on disk differs from the running code: the repairs stay.
+    monkeypatch.setattr(ws, "RUNNING_CODE", "old")
+    monkeypatch.setattr(ws, "code_signature", lambda: "new")
+    asyncio.run(sextant._clear_restart_if_same_code(hass))
+    assert len(hass.data["issues"]) == 3
+    # The same Python: only the frontend changed, so Sextant's go and the other integration's stays.
+    monkeypatch.setattr(ws, "code_signature", lambda: "old")
+    asyncio.run(sextant._clear_restart_if_same_code(hass))
+    assert list(hass.data["issues"]) == [("marketplace", "restart_required_1365808237_tags/2026.11.27.10")]
+
+
 def test_code_version_is_the_manifests():
     import json
     from pathlib import Path

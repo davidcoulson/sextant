@@ -106,7 +106,7 @@ def test_setup_and_unload_round_trip(tmp_path, monkeypatch):
     assert len(hass.http.views) == 6 and len(hass.data["_ws_commands"]) == len(handlers) + 1
 
     assert run(sextant.async_unload_entry(hass, entry)) is True
-    assert entry.unloaded == [["sensor", "binary_sensor", "switch", "device_tracker"]] and len(entry.on_unload) == 1
+    assert entry.unloaded == [["sensor", "binary_sensor", "switch", "device_tracker"]] and len(entry.on_unload) == 2   # the options listener and the Marketplace repair listener
     assert hass.tasks[-1].cancelled and hass.tasks[-2].cancelled
     for key in ("sextant_initialized", "sextant_sensors", "sextant_add_entities", "sextant_update_task", "sextant_radar_task"):
         assert key not in hass.data

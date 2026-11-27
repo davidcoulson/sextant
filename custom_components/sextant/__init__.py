@@ -8296,18 +8296,28 @@ def _register_calibration_services(hass) -> None:
 _CODE_VERSION = json.loads((Path(__file__).parent / "manifest.json").read_text())["version"]
 
 
-def _clear_marketplace_restart(hass) -> None:
+def _clear_marketplace_restart(hass, same_code: bool = False) -> None:
     """Drop Marketplace's "restart to finish the update" repair once that version runs.
 
     Marketplace cannot see reload_code, so the repair would stay until a restart.
     Called from entry setup, so it is the new code's version even when the old
     code's reload_code handler did the reload. A repair for any other version
-    (an update downloaded after this code was imported) still waits.
+    (an update downloaded after this code was imported) still waits, unless
+    ``same_code``: the Python on disk is the code running, so the update changed
+    only the frontend and there is nothing to restart for.
     """
     for (domain, issue_id), issue in list(ir.async_get(hass).issues.items()):
         if (domain == "marketplace" and issue_id.startswith("restart_required_")
-                and issue.issue_domain == DOMAIN and issue_id.endswith(f"/{_CODE_VERSION}")):
+                and issue.issue_domain == DOMAIN and (same_code or issue_id.endswith(f"/{_CODE_VERSION}"))):
             ir.async_delete_issue(hass, domain, issue_id)
+
+
+async def _clear_restart_if_same_code(hass) -> None:
+    """Drop Sextant's restart repairs when the Python on disk is the code running (a frontend-only update)."""
+    from . import ws as ws_mod  # noqa: PLC0415
+
+    if ws_mod.RUNNING_CODE is not None and await hass.async_add_executor_job(ws_mod.code_signature) == ws_mod.RUNNING_CODE:
+        _clear_marketplace_restart(hass, same_code=True)
 
 
 def _import_code(package: str) -> None:
@@ -8657,6 +8667,15 @@ async def async_setup_entry(hass, entry):
     ok = await async_setup(hass, entry)
     if ok:
         _clear_marketplace_restart(hass)
+        await _clear_restart_if_same_code(hass)
+
+        # Marketplace raises its repair after it has written the files, so the check then sees the new Python.
+        async def _on_issue(event) -> None:
+            if (event.data.get("action") == "create" and event.data.get("domain") == "marketplace"
+                    and str(event.data.get("issue_id", "")).startswith("restart_required_")):
+                await _clear_restart_if_same_code(hass)
+
+        entry.async_on_unload(hass.bus.async_listen("repairs_issue_registry_updated", _on_issue))
     return ok
 
 
