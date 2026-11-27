@@ -74,6 +74,14 @@ it is left out of the proximity term, of the nearest-proxy test that decides
 which floors are solved at all, and of the fit score's corroboration. A
 floor whose proxies are all position-only is scored on them anyway.
 
+A wall tablet or phone panel used as a proxy often reads things across the
+room as under a metre away. Set *Counts only within* in its panel on the Edit
+page (for example 0.4 m) and it only counts when Bermuda reads a thing closer
+than that - someone standing at it. Farther readings are dropped before the
+solve, the floor election and the near-proxy anchor, as if the panel had not
+heard the thing. The cut-off is on Bermuda's own distance, before the proxy's
+correction and any per-thing trim.
+
 **Bias fields.** A floor's `bias` is one prior for the whole plan, and a
 house is not uniform. Over a slab the floor below is attenuated and the
 election has an easy time. Beside a void — a catwalk over a foyer, a gallery

@@ -1866,6 +1866,21 @@ def test_anchor_snaps_a_thing_sitting_on_one_proxy_and_releases_with_hysteresis(
     assert "w" not in sextant._anchor_state
 
 
+def test_anchor_on_a_near_only_proxy_lets_go_as_soon_as_its_reading_drops():
+    layout = {"floor": [{"name": "F", "scale": 100.0, "zones": [], "subzones": [], "receivers": []}], "tuning": {"anchor_secs": 0}}
+    def rx(near):
+        panel = {"entity_id": "panel", "cords": {"x": 100.0, "y": 100.0}, "near_only_m": 0.4}
+        if near is not None:
+            panel["distance"] = near
+        return [panel, {"entity_id": "wall", "cords": {"x": 400.0, "y": 100.0}, "distance": 2.0},
+                {"entity_id": "door", "cords": {"x": 100.0, "y": 500.0}, "distance": 2.5}]
+    sextant._anchor_state.pop("p", None)
+    assert sextant._elect_anchor("p", "F", rx(0.3), layout, now=1000.0)["slug"] == "panel"
+    # Past its cut-off update_receiver_radii drops the reading: released at once, no dwell.
+    assert sextant._elect_anchor("p", "F", rx(None), layout, now=1005.0) is None
+    assert "p" not in sextant._anchor_state
+
+
 def test_anchor_lets_go_when_another_proxy_reads_closer():
     # The purse case: anchored to a tablet that reads it at 1.0 m, under the
     # release distance, while the kitchen proxy reads it closer still.

@@ -2736,6 +2736,7 @@ async def update_receiver_radii(hass, eids):
                 # entity path can give. A None distance is Bermuda's own
                 # "this scanner can no longer hear it" timeout.
                 distance_m = reading["distance"]
+                bermuda_m = distance_m  # before the median estimate, for near_only_m
                 age = reading["age"]
                 if use_median and distance_m is not None:
                     estimate = _median_distance(reading, median_window, median_min)
@@ -2762,6 +2763,7 @@ async def update_receiver_radii(hass, eids):
                 unit = rec_value.attributes.get("unit_of_measurement")
                 if unit in DistanceConverter.VALID_UNITS and unit != UnitOfLength.METERS:
                     distance_m = DistanceConverter.convert(distance_m, unit, UnitOfLength.METERS)
+                bermuda_m = distance_m
 
             # A distance must be a positive, finite number of metres: -1 is a
             # common "no reading" sentinel, and a NaN would carry through the
@@ -2785,6 +2787,16 @@ async def update_receiver_radii(hass, eids):
                     "Ignoring stale distance for %s (%.0fs old, max %.0fs)",
                     entity_id, age, limit,
                 )
+                continue
+            # Near-only proxy (``near_only_m`` on the receiver, "Counts only
+            # within" on the Edit page): a wall tablet or phone panel that
+            # reads things metres away as under a metre is only trusted when
+            # someone stands right at it. Past the cut-off - on Bermuda's own
+            # distance, before any correction or trim - it drops out of the
+            # solve, the floor election and the anchor, like a missed reading.
+            near_only = receiver.get("near_only_m")
+            if isinstance(near_only, (int, float)) and not isinstance(near_only, bool) and near_only > 0 and bermuda_m >= near_only:
+                receiver.pop("distance", None)
                 continue
             try:
                 distance = distance_m
@@ -7180,6 +7192,11 @@ def _elect_anchor(entity, floor_name, receivers, layout, now=None):
     if candidate is not None and candidate.get("entity_id") != st["slug"]:
         return _adopt_anchor(entity, floor_name, candidate, now)
     current = by_slug.get(st["slug"])
+    # A near-only proxy (near_only_m) with no reading has no say: let go now
+    # rather than hold the thing on it through the release dwell.
+    if current is None and any(rx.get("entity_id") == st["slug"] and rx.get("near_only_m") for rx in receivers):
+        _anchor_state.pop(entity, None)
+        return None
     # Another proxy reading it clearly closer (10%) means it is not on this
     # one, however near this one reads. A near-tie neither starts the release
     # clock nor stops one already running: readings jittering around equal

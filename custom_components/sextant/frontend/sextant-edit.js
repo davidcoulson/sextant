@@ -1144,7 +1144,7 @@ class SextantEdit extends LitElement {
     this._snapshot();
     if (sel.kind === "pin") this._refreshAlignment();
     if (field === "calibrate" || field === "solve" || field === "floor_vote") { if (value === undefined) delete item[field]; else item[field] = value; }
-    else if (field === "height" || field === "correction" || field === "hold_s") item[field] = value === "" || value == null ? undefined : Number(value);
+    else if (field === "height" || field === "correction" || field === "hold_s" || field === "near_only_m") item[field] = value === "" || value == null ? undefined : Number(value);
     else if (field === "no_go") item.no_go = !!value;
     else if (field === "entity_id" && sel.kind === "zone") {
       // A radar limited to this room follows it to its new name - when this is
@@ -1157,6 +1157,7 @@ class SextantEdit extends LitElement {
     else item[field] = value;
     if (item.height === undefined) delete item.height;
     if (item.correction === undefined) delete item.correction;
+    if (item.near_only_m === undefined) delete item.near_only_m;
     if (item.color === undefined) delete item.color;
     if (item[field] === undefined) delete item[field];
     this._dirty = true;
@@ -1578,6 +1579,10 @@ class SextantEdit extends LitElement {
         ${uiSwitch({ label: "Use for floor choice", checked: item.floor_vote !== false, disabled: item.solve === false,
           onChange: (v) => this._edit("floor_vote", v ? undefined : false) })}
         <div class="muted small">Off keeps this proxy helping with where on its floor a thing is, but its readings stop counting toward which floor wins. For a proxy between storeys - a basement ceiling light just under the floor above - that hears the room overhead almost as well as its own.</div>
+        <div class="row">
+          ${uiField({ label: `Counts only within (${lenUnit(this.hass)})`, type: "number", step: 0.05, min: 0, max: isImperial(this.hass) ? 33 : 10, value: toDisplayLen(item.near_only_m, this.hass), placeholder: "always", disabled: item.solve === false, onChange: (v) => this._edit("near_only_m", v === "" || Number(v) <= 0 ? "" : fromDisplayLen(v, this.hass)), style: "width: 200px" })}
+        </div>
+        <div class="muted small">Past this distance (Bermuda's reading, before any correction) the proxy has no say in where a thing is or which floor it is on; closer than it, it counts as usual. For a wall tablet or phone panel that only needs to tell you someone is standing at it, and reads things across the room as close. Empty: always counts.</div>
         ${uiSwitch({ label: "Leave this proxy's correction alone", checked: item.calibrate === false,
           onChange: (v) => this._edit("calibrate", v ? false : undefined) })}
         <div class="muted small">Calibration skips it: it is left out of the fit and its correction is never overwritten. For a radio whose distances are the wrong shape rather than the wrong scale - a tablet or a phone, which read long up close and far too short across a room - where no single multiplier fits.</div>
