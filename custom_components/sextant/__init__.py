@@ -8273,7 +8273,8 @@ def _register_calibration_services(hass) -> None:
         # in flight finishes first, instead of landing on the new code's state.
         async with LAYOUT_LOCK:
             for key in [k for k in hass.data if str(k).startswith("sextant_")
-                        and k not in ("sextant_views_registered", "sextant_stop_listeners", "sextant_reloading")]:
+                        and k not in ("sextant_views_registered", "sextant_stop_listeners", "sextant_reloading",
+                                      "sextant_started_requirements")]:  # installed only at a restart
                 hass.data.pop(key, None)
             hass.data.pop(DOMAIN, None)
             _forget_code(hass, __name__, DOMAIN)
@@ -8443,8 +8444,10 @@ async def async_setup(hass, config):
         if ws_running.RUNNING_CODE is None:
             sig = await hass.async_add_executor_job(ws_running.code_signature)
             # reload_code swaps the Python but not the installed requirements: keep the ones this process started with.
-            started = hass.data.setdefault("sextant_started_requirements", sig and sig.split("|")[1])
-            ws_running.RUNNING_CODE = sig and f"{sig.split('|')[0]}|{started}"
+            # Unreadable: left unset, so the next setup hashes again.
+            if sig:
+                started = hass.data.setdefault("sextant_started_requirements", sig.split("|")[1])
+                ws_running.RUNNING_CODE = f"{sig.split('|')[0]}|{started}"
 
         if show_sidebar_panel:
             try:
@@ -8683,7 +8686,11 @@ async def async_setup_entry(hass, entry):
                 await _clear_restart_if_same_code(hass)
 
         entry.async_on_unload(hass.bus.async_listen("repairs_issue_registry_updated", _on_issue))
-        _clear_marketplace_restart(hass)
+        # After reload_code the new version runs, but a changed requirement still waits for a restart.
+        from . import ws as ws_mod  # noqa: PLC0415
+        sig = await hass.async_add_executor_job(ws_mod.code_signature)
+        if sig and sig.split("|")[1] == hass.data.get("sextant_started_requirements"):
+            _clear_marketplace_restart(hass)
         await _clear_restart_if_same_code(hass)
     return ok
 
