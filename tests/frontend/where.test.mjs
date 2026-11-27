@@ -86,3 +86,32 @@ test("editor: options by label, and configured ids kept even when missing", () =
   const opts = entityOptions(states, (id) => /_sextant_pet_location$/.test(id), (id, s) => s.attributes.friendly_name || id, ["sensor.gone_sextant_pet_location"]);
   assert.deepEqual(opts.map((o) => o.label), ["Meg Location", "sensor.fry_sextant_pet_location", "sensor.gone_sextant_pet_location", "sensor.leela_sextant_pet_location"]);
 });
+
+test("away: the phone's town, and what they're doing when on the move", () => {
+  const away = loc("away", { kind: "zone", zone: "not_home", presence: "away", tracker: "device_tracker.mi_phone", source: "gps" });
+  const st = {
+    "sensor.mi_sextant_person_location": away,
+    "sensor.mi_phone_activity": loc("Automotive", {}),
+    "sensor.mi_phone_geocoded_location": loc("6800 Pearl Rd", { Locality: "Middleburg Heights", "Administrative Area": "OH" }),
+    "sensor.work_sextant_person_location": loc("away", { kind: "zone", zone: "work", presence: "away" }),
+  };
+  const e = { entity: "sensor.mi_sextant_person_location", activity: "sensor.mi_phone_activity", place: "sensor.mi_phone_geocoded_location" };
+  const [d, z] = whereRows(st, [e, { ...e, entity: "sensor.work_sextant_person_location" }], NOW);
+  assert.deepEqual([d.where, d.moving.icon, d.zone], ["Driving near Middleburg Heights, OH", "mdi:car-hatchback", false]);
+  assert.deepEqual([z.where, z.zone], ["Work", true]);  // a named zone wins over the town
+  st["sensor.mi_phone_activity"] = loc("Stationary", {});
+  assert.deepEqual(whereRows(st, [e], NOW).map((r) => [r.where, r.moving]), [["Middleburg Heights, OH", null]]);
+  st["sensor.mi_phone_geocoded_location"] = loc("unavailable", { Locality: "Cleveland", "Administrative Area": "OH" });
+  st["sensor.mi_phone_activity"] = loc("Walking", {});
+  assert.equal(whereRows(st, [e], NOW)[0].where, "Walking");
+  assert.equal(whereRows(st, ["sensor.mi_sextant_person_location"], NOW)[0].where, "Away");
+});
+
+test("editor: a picked person brings their phone's activity and town sensors", () => {
+  const st = { ...states, "sensor.david_coulson_sextant_person_location": loc("x", { tracker: "device_tracker.d_phone" }) };
+  const reg = { "device_tracker.d_phone": { device_id: "D" }, "sensor.d_phone_sleep_activity": { device_id: "D" }, "sensor.d_phone_activity": { device_id: "D" }, "sensor.d_phone_geocoded_location": { device_id: "D" }, "sensor.other_activity": { device_id: "E" } };
+  assert.deepEqual(withPerson(st, "sensor.david_coulson_sextant_person_location", reg), {
+    entity: "sensor.david_coulson_sextant_person_location", person: "person.david_coulson",
+    activity: "sensor.d_phone_activity", place: "sensor.d_phone_geocoded_location",
+  });
+});

@@ -8,6 +8,8 @@
  *     - entity: sensor.david_coulson_sextant_person_location
  *       person: person.david_coulson   # photo and name (optional)
  *       name: David                    # optional
+ *       activity: sensor.davids_iphone_activity           # optional: "Driving near …" when away
+ *       place: sensor.davids_iphone_geocoded_location     # optional: the town when away
  *     - sensor.meg_sextant_pet_location
  *   rooms:                       # optional: room occupancy sensors, for modes (rooms layout)
  *     - binary_sensor.great_room_sextant_occupancy
@@ -57,10 +59,12 @@ class SextantWhereCard extends LitElement {
   _avatar(r, size = "", badge = false) {
     const ring = r.level ? `--c:${r.level.color};--p:${Math.round(r.conf * 100)}` : "--c:var(--divider-color);--p:0";
     const fallback = r.pet ? html`<ha-icon icon=${classIcon(r.via) || "mdi:paw"}></ha-icon>` : r.name[0];
-    const badgeIcon = r.away ? SOURCE_ICONS[r.source] : classIcon(r.via);
+    const badgeIcon = r.moving?.icon || (r.away ? SOURCE_ICONS[r.source] || "mdi:home-export-outline" : classIcon(r.via));
+    // As on the house's Mushroom person cards: green home, blue in a named zone, orange on the move, red away.
+    const bc = !r.away ? "" : r.zone ? "var(--blue-color, #2196f3)" : r.moving ? "var(--orange-color, #ff9800)" : "var(--red-color, #f44336)";
     return html`<span class="ring ${size}" style=${ring} title=${r.level ? `${r.level.label} ${Math.round(r.conf * 100)}%` : ""}>
       <span class="av">${r.picture ? html`<img src=${r.picture} alt="">` : fallback}</span>
-      ${badge && badgeIcon ? html`<span class="badge"><ha-icon icon=${badgeIcon}></ha-icon></span>` : nothing}</span>`;
+      ${badge && badgeIcon ? html`<span class="badge" style=${bc ? `background:${bc}` : ""}><ha-icon icon=${badgeIcon}></ha-icon></span>` : nothing}</span>`;
   }
 
   _tiles(rows) {
@@ -184,7 +188,7 @@ class SextantWhereCardEditor extends LitElement {
     // Entries queued per sensor, so a sensor listed twice keeps both of its entries.
     const had = new Map();
     for (const x of this._config.entities || []) { const id = normEntry(x).entity; had.set(id, [...(had.get(id) || []), x]); }
-    const entities = (v.entities || []).flatMap((id) => had.get(id)?.splice(0) ?? [withPerson(this.hass.states, id)]);
+    const entities = (v.entities || []).flatMap((id) => had.get(id)?.splice(0) ?? [withPerson(this.hass.states, id, this.hass.entities)]);
     const config = { ...this._config, layout: v.layout || "tiles", entities };
     for (const k of ["columns", "rooms"]) { if (v[k] == null || (Array.isArray(v[k]) && !v[k].length)) delete config[k]; else config[k] = v[k]; }
     this._config = config;

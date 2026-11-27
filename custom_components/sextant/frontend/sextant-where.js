@@ -32,16 +32,35 @@ const PET_CLASSES = new Set(["paw", "dog", "cat"]);
 const BLANK = new Set(["unknown", "unavailable", "", null, undefined]);
 const title = (s) => String(s).replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 
-/** One entry of `entities:`, a string or {entity, person, name, pet}, as an object. */
+// Companion app activity states (iOS, then Android) that mean on the move.
+const MOVING = {
+  automotive: { label: "Driving", icon: "mdi:car-hatchback" }, in_vehicle: { label: "Driving", icon: "mdi:car-hatchback" },
+  cycling: { label: "Cycling", icon: "mdi:bike" }, on_bicycle: { label: "Cycling", icon: "mdi:bike" },
+  walking: { label: "Walking", icon: "mdi:walk" }, on_foot: { label: "Walking", icon: "mdi:walk" },
+  running: { label: "Running", icon: "mdi:run" },
+};
+
+/** One entry of `entities:`, a string or {entity, person, name, pet, activity, place}, as an object. */
 export function normEntry(e) {
   return typeof e === "string" ? { entity: e } : { ...(e || {}) };
 }
 
-/** A new `entities:` entry for a location sensor, with its person (for photo and name) when person.<same slug> exists. */
-export function withPerson(states, id) {
+/**
+ * A new `entities:` entry for a location sensor, with its person (for photo and name) when
+ * person.<same slug> exists, and the activity and geocoded-location sensors of the phone the
+ * sensor tracks with (from the entity registry, `entities`), for "Driving near <town>" when away.
+ */
+export function withPerson(states, id, entities = {}) {
   const m = /^sensor\.(.+)_sextant_(?:person|pet)_location$/.exec(id || "");
-  const person = m && `person.${m[1]}`;
-  return person && states?.[person] ? { entity: id, person } : id;
+  const person = m && states?.[`person.${m[1]}`] ? `person.${m[1]}` : null;
+  const dev = entities[states?.[id]?.attributes?.tracker]?.device_id;
+  const mine = dev ? Object.keys(entities).filter((x) => entities[x]?.device_id === dev) : [];
+  // Android also has sleep activity sensors; its motion one is *_detected_activity, iOS's *_activity.
+  const acts = mine.filter((x) => /^sensor\..+_activity$/.test(x) && !/sleep/.test(x));
+  const activity = acts.find((x) => /_detected_activity$/.test(x)) || acts[0];
+  const place = mine.find((x) => /^sensor\..+_geocoded_location$/.test(x));
+  const entry = { entity: id, ...(person && { person }), ...(activity && { activity }), ...(place && { place }) };
+  return Object.keys(entry).length > 1 ? entry : id;
 }
 
 /**
@@ -62,14 +81,19 @@ export function whereRows(states, entries, now) {
     const pet = e.pet ?? (/_pet_location$/.test(e.entity) || PET_CLASSES.has(a.via_class));
     const room = BLANK.has(a.room) ? null : a.room;
     const floor = BLANK.has(a.floor) ? null : a.floor;
-    let where, away = false;
+    let where, away = false, zone = null, moving = null;
     if (!st || st.state === "unavailable") where = "Unavailable";
     else if (a.kind === "zone" || a.presence === "away") {
       away = true;
-      where = a.zone && a.zone !== "not_home" ? title(a.zone) : "Away";
+      zone = a.zone && a.zone !== "not_home" ? title(a.zone) : null;
+      moving = e.activity ? MOVING[String(states?.[e.activity]?.state).toLowerCase()] || null : null;
+      const gs = e.place ? states?.[e.place] : null;
+      const g = gs && !BLANK.has(gs.state) ? gs.attributes || {} : {};  // a dead geocoder keeps its last town
+      const place = [g.Locality ?? g.locality, g["Administrative Area"] ?? g.administrative_area ?? g.admin_area].filter((x) => x && x !== "N/A").join(", ");
+      where = zone || (moving ? `${moving.label}${place ? ` near ${place}` : ""}` : place || "Away");
     } else where = room || title(st.state);
     rows.push({
-      id: e.entity, name, pet, away,
+      id: e.entity, name, pet, away, zone: !!zone, moving,
       picture: person?.attributes?.entity_picture || null,
       where, room: away ? null : room, spot: away ? null : (a.spot || null),
       floor: away ? null : floor,
