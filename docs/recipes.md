@@ -339,8 +339,9 @@ height: 300
 ### A room at a glance
 
 Three ways to show who is in a room and what it is doing, for a room's own
-dashboard view. Each takes the room's occupancy sensor as `entity`; copy the
-block and change that one line for each room.
+dashboard view. Each takes the room's occupancy sensor; copy the block and
+change every `binary_sensor.kitchen_sextant_occupancy` in it (the chips name
+it three times) to the room's own.
 
 The chip: faces of who is in the room, how long it has been on, and the
 mode's icon. An empty room shows how long it has been empty and who was in
@@ -372,7 +373,7 @@ chips:
       tap_action:
         action: more-info
       content: >
-        {%- set a = states[entity].attributes -%}
+        {%- set a = states[entity].attributes if states[entity] else {} -%}
         {%- set p = a.get('people', []) | count -%}
         {%- set ns = namespace(k={}, out=([p ~ (' person' if p == 1 else ' people')] if p else [])) -%}
         {%- for n in a.get('pets', []) -%}
@@ -397,7 +398,7 @@ chips:
       {{ 'amber' if state_attr(entity, 'mode') else ('green' if is_state(entity, 'on') else 'disabled') }}
     content: >
       {%- set mode = state_attr(entity, 'mode') -%}
-      {%- set s = as_datetime(state_attr(entity, 'since')) -%}
+      {%- set s = as_datetime(state_attr(entity, 'since'), default=none) -%}
       {%- set m = ((now() - s).total_seconds() // 60) | int if s else 0 -%}
       {%- set d = (m // 60) ~ 'h ' ~ (m % 60) ~ 'm' if m >= 60 else m ~ 'm' -%}
       {{ (mode ~ ' · ' if mode else '') ~ (('on for ' ~ d) if is_state(entity, 'on') else ('Empty since ' ~ (s | as_local).strftime('%-I:%M %p') if s else 'Empty')) }}
@@ -414,8 +415,8 @@ tap_action:
 primary: >
   {{ state_attr(entity, 'room') }} · {{ state_attr(entity, 'mode') or ('Occupied' if is_state(entity, 'on') else 'Empty') }}
 secondary: >
-  {%- set a = states[entity].attributes -%}
-  {%- set s = as_datetime(a.get('since')) -%}
+  {%- set a = states[entity].attributes if states[entity] else {} -%}
+  {%- set s = as_datetime(a.get('since'), default=none) -%}
   {%- set m = ((now() - s).total_seconds() // 60) | int if s else 0 -%}
   {%- set d = (m // 60) ~ 'h ' ~ (m % 60) ~ 'm' if m >= 60 else m ~ 'm' -%}
   {%- if is_state(entity, 'on') -%}

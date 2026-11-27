@@ -292,7 +292,7 @@ export function roomChip(states, entity) {
   const s = states?.[entity];
   if (!s) return null;
   const a = s.attributes || {};
-  const pic = (name) => states[`person.${String(name).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "")}`]?.attributes?.entity_picture || null;
+  const pic = (name) => states[`person.${String(name).normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "")}`]?.attributes?.entity_picture || null;
   const faces = [...(a.people || []).map((name) => ({ name, pet: false })), ...(a.pets || []).map((name) => ({ name, pet: true }))]
     .map((f) => ({ ...f, picture: pic(f.name) }));
   return { room: a.room ?? entity, on: s.state === "on", faces, since: Date.parse(a.since) / 1000 || null, mode: a.mode || null };

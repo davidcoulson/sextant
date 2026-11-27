@@ -302,3 +302,9 @@ test("the room chip asks Strimmer for the person entities it finds at runtime", 
   assert.match(src, /import \{[^}]*\baskStrimmer\b[^}]*\} from "\.\/sextant-occupancy-data\.js"/);
   assert.match(src, /updated\(changed\) \{[^}]*if \(changed\.has\("hass"\)\) askStrimmer\(this\.hass\?\.connection\);/);
 });
+
+test("roomChip finds an accented name's person entity the way Home Assistant slugs it", async () => {
+  const { roomChip } = await import("../../custom_components/sextant/frontend/sextant-occupancy-data.js");
+  const states = { "binary_sensor.r": { state: "on", attributes: { people: ["José Silva"] } }, "person.jose_silva": { attributes: { entity_picture: "/p" } } };
+  assert.equal(roomChip(states, "binary_sensor.r").faces[0].picture, "/p");
+});

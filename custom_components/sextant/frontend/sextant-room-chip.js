@@ -42,27 +42,33 @@ class SextantRoomChip extends LitElement {
     // Strimmer forwards only what dashboards name; the occupants' person entities are found at runtime.
     if (changed.has("hass")) askStrimmer(this.hass?.connection);
     const r = roomChip(this.hass?.states, this._config.entity);
-    // Empty: who was here last comes from the recorder, once per time the room turns off.
-    if (r && !r.on && r.since && this._lastFor !== r.since) { this._lastFor = r.since; this._last = null; this._loadLast(r.since); }
+    // Empty: who was here last comes from the recorder, once per room and time it turned off.
+    const key = r && !r.on && r.since ? `${this._config.entity}@${r.since}` : null;
+    if (key && this._lastFor !== key) { this._lastFor = key; this._last = null; this._loadLast(this._config.entity, r.since, key); }
   }
 
-  async _loadLast(since) {
+  async _loadLast(entity, since, key) {
     try {
       const rows = await this.hass.callWS({
-        type: "history/history_during_period", entity_ids: [this._config.entity], minimal_response: false, no_attributes: false,
+        type: "history/history_during_period", entity_ids: [entity], minimal_response: false, no_attributes: false,
         significant_changes_only: false, start_time: new Date((since - 12 * 3600) * 1000).toISOString(), end_time: new Date((since + 60) * 1000).toISOString(),
       });
-      if (this._lastFor === since) this._last = lastOccupants(rows?.[this._config.entity]);
+      if (this._lastFor === key) this._last = lastOccupants(rows?.[entity]);
     } catch (e) {
-      if (this._lastFor === since) this._last = [];   // no recorder or no access: the chip just leaves "last" off
+      // Leave "last" off for now; clearing the key tries again on the next update (at most every 30 s).
+      if (this._lastFor === key) { this._last = []; this._lastFor = null; }
     }
   }
 
   _face(f) {
     const tip = f.name;
-    return f.picture ? html`<img class="face" src=${this.hass.hassUrl(f.picture)} alt=${tip} title=${tip}>`
+    let src = null;
+    try { src = f.picture && this.hass.hassUrl(f.picture); } catch (e) { /* a malformed picture URL: initials instead */ }
+    return src ? html`<img class="face" src=${src} alt=${tip} title=${tip}>`
       : html`<span class="face ${f.pet ? "pet" : ""}" title=${tip}>${f.name.slice(0, 1).toUpperCase()}</span>`;
   }
+
+  _key(e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); this._open(); } }
 
   _open() { this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: this._config.entity }, bubbles: true, composed: true })); }
 
@@ -73,11 +79,11 @@ class SextantRoomChip extends LitElement {
     const age = r.since ? fmtFor(Date.now() / 1000 - r.since) : "";
     if (!r.on) {
       const last = this._last?.length ? this._last.map(firstName).join(", ") : "";
-      return html`<ha-card class="chip off" role="button" tabindex="0" @click=${this._open} title="${r.room}: empty">
+      return html`<ha-card class="chip off" role="button" tabindex="0" @click=${this._open} @keydown=${this._key} title="${r.room}: empty">
         <ha-icon icon="mdi:account-off-outline"></ha-icon><span>Empty${age ? ` · ${age}` : ""}</span>${last ? html`<span class="muted">· ${last}</span>` : nothing}</ha-card>`;
     }
     const shown = r.faces.slice(0, this._config.max), more = r.faces.length - shown.length;
-    return html`<ha-card class="chip" role="button" tabindex="0" @click=${this._open} title="${r.room}: ${r.faces.map((f) => f.name).join(", ") || "on"}">
+    return html`<ha-card class="chip" role="button" tabindex="0" @click=${this._open} @keydown=${this._key} title="${r.room}: ${r.faces.map((f) => f.name).join(", ") || "on"}">
       ${r.faces.length ? html`<span class="faces">${shown.map((f) => this._face(f))}${more > 0 ? html`<span class="face more">+${more}</span>` : nothing}</span>`
         : html`<ha-icon icon="mdi:account-question-outline"></ha-icon>`}
       ${age ? html`<span>${age}</span>` : nothing}
