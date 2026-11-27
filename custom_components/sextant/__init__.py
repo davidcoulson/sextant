@@ -5624,6 +5624,27 @@ def _ask_phones_for_location(hass, layout, person):
     return sent
 
 
+def _phone_ssids(hass, layout, person):
+    """[(network, when it changed)] from the Wi-Fi network sensor of each of the person's
+    companion-app phones (their GPS sources; iOS *_ssid, Android *_wifi_connection), for
+    persons.ssid_left. None found, or the registry not up: [], which says nothing."""
+    out = []
+    try:
+        ent_reg = er.async_get(hass)
+        for eid in persons_mod.gps_sources(layout, person):
+            entry = ent_reg.async_get(eid)
+            if not entry or entry.platform != "mobile_app" or not entry.device_id:
+                continue
+            for e in er.async_entries_for_device(ent_reg, entry.device_id):
+                if e.domain == "sensor" and e.entity_id.endswith(("_ssid", "_wifi_connection")):
+                    st = hass.states.get(e.entity_id)
+                    if st is not None:
+                        out.append((st.state, st.last_changed.timestamp()))
+    except Exception:  # noqa: BLE001 - a phone's network is a help, never a stop
+        _LOGGER.debug("Phone networks for %s not read", person, exc_info=True)
+    return out
+
+
 # Outside door contacts (persons.exit_doors), when each was last seen open, and
 # person -> the last sighting they went out after (so a later opening of the
 # door does not bring them back in).
@@ -5698,6 +5719,8 @@ def _update_person_sensors(hass):
     _exit_doors = frozenset(persons_mod.exit_doors(layout))
     for door in _exit_doors:
         note_exit_door(door, hass.states.get(door))   # a door standing open
+    # The networks the router's clients are on: the house's own (persons.ssid_left).
+    home_ssids = {c["ssid"] for c in (view.get("candidates") or {}).values() if c.get("ssid")}
     if _event_visits is None:
         _event_visits, _events_from = dict(_person_visits), now + EVENTS_SETTLE_S
     for person, things in by_person.items():
@@ -5779,6 +5802,11 @@ def _update_person_sensors(hass):
         # down the road, is a departure, not a pause, and the person is away
         # now rather than when away_after_secs runs out (persons.gps_left).
         if best is None and presence == "quiet" and persons_mod.gps_left(gps, last_heard, home, _tuning(layout, "gps_leave_m")):
+            presence, held, held_why = "away", None, None
+        # Or a phone of theirs has joined a network the house does not broadcast since: the
+        # neighbour's Wi-Fi is gone, however close GPS puts it (persons.ssid_left).
+        ssids = _phone_ssids(hass, layout, person)
+        if best is None and presence == "quiet" and persons_mod.ssid_left(ssids, last_heard, home_ssids):
             presence, held, held_why = "away", None, None
         # Last heard in a room with an outside door, and quiet since: out of
         # it, not asleep in it. Every proxy losing a phone at once is a phone
@@ -5897,6 +5925,10 @@ def _update_person_sensors(hass):
                     (wifi_raw or {}).get("ap_name") or (wifi_raw or {}).get("ap"),
                     best=(best or {}).get("ent"), held=bool(held), left_behind=sorted(c["ent"] for c in left_behind),
                     place=_person_places.get(person), gps_src=(gps or {}).get("entity"),
+                    # How far GPS strays while they are home: what gps_leave_m can safely be.
+                    gps_m=persons_mod.gps_from_home_m(gps, home), gps_acc=(gps or {}).get("accuracy"),
+                    gps_age=None if persons_mod.valid_time((gps or {}).get("reported")) is None else round(now - gps["reported"]),
+                    ssid=[s for s, _ in ssids] or None,
                     things=[{"e": e, "cls": classes.get(e), "pres": pr, "zone": (cand.get(e) or {}).get("zone"),
                              "worn": (cand.get(e) or {}).get("worn"),
                              "age": None if not cand.get(e) or cand[e].get("updated") is None else round(now - cand[e]["updated"])}

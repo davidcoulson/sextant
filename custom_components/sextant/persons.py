@@ -586,6 +586,32 @@ def gps_left(gps, last_heard, home=None, min_distance_m=200.0) -> bool:
     return _haversine_m(home, (lat, lon)) - max(0.0, float(accuracy)) >= min_distance_m
 
 
+def gps_from_home_m(gps, home):
+    """Metres from home of a fix with coordinates, else None: for the person log."""
+    lat, lon = (gps or {}).get("latitude"), (gps or {}).get("longitude")
+    if lat is None or lon is None or not home or None in home:
+        return None
+    return round(_haversine_m(home, (lat, lon)))
+
+
+# A phone's Wi-Fi network sensor on no network: iOS, then Android.
+_NO_SSID = {"", "unknown", "unavailable", "none", "not connected", "<not connected>"}
+
+
+def ssid_left(ssids, last_heard, home_ssids) -> bool:
+    """Whether a phone joined a network the house does not broadcast after the
+    person was last heard: Eilee at the neighbour's 160 m away, on their guest
+    Wi-Fi, is gone, though GPS that close may be drift (gps_left). ``ssids`` is
+    (network, when it changed) per phone; ``home_ssids`` the networks the
+    router's clients are on now, so none (no router integration) says nothing.
+    No network (cellular) is no word either: a phone drops Wi-Fi in the house too."""
+    heard = valid_time(last_heard)
+    if not home_ssids or heard is None:
+        return False
+    return any(isinstance(s, str) and s.strip().lower() not in _NO_SSID and s not in home_ssids
+               and valid_time(t) is not None and t > heard for s, t in ssids or ())
+
+
 def without_left_behind(candidates, gps, now, stale, home=None, min_distance_m=200.0):
     """(candidates that may still speak for the person, those left behind).
     A thing that came to rest (``arrived``) more than RECENT_MOVE_SECS ago and
