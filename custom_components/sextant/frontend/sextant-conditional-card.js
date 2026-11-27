@@ -52,6 +52,8 @@ class SextantConditionalCard extends LitElement {
       el.preview = this.preview;
       el.config = config.card;
       el.load?.();
+      // The inner card's own visibility hides only the wrapper; fold it into ours so a section leaves no gap.
+      el.addEventListener("card-visibility-changed", (e) => { e.stopPropagation(); this.requestUpdate(); });
     } else {
       const helpers = await window.loadCardHelpers();
       if (config !== this._config) return;
@@ -70,6 +72,7 @@ class SextantConditionalCard extends LitElement {
   _visible() {
     // Shown while editing, so the card can be found and changed.
     if (this.preview || this.editMode) return true;
+    if (this._card?.localName === "hui-card" && this._card.hidden) return false;
     const states = this.hass?.states, userId = this.hass?.user?.id;
     let place = { room: null, floor: null };
     if (testsPlace(this._config)) {
@@ -103,7 +106,8 @@ class SextantConditionalCard extends LitElement {
     if (changed.has("preview") && this._card) this._card.preview = this.preview;
   }
 
-  render() { return this._on && this._card ? html`${this._card}` : nothing; }
+  // Kept in the page while hidden (the host is display: none), so the inner hui-card keeps checking its own visibility.
+  render() { return this._card ? html`${this._card}` : nothing; }
 
   static styles = css`:host([hidden]) { display: none; }`;
 }

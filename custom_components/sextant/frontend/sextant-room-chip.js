@@ -120,6 +120,8 @@ class SextantRoomChipEditor extends LitElement {
   _changed(e) {
     e.stopPropagation();
     const config = { ...this._config, ...e.detail.value };
+    // A cleared field goes back to the card's default rather than overriding it with nothing.
+    for (const [k, v] of Object.entries(config)) if (v == null || v === "") delete config[k];
     this._config = config;
     this.dispatchEvent(new CustomEvent("config-changed", { detail: { config }, bubbles: true, composed: true }));
   }

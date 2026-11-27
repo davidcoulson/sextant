@@ -179,8 +179,11 @@ class SextantWhereCardEditor extends LitElement {
     e.stopPropagation();
     const v = e.detail.value;
     // A sensor already listed keeps its entry (name, person); a new one gets its person when there is one.
-    const had = new Map((this._config.entities || []).map((x) => [normEntry(x).entity, x]));
-    const config = { ...this._config, layout: v.layout || "tiles", entities: (v.entities || []).map((id) => had.get(id) ?? withPerson(this.hass.states, id)) };
+    // Entries queued per sensor, so a sensor listed twice keeps both of its entries.
+    const had = new Map();
+    for (const x of this._config.entities || []) { const id = normEntry(x).entity; had.set(id, [...(had.get(id) || []), x]); }
+    const entities = (v.entities || []).flatMap((id) => had.get(id)?.splice(0) ?? [withPerson(this.hass.states, id)]);
+    const config = { ...this._config, layout: v.layout || "tiles", entities };
     for (const k of ["columns", "rooms"]) { if (v[k] == null || (Array.isArray(v[k]) && !v[k].length)) delete config[k]; else config[k] = v[k]; }
     this._config = config;
     this.dispatchEvent(new CustomEvent("config-changed", { detail: { config }, bubbles: true, composed: true }));
