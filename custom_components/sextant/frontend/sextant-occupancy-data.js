@@ -172,8 +172,9 @@ export function clockAt(t, now = Date.now() / 1000) {
  *  Confident from 70%, Likely from 40%, else Unsure. */
 export function confidenceLevel(conf) {
   if (conf == null || !Number.isFinite(conf)) return null;
-  return conf >= 0.7 ? { word: "Confident", icon: "mdi:crosshairs-gps" }
-    : conf >= 0.4 ? { word: "Likely", icon: "mdi:crosshairs" } : { word: "Unsure", icon: "mdi:crosshairs-question" };
+  return conf >= 0.7 ? { word: "Confident", icon: "mdi:crosshairs-gps", colour: "var(--green-color, #4caf50)" }
+    : conf >= 0.4 ? { word: "Likely", icon: "mdi:crosshairs", colour: "var(--amber-color, #ffc107)" }
+      : { word: "Unsure", icon: "mdi:crosshairs-question", colour: "var(--red-color, #f44336)" };
 }
 
 /** A person's chip label: the first word of their name, capitalised ("david coulson" -> "David"). */

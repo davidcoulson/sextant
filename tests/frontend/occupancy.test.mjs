@@ -223,6 +223,8 @@ test("confidenceLevel turns a confidence into a word and a crosshairs icon", asy
   assert.equal(confidenceLevel(0.7).word, "Confident");
   assert.equal(confidenceLevel(0.53).word, "Likely");
   assert.equal(confidenceLevel(0.1).icon, "mdi:crosshairs-question");
+  assert.match(confidenceLevel(0.7).colour, /green/);
+  assert.match(confidenceLevel(0.1).colour, /red/);
   assert.equal(confidenceLevel(null), null);
   assert.equal(confidenceLevel(NaN), null);
 });
