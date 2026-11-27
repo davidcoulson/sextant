@@ -62,6 +62,12 @@ put stands (`source: held`): they have not left the house. Unless GPS has
 already seen them go: a fix made since the last sighting, outside the home
 zone and at least `gps_leave_m` (200 m) from home, ends the hold at once
 and the person is `away` now rather than when `away_after_secs` runs out.
+So does one of their phones joining a Wi-Fi network the house does not
+broadcast (the Companion app's Wi-Fi network sensor, `_ssid` on iOS,
+`_wifi_connection` on Android) since that sighting: the neighbour's guest
+network is a departure however close GPS puts it. The house's networks are the
+ones the router's clients are on; with no router integration, or the phone on
+no network (cellular), this says nothing.
 Any of their GPS sources can be the one to see it: the first in their order is
 read, unless another has a fix from since that sighting that shows the
 departure while the first still has them at or by the house. Between gone and

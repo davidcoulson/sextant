@@ -653,3 +653,29 @@ def test_a_watch_heard_saying_it_is_worn_is_never_left_behind_by_gps():
     # Worn but not placed: it cannot speak, so it vouches for nothing else.
     assert persons.without_left_behind([dict(worn, zone="unknown"), dict(worn, ent="tag", cls="tag", worn=None)],
                                        _fix(), NOW, 120, HOME)[1]
+
+
+def test_ssid_left_a_network_the_house_does_not_have_after_the_last_sighting():
+    home = {"djc-wifi", "yj45rf13"}
+    # On the neighbour's guest Wi-Fi since after she was last heard: gone.
+    assert persons.ssid_left([("BigMutts guest", NOW - 60)], NOW - 300, home)
+    # Joined before the last sighting: BLE heard her since, so no word.
+    assert not persons.ssid_left([("BigMutts guest", NOW - 400)], NOW - 300, home)
+    # The house's own network, or none (cellular, iOS and Android spellings): no word.
+    assert not persons.ssid_left([("djc-wifi", NOW - 60)], NOW - 300, home)
+    assert not persons.ssid_left([(" DJC-WiFi ", NOW - 60)], NOW - 300, home)   # one network spelt two ways
+    for none in ("Not Connected", "<not connected>", "unavailable", "unknown", ""):
+        assert not persons.ssid_left([(none, NOW - 60)], NOW - 300, home)
+    # No router networks known, never heard, or no phone: no word.
+    assert not persons.ssid_left([("BigMutts guest", NOW - 60)], NOW - 300, set())
+    assert not persons.ssid_left([("BigMutts guest", NOW - 60)], None, home)
+    assert not persons.ssid_left([], NOW - 300, home)
+    # Any one phone of theirs is enough.
+    assert persons.ssid_left([("djc-wifi", NOW - 60), ("Cafe", NOW - 30)], NOW - 300, home)
+
+
+def test_gps_from_home_m_for_the_person_log():
+    assert persons.gps_from_home_m({"latitude": HOME[0], "longitude": HOME[1]}, HOME) == 0
+    assert 150 < persons.gps_from_home_m({"latitude": HOME[0] - 0.00145, "longitude": HOME[1]}, HOME) < 170
+    assert persons.gps_from_home_m({"zone": "not_home"}, HOME) is None
+    assert persons.gps_from_home_m(None, HOME) is None
