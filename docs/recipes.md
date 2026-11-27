@@ -364,7 +364,8 @@ rooms:                 # optional, rooms layout: shows each room's mode
 
 - `tiles`: a grid of tiles, room as the headline and the spot under it.
   Someone away gets both lines for their town ("Avon, OH"), the badge shows
-  driving or walking, the ring fills in the badge colour, and the time is how
+  driving or walking, the ring is a full grey one (Sextant has no confidence
+  to show for someone away: GPS placed them, or nothing did), and the time is how
   long since they left.
 - `rooms`: one line per occupied room, avatars stacked, with its mode.
   Anyone away is left out.
