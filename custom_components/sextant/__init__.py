@@ -8441,7 +8441,10 @@ async def async_setup(hass, config):
         # The Python this import is, hashed once: an options reload runs setup again on the same modules,
         # and reload_code imports a fresh ws module, so it is hashed again only when the code really changed.
         if ws_running.RUNNING_CODE is None:
-            ws_running.RUNNING_CODE = await hass.async_add_executor_job(ws_running.code_signature)
+            sig = await hass.async_add_executor_job(ws_running.code_signature)
+            # reload_code swaps the Python but not the installed requirements: keep the ones this process started with.
+            started = hass.data.setdefault("sextant_started_requirements", sig and sig.split("|")[1])
+            ws_running.RUNNING_CODE = sig and f"{sig.split('|')[0]}|{started}"
 
         if show_sidebar_panel:
             try:
