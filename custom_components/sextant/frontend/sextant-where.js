@@ -105,20 +105,22 @@ export function whereRows(states, entries, now) {
         || (gs?.state !== "home" && typeof g.place === "string" && ("driving" in g ? g.place.replace(/\s*\([^()]*\)$/, "") : g.place))
         || g.address
         // A sensor whose state is the address itself (a pet collar's).
-        || (gs && !BLANK.has(gs.state) && !e.place.startsWith("device_tracker.") ? gs.state : "");
+        || (gs && !BLANK.has(gs.state) && gs.state !== "N/A" && !e.place.startsWith("device_tracker.") ? gs.state : "");
       place ||= null;
       where = zone || (moving ? `${moving.label}${place ? ` near ${place}` : ""}` : place || "Away");
     } else where = room || title(st.state);
     rows.push({
       id: e.entity, name, pet, away, outside, zone: !!zone, moving, place: zone ? null : place,
       picture: person?.attributes?.entity_picture || null,
-      where, room: away ? null : outside ? "Outside" : room, spot: away ? null : (a.spot || null),
+      where, room: away || !st || st.state === "unavailable" ? null : outside ? "Outside" : room, spot: away || !st || st.state === "unavailable" ? null : (a.spot || null),
       floor: away ? null : floor,
       // Away has no since: time since the sensor last changed, when they left or reached the zone.
       stay: typeof a.since === "number" ? now - a.since : (away || outside) && st?.last_changed ? now - Date.parse(st.last_changed) / 1000 : null,
       conf: typeof a.conf === "number" ? a.conf : null,
       level: away ? null : confLevel(a.conf),
       via: a.via_class || null, source: a.source || null,
+      // A GPS collar: the dog's card even when no tag is heard (via_class comes from the tag, so it is null then).
+      roams: pet && (a.via_class === "dog" || !!a.tracker),
       distance: away && typeof a.distance_m === "number" ? a.distance_m : null,
     });
   }
@@ -161,7 +163,7 @@ export function stripChips(rows, fold = 2) {
 /** People (not pets, not away) in the same room as each pet, by pet id: "Fry is with David". */
 export function petCompany(rows) {
   const people = rows.filter((r) => !r.pet && !r.away && r.room);
-  return new Map(rows.filter((r) => r.pet).map((p) => [p.id, p.away || !p.room ? [] : people.filter((r) => r.room === p.room)]));
+  return new Map(rows.filter((r) => r.pet).map((p) => [p.id, p.away || p.outside || !p.room ? [] : people.filter((r) => r.room === p.room)]));
 }
 
 /** "David", "David and Michelle", "David, Michelle +1". */

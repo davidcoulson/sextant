@@ -55,8 +55,8 @@ class SextantWhereCard extends LitElement {
     const n = this._config?.entities?.length || 1;
     if (this._config?.layout === "pets") {
       const rows = this.hass ? whereRows(this.hass.states, this._config.entities, Date.now() / 1000).filter((r) => r.pet) : [];
-      const dogs = rows.filter((r) => r.via === "dog").length;
-      return dogs * 2 + Math.ceil((rows.length - dogs || n) / (this._config.columns || 2)) * 1.3;
+      const dogs = rows.filter((r) => r.roams).length;
+      return dogs * 2 + Math.ceil((this.hass ? rows.length - dogs : n) / (this._config.columns || 2)) * 1.3;
     }
     return { tiles: Math.ceil(n / (this._config.columns || 2)) * 1.4, rooms: n, strip: 1, rings: 3 }[this._config?.layout] || 3;
   }
@@ -129,7 +129,7 @@ class SextantWhereCard extends LitElement {
   // room puts their face on the pet's photo and "with David" under it; people themselves are not drawn.
   _pets(rows) {
     const company = petCompany(rows), pets = rows.filter((r) => r.pet);
-    const dogs = pets.filter((r) => r.via === "dog"), rest = pets.filter((r) => r.via !== "dog");
+    const dogs = pets.filter((r) => r.roams), rest = pets.filter((r) => !r.roams);
     const face = (r, size) => {
       const w = company.get(r.id) || [];
       return html`<span class="pface">${this._avatar(r, size)}${w[0] ? html`<span class="with-face" title=${w[0].name}>
@@ -141,7 +141,7 @@ class SextantWhereCard extends LitElement {
     };
     const where = (r) => r.away ? this._where(r) : r.spot || r.where;
     const dog = (r) => {
-      const state = r.away ? "away" : r.outside ? "outside" : "inside";
+      const state = r.where === "Unavailable" ? null : r.away ? "away" : r.outside ? "outside" : "inside";
       const how = [SOURCE_NAMES[r.source], r.distance != null ? `${fmtDistance(r.distance)} from home` : ""].filter(Boolean).join(" · ");
       return html`<button class="dog" @click=${() => this._more(r.id)}>${face(r, "xl")}
         <span class="txt"><span class="n">${r.name}</span>
