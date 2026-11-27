@@ -58,8 +58,11 @@ export function withPerson(states, id, entities = {}) {
   // Android also has sleep activity sensors; its motion one is *_detected_activity, iOS's *_activity.
   const acts = mine.filter((x) => /^sensor\..+_activity$/.test(x) && !/sleep/.test(x));
   const activity = acts.find((x) => /_detected_activity$/.test(x)) || acts[0];
-  const place = mine.find((x) => /^sensor\..+_geocoded_location$/.test(x));
-  const entry = { entity: id, ...(person && { person }), ...(activity && { activity }), ...(place && { place }) };
+  // No Companion app sensors on the tracker's device: a Life360 tracker answers both itself.
+  const tracker = states?.[id]?.attributes?.tracker;
+  const l360 = "driving" in (states?.[tracker]?.attributes || {}) ? tracker : undefined;
+  const place = mine.find((x) => /^sensor\..+_geocoded_location$/.test(x)) || l360;
+  const entry = { entity: id, ...(person && { person }), ...((activity || l360) && { activity: activity || l360 }), ...(place && { place }) };
   return Object.keys(entry).length > 1 ? entry : id;
 }
 
@@ -86,10 +89,16 @@ export function whereRows(states, entries, now) {
     else if (a.kind === "zone" || a.presence === "away") {
       away = true;
       zone = a.zone && a.zone !== "not_home" ? title(a.zone) : null;
-      moving = e.activity ? MOVING[String(states?.[e.activity]?.state).toLowerCase()] || null : null;
+      // A Companion app activity sensor, or a Life360 tracker (its driving flag; its state is a zone, not an activity).
+      const act = e.activity ? states?.[e.activity] : null;
+      moving = !act || BLANK.has(act.state) ? null
+        : e.activity.startsWith("device_tracker.") ? (act.attributes?.driving === true ? MOVING.automotive : null)
+        : MOVING[String(act.state).toLowerCase()] || null;
       const gs = e.place ? states?.[e.place] : null;
       const g = gs && !BLANK.has(gs.state) ? gs.attributes || {} : {};  // a dead geocoder keeps its last town
-      const place = [g.Locality ?? g.locality, g["Administrative Area"] ?? g.administrative_area ?? g.admin_area].filter((x) => x && x !== "N/A").join(", ");
+      // A geocoder's town and state; a Life360 tracker's named place, else its street and state.
+      const place = [g.Locality ?? g.locality, g["Administrative Area"] ?? g.administrative_area ?? g.admin_area].filter((x) => x && x !== "N/A").join(", ")
+        || (gs?.state !== "home" && g.place) || g.address || "";  // Life360 lagging at its home place: not a place to show
       where = zone || (moving ? `${moving.label}${place ? ` near ${place}` : ""}` : place || "Away");
     } else where = room || title(st.state);
     rows.push({

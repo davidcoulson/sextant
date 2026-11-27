@@ -115,3 +115,22 @@ test("editor: a picked person brings their phone's activity and town sensors", (
     activity: "sensor.d_phone_activity", place: "sensor.d_phone_geocoded_location",
   });
 });
+
+test("Life360: a tracker gives driving and its place or address", () => {
+  const st = {
+    "sensor.j_sextant_person_location": loc("away", { kind: "zone", zone: "not_home", presence: "away", tracker: "device_tracker.j" }),
+    "device_tracker.j": loc("not_home", { driving: true, address: "Pearl Road, Ohio", place: null }),
+  };
+  const e = { entity: "sensor.j_sextant_person_location", activity: "device_tracker.j", place: "device_tracker.j" };
+  assert.equal(whereRows(st, [e], NOW)[0].where, "Driving near Pearl Road, Ohio");
+  st["device_tracker.j"] = loc("not_home", { driving: false, address: "Main St, Ohio", place: "School" });
+  assert.deepEqual(whereRows(st, [e], NOW).map((r) => [r.where, r.moving]), [["School", null]]);
+  // The editor: no Companion app sensors on the Life360 device, so the tracker fills both keys.
+  assert.deepEqual(withPerson(st, "sensor.j_sextant_person_location", { "device_tracker.j": { device_id: "L" } }),
+    { entity: "sensor.j_sextant_person_location", activity: "device_tracker.j", place: "device_tracker.j" });
+  // Life360 still at home while Sextant says away: the street, not the home place; a dead tracker's flag is stale.
+  st["device_tracker.j"] = loc("home", { driving: false, address: "Silver Tree Trail, Ohio", place: "Home (Bauer Coulson)" });
+  assert.equal(whereRows(st, [e], NOW)[0].where, "Silver Tree Trail, Ohio");
+  st["device_tracker.j"] = loc("unavailable", { driving: true, address: "Pearl Road, Ohio" });
+  assert.equal(whereRows(st, [e], NOW)[0].where, "Away");
+});
