@@ -1078,6 +1078,11 @@ class SextantLive extends LitElement {
     return true;
   }
 
+  async _keepMark(id, keep) {
+    const r = await callWS(this, this.hass, { type: "sextant/truth/keep", mark_id: id, keep });
+    if (r) this._loadMarks(this._selected);
+  }
+
   async _deleteMark(id) {
     if (!(await confirmAsync(`Forget pin ${id}?`, { ok: "Forget", danger: true }))) return;
     const r = await callWS(this, this.hass, { type: "sextant/truth/delete", mark_id: id });
@@ -2015,6 +2020,7 @@ class SextantLive extends LitElement {
 
   _renderTruth(sel) {
     const ent = sel.ent;
+    const when = (t) => new Date(t * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
     const t = this._truth && this._truth.mark?.entity === ent ? this._truth : null;
     const rows = (t?.rows || []).filter((r) => !r.cross).slice(0, 6);
     // The cross-floor fit is a comparison only: nothing places a thing that way.
@@ -2033,11 +2039,14 @@ class SextantLive extends LitElement {
         <p class="muted small">Error is the mean distance from the pin; Room is how often the fix landed in the pin's room. One pin can overfit: pin ${this._pn(ent).obj} in another room too.</p>` : html`<p class="muted small">Nothing could be re-solved for this mark.</p>`}
         <div class="row">${uiButton({ label: "Close", kind: "text", onClick: () => { this._truth = null; } })}${uiButton({ label: "Forget pin", kind: "text", onClick: () => this._deleteMark(t.mark.id) })}</div>
       </div>` : nothing}
-      ${!t && this._marks.length ? html`<details class="marks"><summary>Pins</summary>
+      ${!t && this._marks.length ? html`<details class="marks" ?open=${this._marks.some((m) => m.stale)}><summary>Pins</summary>
         <ul class="plain pinlist">${this._marks.map((m) => html`<li>
           <span class="pinid">Pin ${m.id} <span class="muted">· ${m.floor}</span></span>
-          <button class="forget" title="Forget pin ${m.id}" aria-label="Forget pin ${m.id}" @click=${() => this._deleteMark(m.id)}><ha-icon icon="mdi:trash-can-outline"></ha-icon></button>
-          <span class="muted small pinwhen">${new Date(m.t * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} · ${m.samples} cycles</span>
+          <span class="pinbtns">
+            <button class="forget ${m.keep ? "on" : ""}" title=${m.keep ? `Stop keeping pin ${m.id} fresh` : `Keep pin ${m.id} fresh: re-take its readings hourly while it sits still there`} aria-label=${`Keep pin ${m.id} fresh`} aria-pressed=${!!m.keep} @click=${() => this._keepMark(m.id, !m.keep)}><ha-icon icon="mdi:pin-outline"></ha-icon></button>
+            <button class="forget" title="Forget pin ${m.id}" aria-label="Forget pin ${m.id}" @click=${() => this._deleteMark(m.id)}><ha-icon icon="mdi:trash-can-outline"></ha-icon></button>
+          </span>
+          <span class="muted small pinwhen">${when(m.t)} · ${m.samples} cycles${m.keep ? html` · kept fresh${m.refreshed ? `, last ${when(m.refreshed)}` : ""}` : nothing}${m.stale ? html` · <span class="warn">readings changed ${when(m.stale)}: moved? Re-pin it</span>` : nothing}</span>
         </li>`)}</ul></details>` : nothing}
     </div>`;
   }
@@ -2214,7 +2223,10 @@ class SextantLive extends LitElement {
     .pinlist li:last-child { border-bottom: 0; }
     .pinlist .pinid { grid-column: 1; grid-row: 1; font-size: 13px; }
     .pinlist .pinwhen { grid-column: 1; grid-row: 2; }
-    .pinlist .forget { grid-column: 2; grid-row: 1 / 3; align-self: center; display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border: 1px solid var(--divider-color); border-radius: 8px; background: transparent; color: var(--secondary-text-color); cursor: pointer; }
+    .pinlist .pinbtns { grid-column: 2; grid-row: 1 / 3; display: inline-flex; gap: 6px; }
+    .pinlist .forget.on { color: var(--primary-color); border-color: var(--primary-color); }
+    .pinlist .warn { color: var(--warning-color, #b26a00); }
+    .pinlist .forget { align-self: center; display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border: 1px solid var(--divider-color); border-radius: 8px; background: transparent; color: var(--secondary-text-color); cursor: pointer; }
     .pinlist .forget ha-icon { --mdc-icon-size: 18px; }
     .pinlist .forget:hover { color: var(--error-color, #c62828); border-color: var(--error-color, #c62828); }
     /* Clicked on the map: floats over the plan's top-left, out of the way. */

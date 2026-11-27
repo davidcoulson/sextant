@@ -1047,6 +1047,42 @@ def _set_truth_marks(marks):
     _mark_ref_cache["key"] = None
 
 
+_kept_pin_tried = {}   # mark id -> when it last tried fresh readings
+
+
+def _keep_pins_fresh(hass, entity, now):
+    """Start a refresh of this thing's kept pins that are due, when it has
+    been still for a whole pin window: every sample is then from where it sits."""
+    due = [m for m in _truth_marks if m.get("keep") and m.get("entity") == entity
+           and now - _kept_pin_tried.get(m.get("id"), -math.inf) >= truth_mod.KEEP_EVERY_S]
+    still = (_zone_state.get(entity) or {}).get("still_since")
+    if not due or still is None or now - still < truth_mod.DEFAULT_WINDOW_SECS:
+        return
+    for m in due:
+        _kept_pin_tried[m.get("id")] = now
+    hass.async_create_task(_refresh_kept_pins(hass, entity, [m.get("id") for m in due], now))
+
+
+async def _refresh_kept_pins(hass, entity, ids, now):
+    async with TRUTH_LOCK:  # the Live page edits the same file
+        store = await load_truth(hass)
+        changed = False
+        for mark in store.get("marks", []):
+            if mark.get("id") not in ids or not mark.get("keep") or mark.get("entity") != entity:
+                continue
+            samples = _truth_buffer.samples(entity, since=now - truth_mod.DEFAULT_WINDOW_SECS, floor=mark.get("floor"))
+            if len(samples) < truth_mod.MIN_SAMPLES:
+                continue
+            was = (mark.get("refreshed"), mark.get("stale"))
+            d = truth_mod.refresh(mark, samples, now)
+            if (mark.get("refreshed"), mark.get("stale")) != was:
+                changed = True
+                _LOGGER.debug("Kept pin %s for %s: drift %.2f, %s", mark.get("id"), entity, d, "stale" if mark.get("stale") else "refreshed")
+        if changed:
+            await save_truth(hass, store)
+            _set_truth_marks(store["marks"])
+
+
 def _raw_vector(layout):
     """{rx_address: metres} this cycle, before calibration and per-thing trim."""
     out = {}
@@ -2978,6 +3014,7 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
             _LOGGER.debug("Cross-floor points skipped for %s: %s", entity, e)
         _truth_buffer.remember(entity, jobs, thing_vec if estimator != "geometric" else fingerprint.thing_vector(layout), fp_gain, estimator,
                                raw_vec=_raw_vector(layout), cross=borrowed)
+        _keep_pins_fresh(hass, entity, time.time())
 
     solved = {}  # floor name -> everything the publish pipeline needs
     if jobs:
