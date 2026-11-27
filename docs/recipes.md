@@ -379,8 +379,8 @@ rooms:                 # optional, rooms layout: shows each room's mode
   distance from home, and a badge for how she was placed (Bluetooth, Wi-Fi,
   GPS). The other pets
   are tiles, two across, with their spot or room. People listed are not
-  drawn; a pet in the same room as one shows their face on its photo and
-  "with David" under it.
+  drawn; a pet placed confidently (a green ring) in the same room as one
+  shows their face on its photo and "with David" under it.
 
 The card reads only the entities its config names, so it works on
 dashboards served through Strimmer without an override rule.
