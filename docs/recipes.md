@@ -340,7 +340,9 @@ height: 300
 
 The where card shows each person and pet with the room, the spot,
 how long they have been there, and a ring that fills and colours with how sure
-Sextant is (green confident, amber likely, red unsure). The badge on the photo
+Sextant is (green confident, amber likely, red unsure). The ring reads the
+sensor's `settled_conf` when it has one, so a long stay while heard lifts it a
+little (it closes at most half the gap to 100%). The badge on the photo
 is the device that placed them (phone, watch, collar tag). Tap anyone for the
 location sensor's details. Add the resource `/sextant/sextant-where-card.js`
 (JavaScript module) first. The card has a visual editor; a person or pet picked
