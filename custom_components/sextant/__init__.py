@@ -924,6 +924,8 @@ TUNING_SPEC = {
     # A thing in a room when its door shut is only placed outside it once another room has led
     # clearly and without a break this long; until then a blip through the wall changes nothing.
     "door_leave_secs": (600.0, float, 0.0, 7200.0),
+    # The floor lead that moves a thing shut in a room to another floor (held door_leave_secs).
+    "door_floor_margin": (0.25, float, 0.0, 1.0),
     # A repair is raised for a room's sensor (other sensors, door contact) that has been unavailable
     # this long, or a binary sensor that has read on this long (it would hold its room occupied).
     "sensor_gone_secs": (21600.0, float, 600.0, 2592000.0),
@@ -3105,10 +3107,18 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
         1.0, tenure / _tuning(layout, "floor_tenure_full_secs")
     )
     zs = _zone_state.get(entity) or {}   # last cycle's room, on the incumbent floor
+    switch_secs = _tuning(layout, "floor_switch_secs")
+    # Shut in a room on this floor (_elect_zone forgets it when the door opens): no stairs
+    # behind a shut door, so only a strong lead held for door_leave_secs moves it.
+    # Only while still in that room: one let out into the hall may take the stairs.
+    shut_in = _floor_held_by_door(entity, incumbent)
+    if shut_in:
+        margin = max(margin, _tuning(layout, "door_floor_margin"))
+        switch_secs = max(switch_secs, _tuning(layout, "door_leave_secs"))
     lowest_floor_name, challenge = _elect_floor(
         probs, incumbent, solved, _floor_challenge.get(entity),
-        now=now, switch_secs=_tuning(layout, "floor_switch_secs"), margin=margin, scores=scores,
-        held=bool(zs.get("locked")) and zs.get("still_since") is not None,
+        now=now, switch_secs=switch_secs, margin=margin, scores=scores,
+        held=bool(zs.get("locked")) and zs.get("still_since") is not None, shut_in=shut_in,
     )
     if challenge is None:
         _floor_challenge.pop(entity, None)
@@ -6421,8 +6431,13 @@ def _update_floor_probabilities(entity, scores, valid_floors=None, now=None):
     return dict(probs)
 
 
+def _floor_held_by_door(entity, floor):
+    """Whether the thing is still in the room it was shut in on this floor (see _shut_in)."""
+    return floor is not None and _shut_in.get(entity) == (floor, (_zone_state.get(entity) or {}).get("zone"))
+
+
 def _elect_floor(probs, incumbent, solved, challenge, now=None,
-                 switch_secs=FLOOR_SWITCH_SECS, margin=FLOOR_SWITCH_MARGIN, scores=None, held=False):
+                 switch_secs=FLOOR_SWITCH_SECS, margin=FLOOR_SWITCH_MARGIN, scores=None, held=False, shut_in=False):
     """Pick the floor to publish. Returns (floor, challenge_state).
 
     The caller guarantees the incumbent is either solved this cycle or None
@@ -6453,6 +6468,10 @@ def _elect_floor(probs, incumbent, solved, challenge, now=None,
     every few minutes. A lead over the margin still wins as before, moving
     releases the lock, and a room locked on the wrong floor is still left
     in the end.
+
+    ``shut_in``: the thing is shut in a room on the incumbent floor. A lead
+    under the margin never wins, however long it lasts (Meg, on Eilee's bed
+    over the Sewing Room proxy, lost his floor to a +0.1 lead held 10 minutes).
     """
     now = time.time() if now is None else now
     contenders = {f: p for f, p in probs.items() if f in solved}
@@ -6470,7 +6489,7 @@ def _elect_floor(probs, incumbent, solved, challenge, now=None,
     # "led" is how long the incumbent has been behind anyone, so two challengers
     # trading first place cannot keep restarting it.
     led = (challenge or {}).get("led", now)
-    lasting = now - led >= max(FLOOR_LASTING_LEAD_MIN_S, FLOOR_LASTING_LEAD_X * switch_secs)
+    lasting = not shut_in and now - led >= max(FLOOR_LASTING_LEAD_MIN_S, FLOOR_LASTING_LEAD_X * switch_secs)
     agree = not (scores and scores.get(best, 0.0) <= scores.get(incumbent, 0.0))
     if lead < margin:
         if lasting and agree and not (held and now - led < FLOOR_HELD_LEAD_S):
