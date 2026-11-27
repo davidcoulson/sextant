@@ -28,3 +28,19 @@ def test_forget_code_makes_the_next_import_read_the_disk(tmp_path, monkeypatch):
     assert importlib.import_module("reloadme").VALUE == 2
     assert hass.data == {"components": {"reloadme_other": hass.data["components"]["reloadme_other"]}, "missing_platforms": {}}
     assert sys.modules.pop("reloadme_other") is other  # a name that only starts the same is left alone
+
+
+def test_reload_clears_only_marketplaces_sextant_restart_repairs():
+    issue = lambda domain: types.SimpleNamespace(issue_domain=domain)  # noqa: E731
+    hass = types.SimpleNamespace(data={"issues": {
+        ("marketplace", "restart_required_1366403240_tags/2026.11.27.2"): issue("sextant"),
+        ("marketplace", "restart_required_1365808237_tags/2026.11.26.01"): issue("ssh"),
+        ("marketplace", "critical_x"): issue("sextant"),
+        ("sextant", "restart_required_x"): issue("sextant"),
+    }})
+    sextant._clear_marketplace_restart(hass)
+    assert set(hass.data["issues"]) == {
+        ("marketplace", "restart_required_1365808237_tags/2026.11.26.01"),
+        ("marketplace", "critical_x"),
+        ("sextant", "restart_required_x"),
+    }

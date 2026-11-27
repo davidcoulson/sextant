@@ -8128,8 +8128,19 @@ def _register_calibration_services(hass) -> None:
             # This handler stays registered, so the action works again once the code is fixed.
             raise HomeAssistantError("Sextant is unloaded: the new code did not set up (see the log). "
                                      "Fix it and call sextant.reload_code again, or restart Home Assistant")
+        _clear_marketplace_restart(hass)
 
     async_register_admin_service(hass, DOMAIN, "reload_code", _reload_code, schema=vol.Schema({}))
+
+
+def _clear_marketplace_restart(hass) -> None:
+    """Drop Marketplace's "restart to finish the update" repairs for Sextant.
+
+    Marketplace cannot see reload_code, so they would stay until a restart.
+    """
+    for (domain, issue_id), issue in list(ir.async_get(hass).issues.items()):
+        if domain == "marketplace" and issue_id.startswith("restart_required_") and issue.issue_domain == DOMAIN:
+            ir.async_delete_issue(hass, domain, issue_id)
 
 
 def _import_code(package: str) -> None:
