@@ -45,7 +45,7 @@ class SextantWhereCard extends LitElement {
 
   getCardSize() {
     const n = this._config?.entities?.length || 1;
-    return { tiles: Math.ceil(n / (this._config.columns || 2)) * 1.2, rooms: n, strip: 1, rings: 3 }[this._config?.layout] || 3;
+    return { tiles: Math.ceil(n / (this._config.columns || 2)) * 1.4, rooms: n, strip: 1, rings: 3 }[this._config?.layout] || 3;
   }
 
   // Stays are drawn as "42m": redraw each minute even when no state changes.
@@ -67,7 +67,7 @@ class SextantWhereCard extends LitElement {
     return html`<div class="tiles" style="--cols:${this._config.columns || 2}">${rows.map((r) => html`
       <button class="tile" @click=${() => this._more(r.id)}>${this._avatar(r, "", true)}
         <span class="txt"><span class="n"><span class="nm">${r.name}</span><span class="stay">${fmtStay(r.stay, true)}</span></span>
-        <span class="room">${r.where}${r.spot || r.floor ? html`<span class="sub"> · ${r.spot || r.floor}</span>` : nothing}</span></span></button>`)}</div>`;
+        <span class="room" title=${[r.where, r.spot || r.floor].filter(Boolean).join(" · ")}>${r.where}${r.spot || r.floor ? html`<span class="sub"> · ${r.spot || r.floor}</span>` : nothing}</span></span></button>`)}</div>`;
   }
 
   _rooms(rows) {
