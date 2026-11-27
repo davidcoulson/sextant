@@ -71,7 +71,7 @@ def _elector(core, habits_now):
     """``_elect_zone`` on its own state: fresh zone state, the habits as given, nothing learned."""
     habits = types.SimpleNamespace(**{k: getattr(core.habits_mod, k) for k in dir(core.habits_mod) if not k.startswith("__")})
     habits.learn = lambda *a, **k: None
-    scope = {**vars(core), "_zone_state": {}, "_habits": copy.deepcopy(habits_now), "_habits_last": {}, "habits_mod": habits}
+    scope = {**vars(core), "_zone_state": {}, "_shut_in": {}, "_habits": copy.deepcopy(habits_now), "_habits_last": {}, "habits_mod": habits}
     return types.FunctionType(core._elect_zone.__code__, scope, "_elect_zone", core._elect_zone.__defaults__)
 
 

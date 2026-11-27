@@ -874,7 +874,7 @@ class SextantHealth extends LitElement {
       ["Floors", ["floor_switch_secs", "floor_switch_margin", "floor_tenure_bonus", "floor_tenure_full_secs", "floor_proximity_weight", "floor_proximity_blend", "floor_proximity_k", "floor_proximity_near_m", "wifi_floor_weight"]],
       ["People", ["gps_stale_secs", "gps_leave_m", "exit_quiet_secs", "exit_door_secs", "watch_still_secs", "wifi_confirm_secs", "person_log_hours"]],
       ["Occupancy", ["room_hold_secs", "room_extended_secs", "room_sleep_hold_secs", "room_extended_hold_secs", "room_force_max_secs", "sleep_start_hour", "sleep_end_hour",
-        "door_hold_max_secs", "door_settle_secs", "sensor_gone_secs", "sensor_stuck_secs"]],
+        "door_hold_max_secs", "door_settle_secs", "door_entry_grace_secs", "door_leave_secs", "sensor_gone_secs", "sensor_stuck_secs"]],
       ["Robots and mmWave", ["robot_poll_secs", "mmwave_fusion", "mmwave_auto_pins", "mmwave_rooms", "mmwave_pair_m", "mmwave_merge_m", "mmwave_tick_s", "mmwave_verify_s", "mmwave_hold_s"]],
       ["Calibration", ["calibration_target", "correction_close_fade", "correction_fade_near_m", "correction_fade_far_m"]],
       ["History and display", ["history_hours", "stale_after_secs", "away_after_secs", "restore_state_secs", "election_log_hours"]],
