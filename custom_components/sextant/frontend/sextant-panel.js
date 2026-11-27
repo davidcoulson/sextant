@@ -47,6 +47,8 @@ const MODES = [
 const SETUP_MODES = ["proxies", "bermuda", "calibration", "tuning", "advice"];
 const EXPERT_MODES = ["tuning"];   // pages shown only in expert mode
 const FLOOR_MODES = new Set(["live", "edit", "proxies", "calibration"]);
+// Pages with no form to lose: they reload themselves into a new version.
+const AUTO_RELOAD_MODES = new Set(["live", "occupancy"]);
 // Pages that change the layout, the things or Bermuda, or expose every
 // address the house hears: administrators only (the backend refuses the
 // commands too; this just keeps the tabs out of a non-admin's way).
@@ -105,11 +107,15 @@ class SextantPanel extends LitElement {
     this._load();
     this._subscribe();
     this._clock = setInterval(() => { this._now = Date.now() / 1000; }, 1000);
+    // Back in view: fetch the layout again, which carries the installed version.
+    this._onVisible = () => { if (document.visibilityState === "visible" && AUTO_RELOAD_MODES.has(this._mode)) this._load(); };
+    document.addEventListener("visibilitychange", this._onVisible);
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     clearInterval(this._clock);
+    document.removeEventListener("visibilitychange", this._onVisible);
     if (this._unsub) { this._unsub.then((u) => u()).catch(() => {}); this._unsub = null; }
   }
 
@@ -125,6 +131,22 @@ class SextantPanel extends LitElement {
     const now = Date.now();
     if (changed.has("hass") && this.hass && !this._data && !this._loading && !retryWait(this._loadFailedAt, now)) this._load();
     if (changed.has("hass") && this.hass && !this._unsub && !retryWait(this._subFailedAt, now)) this._subscribe();
+    this._autoReload();
+  }
+
+  /** A newer version is installed: reload into it while the tab is in view on
+   * a page with nothing to type into (any other page may hold a draft; it
+   * keeps the banner's button). Once per version per tab, so a browser that
+   * serves the old files again cannot loop. */
+  _autoReload() {
+    const installed = this._data?.app_version;
+    if (!installed || !PANEL_VERSION || installed === PANEL_VERSION || this._data?.restart_needed) return;
+    if (!this.isConnected || document.visibilityState !== "visible" || !AUTO_RELOAD_MODES.has(this._mode)) return;
+    try {
+      if (sessionStorage.getItem("sextant.autoReloaded") === installed) return;
+      sessionStorage.setItem("sextant.autoReloaded", installed);
+    } catch { return; }
+    window.location.reload();
   }
 
   async _load() {
