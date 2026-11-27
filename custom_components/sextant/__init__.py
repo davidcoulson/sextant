@@ -6706,8 +6706,15 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
             best = max((z for z in probs if z not in closed), key=probs.get, default=None)
             if home in probs:   # nor out of the one it was shut in: back from a floor blip, it is still there
                 best = home
-            if best is None:   # only shut rooms have evidence: no room until an open one does
-                return "unknown", False, speed
+            if best is None:   # only shut rooms have evidence: no room until an open one does,
+                # or one shut unseen (see unseen below) has led alone for door_leave_secs
+                lead = max((z for z in probs if z in doors_shut and isinstance(doors_shut, dict) and not doors_shut[z]),
+                           key=probs.get, default=None)
+                if lead is None or (st.get("unseen") or (None,))[0] != lead:
+                    st["unseen"] = (lead, now)
+                if lead is None or now - st["unseen"][1] < _tuning(layout, "door_leave_secs"):
+                    return "unknown", False, speed
+                best = lead
         st.update(zone=best, since=now, challenge=None, locked=False, away_since=None, entering=False)
         return best, False, speed
     # Anchored: the thing sits on a proxy (one reads it within anchor_max_m,

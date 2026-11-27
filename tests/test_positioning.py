@@ -2927,3 +2927,15 @@ def test_doors_shut_says_whether_the_shutting_was_seen():
     sextant._closed_rooms(hass, polys, {}, 1201.0)
     assert sextant._doors_shut(hass, polys) == {"Hall": True}
     sextant._door_seen.clear()
+
+
+def test_arriving_on_a_floor_into_a_room_shut_unseen_waits_out_the_long_lead(monkeypatch):
+    """Codex review: only an unseen-shut room has evidence after a floor change."""
+    sextant._zone_state.clear()
+    sextant._shut_in.clear()
+    layout = {"tuning": {"zone_lock_warmup_secs": 0.0, "zone_prob_smoothing": 0.0}}
+    monkeypatch.setattr(sextant, "_zone_membership", lambda polys, samples: {"Hall": 1.0})
+    got = [sextant._elect_zone("meg", "F", None, Point(250, 50), None, _three_rooms(), 100.0, layout, now=t,
+                               closed={"Hall"}, doors_shut={"Hall": seen}, new_floor=(t == 0.0))[0]
+           for t, seen in ((0.0, False), (300.0, False), (600.0, False), (601.0, True))]
+    assert got == ["unknown", "unknown", "Hall", "Hall"]
