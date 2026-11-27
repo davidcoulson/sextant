@@ -7180,10 +7180,12 @@ def _elect_anchor(entity, floor_name, receivers, layout, now=None):
     if candidate is not None and candidate.get("entity_id") != st["slug"]:
         return _adopt_anchor(entity, floor_name, candidate, now)
     current = by_slug.get(st["slug"])
-    if current is not None and current[0] <= release_m:
+    # Another proxy reading it closer means it is not on this one, however near this one reads.
+    beaten = current is not None and ranked[0][1].get("entity_id") != st["slug"] and ranked[0][0] < current[0]
+    if current is not None and current[0] <= release_m and not beaten:
         st["away_since"] = None
         return _place(current[1])
-    # Reading gone or opened past the release distance: let go after the dwell.
+    # Reading gone, opened past the release distance, or beaten: let go after the dwell.
     st["away_since"] = st.get("away_since") or now
     if now - st["away_since"] >= dwell:
         _anchor_state.pop(entity, None)

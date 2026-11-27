@@ -1866,6 +1866,25 @@ def test_anchor_snaps_a_thing_sitting_on_one_proxy_and_releases_with_hysteresis(
     assert "w" not in sextant._anchor_state
 
 
+def test_anchor_lets_go_when_another_proxy_reads_closer():
+    # The purse case: anchored to a tablet that reads it at 1.0 m, under the
+    # release distance, while the kitchen proxy reads it closer still.
+    layout = {"floor": [{"name": "F", "scale": 100.0, "zones": [], "subzones": [], "receivers": []}], "tuning": {"anchor_secs": 20}}
+    def rx(tablet, kitchen):
+        return [
+            {"entity_id": "tablet", "cords": {"x": 0.0, "y": 0.0}, "distance": tablet},
+            {"entity_id": "kitchen", "cords": {"x": 200.0, "y": 0.0}, "distance": kitchen},
+        ]
+    sextant._anchor_state.pop("w", None)
+    sextant._elect_anchor("w", "F", rx(0.5, 1.5), layout, now=0.0)
+    assert sextant._elect_anchor("w", "F", rx(0.6, 1.5), layout, now=21.0)["slug"] == "tablet"
+    assert sextant._elect_anchor("w", "F", rx(1.0, 0.9), layout, now=30.0)["slug"] == "tablet"   # beaten, held for the dwell
+    assert sextant._elect_anchor("w", "F", rx(1.0, 1.2), layout, now=35.0)["slug"] == "tablet"   # nearest again: away clock resets
+    assert sextant._elect_anchor("w", "F", rx(1.0, 0.9), layout, now=40.0)["slug"] == "tablet"
+    assert sextant._elect_anchor("w", "F", rx(1.0, 0.9), layout, now=61.0) is None
+    assert "w" not in sextant._anchor_state
+
+
 def test_anchor_needs_a_clear_nearest_and_can_be_disabled():
     layout = {"floor": [{"name": "F", "scale": 100.0, "zones": [], "subzones": [], "receivers": []}], "tuning": {"anchor_secs": 0}}
     two_close = [
