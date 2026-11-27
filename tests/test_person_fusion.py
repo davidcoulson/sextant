@@ -688,8 +688,10 @@ def test_while_settling_only_ble_and_gps_arrivals_go_early():
     back = {"arrived": NOW, "departed": None, "via": "gps"}
     wifi = {"arrived": NOW, "departed": None, "via": "wifi"}
     before = {D: OUT, M: OUT, J: IN, CAT: OUT}
-    early = persons.early_arrivals(before, {D: back, M: wifi, J: gone, CAT: {**back, "via": "ble"}, "person.new": back})
+    early = persons.early_arrivals(before, {D: back, M: wifi, J: gone, CAT: {**back, "via": "ble"}, "person.new": back}, NOW - 10)
     assert early == {D: back, M: OUT, J: IN, CAT: {**back, "via": "ble"}}
+    # A BLE visit dated by a sighting from before the start (restored, quiet) waits.
+    assert persons.early_arrivals({D: OUT}, {D: {"arrived": NOW - 120, "departed": None, "via": "ble"}}, NOW - 10) == {D: OUT}
     assert _types(persons.visit_events(before, early, {CAT})) == ["sextant_person_arrived"]
     # Once fired it is the baseline, so the end of the settle does not fire it again; the rest fire then.
     assert _types(persons.visit_events(early, {D: back, M: wifi, J: gone, CAT: OUT}, {CAT})) == ["sextant_person_arrived", "sextant_person_left"]

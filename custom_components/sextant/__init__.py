@@ -5954,7 +5954,7 @@ def _update_person_sensors(hass):
             hass.bus.async_fire(event, data)
     else:
         # Settling after a start: BLE and GPS arrivals fire now (the garage), the rest when it ends.
-        early = persons_mod.early_arrivals(_event_visits, _person_visits)
+        early = persons_mod.early_arrivals(_event_visits, _person_visits, _events_from - EVENTS_SETTLE_S)
         for event, data in persons_mod.visit_events(_event_visits, early, pets):
             hass.bus.async_fire(event, data)
         _event_visits = early
