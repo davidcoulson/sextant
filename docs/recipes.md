@@ -360,6 +360,7 @@ rooms:                 # optional, rooms layout: shows each room's mode
 
 - `tiles`: a grid of tiles, room as the headline and the spot under it.
 - `rooms`: one line per occupied room, avatars stacked, with its mode.
+  Anyone away is left out.
 - `strip`: one wrapping row of chips; pets of one kind on one floor fold
   into one chip ("3 cats · Ground Floor").
 - `rings`: people's faces four across with the time there; pets on one line.

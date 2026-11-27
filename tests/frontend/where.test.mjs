@@ -54,6 +54,11 @@ test("rooms group the household and carry the room's mode", () => {
   assert.deepEqual(g.map((x) => [x.room, x.rows.length, x.mode]), [["Great Room", 2, "TV"], ["Catwalk", 1, null]]);
 });
 
+test("rooms leave out away people: away is not a room", () => {
+  const rows = whereRows(states, ["sensor.sherry_wayne_sextant_person_location", "sensor.meg_sextant_pet_location"], NOW);
+  assert.deepEqual(groupRooms(rows).map((x) => x.room), ["Catwalk"]);
+});
+
 test("the strip folds same-class pets on a floor, people stay single", () => {
   const rows = whereRows(states, ["sensor.david_coulson_sextant_person_location", "sensor.fry_sextant_pet_location", "sensor.meg_sextant_pet_location", "sensor.leela_sextant_pet_location"], NOW);
   const chips = stripChips(rows);

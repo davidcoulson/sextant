@@ -75,13 +75,14 @@ export function whereRows(states, entries, now) {
   return rows;
 }
 
-/** Occupied rooms in order of first appearance, each with its rows and room mode. */
+/** Occupied rooms in order of first appearance, each with its rows and room mode. Away people are left out: away is not a room. */
 export function groupRooms(rows, roomStates = []) {
   const modes = new Map(roomStates.filter(Boolean).map((s) => [s.attributes?.room, s.attributes?.mode]));
   const out = new Map();
   for (const r of rows) {
-    const key = r.away ? r.where : (r.room || r.where);
-    if (!out.has(key)) out.set(key, { room: key, floor: r.floor, away: r.away, mode: modes.get(key) || null, rows: [] });
+    if (r.away) continue;
+    const key = r.room || r.where;
+    if (!out.has(key)) out.set(key, { room: key, floor: r.floor, mode: modes.get(key) || null, rows: [] });
     out.get(key).rows.push(r);
   }
   return [...out.values()];
