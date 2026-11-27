@@ -297,7 +297,7 @@ class SextantWhereCardEditor extends LitElement {
     ];
     const data = { layout, entities: ids, columns: c.columns, rooms: c.rooms || [], show_floor: !!c.show_floor, precise: !!c.precise };
     return html`<ha-form .hass=${this.hass} .data=${data} .schema=${schema} .computeLabel=${(s) => s.name === "columns" ? `Columns (blank: ${layout === "rings" ? 4 : 2})` : WHERE_LABELS[s.name] || s.name} @value-changed=${this._changed}></ha-form>
-      ${layout === "pets" ? html`<p class="hint">Pets layout: people listed here are not drawn; a pet in the same room as one shows "with" them.</p>` : nothing}
+      ${layout === "pets" ? html`<p class="hint">Pets layout: people listed here are not drawn; a pet placed confidently (green ring) in the same room as one shows "with" them.</p>` : nothing}
       <p class="hint">Names and photos come from each person; set <code>name</code> or <code>person</code> on an entry in YAML to change them.</p>`;
   }
 

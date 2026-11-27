@@ -160,10 +160,12 @@ export function stripChips(rows, fold = 2) {
   return chips.flatMap((c) => c.kind === "many" && c.rows.length < fold ? c.rows.map((row) => ({ kind: "one", row })) : [c]);
 }
 
-/** People (not pets, not away) in the same room as each confidently placed pet, by pet id: "Fry is with David". */
+/** People (not pets, not away) in the same room and floor as each pet placed confidently from a live reading
+ *  (not held), by pet id: "Fry is with David". */
 export function petCompany(rows) {
   const people = rows.filter((r) => !r.pet && !r.away && r.room);
-  return new Map(rows.filter((r) => r.pet).map((p) => [p.id, p.away || p.outside || !p.room || p.level?.key !== "confident" ? [] : people.filter((r) => r.room === p.room)]));
+  return new Map(rows.filter((r) => r.pet).map((p) => [p.id, p.away || p.outside || !p.room || p.source === "held" || p.level?.key !== "confident" ? []
+    : people.filter((r) => r.room === p.room && r.floor === p.floor)]));
 }
 
 /** "David", "David and Michelle", "David, Michelle +1". */

@@ -196,13 +196,15 @@ test("pets: company is the people in the pet's room, never other pets or anyone 
     "sensor.sherry_wayne_sextant_person_location", "sensor.meg_sextant_pet_location", "sensor.fry_sextant_pet_location", "sensor.leela_sextant_pet_location",
   ], NOW);
   rows.find((r) => r.name === "David").room = "Great Room";
-  // Only a pet placed confidently has company: Fry at 30% is in the Great Room with David, but not surely.
-  assert.deepEqual(petCompany(rows).get("sensor.fry_sextant_pet_location"), []);
-  rows.find((r) => r.id === "sensor.fry_sextant_pet_location").level = { key: "confident" };
+  // Only a pet placed confidently has company: Leela at 80% is with David; Fry at 30% in the same room is not surely.
   const c = petCompany(rows);
   assert.deepEqual([...c.keys()], ["sensor.meg_sextant_pet_location", "sensor.fry_sextant_pet_location", "sensor.leela_sextant_pet_location"]);
-  assert.deepEqual(c.get("sensor.fry_sextant_pet_location").map((r) => r.name), ["David"]);
-  assert.deepEqual(c.get("sensor.meg_sextant_pet_location"), []);
+  assert.deepEqual(c.get("sensor.leela_sextant_pet_location").map((r) => r.name), ["David"]);
+  assert.deepEqual([c.get("sensor.fry_sextant_pet_location"), c.get("sensor.meg_sextant_pet_location")], [[], []]);
+  // A held fix keeps its old confidence: no company. Nor a room of the same name on another floor.
+  const leela = rows.find((r) => r.id === "sensor.leela_sextant_pet_location");
+  assert.deepEqual(petCompany(rows.map((r) => r === leela ? { ...r, source: "held" } : r)).get(leela.id), []);
+  assert.deepEqual(petCompany(rows.map((r) => r === leela ? { ...r, floor: "Second Floor" } : r)).get(leela.id), []);
   // "Outside" is not a room to share: the garden is big.
   const fry = rows.find((r) => r.name === "Fry" || r.id === "sensor.fry_sextant_pet_location");
   Object.assign(fry, { outside: true, room: "Outside" });
