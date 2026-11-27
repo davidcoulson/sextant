@@ -100,23 +100,29 @@ _signature_cache = [None, None]  # [(name, mtime_ns, size) per file, digest]
 
 
 def code_signature() -> str | None:
-    """sha256 over the package's .py files, in name order (blocking: call in the executor)."""
+    """"<sources>|<requirements>": sha256 over the package's .py files in name order, then over the
+    manifest's requirements (blocking: call in the executor)."""
     import hashlib  # noqa: PLC0415
+    import json  # noqa: PLC0415
     from pathlib import Path  # noqa: PLC0415
 
     try:
-        paths = sorted(Path(__file__).parent.glob("*.py"))
+        folder = Path(__file__).parent
+        paths = sorted(folder.glob("*.py"))
+        manifest = folder / "manifest.json"
         # Every panel load asks; re-hash only when a file's size or mtime moved.
-        key = tuple((p.name, st.st_mtime_ns, st.st_size) for p in paths for st in (p.stat(),))
+        key = tuple((p.name, st.st_mtime_ns, st.st_size) for p in [*paths, manifest] for st in (p.stat(),))
         if _signature_cache[0] == key:
             return _signature_cache[1]
         digest = hashlib.sha256()
         for path in paths:
             digest.update(path.name.encode())
             digest.update(path.read_bytes())
-        _signature_cache[:] = [key, digest.hexdigest()]
+        # A changed requirement needs a restart too: Home Assistant installs them only when it loads the integration.
+        reqs = hashlib.sha256(json.dumps(sorted(json.loads(manifest.read_text()).get("requirements") or [])).encode())
+        _signature_cache[:] = [key, f"{digest.hexdigest()}|{reqs.hexdigest()}"]
         return _signature_cache[1]
-    except OSError:
+    except (OSError, ValueError):
         return None
 
 
