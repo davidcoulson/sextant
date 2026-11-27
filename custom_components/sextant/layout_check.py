@@ -25,7 +25,7 @@ MAP_KEYS = (
     "thing_fp_weights", "thing_fp_gains", "thing_ref_offsets", "thing_owners", "thing_pronouns",
     "thing_locates_owner", "thing_always_home", "thing_home_entity", "thing_battery_entity", "thing_charging_entity",
     "thing_ids",
-    "class_always_home", "class_habit_gain",
+    "class_always_home", "class_habit_gain", "class_habit_floor_weight",
 )
 # Upper bounds that keep a single save from stalling the loop (see the shapes
 # and the spot confinement, which walk every vertex).

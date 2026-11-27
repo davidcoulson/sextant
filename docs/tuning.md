@@ -99,6 +99,7 @@ distances in metres.
 | `floor_tenure_bonus` | 0.05 | extra margin at full tenure |
 | `floor_tenure_full_secs` | 600 | tenure counted up to this |
 | `floor_proximity_weight` | 0.5 | how much proximity scales a floor's score (0 = fit only) |
+| `habit_floor_weight` | 0 | how much the floor a thing is usually on at this hour counts in its floor election: each floor's score times its share of the hour (at least 0.05) to this power. Per class on the Things page; skipped while charging and for a watch off a wrist; `sextant.pause_habits` pauses it. 0 = off |
 | `wifi_floor_weight` | 0.25 | how much the access point a person's phone is on sways their floor (a watch's is ignored: watches stay on an access point long after leaving it): a floor it never means scores this much less; 0 = off |
 | `floor_proximity_blend` | `gated` | how that weight combines a floor's fit with its proximity: `gated` (fit × ((1 − w) + w × proximity): a poor fit caps the floor) or `geometric` (fit^(1 − w) × proximity^w: the nearest proxies can carry a floor whose fit is poor). Try `geometric` at weight 0.7 with `floor_switch_margin` 0.10 when a still thing next to an open foyer or landing keeps reading the floor below |
 | `floor_proximity_k` | 3 | nearest proxies averaged for proximity |

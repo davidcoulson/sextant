@@ -467,6 +467,8 @@ class SextantDevices extends LitElement {
       // Only for the class it was typed for: changing the thing's class in the dialog must not carry the number over.
       ...(w.classHabit !== undefined && w.thing_class && w.classHabitFor === w.thing_class
         ? { class_habit_gain: w.classHabit === "" || !Number.isFinite(Number(w.classHabit)) ? null : Math.min(0.3, Math.max(0, Number(w.classHabit))) } : {}),
+      ...(w.classFloorHabit !== undefined && w.thing_class && w.classFloorHabitFor === w.thing_class
+        ? { class_habit_floor_weight: w.classFloorHabit === "" || !Number.isFinite(Number(w.classFloorHabit)) ? null : Math.min(1, Math.max(0, Number(w.classFloorHabit))) } : {}),
       height: w.height === "" || w.height == null ? null : fromDisplayLen(w.height, this.hass),
       ref_offset_db: w.ref === "" || w.ref == null ? null : Number(w.ref),
       icon: w.icon || null,
@@ -588,6 +590,12 @@ class SextantDevices extends LitElement {
             value: (w.classHabitFor === w.thing_class ? w.classHabit : undefined) ?? this.data?.layout?.class_habit_gain?.[w.thing_class] ?? "", placeholder: PET_CLASSES.includes(w.thing_class) ? "0 (pets)" : String(this.data?.layout?.tuning?.habit_margin_gain ?? 0.1),
             onChange: (v) => { w.classHabit = v; w.classHabitFor = w.thing_class; this.requestUpdate(); }, style: "width: 260px" })}
           <span class="small muted">How much its usual room at this hour settles a close call. Blank uses the Tuning value (none for pets); 0 turns it off.</span>
+        </div>
+        <div class="row">
+          ${uiField({ label: `Floor routine for every ${THING_CLASSES.find((c) => c[0] === w.thing_class)?.[1] || w.thing_class} (0 to 1)`, type: "number", step: 0.05, min: 0, max: 1,
+            value: (w.classFloorHabitFor === w.thing_class ? w.classFloorHabit : undefined) ?? this.data?.layout?.class_habit_floor_weight?.[w.thing_class] ?? "", placeholder: String(this.data?.layout?.tuning?.habit_floor_weight ?? 0),
+            onChange: (v) => { w.classFloorHabit = v; w.classFloorHabitFor = w.thing_class; this.requestUpdate(); }, style: "width: 260px" })}
+          <span class="small muted">How much the floor it is usually on at this hour counts in the floor election (0.25 is a good start). Not while it is charging, or for a watch off a wrist. Blank uses the Tuning value; 0 turns it off.</span>
         </div>` : nothing}
         <div class="row">
           ${uiField({ label: `Height (${unit})`, type: "number", step: 0.05, min: 0, max: unit === "ft" ? 16 : 5, value: w.height, placeholder: String(toDisplayLen(this._defaultHeight(), this.hass)), onChange: (v) => { w.height = v; this.requestUpdate(); }, style: "width: 150px" })}

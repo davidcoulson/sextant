@@ -282,7 +282,7 @@ def _install_homeassistant_stubs():
     # attribute off the parent package (like panel_custom above).
     helpers.config_validation = _module(
         "homeassistant.helpers.config_validation",
-        string=str, boolean=bool, positive_int=int, entity_id=str,
+        string=str, boolean=bool, datetime=lambda v: v, date=lambda v: v, positive_int=int, entity_id=str,
         ensure_list=lambda v: v if isinstance(v, list) else [v],
     )
     # Entity and device registries: in-memory fakes, one pair per hass, with

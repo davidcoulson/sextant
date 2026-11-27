@@ -913,6 +913,10 @@ TUNING_SPEC = {
     # Time-of-day prior (habits.py): how far a thing's usual room at this hour moves the margin a
     # challenger room must lead by. 0 turns it off.
     "habit_margin_gain": (0.10, float, 0.0, 0.3),
+    # The same habits on the floor election: each floor's score is multiplied by the share of this
+    # hour the thing is usually on it, to this power (habits.floor_factors). 0 turns it off; a class
+    # can have its own (layout class_habit_floor_weight).
+    "habit_floor_weight": (0.0, float, 0.0, 1.0),
     # A room held for a closed door (room "door") lets go after this long even if the door never opens.
     "door_hold_max_secs": (28800.0, float, 60.0, 172800.0),
     # How long someone must keep reading in a room after its door closed to count as shut in.
@@ -3067,7 +3071,9 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
     # learned footprint (wifi.py): a floor that access point never means
     # scores less. Only for the owner's phones and watches; see wifi_floor_weight.
     wifi_factors = {f: _wifi_floor_factor(entity, layout, f) for f in prox_scores}
-    scores = {f: s * biases[f] * wifi_factors[f] for f, s in prox_scores.items()}
+    # Where this thing usually is at this hour (habits.py), when switched on for it.
+    habit_factors = _habit_floor_factors(hass, layout, entity, list(prox_scores))
+    scores = {f: s * biases[f] * wifi_factors[f] * habit_factors.get(f, 1.0) for f, s in prox_scores.items()}
     # Every contender's own fix and how its score was built, not just the
     # winner's. A bias field is tuned against exactly this: where did each
     # floor's solve land, and what did the election make of it. The published
@@ -3086,6 +3092,7 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
             "prox": round(prox_scores[f], 4),
             "bias": round(biases[f], 4),
             "wifi": round(wifi_factors[f], 4),
+            **({"habit": round(habit_factors[f], 4)} if f in habit_factors else {}),
             "score": round(scores[f], 4),
             # Which proxies said what, per floor. The scores alone cannot tell
             # a floor that lost from a floor that was not listening: Meg's
@@ -5457,6 +5464,26 @@ def _wifi_for(person, view, skip=()):
     return None
 
 
+def _habit_floor_factors(hass, layout, entity, floors):
+    """{floor: multiplier} from where this thing usually is at this hour (habits.floor_factors),
+    or {} when off for its class or unlearned, and when the habit is not where the thing
+    is now: it is charging, or it is a watch off a wrist, so it sits where it was put."""
+    weight = habits_mod.gain_for(layout, entity, _tuning(layout, "habit_floor_weight"),
+                                 table_key="class_habit_floor_weight", top=1.0, pets_off=False)
+    now = time.time()
+    if weight <= 0 or habits_mod.paused(layout, entity, now):
+        return {}
+    charger = (layout.get("thing_charging_entity") or {}).get(entity)
+    st = hass.states.get(charger) if isinstance(charger, str) else None
+    if st is not None and persons_mod.charging_now(st.state):
+        return {}
+    if (layout.get("thing_classes") or {}).get(entity) == "watch":
+        from . import watch_adverts  # noqa: PLC0415
+        if watch_adverts.worn_now(hass, entity, _tuning(layout, "stale_after_secs")) is False:
+            return {}
+    return habits_mod.floor_factors(_habits, entity, floors, now, weight, _local_tz)
+
+
 def _wifi_floor_factor(entity, layout, floor_name):
     """The Wi-Fi hint's multiplier on one floor's election score for one thing:
     the access point the owner's phone or watch is joined to, through its
@@ -6754,7 +6781,7 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
                       still_since=None, away_since=None, outvoted_since=None)
             _habits_last[entity] = now
             return az, False, speed
-    if best == incumbent and probs[best] >= HABIT_CONFIDENT_SHARE:
+    if best == incumbent and probs[best] >= HABIT_CONFIDENT_SHARE and not habits_mod.paused(layout, entity, now):
         habits_mod.learn(_habits, entity, _habit_zone(floor_name, incumbent), now, _habits_last.get(entity), _local_tz)
     _habits_last[entity] = now
 
@@ -6827,7 +6854,7 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
     if best != incumbent:
         # Where this thing usually is at this hour tips a close call, never a clear one.
         gain = habits_mod.gain_for(layout, entity, _tuning(layout, "habit_margin_gain"))
-        if gain > 0:
+        if gain > 0 and not habits_mod.paused(layout, entity, now):
             shifted = max(0.05, margin + habits_mod.prior_shift(
                 _habits, entity, _habit_zone(floor_name, incumbent), _habit_zone(floor_name, best), now, gain, _local_tz))
             margin = min(shifted, max(margin, 0.9))   # a habit never makes a unanimous challenger unable to win
@@ -8052,6 +8079,50 @@ def _register_calibration_services(hass) -> None:
             vol.Optional("reset", default=False): cv.boolean,
         }),
     )
+
+    async def _pause_habits(call: ServiceCall) -> None:
+        """Stop using and learning habits until a time (habits.paused), for some things or all."""
+        now = time.time()
+        if call.data.get("until") is not None:
+            from datetime import datetime as _dt  # noqa: PLC0415
+            from homeassistant.util import dt as dt_util  # noqa: PLC0415
+            until = call.data["until"]
+            if not isinstance(until, _dt):   # an all-day calendar event ends on a date: its local midnight
+                until = _dt(until.year, until.month, until.day)
+            until = dt_util.as_timestamp(until)   # a time without a zone is local
+        elif call.data.get("hours") is not None:
+            until = now + 3600.0 * call.data["hours"]
+        else:
+            raise HomeAssistantError("pause_habits needs until or hours")
+        if until <= now:
+            raise HomeAssistantError("pause_habits: until is already past")
+        pause = {"until": until, **{k: list(call.data[k]) for k in ("things", "classes") if call.data.get(k)}}
+        async with LAYOUT_LOCK:
+            data = get_layout_for_edit(hass)
+            if not isinstance(data, dict):
+                raise HomeAssistantError("No Sextant layout saved yet; place receivers first.")
+            live = [p for p in data.get("habit_pauses") or [] if isinstance(p, dict) and (p.get("until") or 0) > now]
+            data["habit_pauses"] = (live + [pause])[-habits_mod.MAX_PAUSES:]
+            await save_layout(hass, data)
+        _LOGGER.info("sextant.pause_habits: %s", pause)
+
+    async def _resume_habits(call: ServiceCall) -> None:
+        """End every habit pause now."""
+        async with LAYOUT_LOCK:
+            data = get_layout_for_edit(hass)
+            if isinstance(data, dict) and data.pop("habit_pauses", None) is not None:
+                await save_layout(hass, data)
+
+    async_register_admin_service(hass,
+        DOMAIN, "pause_habits", _pause_habits,
+        schema=vol.Schema({
+            vol.Optional("until"): vol.Any(cv.datetime, cv.date),
+            vol.Optional("hours"): vol.All(vol.Coerce(float), vol.Range(min=0.01, max=24 * 31)),
+            vol.Optional("things"): vol.All(cv.ensure_list, [cv.string], vol.Length(max=200)),
+            vol.Optional("classes"): vol.All(cv.ensure_list, [cv.string], vol.Length(max=50)),
+        }),
+    )
+    async_register_admin_service(hass, DOMAIN, "resume_habits", _resume_habits, schema=vol.Schema({}))
 
     async def _get_map(call: ServiceCall) -> ServiceResponse:
         """The plan and who is where, in metres (export.py)."""

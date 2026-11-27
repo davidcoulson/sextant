@@ -89,18 +89,65 @@ def share(store: dict, ent: str, zone: str, now: float, tz=None) -> float | None
     return None if faded < MIN_SLOT_S else row["z"].get(zone, 0.0) / total
 
 
-def gain_for(layout, ent: str, default: float, pet_classes=frozenset({"cat", "dog", "paw"})) -> float:
-    """The habit gain for a thing: its class's own setting (layout ``class_habit_gain``),
-    else ``default`` - except a pet's tag, which wanders and has no routine to
-    lean on, so it gets 0 until the class is given a value."""
+def gain_for(layout, ent: str, default: float, pet_classes=frozenset({"cat", "dog", "paw"}),
+             table_key: str = "class_habit_gain", top: float = 0.3, pets_off: bool = True) -> float:
+    """The habit gain for a thing: its class's own setting (layout ``table_key``,
+    ``class_habit_gain`` for rooms), else ``default`` - except, for rooms, a pet's
+    tag, which wanders between rooms and gets 0 until the class is given a value."""
     layout = layout if isinstance(layout, dict) else {}
     cls = (layout.get("thing_classes") or {}).get(ent) if isinstance(layout.get("thing_classes"), dict) else None
     cls = cls if isinstance(cls, str) else None
-    table = layout.get("class_habit_gain")
+    table = layout.get(table_key)
     own = table.get(cls) if isinstance(table, dict) and cls else None
-    if isinstance(own, (int, float)) and not isinstance(own, bool) and math.isfinite(own) and 0.0 <= own <= 0.3:
+    if isinstance(own, (int, float)) and not isinstance(own, bool) and math.isfinite(own) and 0.0 <= own <= top:
         return float(own)
-    return 0.0 if cls in pet_classes else default
+    return 0.0 if pets_off and cls in pet_classes else default
+
+
+MAX_PAUSES = 20
+
+
+def paused(layout, ent: str, now: float) -> bool:
+    """Whether a pause (layout ``habit_pauses``, set by sextant.pause_habits) covers this
+    thing now: a holiday is not the routine, so for its length the habits are neither
+    used nor learned. A pause naming no things and no classes covers everything."""
+    layout = layout if isinstance(layout, dict) else {}
+    classes = layout.get("thing_classes") if isinstance(layout.get("thing_classes"), dict) else {}
+    pauses = layout.get("habit_pauses")
+    for p in pauses if isinstance(pauses, list) else ():
+        until = p.get("until") if isinstance(p, dict) else None
+        if not isinstance(until, (int, float)) or isinstance(until, bool) or until <= now:
+            continue
+        things, kinds = p.get("things", []), p.get("classes", [])
+        if not isinstance(things, list) or not isinstance(kinds, list):
+            continue
+        if (not things and not kinds) or ent in things or classes.get(ent) in kinds:
+            return True
+    return False
+
+
+FLOOR_FLOOR_SHARE = 0.05   # a floor it is never on at this hour still counts this much: rare is not impossible
+
+
+def floor_factors(store: dict, ent: str, floors, now: float, weight: float, tz=None) -> dict:
+    """{floor: multiplier} for the floor election: the share of this slot's time
+    the thing spent on each floor (its rooms' ``floor|room`` keys added up),
+    raised to ``weight``. Empty (no change) with weight 0 or a slot with too
+    little history. A dog asleep upstairs at 03:00 every night is upstairs at
+    03:00 tonight unless the readings say plainly otherwise."""
+    if weight <= 0:
+        return {}
+    row = (store.get(ent) or {}).get(slot_of(now, tz))
+    if not row:
+        return {}
+    total = sum(row["z"].values())
+    if total * 0.5 ** (max(0.0, now - row["at"]) / HALF_LIFE_S) < MIN_SLOT_S:
+        return {}
+    on: dict = {}
+    for key, secs in row["z"].items():
+        floor = key.split("|", 1)[0]
+        on[floor] = on.get(floor, 0.0) + secs / total
+    return {f: max(on.get(f, 0.0), FLOOR_FLOOR_SHARE) ** weight for f in floors}
 
 
 def prior_shift(store: dict, ent: str, incumbent: str, challenger: str, now: float, gain: float, tz=None) -> float:

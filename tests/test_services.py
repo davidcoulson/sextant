@@ -156,3 +156,22 @@ def test_get_map_answers_with_the_plan_and_the_rows(tmp_path):
     assert out["things"][0]["key"] == "phone" and out["things"][0]["presence"] == "away"
     with pytest.raises(Exception, match="Roof"):
         run(h["get_map"](_Call(floor="Roof")))
+
+
+def test_habit_pauses_are_stored_dropped_when_over_and_resumed(tmp_path):
+    import time as _t
+    hass, h = _hass(tmp_path)
+    run(h["pause_habits"](_Call(hours=24, classes=["phone"])))
+    run(h["pause_habits"](_Call(hours=2, things=["meg"])))
+    pauses = st.get_layout(hass)["habit_pauses"]
+    assert [p.get("classes") or p.get("things") for p in pauses] == [["phone"], ["meg"]]
+    assert 23.9 * 3600 < pauses[0]["until"] - _t.time() <= 24 * 3600
+    layout = st.get_layout_for_edit(hass)
+    layout["habit_pauses"][0]["until"] = 1.0   # over: the next pause drops it
+    run(st.save_layout(hass, layout))
+    run(h["pause_habits"](_Call(hours=1)))
+    assert len(st.get_layout(hass)["habit_pauses"]) == 2
+    with pytest.raises(Exception, match="until or hours"):
+        run(h["pause_habits"](_Call()))
+    run(h["resume_habits"](_Call()))
+    assert "habit_pauses" not in st.get_layout(hass)
