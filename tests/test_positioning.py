@@ -2873,8 +2873,22 @@ def test_being_shut_in_outlives_a_floor_blip(monkeypatch):
     hall, office = {"Hall": 1.0}, {"Office": 1.0}
     _shut_room_walk(monkeypatch, [(0.0, hall, set()), (10.0, hall, {"Hall"})])
     sextant._zone_state.pop("meg")   # the caller drops the election on a floor change
-    monkeypatch.setattr(sextant, "_zone_membership", lambda polys, samples: {"Hall": 1.0})
+    monkeypatch.setattr(sextant, "_zone_membership", lambda polys, samples: {"Office": 0.7, "Hall": 0.3})
     got = sextant._elect_zone("meg", "F", None, Point(250, 50), None, _three_rooms(), 100.0,
                               {"tuning": {"zone_lock_warmup_secs": 0.0, "zone_prob_smoothing": 0.0}},
                               now=50.0, closed={"Hall"}, new_floor=True)[0]
     assert got == "Hall"
+
+
+def test_being_shut_in_starts_when_the_door_shuts_not_after_the_entry_grace(monkeypatch):
+    """Codex review: a blip in the 3 minutes before the room counts as closed must not let a thing out."""
+    sextant._zone_state.clear()
+    sextant._shut_in.clear()
+    layout = {"tuning": {"zone_lock_warmup_secs": 0.0, "zone_prob_smoothing": 0.0, "stationary_secs": 99999.0}}
+    got = []
+    for t, shares, closed in [(0.0, {"Hall": 1.0}, set()), (10.0, {"Office": 1.0}, set()), (100.0, {"Office": 1.0}, set()),
+                              (190.0, {"Hall": 1.0}, {"Hall"})]:
+        monkeypatch.setattr(sextant, "_zone_membership", lambda polys, samples, s=shares: dict(s))
+        got.append(sextant._elect_zone("meg", "F", None, Point(250, 50), None, _three_rooms(), 100.0, layout,
+                                       now=t, closed=closed, doors_shut={"Hall"} if t else set())[0])
+    assert got == ["Hall"] * 4

@@ -3223,12 +3223,13 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
         # uncertainty ellipse, which would keep a small spot from ever winning.
         kf_for_election = None if anchor is not None else _kf_position_state.get(entity)
         closed = _closed_rooms(hass, zone_polys, layout, now)
+        doors_shut = _doors_shut(hass, zone_polys)
         zone, zone_locked, zone_speed = _elect_zone(
             entity, lowest_floor_name, instant_zone, test_point,
             kf_for_election, zone_polys, scale, layout, now=now,
             hold=(_floor_challenge.get(entity) or {}).get("since") is not None,  # a margin challenge, not a small lead
             anchor_point=Point(anchor["x"], anchor["y"]) if anchor is not None else None,
-            closed=closed,
+            closed=closed, doors_shut=doors_shut,
             new_floor=came_from is not None and came_from != lowest_floor_name,
         )
         # Sub-zone: only the elected zone's own sub-zones are eligible, with
@@ -6585,7 +6586,13 @@ def _closed_rooms(hass, zone_polys, layout, now):
     return out
 
 
-def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, scale, layout, now=None, hold=False, anchor_point=None, closed=(), new_floor=False):
+def _doors_shut(hass, zone_polys):
+    """The zones whose door reads closed now, grace or not: who is inside is decided when it shuts."""
+    return {zid for zid, door in (getattr(zone_polys, "doors", None) or {}).items()
+            if (st := hass.states.get(door)) is not None and rooms_mod.door_closed(st.state)}
+
+
+def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, scale, layout, now=None, hold=False, anchor_point=None, closed=(), new_floor=False, doors_shut=None):
     """The zone to PUBLISH for a thing this cycle. Returns
     (zone, locked, speed_m_s).
 
@@ -6678,11 +6685,13 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
     # that room, and leaves it only on a long clear lead (door_leave_secs), so a
     # blip cannot put it outside a shut door. Kept apart from _zone_state, which
     # a floor blip drops; the door opening forgets it.
+    # doors_shut, not closed: the entry grace must not leave a thing just shut in free to blip out.
+    doors_shut = closed if doors_shut is None else doors_shut
     home = _shut_in.get(entity)
-    if home is not None and home[0] == floor_name and home[1] not in closed:
+    if home is not None and home[0] == floor_name and home[1] not in doors_shut:
         _shut_in.pop(entity, None)
         home = None
-    if incumbent is not None and incumbent in closed and not st.get("entering"):
+    if incumbent is not None and incumbent in doors_shut and not st.get("entering"):
         _shut_in[entity] = home = (floor_name, incumbent)
     home = home[1] if home is not None and home[0] == floor_name else None
     closed = set(closed) - {home}
@@ -6692,6 +6701,8 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
     if incumbent is None:
         if st.get("entering"):   # a thing arriving from another floor cannot walk into a shut room either
             best = max((z for z in probs if z not in closed), key=probs.get, default=None)
+            if home in probs:   # nor out of the one it was shut in: back from a floor blip, it is still there
+                best = home
             if best is None:   # only shut rooms have evidence: no room until an open one does
                 return "unknown", False, speed
         st.update(zone=best, since=now, challenge=None, locked=False, away_since=None, entering=False)
