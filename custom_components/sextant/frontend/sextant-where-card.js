@@ -2,8 +2,8 @@
  * Sextant "where is everyone" card for Lovelace.
  *
  *   type: custom:sextant-where-card
- *   layout: tiles                # tiles | rooms | strip | rings
- *   columns: 2                   # tiles (2) and rings (4)
+ *   layout: tiles                # tiles | rooms | strip | rings | pets
+ *   columns: 2                   # tiles (2), rings (4) and pets' tiles (2)
  *   show_floor: true             # optional: the floor when there is no spot (tiles, rings, rooms)
  *   precise: true                # optional: one line, the spot, else room, else floor, else Home (tiles, rings, strip)
  *   entities:
@@ -14,6 +14,8 @@
  *       place: sensor.davids_iphone_geocoded_location     # optional: the town when away
  *       # either key may instead name a Life360 tracker (device_tracker.*): its driving flag, its place or address
  *     - sensor.meg_sextant_pet_location
+ *   # pets: the pets only; each dog gets a card of its own (inside, outside or away). People listed
+ *   # are not drawn: a pet in a room with one of them shows their face and "with David".
  *   rooms:                       # optional: room occupancy sensors, for modes (rooms layout)
  *     - binary_sensor.great_room_sextant_occupancy
  *
@@ -25,12 +27,12 @@
  */
 import { LitElement, html, css, nothing } from "./lit.js";
 import { classIcon } from "./sextant-ui.js";
-import { whereRows, groupRooms, stripChips, fmtStay, normEntry, withPerson, preciseWhere } from "./sextant-where.js";
+import { whereRows, groupRooms, stripChips, fmtStay, normEntry, withPerson, preciseWhere, petCompany, joinNames, fmtDistance } from "./sextant-where.js";
 import { forwardHaContext, loadHaEditors, entityOptions } from "./sextant-ha-editors.js";
 
 const MODE_ICONS = { sleep: "mdi:sleep", tv: "mdi:television", cooking: "mdi:chef-hat", gaming: "mdi:controller" };
 const SOURCE_ICONS = { ble: "mdi:bluetooth", wifi: "mdi:wifi", gps: "mdi:map-marker-radius" };
-const LAYOUTS = ["tiles", "rooms", "strip", "rings"];
+const LAYOUTS = ["tiles", "rooms", "strip", "rings", "pets"];
 
 class SextantWhereCard extends LitElement {
   static properties = { hass: { attribute: false }, _config: { state: true }, _tick: { state: true } };
@@ -50,6 +52,11 @@ class SextantWhereCard extends LitElement {
 
   getCardSize() {
     const n = this._config?.entities?.length || 1;
+    if (this._config?.layout === "pets") {
+      const rows = this.hass ? whereRows(this.hass.states, this._config.entities, Date.now() / 1000).filter((r) => r.pet) : [];
+      const dogs = rows.filter((r) => r.roams).length;
+      return dogs * 2 + Math.ceil((this.hass ? rows.length - dogs : n) / (this._config.columns || 2)) * 1.3;
+    }
     return { tiles: Math.ceil(n / (this._config.columns || 2)) * 1.4, rooms: n, strip: 1, rings: 3 }[this._config?.layout] || 3;
   }
 
@@ -61,7 +68,7 @@ class SextantWhereCard extends LitElement {
 
   _avatar(r, size = "", badge = false) {
     const fallback = r.pet ? html`<ha-icon icon=${classIcon(r.via) || "mdi:paw"}></ha-icon>` : r.name[0];
-    const badgeIcon = r.moving?.icon || (r.away ? SOURCE_ICONS[r.source] || "mdi:home-export-outline" : classIcon(r.via));
+    const badgeIcon = typeof badge === "string" ? badge : r.moving?.icon || (r.away ? SOURCE_ICONS[r.source] || "mdi:home-export-outline" : classIcon(r.via));
     // As on the house's Mushroom person cards: green home, blue in a named zone, orange on the move, red away.
     const bc = !r.away ? "" : r.zone ? "var(--blue-color, #2196f3)" : r.moving ? "var(--orange-color, #ff9800)" : "var(--red-color, #f44336)";
     // Away has no confidence: a full ring in the badge colour.
@@ -117,10 +124,40 @@ class SextantWhereCard extends LitElement {
       ${pets.length ? html`<div class="pets">${pets.map((r) => html`<button class="pet" @click=${() => this._more(r.id)}>${this._avatar(r, "xs")}${r.name} <span class="sub">${this._config.precise ? preciseWhere(r) : r.spot || r.where}</span></button>`)}</div>` : nothing}</div>`;
   }
 
+  // Pets: each dog a card (inside, outside or away; where; trackers), the rest as tiles. A person in the same
+  // room puts their face on the pet's photo and "with David" under it; people themselves are not drawn.
+  _pets(rows) {
+    const company = petCompany(rows), pets = rows.filter((r) => r.pet);
+    const dogs = pets.filter((r) => r.roams), rest = pets.filter((r) => !r.roams);
+    const face = (r, size, badge) => {
+      const w = company.get(r.id) || [];
+      return html`<span class="pface">${this._avatar(r, size, badge)}${w[0] ? html`<span class="with-face" title=${w[0].name}>
+        ${w[0].picture ? html`<img src=${w[0].picture} alt="">` : w[0].name[0]}</span>` : nothing}</span>`;
+    };
+    const withChip = (r) => {
+      const w = company.get(r.id) || [];
+      return w.length ? html`<span class="with">with ${joinNames(w.map((x) => x.name))}</span>` : nothing;
+    };
+    const where = (r) => r.away ? this._where(r) : r.spot || r.where;
+    const dog = (r) => {
+      const state = r.where === "Unavailable" ? null : r.away ? "away" : r.outside ? "outside" : "inside";
+      // The badge says how she was placed (Bluetooth, Wi-Fi, GPS); away it is the usual away badge.
+      return html`<button class="dog" @click=${() => this._more(r.id)}>${face(r, "xl", r.away || r.moving ? true : SOURCE_ICONS[r.source] || false)}
+        <span class="txt"><span class="n">${r.name}</span>
+          <span class="states">${["inside", "outside", "away"].map((s) => html`<span class="st ${s === state ? `on ${s}` : ""}">${s[0].toUpperCase() + s.slice(1)}</span>`)}</span>
+          <span class="room ${r.away ? "two" : ""}" title=${this._where(r, false)}>${where(r)}${r.stay != null ? html` <span class="stay">· ${fmtStay(r.stay, true)}</span>` : nothing}${r.distance != null ? html` <span class="stay">· ${fmtDistance(r.distance)}</span>` : nothing}</span>
+          ${withChip(r)}</span></button>`;
+    };
+    return html`${dogs.map(dog)}${rest.length ? html`<div class="ptiles ${dogs.length ? "below" : ""}" style="--cols:${this._config.columns || 2}">${rest.map((r) => html`
+      <button class="ptile" @click=${() => this._more(r.id)}>${face(r, "")}
+        <span class="txt"><span class="n"><span class="nm">${r.name}</span><span class="stay">${fmtStay(r.stay, true)}</span></span>
+          <span class="room ${r.away ? "two" : ""}" title=${this._where(r, false)}>${where(r)}</span>${withChip(r)}</span></button>`)}</div>` : nothing}`;
+  }
+
   render() {
     if (!this._config || !this.hass) return nothing;
     const rows = whereRows(this.hass.states, this._config.entities, Date.now() / 1000);
-    const body = { tiles: this._tiles, rooms: this._rooms, strip: this._strip, rings: this._rings }[this._config.layout].call(this, rows);
+    const body = { tiles: this._tiles, rooms: this._rooms, strip: this._strip, rings: this._rings, pets: this._pets }[this._config.layout].call(this, rows);
     // tiles and strip sit straight on the dashboard like the tile and chips cards; the others get a card.
     return ["tiles", "strip"].includes(this._config.layout) ? body : html`<ha-card>${body}</ha-card>`;
   }
@@ -184,8 +221,33 @@ class SextantWhereCard extends LitElement {
     .pets { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--divider-color); font-size: 12px; }
     .pet { display: inline-flex; gap: 4px; align-items: center; white-space: nowrap; }
 
+    .ring.xl { --s: 60px; }
+    .pface { position: relative; flex: none; display: inline-grid; }
+    .with-face { position: absolute; right: -5px; bottom: -5px; width: 22px; height: 22px; border-radius: 50%; overflow: hidden; display: grid; place-items: center;
+      font-size: 11px; font-weight: 600; background: var(--secondary-background-color); border: 2px solid var(--card-background-color, var(--ha-card-background)); }
+    .ring.xl + .with-face { width: 28px; height: 28px; }
+    .with-face img { width: 100%; height: 100%; object-fit: cover; }
+    .with { align-self: flex-start; margin-top: 3px; padding: 1px 8px; border-radius: 999px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+      color: color-mix(in srgb, var(--blue-color, #2196f3) 45%, var(--primary-text-color)); background: color-mix(in srgb, var(--blue-color, #2196f3) 15%, transparent); }
+    .dog { display: flex; gap: 14px; align-items: center; width: 100%; min-width: 0; }
+    .dog + .dog { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--divider-color); }
+    .dog .txt, .ptile .txt { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.25; }
+    .dog .n { font-weight: 600; font-size: 17px; }
+    .dog .room { font-size: 15px; }
+    .ring.xl .badge { width: 22px; height: 22px; }
+    .states { display: flex; gap: 4px; margin: 4px 0; }
+    .st { font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--divider-color); color: var(--secondary-text-color); }
+    .st.on { border-color: transparent; color: #fff; } .st.inside { background: var(--green-color, #4caf50); }
+    .st.outside { background: var(--amber-color, #ffc107); color: #000; } .st.away { background: var(--red-color, #f44336); }
+    .ptiles { display: grid; grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); gap: 12px 8px; }
+    .ptiles.below { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--divider-color); }
+    .ptile { display: flex; gap: 10px; align-items: center; min-width: 0; }
+    .ptile .n { font-weight: 600; display: flex; gap: 6px; align-items: baseline; }
+    .ptile .nm { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ptile .stay { margin-left: auto; flex: none; font-weight: 400; font-size: 11px; }
+
     /* No color-mix (Safari before 16.4): plain rings and chips. */
-    @supports not (color: color-mix(in srgb, red, blue)) { .ring { background: var(--c); } .fact { background: var(--secondary-background-color); color: var(--primary-text-color); } }
+    @supports not (color: color-mix(in srgb, red, blue)) { .ring { background: var(--c); } .with { background: var(--secondary-background-color); color: var(--primary-text-color); } .fact { background: var(--secondary-background-color); color: var(--primary-text-color); } }
   `;
 }
 
@@ -228,13 +290,14 @@ class SextantWhereCardEditor extends LitElement {
     const schema = [
       { name: "layout", selector: { select: { mode: "dropdown", options: LAYOUTS.map((l) => ({ value: l, label: l[0].toUpperCase() + l.slice(1) })) } } },
       { name: "entities", selector: { select: { multiple: true, reorder: true, mode: "dropdown", options: entityOptions(states, (id) => /^sensor\..+_sextant_(person|pet)_location$/.test(id), (id, s) => (s.attributes.friendly_name || id).replace(/ Location$/, ""), ids) } } },
-      ...(layout === "tiles" || layout === "rings" ? [{ name: "columns", selector: { number: { min: 1, max: 6, mode: "box" } } }] : []),
-      ...(layout === "rooms" ? [] : [{ name: "precise", selector: { boolean: {} } }]),
-      ...(layout === "strip" || (c.precise && layout !== "rooms") ? [] : [{ name: "show_floor", selector: { boolean: {} } }]),
+      ...(["tiles", "rings", "pets"].includes(layout) ? [{ name: "columns", selector: { number: { min: 1, max: 6, mode: "box" } } }] : []),
+      ...(layout === "rooms" || layout === "pets" ? [] : [{ name: "precise", selector: { boolean: {} } }]),
+      ...(layout === "strip" || layout === "pets" || (c.precise && layout !== "rooms") ? [] : [{ name: "show_floor", selector: { boolean: {} } }]),
       ...(layout === "rooms" ? [{ name: "rooms", selector: { select: { multiple: true, mode: "dropdown", options: entityOptions(states, (id) => /^binary_sensor\..+_sextant_occupancy$/.test(id), (id, s) => s.attributes.room || id, c.rooms || []) } } }] : []),
     ];
     const data = { layout, entities: ids, columns: c.columns, rooms: c.rooms || [], show_floor: !!c.show_floor, precise: !!c.precise };
     return html`<ha-form .hass=${this.hass} .data=${data} .schema=${schema} .computeLabel=${(s) => s.name === "columns" ? `Columns (blank: ${layout === "rings" ? 4 : 2})` : WHERE_LABELS[s.name] || s.name} @value-changed=${this._changed}></ha-form>
+      ${layout === "pets" ? html`<p class="hint">Pets layout: people listed here are not drawn; a pet in the same room as one shows "with" them.</p>` : nothing}
       <p class="hint">Names and photos come from each person; set <code>name</code> or <code>person</code> on an entry in YAML to change them.</p>`;
   }
 

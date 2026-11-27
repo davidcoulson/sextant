@@ -1,7 +1,7 @@
 // The "where is everyone" card's model, on the shapes Sextant's sensors really have.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { confLevel, fmtStay, whereRows, groupRooms, stripChips, withPerson, preciseWhere } from "../../custom_components/sextant/frontend/sextant-where.js";
+import { confLevel, fmtStay, whereRows, groupRooms, stripChips, withPerson, preciseWhere, petCompany, joinNames, fmtDistance } from "../../custom_components/sextant/frontend/sextant-where.js";
 import { entityOptions } from "../../custom_components/sextant/frontend/sextant-ha-editors.js";
 
 const NOW = 1795775000;
@@ -165,4 +165,47 @@ test("away: the town on its own for the tile headline, and time away from the se
   assert.deepEqual([z.place, z.stay], [null, null]);  // a zone is the place itself; no last_changed, no time
   st["sensor.mi_phone_geocoded_location"] = loc("unavailable", {});
   assert.equal(whereRows(st, [e], NOW)[0].place, null);
+});
+
+test("pets: a dog outside is home but in no room; away she has her collar's address and a distance", () => {
+  const st = {
+    "sensor.primrose_sextant_pet_location": { ...loc("Outside", { kind: "outside", room: "Outside", presence: "here", source: "gps", via_class: "dog", tracker: "device_tracker.primrose_tracker" }), last_changed: new Date((NOW - 900) * 1000).toISOString() },
+    "sensor.primrose_current_place_address": loc("12 Elm St, Strongsville", {}),
+  };
+  const e = { entity: "sensor.primrose_sextant_pet_location", place: "sensor.primrose_current_place_address" };
+  const [o] = whereRows(st, [e], NOW);
+  assert.deepEqual([o.outside, o.away, o.room, o.where, o.stay, o.distance, o.via], [true, false, "Outside", "Outside", 900, null, "dog"]);
+  // GPS only: no tag heard, so no via_class; the collar still makes her a dog card.
+  st["sensor.primrose_sextant_pet_location"] = loc("away", { kind: "zone", zone: "not_home", presence: "away", source: "gps", via_class: null, tracker: "device_tracker.primrose_tracker", distance_m: 3200 });
+  const [a] = whereRows(st, [e], NOW);
+  assert.deepEqual([a.outside, a.away, a.room, a.place, a.distance, a.roams], [false, true, null, "12 Elm St, Strongsville", 3200, true]);
+  st["sensor.primrose_current_place_address"] = loc("N/A", {});
+  assert.equal(whereRows(st, [e], NOW)[0].where, "Away");
+  // Unavailable keeps no room or spot from its last attributes.
+  st["sensor.primrose_sextant_pet_location"] = loc("unavailable", { kind: "spot", room: "Foyer", spot: "Mat", via_class: "dog" });
+  assert.deepEqual(whereRows(st, [e], NOW).map((r) => [r.where, r.room, r.spot]), [["Unavailable", null, null]]);
+  // The editor finds the collar's address sensor on the tracker's device.
+  const reg = { "device_tracker.primrose_tracker": { device_id: "P" }, "sensor.primrose_current_place_address": { device_id: "P" } };
+  st["sensor.primrose_sextant_pet_location"] = loc("x", { tracker: "device_tracker.primrose_tracker" });
+  assert.equal(withPerson(st, "sensor.primrose_sextant_pet_location", reg).place, "sensor.primrose_current_place_address");
+});
+
+test("pets: company is the people in the pet's room, never other pets or anyone away", () => {
+  const rows = whereRows(states, [
+    { entity: "sensor.david_coulson_sextant_person_location", person: "person.david_coulson" },
+    "sensor.sherry_wayne_sextant_person_location", "sensor.meg_sextant_pet_location", "sensor.fry_sextant_pet_location", "sensor.leela_sextant_pet_location",
+  ], NOW);
+  rows.find((r) => r.name === "David").room = "Great Room";
+  const c = petCompany(rows);
+  assert.deepEqual([...c.keys()], ["sensor.meg_sextant_pet_location", "sensor.fry_sextant_pet_location", "sensor.leela_sextant_pet_location"]);
+  assert.deepEqual(c.get("sensor.fry_sextant_pet_location").map((r) => r.name), ["David"]);
+  assert.deepEqual(c.get("sensor.meg_sextant_pet_location"), []);
+  // "Outside" is not a room to share: the garden is big.
+  const fry = rows.find((r) => r.name === "Fry" || r.id === "sensor.fry_sextant_pet_location");
+  Object.assign(fry, { outside: true, room: "Outside" });
+  rows.find((r) => r.name === "David").room = "Outside";
+  assert.deepEqual(petCompany(rows).get("sensor.fry_sextant_pet_location"), []);
+  assert.equal(rows.find((r) => r.id === "sensor.meg_sextant_pet_location").roams, false);
+  assert.deepEqual([joinNames(["David"]), joinNames(["David", "Michelle"]), joinNames(["David", "Michelle", "Eilee", "Jack"])], ["David", "David and Michelle", "David, Michelle +2"]);
+  assert.deepEqual([fmtDistance(800), fmtDistance(3240), fmtDistance(41200)], ["800 m", "3.2 km", "41 km"]);
 });
