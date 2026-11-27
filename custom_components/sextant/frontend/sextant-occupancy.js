@@ -3,7 +3,7 @@
 import { LitElement, html, css, nothing, repeat } from "./lit.js";
 import { sharedStyles, fmtAge, fmtLen, classIcon, THING_CLASSES } from "./sextant-ui.js";
 import { occupancyByFloor, isActive, outsideNow, chipDetail, firstName, spotInRoom, SOURCE_ICON, SOURCE_LABEL, WHERE_SOURCE, WHERE_ICON, modeIcon,
-  trackedPeople, staysFromHistory, subjectHistory, clockAt } from "./sextant-occupancy-data.js";
+  trackedPeople, staysFromHistory, subjectHistory, clockAt, confidenceLevel } from "./sextant-occupancy-data.js";
 
 const HISTORY_HOURS = 24;
 
@@ -72,12 +72,18 @@ class SextantOccupancy extends LitElement {
     @media (pointer: coarse) { button.chip { min-height: 32px; padding: 4px 10px; } }
     /* One line: a long spot ends in an ellipsis (the details have it whole). */
     .chip .spot { color: var(--secondary-text-color); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-    .pop { position: absolute; z-index: 5; top: 100%; left: 0; width: max-content; max-width: min(280px, 80vw); padding: 8px 10px; border-radius: 8px;
+    .pop { position: absolute; z-index: 5; top: calc(100% + 4px); left: 0; width: max-content; min-width: 180px; max-width: min(300px, 80vw); padding: 10px 12px; border-radius: 10px;
       background: var(--card-background-color); color: var(--primary-text-color); border: 1px solid var(--divider-color);
-      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25); font-size: 12px; line-height: 1.5; pointer-events: none; }
-    .pop b { display: block; font-size: 13px; margin-bottom: 2px; padding-right: 22px; }
-    .si { position: absolute; top: 8px; right: 8px; --mdc-icon-size: 16px; color: var(--secondary-text-color); }
-    .k { color: var(--secondary-text-color); margin-right: 4px; }
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25); pointer-events: none; }
+    .pop b { display: block; font-size: 12px; font-weight: 500; color: var(--secondary-text-color); margin-bottom: 2px; }
+    /* The summary: the place large, its floor under it, then small facts with icons. */
+    .place { font-size: 15px; font-weight: 500; line-height: 1.3; }
+    .place .muted, .floorname { color: var(--secondary-text-color); }
+    .floorname { font-size: 12px; }
+    .facts { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; font-size: 12px; color: var(--secondary-text-color); }
+    .fact { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+    .fact ha-icon { --mdc-icon-size: 15px; }
+    .hint.more { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--divider-color); }
 
     /* The history sheet: up from the bottom on a phone, a panel on the right when wide. */
     .scrim { position: fixed; inset: 0; z-index: 10; background: rgba(0, 0, 0, 0.4); }
@@ -90,7 +96,7 @@ class SextantOccupancy extends LitElement {
     .sh b { display: block; font-size: 16px; }
     .sh small { color: var(--secondary-text-color); font-size: 12px; }
     .sb { overflow-y: auto; padding: 8px 16px 16px; font-size: 13px; }
-    .now { position: relative; padding: 8px 0; margin-bottom: 4px; border-bottom: 1px solid var(--divider-color); font-size: 12px; line-height: 1.6; }
+    .now { padding: 10px 0 12px; margin-bottom: 4px; border-bottom: 1px solid var(--divider-color); }
     .hr { display: grid; grid-template-columns: 96px minmax(0, 1fr) auto; gap: 8px; padding: 7px 0; border-top: 1px solid var(--divider-color); align-items: baseline; }
     .hr:first-child { border-top: 0; }
     .hr .t, .hr .d, .hr .what small, .hint { color: var(--secondary-text-color); font-size: 12px; }
@@ -115,33 +121,36 @@ class SextantOccupancy extends LitElement {
       <button class="chip" aria-label=${`${label}: details and history`}
           @click=${() => { this._hover = null; this._openHistory({ kind: "person", name, label, pet, ids: r.ids }); }}>
         <ha-icon icon=${icon}></ha-icon>${label}${spot ? html`<span class="spot">&nbsp;· ${spot}</span>` : nothing}</button>
-      ${this._hover === key ? html`<div class="pop" role="tooltip"><b>${name}</b>${this._details(d, pet)}</div>` : nothing}
+      ${this._hover === key ? html`<div class="pop" role="tooltip"><b>${name}</b>${this._details(d, pet)}<div class="hint more">Click for the last ${HISTORY_HOURS} hours</div></div>` : nothing}
     </span>`;
   }
 
-  /** Where a person or pet is now, what tracks them and how sure Sextant is. */
+  /** Where a person or pet is now, as a short summary: the place in large type, then small facts with icons.
+   *  The numbers behind "Sure" (the fit's and the stay-lifted confidence) are in its tooltip. */
   _details(d, pet = false) {
-    if (!d) return html`No Sextant location sensor found.`;
-    const row = (k, v) => (v == null || v === "" ? nothing : html`<div><span class="k">${k}</span>${v}</div>`);
-    const age = d.heardAt ? fmtAge((Date.now() - d.heardAt) / 1000) + " ago" : null;   // "here" says nothing more: Here for is above
+    if (!d) return html`<div class="hint">No Sextant location sensor found.</div>`;
+    const room = d.outside ? "Outside" : d.room && d.room !== "unknown" ? d.room : "Somewhere unknown";
+    const floor = !d.outside && d.floor && d.floor !== "unknown" ? d.floor : null;
     // A pet is its own tag: "Tracked by Cat" says nothing.
     const device = pet ? null : d.thing ? (THING_CLASSES.find(([k]) => k && k === d.thingClass) || [])[1] || d.thing : d.tracker;
     let src = WHERE_SOURCE[d.source] || d.source;
     if (d.source === "wifi" && d.accessPoint) src += ` (${d.accessPoint})`;
     if (d.source === "gps" && d.gpsAccuracy != null) src += ` (±${fmtLen(d.gpsAccuracy, this.hass, 0)})`;
-    // The stay-lifted figure, with the single fit's own beside it when they differ.
+    const ago = d.heardAt ? (Date.now() - d.heardAt) / 1000 : null;
+    const heard = ago == null ? (d.presence && d.presence !== "here" ? d.presence : null) : ago < 60 ? "Heard just now" : `Heard ${fmtAge(ago).split(" ")[0]} ago`;
     const pct = (x) => `${Math.round(x * 100)}%`;
-    const conf = d.conf == null ? null : d.settled == null || pct(d.settled) === pct(d.conf) ? pct(d.conf) : `${pct(d.settled)} (fit ${pct(d.conf)})`;
-    return html`
-      ${d.source ? html`<ha-icon class="si" icon=${WHERE_ICON[d.source] || "mdi:help-circle-outline"} title=${src}></ha-icon>` : nothing}
-      ${d.outside ? row("Where", "Outside") : html`
-        ${row("Room", d.room && d.room !== "unknown" ? d.room : "Unknown")}
-        ${row("Spot", d.spot)}
-        ${row("Floor", d.floor && d.floor !== "unknown" ? d.floor : null)}`}
-      ${row(d.outside ? "Out for" : "Here for", d.since ? fmtAge((Date.now() - d.since) / 1000) : null)}
-      ${row("Tracked by", device)}
-      ${row("Confidence", conf)}
-      ${row("Last heard", age ? `${age}${d.presence && d.presence !== "here" ? ` (${d.presence})` : ""}` : d.presence !== "here" ? d.presence : null)}`;
+    const shown = d.settled ?? d.conf;
+    const level = confidenceLevel(shown);
+    const why = d.conf == null ? "" : d.settled == null || pct(d.settled) === pct(d.conf) ? `Confidence ${pct(d.conf)}` : `Confidence ${pct(d.settled)} over the stay, ${pct(d.conf)} this moment`;
+    const fact = (icon, text, title = text) => text ? html`<span class="fact" title=${title}><ha-icon icon=${icon}></ha-icon>${text}</span>` : nothing;
+    return html`<div class="place">${room}${d.spot && !d.outside ? html`<span class="muted"> · ${d.spot}</span>` : nothing}</div>
+      ${floor ? html`<div class="floorname">${floor}</div>` : nothing}
+      <div class="facts">
+        ${fact("mdi:clock-outline", d.since ? fmtAge((Date.now() - d.since) / 1000) : null, d.outside ? "Out for" : "Here for")}
+        ${fact(WHERE_ICON[d.source] || "mdi:help-circle-outline", heard, `${heard} · ${src}`)}
+        ${level ? fact(level.icon, level.word, why) : nothing}
+        ${fact(pet ? "mdi:paw" : classIcon(d.thingClass) || "mdi:cellphone", device, `Tracked by ${device}`)}
+      </div>`;
   }
 
   async _openHistory(subject) {
