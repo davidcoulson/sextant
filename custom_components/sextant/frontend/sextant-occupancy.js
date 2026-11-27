@@ -3,7 +3,8 @@
 import { LitElement, html, css, nothing, repeat } from "./lit.js";
 import { sharedStyles, fmtAge, fmtLen, classIcon, THING_CLASSES } from "./sextant-ui.js";
 import { occupancyByFloor, isActive, outsideNow, chipDetail, firstName, spotInRoom, SOURCE_ICON, SOURCE_LABEL, WHERE_SOURCE, WHERE_ICON, modeIcon,
-  trackedPeople, staysFromHistory, subjectHistory, clockAt, confidenceLevel } from "./sextant-occupancy-data.js";
+  trackedPeople, staysFromHistory, subjectHistory, joinRepeats, modeStays, modeEntityOf, clockAt, confidenceLevel } from "./sextant-occupancy-data.js";
+import { thingColor } from "./sextant-map.js";
 
 const HISTORY_HOURS = 24;
 
@@ -118,8 +119,8 @@ class SextantOccupancy extends LitElement {
     .ev:not(:last-child)::after { content: ""; position: absolute; left: -16px; top: 24px; bottom: -12px; width: 2px; background: var(--divider-color); }
     .ev { position: relative; display: flex; align-items: baseline; gap: 10px; padding: 7px 0; }
     .ev::before { content: ""; position: absolute; left: -21px; top: 12px; width: 8px; height: 8px; border-radius: 50%;
-      border: 2px solid var(--primary-color); background: var(--card-background-color); }
-    .ev.cur::before { background: var(--primary-color); }
+      border: 2px solid var(--who, var(--primary-color)); background: var(--card-background-color); }
+    .ev.cur::before { background: var(--who, var(--primary-color)); }
     .ev.nowhere::before { border-color: var(--secondary-text-color); }
     .ev .t, .ev .d, .ev .from, .ev small, .hint { color: var(--secondary-text-color); }
     .ev .t { flex: none; min-width: 64px; white-space: nowrap; font-variant-numeric: tabular-nums; }
@@ -179,7 +180,7 @@ class SextantOccupancy extends LitElement {
     const why = d.conf == null ? "" : d.settled == null || pct(d.settled) === pct(d.conf) ? `Confidence ${pct(d.conf)}` : `Confidence ${pct(d.settled)} over the stay, ${pct(d.conf)} this moment`;
     const fact = (icon, text, colour, title = text) => text ? html`<span class="fact" style=${`--c: ${colour}`} title=${title}><ha-icon icon=${icon}></ha-icon>${text}</span>` : nothing;
     return html`${this._head(pet, name, icon || classIcon(d.thingClass), html`
-          <div class="place">${room}${d.spot && !d.outside ? html`<span class="muted"> · ${d.spot}</span>` : nothing}</div>
+          <div class="place">${room}${d.spot && !d.outside ? html`<span class="muted"> · ${d.spot}${d.spotSince ? ` (${fmtAge((Date.now() - d.spotSince) / 1000)})` : ""}</span>` : nothing}</div>
           ${floor ? html`<div class="floorname">${floor}</div>` : nothing}`)}
       <div class="facts">
         ${fact("mdi:clock-outline", d.since ? fmtAge((Date.now() - d.since) / 1000) : null, "var(--blue-color, #2196f3)", d.outside ? "Out for" : "Here for")}
@@ -199,16 +200,24 @@ class SextantOccupancy extends LitElement {
     const people = subject.kind === "person" ? all.filter((p) => p.name === subject.name) : all;
     // A pet known only by its tag has no room sensors of its own, so no history to read.
     if (subject.kind === "person" && !people.length) { this._hist = { untracked: true }; return; }
+    // A room's or floor's sheet also shows its rooms' modes ("Eilee's Room → Sleep"), from each mode entity.
+    const modes = subject.kind === "person" ? [] : (this.data?.layout?.floor || []).flatMap((f) => (f.zones || []).map((z) => {
+      const ent = modeEntityOf(z.mode_entity), label = typeof z.mode_label === "string" ? z.mode_label.trim().slice(0, 40) || null : null;
+      return ent && z.entity_id && (subject.kind === "floor" ? f.name === subject.floor : f.name === subject.floor && z.entity_id === subject.room)
+        ? { room: z.entity_id, floor: f.name, ent, label, option: /^(input_)?select\./.test(ent) } : null;
+    })).filter(Boolean);
     const now = Date.now() / 1000;
     try {
       // Home Assistant's recorder keeps every state of the room and floor sensors, and any user may read it.
-      const r = people.length ? await this.hass.callWS({
+      const ids = [...people.flatMap((p) => [p.room, p.floor]), ...modes.map((m) => m.ent)];
+      const r = ids.length ? await this.hass.callWS({
         type: "history/history_during_period", start_time: new Date((now - HISTORY_HOURS * 3600) * 1000).toISOString(),
-        entity_ids: people.flatMap((p) => [p.room, p.floor]), minimal_response: true, no_attributes: true, significant_changes_only: false,
+        entity_ids: [...new Set(ids)], minimal_response: true, no_attributes: true, significant_changes_only: false,
       }) : {};
       if (token !== this._token) return;
       const end = Date.now() / 1000;
-      this._hist = { people: people.map((p) => ({ name: p.name, pet: p.pet, stays: staysFromHistory(r?.[p.room], r?.[p.floor], end) })) };
+      this._hist = { people: people.map((p) => ({ name: p.name, pet: p.pet, stays: staysFromHistory(r?.[p.room], r?.[p.floor], end) })),
+        modes: modes.flatMap((m) => modeStays(r?.[m.ent], m.label, m.option, end).map((s) => ({ ...s, room: m.room, floor: m.floor }))) };
     } catch (e) {
       if (token === this._token) this._hist = { error: e?.message || String(e) };
     }
@@ -230,11 +239,14 @@ class SextantOccupancy extends LitElement {
   _renderHistory() {
     const s = this._subject, h = this._hist, now = Date.now() / 1000;
     const title = s.kind === "person" ? s.label : s.kind === "room" ? s.room : s.floor;
-    const rows = h?.people ? subjectHistory(h.people, s) : [];
+    // Joined before the limit, so a long run of one move counts every visit.
+    const rows = h?.people ? joinRepeats([...subjectHistory(h.people, s, Infinity), ...(h.modes || [])].sort((a, b) => b.start - a.start)).slice(0, 100) : [];
     const floors = new Set(rows.map((r) => r.floor).filter(Boolean));
     // "Michelle Great Room → Master Bedroom": the name only when the sheet is not one person's.
-    const what = (r) => html`${s.kind === "person" ? nothing : html`<b>${r.pet ? r.name : firstName(r.name)}</b> `}${r.from
-      ? html`<span class="from">${r.from} →</span> ` : nothing}<span class="to">${r.room || "Not placed"}</span>${s.kind === "person" && floors.size > 1 && r.floor ? html` <small>· ${r.floor}</small>` : nothing}`;
+    const what = (r) => r.mode ? html`<span class="from">${r.room} →</span> <span class="to">${r.mode}</span>${r.count > 1
+      ? html` <small>· ${r.count} times since ${clockAt(r.first, now)}</small>` : nothing}` : html`${s.kind === "person" ? nothing : html`<b>${r.pet ? r.name : firstName(r.name)}</b> `}${r.from
+      ? html`<span class="from">${r.from} →</span> ` : nothing}<span class="to">${r.room || "Not placed"}</span>${s.kind === "person" && floors.size > 1 && r.floor ? html` <small>· ${r.floor}</small>` : nothing}${r.count > 1
+      ? html` <small>· ${r.count} times since ${clockAt(r.first, now)}</small>` : nothing}`;
     let body;
     if (!h) body = html`<div class="hint">Loading…</div>`;
     else if (h.error) body = html`<div class="hint">History is not available (${h.error}). It comes from Home Assistant's recorder, so the people's and pets' room and floor sensors need to be recorded.</div>`;
@@ -242,10 +254,11 @@ class SextantOccupancy extends LitElement {
     else if (!rows.length) body = html`<div class="hint">${s.kind === "person" ? "No history" : "Nobody"} in the last ${HISTORY_HOURS} hours.</div>`;
     else body = html`<ol class="tl">${rows.map((r) => {
       const cur = r.ongoing;
-      return html`<li class="ev ${cur ? "cur" : ""} ${r.room ? "" : "nowhere"}">
+      // Each one's dot in the colour the map gives their name, so a room's list shows who is who at a glance.
+      return html`<li class="ev ${cur ? "cur" : ""} ${r.room ? "" : "nowhere"}" style=${`--who: ${r.mode ? "var(--amber-color, #ffc107)" : thingColor(r.name)}`}>
         <span class="t">${clockAt(r.start, now)}</span>
         <span class="what">${what(r)}</span>
-        <span class="d">${cur ? `now · ${fmtAge(now - r.start)}` : fmtAge(r.end - r.start)}</span></li>`;
+        <span class="d" title=${r.count > 1 ? "Time there in all" : ""}>${cur ? `now · ${fmtAge(now - r.start)}` : fmtAge(r.total)}</span></li>`;
     })}</ol>`;
     const d = s.kind === "person" ? chipDetail(this.hass?.states, s.name, s.ids, this.data?.layout?.thing_classes) : null;
     return html`<dialog class="sheet" aria-label=${`${title}: history`}

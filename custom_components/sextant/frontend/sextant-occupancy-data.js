@@ -76,12 +76,12 @@ export function chipDetail(states, name, ids, classes) {
   const heard = a.last_heard || t.last_heard;
   const spot = a.spot && a.spot !== "unknown" ? a.spot : null;
   const outside = a.kind === "outside";
-  // Outside, since is when the spell outside began (the thing's own sensor says so too).
-  const since = (spot && !outside ? a.spot_since ?? t.spot_since : null) ?? a.since ?? t.since;
+  // since: in the room (outside, the spell outside), as the history row counts it; spotSince: at the spot.
+  const since = a.since ?? t.since, spotSince = spot && !outside ? a.spot_since ?? t.spot_since : null;
   const tracker = via && String(via).includes(".") ? states[via]?.attributes?.friendly_name || via : null;
   return {
     outside, thing, thingClass: thing ? classes?.[thing] || null : null, tracker,
-    since: typeof since === "number" ? since * 1000 : null,
+    since: typeof since === "number" ? since * 1000 : null, spotSince: typeof spotSince === "number" ? spotSince * 1000 : null,
     room: a.room, spot, floor: a.floor, presence: a.presence,
     conf: a.conf ?? t.conf ?? null, source: a.source || "ble",
     // conf lifted by the stay; only while heard, a quiet thing's last word is no fresh evidence.
@@ -176,6 +176,63 @@ export function subjectHistory(people, subject, limit = 100) {
     });
   }
   return rows.sort((a, b) => b.start - a.start || a.name.localeCompare(b.name)).slice(0, limit);
+}
+
+// rooms.py's mode_of: states that mean no mode, and the on states that mean "the label".
+const NO_MODE = new Set(["", "off", "idle", "standby", "paused", "none", "unknown", "unavailable", "not_home", "false"]);
+const MODE_ON = new Set(["on", "home", "playing", "occupied", "detected"]);
+
+/** A room's mode entity from its layout zone, as rooms.py's _entity_ids reads it: the first entity id in a list
+ *  or a comma/space separated string. */
+export function modeEntityOf(value) {
+  const ids = typeof value === "string" ? value.split(/[,\s]+/) : Array.isArray(value) ? value : [];
+  return ids.map((v) => (typeof v === "string" ? v.trim() : "")).find((v) => /^[a-z0-9]+(_[a-z0-9]+)*\.[a-z0-9]+(_[a-z0-9]+)*$/.test(v)) || null;
+}
+
+/** A room's mode spells, [{start, end, mode}] oldest first, from its mode entity's history (compressed rows
+ *  {s, lu, lc?}), read as rooms.py's mode_of does: a dropdown's option as it is (``option``), ``label`` (or "on")
+ *  while an on/off entity is on. Only spells in a mode are kept. A short spell unavailable is Sextant or the
+ *  entity reloading, so it neither ends the mode nor starts a new one. */
+export function modeStays(rows, label, option, now) {
+  const spells = [];
+  for (const r of rows || []) {
+    const t = r.lc ?? r.lu, text = String(r.s ?? "").trim(), low = text.toLowerCase();
+    if (typeof t !== "number") continue;
+    const mode = low === "unknown" || low === "unavailable" ? undefined   // not known, rather than no mode
+      : option ? (text ? text.slice(0, 40) : null) : NO_MODE.has(low) ? null : MODE_ON.has(low) ? (label || "on") : text.slice(0, 40);
+    const last = spells[spells.length - 1];
+    if (last?.mode === mode) continue;   // "on" then "playing" is one spell of the label
+    if (last) last.end = t;
+    spells.push({ start: t, end: now, mode });
+  }
+  const kept = [];
+  spells.forEach((s) => {
+    // Unavailable for a moment, even right now, is a reload: the mode goes on.
+    if (s.mode === undefined && s.end - s.start < BLIP_SECS) { if (kept.length) kept[kept.length - 1].end = s.end; return; }
+    const last = kept[kept.length - 1];
+    if (last && last.mode === s.mode) { last.end = s.end; return; }
+    if (last) last.end = s.start;
+    kept.push(s);
+  });
+  if (kept.length) kept[kept.length - 1].ongoing = true;
+  return kept.filter((s) => s.mode);
+}
+
+/** History rows (newest first) with back-to-back repeats joined: the same one making the same move into the
+ *  same room ("Willow Jack's Room → Catwalk" twelve times in a row) is one row, with ``count`` visits,
+ *  ``first`` (the earliest start) and ``total`` (seconds there in all). ``start`` stays the latest visit's. */
+export function joinRepeats(rows) {
+  const out = [];
+  for (const r of rows) {
+    const g = out[out.length - 1];
+    // The current stay stays its own row, so "now" is how long this visit has lasted.
+    if (g && !g.ongoing && !r.ongoing && g.name === r.name && g.from === r.from && g.room === r.room && g.floor === r.floor && g.mode === r.mode) {
+      g.count += 1; g.first = r.start; g.total += r.end - r.start;
+      continue;
+    }
+    out.push({ ...r, count: 1, first: r.start, total: r.end - r.start });
+  }
+  return out;
 }
 
 /** A time of day for a history row. Within the last 24 hours a clock time names one moment, so it needs no
