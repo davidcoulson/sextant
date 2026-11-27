@@ -576,6 +576,7 @@ _kf_position_state = {}
 # sub-zone's dwell state (see _elect_subzone). Reset on floor change and
 # on prune, like the Kalman state.
 _zone_state = {}
+_shut_in = {}   # entity -> (floor, room) it was in when that room's door shut
 _habits = habits_mod.new_store()   # where each thing usually is, by day type and hour (habits.py)
 _habits_last = {}                   # entity -> when it was last counted into _habits
 _local_tz = None                    # the house's time zone, for the hour of the day
@@ -920,6 +921,9 @@ TUNING_SPEC = {
     # (a cat read through the wall is not in a room it cannot open); a thing that went in just
     # before the door closed, and was placed a little late, still gets this long.
     "door_entry_grace_secs": (180.0, float, 0.0, 3600.0),
+    # A thing in a room when its door shut is only placed outside it once another room has led
+    # clearly and without a break this long; until then a blip through the wall changes nothing.
+    "door_leave_secs": (600.0, float, 0.0, 7200.0),
     # A repair is raised for a room's sensor (other sensors, door contact) that has been unavailable
     # this long, or a binary sensor that has read on this long (it would hold its room occupied).
     "sensor_gone_secs": (21600.0, float, 600.0, 2592000.0),
@@ -3219,12 +3223,13 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
         # uncertainty ellipse, which would keep a small spot from ever winning.
         kf_for_election = None if anchor is not None else _kf_position_state.get(entity)
         closed = _closed_rooms(hass, zone_polys, layout, now)
+        doors_shut = _doors_shut(hass, zone_polys)
         zone, zone_locked, zone_speed = _elect_zone(
             entity, lowest_floor_name, instant_zone, test_point,
             kf_for_election, zone_polys, scale, layout, now=now,
             hold=(_floor_challenge.get(entity) or {}).get("since") is not None,  # a margin challenge, not a small lead
             anchor_point=Point(anchor["x"], anchor["y"]) if anchor is not None else None,
-            closed=closed,
+            closed=closed, doors_shut=doors_shut,
             new_floor=came_from is not None and came_from != lowest_floor_name,
         )
         # Sub-zone: only the elected zone's own sub-zones are eligible, with
@@ -3499,7 +3504,7 @@ def _forget_thing_state(ent, keep_sighting=False):
     stale-position prune can still say "away since". For a thing forgotten on
     purpose (ws_thing_forget) that memory is the point, and its radar pin,
     robot and error bookkeeping go too."""
-    tables = [_kf_position_state, _zone_state, _outside_state, _subzone_state, _anchor_state, _floor_probability,
+    tables = [_kf_position_state, _zone_state, _shut_in, _outside_state, _subzone_state, _anchor_state, _floor_probability,
               _floor_probability_at, _floor_challenge, _floor_dark_cycles, _floor_since, _arrivals]
     if not keep_sighting:
         tables += [_last_seen, _presence_published, _radar_still, _radar_last_pin, _robot_state, _thing_error_counts]
@@ -6581,7 +6586,13 @@ def _closed_rooms(hass, zone_polys, layout, now):
     return out
 
 
-def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, scale, layout, now=None, hold=False, anchor_point=None, closed=(), new_floor=False):
+def _doors_shut(hass, zone_polys):
+    """The zones whose door reads closed now, grace or not: who is inside is decided when it shuts."""
+    return {zid for zid, door in (getattr(zone_polys, "doors", None) or {}).items()
+            if (st := hass.states.get(door)) is not None and rooms_mod.door_closed(st.state)}
+
+
+def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, scale, layout, now=None, hold=False, anchor_point=None, closed=(), new_floor=False, doors_shut=None):
     """The zone to PUBLISH for a thing this cycle. Returns
     (zone, locked, speed_m_s).
 
@@ -6623,6 +6634,7 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
     valid = {zid for zid, _p, _b, no_go in zone_polys if not no_go}
     if not _tuning(layout, "zone_hysteresis") or not valid:
         _zone_state.pop(entity, None)
+        _shut_in.pop(entity, None)
         return instant_zone, False, None
 
     st = _zone_state.get(entity)
@@ -6669,12 +6681,28 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
         st["still_since"] = st["moving_since"] = None
 
     incumbent = st["zone"]
+    # A thing in a room when its door shut is inside: it may always come back to
+    # that room, and leaves it only on a long clear lead (door_leave_secs), so a
+    # blip cannot put it outside a shut door. Kept apart from _zone_state, which
+    # a floor blip drops; the door opening forgets it.
+    # doors_shut, not closed: the entry grace must not leave a thing just shut in free to blip out.
+    doors_shut = closed if doors_shut is None else doors_shut
+    home = _shut_in.get(entity)
+    if home is not None and home[0] == floor_name and home[1] not in doors_shut:
+        _shut_in.pop(entity, None)
+        home = None
+    if incumbent is not None and incumbent in doors_shut and not st.get("entering"):
+        _shut_in[entity] = home = (floor_name, incumbent)
+    home = home[1] if home is not None and home[0] == floor_name else None
+    closed = set(closed) - {home}
     if not probs:
         return (incumbent if incumbent is not None else instant_zone), False, speed
     best = max(probs, key=probs.get)
     if incumbent is None:
         if st.get("entering"):   # a thing arriving from another floor cannot walk into a shut room either
             best = max((z for z in probs if z not in closed), key=probs.get, default=None)
+            if home in probs:   # nor out of the one it was shut in: back from a floor blip, it is still there
+                best = home
             if best is None:   # only shut rooms have evidence: no room until an open one does
                 return "unknown", False, speed
         st.update(zone=best, since=now, challenge=None, locked=False, away_since=None, entering=False)
@@ -6689,7 +6717,7 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
     # The proxy's own position, not the filtered point: the filter lags it and
     # a snap can move it. Before habit learning, so the room left gains nothing.
     inset = _tuning(layout, "zone_anchor_inset_m")
-    if anchor_point is not None and inset > 0 and not hold and not _point_in_no_go(anchor_point, zone_polys):
+    if anchor_point is not None and inset > 0 and not hold and incumbent != home and not _point_in_no_go(anchor_point, zone_polys):
         az = next((zid for zid, p, _b, no_go in zone_polys if not no_go and p.covers(anchor_point)), None)
         if az is not None and az != incumbent and az not in closed and _inset_m(zone_polys, az, anchor_point, scale) >= inset:
             st["probs"] = {az: 1.0}
@@ -6761,6 +6789,9 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
     if best != incumbent and _far_move(zone_polys, incumbent, best, scale):
         margin = max(margin, _tuning(layout, "far_move_margin"))
         dwell = max(dwell, _tuning(layout, "far_move_secs"))
+    if best != incumbent and incumbent == home:
+        dwell = max(dwell, _tuning(layout, "door_leave_secs"))
+        challenge_since = None   # time away from the room is not a lead held
     if best != incumbent:
         # Where this thing usually is at this hour tips a close call, never a clear one.
         gain = habits_mod.gain_for(layout, entity, _tuning(layout, "habit_margin_gain"))
