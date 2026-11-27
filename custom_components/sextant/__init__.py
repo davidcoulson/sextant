@@ -6587,8 +6587,11 @@ def _closed_rooms(hass, zone_polys, layout, now):
 
 
 def _doors_shut(hass, zone_polys):
-    """The zones whose door reads closed now, grace or not: who is inside is decided when it shuts."""
-    return {zid for zid, door in (getattr(zone_polys, "doors", None) or {}).items()
+    """{zone: seen shut} for the zones whose door reads closed now, grace or not: who is inside is
+    decided when it shuts. Seen shut is False for a door found closed at start or back from
+    unavailable (see _closed_rooms, which runs first): nobody saw who was inside then."""
+    return {zid: bool((_door_seen.get(door) or (None, None, False))[2])
+            for zid, door in (getattr(zone_polys, "doors", None) or {}).items()
             if (st := hass.states.get(door)) is not None and rooms_mod.door_closed(st.state)}
 
 
@@ -6703,8 +6706,15 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
             best = max((z for z in probs if z not in closed), key=probs.get, default=None)
             if home in probs:   # nor out of the one it was shut in: back from a floor blip, it is still there
                 best = home
-            if best is None:   # only shut rooms have evidence: no room until an open one does
-                return "unknown", False, speed
+            if best is None:   # only shut rooms have evidence: no room until an open one does,
+                # or one shut unseen (see unseen below) has led alone for door_leave_secs
+                lead = max((z for z in probs if z in doors_shut and isinstance(doors_shut, dict) and not doors_shut[z]),
+                           key=probs.get, default=None)
+                if lead is None or (st.get("unseen") or (None,))[0] != lead:
+                    st["unseen"] = (lead, now)
+                if lead is None or now - st["unseen"][1] < _tuning(layout, "door_leave_secs"):
+                    return "unknown", False, speed
+                best = lead
         st.update(zone=best, since=now, challenge=None, locked=False, away_since=None, entering=False)
         return best, False, speed
     # Anchored: the thing sits on a proxy (one reads it within anchor_max_m,
@@ -6784,12 +6794,15 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
     # 2. Margin and dwell. A far move (see far_move_margin) is held to more.
     # A shut room is no challenger, so the strongest open one challenges instead (after the lock
     # check above, so a thing kept out of a room does not earn a lock where it is kept).
-    best = max((z for z in probs if z == incumbent or z not in closed), key=probs.get, default=incumbent)
+    # A room whose shutting nobody saw (closed at start, back from unavailable) may be wrong either
+    # way, so a long clear lead lets a thing in, as one lets a thing out.
+    unseen = {z for z, seen in (doors_shut.items() if isinstance(doors_shut, dict) else ()) if not seen}
+    best = max((z for z in probs if z == incumbent or z not in closed or z in unseen), key=probs.get, default=incumbent)
     margin, dwell = _tuning(layout, "zone_switch_margin"), _tuning(layout, "zone_switch_secs")
     if best != incumbent and _far_move(zone_polys, incumbent, best, scale):
         margin = max(margin, _tuning(layout, "far_move_margin"))
         dwell = max(dwell, _tuning(layout, "far_move_secs"))
-    if best != incumbent and incumbent == home:
+    if best != incumbent and (incumbent == home or best in closed):
         dwell = max(dwell, _tuning(layout, "door_leave_secs"))
         challenge_since = None   # time away from the room is not a lead held
     if best != incumbent:
