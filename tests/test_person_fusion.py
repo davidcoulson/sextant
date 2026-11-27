@@ -663,6 +663,7 @@ def test_ssid_left_a_network_the_house_does_not_have_after_the_last_sighting():
     assert not persons.ssid_left([("BigMutts guest", NOW - 400)], NOW - 300, home)
     # The house's own network, or none (cellular, iOS and Android spellings): no word.
     assert not persons.ssid_left([("djc-wifi", NOW - 60)], NOW - 300, home)
+    assert not persons.ssid_left([(" DJC-WiFi ", NOW - 60)], NOW - 300, home)   # one network spelt two ways
     for none in ("Not Connected", "<not connected>", "unavailable", "unknown", ""):
         assert not persons.ssid_left([(none, NOW - 60)], NOW - 300, home)
     # No router networks known, never heard, or no phone: no word.

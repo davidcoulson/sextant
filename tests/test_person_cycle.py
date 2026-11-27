@@ -211,3 +211,17 @@ def test_a_watch_left_at_home_does_not_hold_the_departure_the_phone_showed(tmp_p
     cycle()
     states[APP] = _tracker("not_home", 51.54, 30)
     assert cycle() == ("away", "gps", APP, LEFT)
+
+
+def test_a_quiet_person_whose_phone_joined_a_neighbours_wifi_is_away(tmp_path, monkeypatch):
+    # The house's network from a router client (a TV), not the person's own phone.
+    states, cycle = _house(tmp_path, monkeypatch, wifi_view={"assigned": {}, "candidates": {
+        "device_tracker.tv": {"home": True, "ap": "ap1", "mac": "bb", "ssid": "djc-wifi"}}})
+    # Eilee's fix: 160 m out, under gps_leave_m once accuracy is taken off, so GPS alone holds her in.
+    states[APP] = _tracker("not_home", 51.50145, 60)
+    ssids = [("djc-wifi", time.time() - 600)]
+    monkeypatch.setattr(sextant, "_phone_ssids", lambda *a: ssids)
+    assert cycle()[0] == "Kitchen"   # on the house's network: held
+    ssids[:] = [("BigMutts guest", time.time() - 30)]
+    state, _, _, events = cycle()
+    assert state == "away" and events == LEFT

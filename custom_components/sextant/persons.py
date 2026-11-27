@@ -606,9 +606,11 @@ def ssid_left(ssids, last_heard, home_ssids) -> bool:
     router's clients are on now, so none (no router integration) says nothing.
     No network (cellular) is no word either: a phone drops Wi-Fi in the house too."""
     heard = valid_time(last_heard)
-    if not home_ssids or heard is None:
+    # Compared loosely: a router and a phone spelling one network two ways must not read as gone.
+    home = {h.strip().casefold() for h in home_ssids or () if isinstance(h, str)}
+    if not home or heard is None:
         return False
-    return any(isinstance(s, str) and s.strip().lower() not in _NO_SSID and s not in home_ssids
+    return any(isinstance(s, str) and s.strip().casefold() not in _NO_SSID | home
                and valid_time(t) is not None and t > heard for s, t in ssids or ())
 
 
