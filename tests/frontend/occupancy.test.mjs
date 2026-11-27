@@ -241,3 +241,29 @@ test("confidenceLevel turns a confidence into a word and a crosshairs icon", asy
   assert.equal(confidenceLevel(null), null);
   assert.equal(confidenceLevel(NaN), null);
 });
+
+import { joinRepeats, modeStays } from "../../custom_components/sextant/frontend/sextant-occupancy-data.js";
+
+test("back-to-back repeats of one move are one row", () => {
+  const v = (start, end, name = "Willow", from = "Jack's Room") => ({ name, from, room: "Catwalk", floor: "Second", start, end });
+  const rows = joinRepeats([v(500, 560, "Meg", null), v(400, 450), v(200, 260), v(100, 130, "Meg", null), v(50, 60)]);
+  assert.deepEqual(rows.map((r) => [r.name, r.count, r.start, r.first, r.total]),
+    [["Meg", 1, 500, 500, 60], ["Willow", 2, 400, 200, 110], ["Meg", 1, 100, 100, 30], ["Willow", 1, 50, 50, 10]]);
+  // Another room or another "from" is another row.
+  assert.equal(joinRepeats([v(400, 450), v(200, 260, "Willow", "Foyer")]).length, 2);
+  // A mode row only joins the same mode.
+  assert.equal(joinRepeats([{ room: "A", floor: "F", mode: "Sleep", start: 5, end: 6 }, { room: "A", floor: "F", mode: "TV", start: 1, end: 2 }]).length, 2);
+});
+
+test("mode spells from a mode entity's history", () => {
+  // An on/off entity reads as its label while on; a short unavailable spell does not split it.
+  const sleep = modeStays([{ s: "off", lu: 0 }, { s: "on", lu: 100 }, { s: "unavailable", lu: 200 }, { s: "on", lu: 213 }, { s: "off", lu: 900 }], "Sleep", false, 1000);
+  assert.deepEqual(sleep.map((s) => [s.mode, s.start, s.end, !!s.ongoing]), [["Sleep", 100, 900, false]]);
+  // Still on: ongoing to now. With no label it reads "on".
+  assert.deepEqual(modeStays([{ s: "on", lu: 10 }], null, false, 50).map((s) => [s.mode, s.end, s.ongoing]), [["on", 50, true]]);
+  // A dropdown's option is the mode as it is, "Idle" too; another entity's own state ("gaming") likewise.
+  assert.deepEqual(modeStays([{ s: "Movie", lu: 0 }, { s: "Idle", lu: 60 }], null, true, 100).map((s) => s.mode), ["Movie", "Idle"]);
+  assert.deepEqual(modeStays([{ s: "idle", lu: 0 }, { s: "Gaming", lu: 60 }], "X", false, 100).map((s) => s.mode), ["Gaming"]);
+  // A long outage ends the mode.
+  assert.deepEqual(modeStays([{ s: "on", lu: 0 }, { s: "unavailable", lu: 100 }, { s: "on", lu: 400 }], "Sleep", false, 500).map((s) => [s.start, s.end]), [[0, 100], [400, 500]]);
+});
