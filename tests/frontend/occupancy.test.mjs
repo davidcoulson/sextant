@@ -219,6 +219,7 @@ test("clockAt says the day when it is not today, and a room carries its since", 
   const now = new Date(2026, 10, 27, 9, 0).getTime() / 1000;
   assert.doesNotMatch(clockAt(now - 3600, now), /Yesterday/);
   assert.match(clockAt(now - 86400, now), /^Yesterday /);
+  assert.doesNotMatch(clockAt(now - 10 * 3600, now), /Yesterday/);   // 11 PM last night, at 9 AM
   const out = occupancyByFloor({ "binary_sensor.a": st("on", "A", "F", { since: "2026-11-27T08:00:00+00:00" }), "binary_sensor.b": st("off", "B", "F", { since: "garbage" }) }, []);
   assert.equal(out[0].rooms.find((r) => r.room === "A").since, Date.parse("2026-11-27T08:00:00+00:00") / 1000);
   assert.equal(out[0].rooms.find((r) => r.room === "B").since, null);

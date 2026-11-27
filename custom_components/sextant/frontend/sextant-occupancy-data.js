@@ -171,11 +171,12 @@ export function subjectHistory(people, subject, limit = 100) {
   return rows.sort((a, b) => b.start - a.start || a.name.localeCompare(b.name)).slice(0, limit);
 }
 
-/** A time of day for a history row; "yesterday" or the weekday when it is not today. */
+/** A time of day for a history row. Within the last 24 hours a clock time names one moment, so it needs no
+ *  day ("11:50 PM" at 6 AM is last night); older (a stay begun before the window) says "Yesterday" or the weekday. */
 export function clockAt(t, now = Date.now() / 1000) {
   const d = new Date(t * 1000), n = new Date(now * 1000);
   const hm = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  if (d.toDateString() === n.toDateString()) return hm;
+  if (now - t < 86400) return hm;
   const y = new Date(n); y.setDate(n.getDate() - 1);
   return `${d.toDateString() === y.toDateString() ? "Yesterday" : d.toLocaleDateString([], { weekday: "short" })} ${hm}`;
 }
