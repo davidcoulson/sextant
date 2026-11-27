@@ -128,6 +128,11 @@ test("Life360: a tracker gives driving and its place or address", () => {
   // Life360 adds the circle's name; the card drops it.
   st["device_tracker.j"] = loc("not_home", { driving: false, address: "Main St, Ohio", place: "Nana & Papa's House (Bauer Coulson)" });
   assert.equal(whereRows(st, [e], NOW)[0].where, "Nana & Papa's House");
+  // Only Life360's (it has a driving flag); a place that is not text falls back to the address.
+  st["device_tracker.j"] = loc("not_home", { address: "Main St, Ohio", place: "Library (West Wing)" });
+  assert.equal(whereRows(st, [e], NOW)[0].where, "Library (West Wing)");
+  st["device_tracker.j"] = loc("not_home", { driving: false, address: "Main St, Ohio", place: 123 });
+  assert.equal(whereRows(st, [e], NOW)[0].where, "Main St, Ohio");
   // The editor: no Companion app sensors on the Life360 device, so the tracker fills both keys.
   assert.deepEqual(withPerson(st, "sensor.j_sextant_person_location", { "device_tracker.j": { device_id: "L" } }),
     { entity: "sensor.j_sextant_person_location", activity: "device_tracker.j", place: "device_tracker.j" });

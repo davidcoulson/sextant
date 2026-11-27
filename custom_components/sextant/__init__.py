@@ -4939,7 +4939,7 @@ async def _restore_runtime(hass):
     # room and spot elections - which is exactly what used to happen to every
     # restored thing on the first cycle after a restart, a second after the
     # restore had put it all back.
-    _restore_floor_elections(back["floors"])
+    _restore_floor_elections(back["floors"], gap=back["age"] or 0.0)
     if back["age"] is None:
         _LOGGER.info("No saved state to resume from; starting cold")
     elif back["kf"] or back["zone"]:
@@ -4965,8 +4965,10 @@ def _thing_floors():
     return update_trilateration_and_zone.last_floor
 
 
-def _restore_floor_elections(saved):
-    """Put back each thing's elected floor, its tenure and its probabilities."""
+def _restore_floor_elections(saved, gap=0.0):
+    """Put back each thing's elected floor, its tenure, its probabilities and any
+    challenger's clock, moved on by ``gap`` (the downtime): nothing was heard then,
+    so it must not count as a lead held."""
     last_floor = _thing_floors()
     for entity, state in (saved or {}).items():
         if not isinstance(state, dict):
@@ -4983,8 +4985,8 @@ def _restore_floor_elections(saved):
         # The challenger's clock: without it a code reload restarted every floor change in progress.
         ch = state.get("challenge")
         if isinstance(ch, dict) and isinstance(ch.get("floor"), str) and isinstance(ch.get("led"), (int, float)):
-            _floor_challenge[entity] = {"floor": ch["floor"], "led": float(ch["led"]),
-                                        **({"since": float(ch["since"])} if isinstance(ch.get("since"), (int, float)) else {})}
+            _floor_challenge[entity] = {"floor": ch["floor"], "led": float(ch["led"]) + gap,
+                                        **({"since": float(ch["since"]) + gap} if isinstance(ch.get("since"), (int, float)) else {})}
 
 
 def _floor_elections():

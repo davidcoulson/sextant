@@ -99,7 +99,8 @@ export function whereRows(states, entries, now) {
       // A geocoder's town and state; a Life360 tracker's named place, else its street and state.
       place = [g.Locality ?? g.locality, g["Administrative Area"] ?? g.administrative_area ?? g.admin_area].filter((x) => x && x !== "N/A").join(", ")
         // Life360 lagging at its home place: not a place to show. Its places end in " (<circle name>)": dropped.
-        || (gs?.state !== "home" && g.place?.replace(/\s*\([^()]*\)$/, "")) || g.address || "";
+        || (gs?.state !== "home" && typeof g.place === "string" && ("driving" in g ? g.place.replace(/\s*\([^()]*\)$/, "") : g.place))
+        || g.address || "";
       place ||= null;
       where = zone || (moving ? `${moving.label}${place ? ` near ${place}` : ""}` : place || "Away");
     } else where = room || title(st.state);
