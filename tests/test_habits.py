@@ -130,3 +130,9 @@ def test_a_floor_name_with_a_bar_gets_its_own_share():
     _spend(s, "m", "West|Upper|Bed", MON_7AM, 30 * 60)
     f = habits.floor_factors(s, "m", ["West", "West|Upper"], MON_7AM + 30 * 60, 1.0, timezone.utc)
     assert f["West|Upper"] > 0.99 and f["West"] == habits.FLOOR_FLOOR_SHARE
+
+
+def test_running_pauses_are_the_live_ones_soonest_first():
+    layout = {"habit_pauses": [{"until": 90.0}, {"until": 10.0}, {"until": 50.0, "things": ["m"]}, {"until": True}, "x"]}
+    assert [p["until"] for p in habits.running_pauses(layout, 20)] == [50.0, 90.0]
+    assert habits.running_pauses({}, 0) == [] and habits.running_pauses({"habit_pauses": "x"}, 0) == []

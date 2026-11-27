@@ -236,6 +236,11 @@ alongside the room's motion and media sensors.
 and `pets_home` the pets, kept apart (a cat may be a person to Home
 Assistant, but not to this count).
 
+`sensor.sextant_habit_pauses` counts the habit pauses running
+(`sextant.pause_habits`, for a holiday: see [positioning](positioning.md)),
+with `pauses` listing each one's end and what it covers and `until` the
+last end; 0 means the routines are in use.
+
 [Recipes](recipes.md) has automations and cards built on all of this.
 
 ## Map card

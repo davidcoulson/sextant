@@ -126,6 +126,14 @@ def paused(layout, ent: str, now: float) -> bool:
     return False
 
 
+def running_pauses(layout, now: float) -> list:
+    """The pauses not over yet, soonest end first: what the habit pauses sensor shows."""
+    pauses = (layout or {}).get("habit_pauses") if isinstance(layout, dict) else None
+    live = [p for p in pauses if isinstance(p, dict) and isinstance(p.get("until"), (int, float))
+            and not isinstance(p.get("until"), bool) and p["until"] > now] if isinstance(pauses, list) else []
+    return sorted(live, key=lambda p: p["until"])
+
+
 FLOOR_FLOOR_SHARE = 0.05   # a floor it is never on at this hour still counts this much: rare is not impossible
 
 

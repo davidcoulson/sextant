@@ -82,7 +82,7 @@ from .storage import (
     migrate_legacy,
     save_layout,
 )
-from .const import ACCURACY_ENTITY_ID, HOUSEHOLD_FLOOR_ENTITY_ID, PEOPLE_HOME_ENTITY_ID, UNTRACKED_ENTITY_ID
+from .const import ACCURACY_ENTITY_ID, HABIT_PAUSES_ENTITY_ID, HOUSEHOLD_FLOOR_ENTITY_ID, PEOPLE_HOME_ENTITY_ID, UNTRACKED_ENTITY_ID
 from . import history as history_mod
 from . import habits as habits_mod
 from . import bermuda_source
@@ -5910,6 +5910,10 @@ def _update_room_sensors(hass):
     update_sextant_sensor_state(hass, PEOPLE_HOME_ENTITY_ID, count, attrs)
     update_sextant_sensor_state(hass, HOUSEHOLD_FLOOR_ENTITY_ID, *rooms_mod.household_floor(
         attrs["home"], person_floors))
+    pauses = [{"until": datetime.fromtimestamp(p["until"], _local_tz).isoformat(timespec="seconds"),
+               **{k: p[k] for k in ("things", "classes") if p.get(k)}} for p in habits_mod.running_pauses(layout, time.time())]
+    update_sextant_sensor_state(hass, HABIT_PAUSES_ENTITY_ID, len(pauses),
+                                {"pauses": pauses, "until": pauses[-1]["until"] if pauses else None})
 
 
 def _restoring(sensor, sensed, now):

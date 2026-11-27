@@ -9,7 +9,7 @@ import logging
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.restore_state import RestoreEntity
 
-from .const import ACCURACY_ENTITY_ID, FIT_ATTRIBUTES, GLOBAL_ENTITY_IDS, HOUSEHOLD_FLOOR_ENTITY_ID, PEOPLE_HOME_ENTITY_ID, UNTRACKED_ENTITY_ID  # single source of truth (shared with __init__)
+from .const import ACCURACY_ENTITY_ID, FIT_ATTRIBUTES, GLOBAL_ENTITY_IDS, HABIT_PAUSES_ENTITY_ID, HOUSEHOLD_FLOOR_ENTITY_ID, PEOPLE_HOME_ENTITY_ID, UNTRACKED_ENTITY_ID  # single source of truth (shared with __init__)
 from . import bermuda_source
 
 _LOGGER = logging.getLogger(__name__)
@@ -482,6 +482,20 @@ class SextantHouseholdFloorSensor(SextantPeopleHomeSensor):
         self._attrs = {"floors": {}, "unplaced": []}
 
 
+class SextantHabitPausesSensor(SextantPeopleHomeSensor):
+    """How many habit pauses are running (sextant.pause_habits); ``pauses`` lists each
+    one's end and what it covers, ``until`` is when the last one ends."""
+
+    _attr_icon = "mdi:calendar-remove"
+
+    def __init__(self):
+        super().__init__()
+        self._attr_name = "Habit Pauses"
+        self._attr_unique_id = "sextant_habit_pauses"
+        self.entity_id = HABIT_PAUSES_ENTITY_ID
+        self._attrs = {"pauses": [], "until": None}
+
+
 class SextantAccuracySensor(SensorEntity):
     # Pushed by the positioning cycle; there is nothing for Home Assistant to poll.
     _attr_should_poll = False
@@ -748,6 +762,10 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         household = SextantHouseholdFloorSensor()
         hass.data["sextant_sensors"][HOUSEHOLD_FLOOR_ENTITY_ID] = household
         new_sensors.append(household)
+    if HABIT_PAUSES_ENTITY_ID not in hass.data["sextant_sensors"]:
+        pauses = SextantHabitPausesSensor()
+        hass.data["sextant_sensors"][HABIT_PAUSES_ENTITY_ID] = pauses
+        new_sensors.append(pauses)
     for entity in entities:
         ensure_sensors_for_entity(hass, entity, hass.data["sextant_sensors"], new_sensors)
     # A battery sensor already made comes back now, with its last level, not at the tag's next advert:
