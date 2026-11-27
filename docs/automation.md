@@ -247,9 +247,9 @@ habit pulls use) is on its floor, room and spot sensors: `usual_floor` on
 `usual_floor`, `usual_room` and `usual_spot` on `_sextant_spot`; each with
 `usual_share`, the fraction of this hour's time it spends there (a spot's
 is of all the hour, so it is at most the room's). They are left out while
-the hour has under about 20 minutes of history and while a habit pause
-covers the thing, and they stay on while the thing is away, so "the dog
-is usually upstairs now" can be checked against where it is.
+the hour has under about 20 minutes of history, while a habit pause
+covers the thing and while it is away, so "the dog is usually upstairs
+now" can be checked against where it is.
 
 [Recipes](recipes.md) has automations and cards built on all of this.
 

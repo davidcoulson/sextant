@@ -196,3 +196,12 @@ def test_usual_attributes_for_the_sensors_and_none_while_paused(monkeypatch):
     assert sp == {"usual_floor": "Second", "usual_room": "Bed", "usual_spot": "Pillow", "usual_share": 0.5}
     layout["habit_pauses"] = [{"until": now + 60}]
     assert core._usual_attrs(layout, "meg", now) == ({}, {}, {})
+
+
+def test_review_spots_need_their_room_and_stored_junk_is_dropped():
+    floors = ["Second"]
+    row = {"at": MON_7AM, "z": {"Second|Hall": 3000.0, "Second|Bed": 600.0},
+           "s": {habits.spot_key("Second|Gone", "Pillow"): 2000.0, habits.spot_key("Second|Bed", "Rug"): 900.0}}
+    u = habits.usual({"m": {"wd7": row}}, "m", MON_7AM, floors, timezone.utc)
+    assert u["spot"] == ("Second", "Bed", "Rug", round(600 / 3600, 2))      # its room's evicted spot is out; capped at the room
+    assert habits.clean({"p": {"wd7": {"at": 1, "z": {"A": 5, "B": 10 ** 400}, "s": {"x": 10 ** 400}}}}) == {"p": {"wd7": {"at": 1.0, "z": {"A": 5.0}}}}

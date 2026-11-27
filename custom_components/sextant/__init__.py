@@ -579,7 +579,7 @@ _zone_state = {}
 _shut_in = {}   # entity -> (floor, room) it was in when that room's door shut
 _habits = habits_mod.new_store()   # where each thing usually is, by day type and hour (habits.py)
 _habits_last = {}                   # entity -> when it was last counted into _habits
-_habits_spot_last = {}              # entity -> when its spot was last counted
+_habits_step = {}                   # entity -> (when, since, room key): the step just counted into its room
 _local_tz = None                    # the house's time zone, for the hour of the day
 HABIT_CONFIDENT_SHARE = 0.8         # an election counts toward the habits only when this sure
 _subzone_state = {}
@@ -3262,13 +3262,11 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
             _floor_sub_zone_polygons(hass, new_global_data, entity, lowest_floor_name), scale, layout, now=now,
             fp=elected.get("fp"),
         )
-        # Spot habits: only where the room itself is sure, as for the rooms (_elect_zone).
-        if (sub_zone and sub_zone != "unknown" and not is_outside
-                and ((_zone_state.get(entity) or {}).get("probs") or {}).get(zone, 0.0) >= HABIT_CONFIDENT_SHARE
-                and not habits_mod.paused(layout, entity, now)):
-            habits_mod.learn(_habits, entity, habits_mod.spot_key(_habit_zone(lowest_floor_name, zone), sub_zone),
-                             now, _habits_spot_last.get(entity), _local_tz, field="s")
-        _habits_spot_last[entity] = now
+        # Spot habits: the same step _elect_zone just counted into this spot's room, and only then.
+        step = _habits_step.pop(entity, None)
+        if (step and step[0] == now and step[2] == _habit_zone(lowest_floor_name, zone)
+                and sub_zone and sub_zone != "unknown" and not is_outside):
+            habits_mod.learn(_habits, entity, habits_mod.spot_key(step[2], sub_zone), now, step[1], _local_tz, field="s")
         row = {
                 "ent": entity,
                 "cords": [avg_x, avg_y],
@@ -3590,11 +3588,11 @@ async def prune_stale_positions(hass):
         gone = _presence_attrs((_last_seen.get(ent) or {}).get("updated"), now, layout if isinstance(layout, dict) else {})
         _presence_published[ent] = gone["presence"]
         loc_state, loc_attrs = _location_state("unknown", "unknown", "unknown", "unknown")
-        u_floor, u_room, u_spot = _usual_attrs(layout if isinstance(layout, dict) else {}, ent, now)
-        update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_room", "unknown", {"area_id": None, **gone, **u_room})
-        update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_floor", "unknown", {**gone, **u_floor})
+        # No usual_* here: only presence is patched while it is away, so they would freeze at this hour.
+        update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_room", "unknown", {"area_id": None, **gone})
+        update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_floor", "unknown", dict(gone))
         update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_nearest_room", "unknown", dict(gone))
-        update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_spot", "unknown", {"room": "unknown", **gone, **u_spot})
+        update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_spot", "unknown", {"room": "unknown", **gone})
         update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_location", loc_state, {**loc_attrs, **gone})
 
 # How long a slug Bermuda no longer tracks keeps its settings before the
@@ -6816,6 +6814,7 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
             return az, False, speed
     if best == incumbent and probs[best] >= HABIT_CONFIDENT_SHARE and not habits_mod.paused(layout, entity, now):
         habits_mod.learn(_habits, entity, _habit_zone(floor_name, incumbent), now, _habits_last.get(entity), _local_tz)
+        _habits_step[entity] = (now, _habits_last.get(entity), _habit_zone(floor_name, incumbent))
     _habits_last[entity] = now
 
     # 3b. Lock and unlock.

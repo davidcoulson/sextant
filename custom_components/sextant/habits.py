@@ -64,7 +64,7 @@ def _clean_secs(raw) -> dict:
     if not isinstance(raw, dict):
         return {}
     good = {z: float(s) for z, s in list(raw.items())[:4 * MAX_ZONES_PER_SLOT]
-            if isinstance(z, str) and isinstance(s, (int, float)) and not isinstance(s, bool) and math.isfinite(s) and s > 0}
+            if isinstance(z, str) and isinstance(s, (int, float)) and not isinstance(s, bool) and 0 < s < 1e12 and math.isfinite(s)}
     return dict(sorted(good.items(), key=lambda kv: -kv[1])[:MAX_ZONES_PER_SLOT])
 
 
@@ -185,12 +185,17 @@ def usual(store: dict, ent: str, now: float, floors, tz=None) -> dict:
         k = max(rooms, key=rooms.get)
         f = _floor_of(k, floors)
         out["room"] = (f, k[len(f) + 1:], round(rooms[k] / total, 2))
-    spots = {k: v for k, v in (row.get("s") or {}).items() if SPOT_SEP in k and _floor_of(k, floors) is not None}
+    # A spot counts only while its room is still in the slot, and at most the room's time: the two are trimmed apart.
+    spots = {}
+    for k, v in (row.get("s") or {}).items():
+        room_key, _, spot = k.partition(SPOT_SEP)
+        if spot and room_key in rooms:
+            spots[k] = min(v, rooms[room_key])
     if spots:
         k = max(spots, key=spots.get)
-        room_key, spot = k.split(SPOT_SEP, 1)
+        room_key, _, spot = k.partition(SPOT_SEP)
         f = _floor_of(room_key, floors)
-        out["spot"] = (f, room_key[len(f) + 1:], spot, round(min(1.0, spots[k] / total), 2))
+        out["spot"] = (f, room_key[len(f) + 1:], spot, round(spots[k] / total, 2))
     return out
 
 
