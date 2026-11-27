@@ -170,9 +170,11 @@ needs no state to compare:
 `time` is the tracker's `arrived_at` or `departed_at`, and `people_home` is
 who is home after the change. "Everyone" is whoever was home: someone away
 for the term does not hold `sextant_everyone_left` up. Pets make no events,
-and neither does a person just added. Nothing fires in the first five
-minutes after a restart, while the GPS and Wi-Fi trackers load; a change
-that happened across the restart fires once that has passed.
+and neither does a person just added. In the first five minutes after a
+restart or reload, while the GPS and Wi-Fi trackers load, only an arrival
+on BLE or GPS fires (so the garage still opens). Departures, Wi-Fi
+arrivals and room events wait, and a change that happened across the
+restart fires once that time has passed.
 
 ```yaml
 triggers:

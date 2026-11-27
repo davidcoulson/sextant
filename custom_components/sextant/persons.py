@@ -747,6 +747,22 @@ def visit_events(before, after, pets=()) -> list:
     return out
 
 
+def early_arrivals(before, after, sources=("ble", "gps")):
+    """``before`` with the arrivals in ``after`` that BLE or GPS carries: what
+    may fire while the events settle after a start, so a reload mid-drive does
+    not hold the garage for five minutes. A router keeps a client "home" for
+    minutes and the Wi-Fi gate is off then, so a Wi-Fi arrival, and every
+    departure, still waits for the settle to end."""
+    def is_home(v):
+        return isinstance(v, dict) and valid_time(v.get("arrived")) is not None
+
+    out = dict(before)
+    for p, v in after.items():
+        if p in before and is_home(v) and not is_home(before[p]) and v.get("via") in sources:
+            out[p] = v
+    return out
+
+
 def room_changes(baseline, pending, now, pets=()):
     """``(baseline, pending, events)`` for ``sextant_person_room_changed``.
 
