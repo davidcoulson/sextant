@@ -349,6 +349,14 @@ Drag to pan, scroll, pinch or use **+**/**−** to zoom (past the map's last til
 
 ## Occupancy tab
 
-A read-only page beside Live: floors stacked top to bottom, a tile per room (rooms with something going on first, then the empty ones as small tiles, each group alphabetical) with the people and pets in it and an icon in its corner for why the room is on (Bluetooth, media playing, radar, door held; hover for the name; see [How occupancy works](occupancy.md)). Dashed tiles are pets only. It reads the room sensors, so it follows them live.
+A read-only page beside Live: floors stacked top to bottom, and on each floor a row per room with something going on (alphabetical), then one line naming the empty ones ("Empty: Gillian's Room"; "Nobody:" when the whole floor is empty). A row shows the room's name, its mode if it has one ("Sleep"), the people and pets in it as chips, and icons for why the room is on (Bluetooth, media playing, radar, door held; hover for the name; see [How occupancy works](occupancy.md)). The row's left edge says what kind of on it is: solid for people, faint for pets only, orange (with a tinted row) for a room in a mode. On a wider screen each room fits one line, with the time it last turned on or off; on a phone the chips sit under the name. It reads the room sensors, so it follows them live.
 
-A person's chip shows their first name (the full name is in the details), and a chip names the spot when the person or pet is in one ("Fry · Meg's Cafe"). Hover a chip, or tap it on a phone, for the details: room, spot, floor, confidence, how long ago it was heard, the source (Bluetooth, Wi-Fi or GPS) and, for Bluetooth, the receivers hearing it now with their distances. Tap again, tap elsewhere or press Escape to close.
+A person's chip shows their first name (the full name is in the details), and a chip names the spot when the person or pet is in one ("Meg · Cafe"). With a mouse, hover a chip for the details: room, spot, floor, how long they have been there, what tracks them, confidence and how long ago they were heard.
+
+**History.** Tap or click a person's or pet's chip, a room's name (empty ones too) or a floor's name to see the last 24 hours of it, newest first:
+
+- a person or pet: their details as above, then each room they were in, when they arrived and how long they stayed ("Not placed" while Sextant had no room for them);
+- a room: who was in it, when and for how long;
+- a floor: who was on it, in which room, when and for how long.
+
+The current stay reads "now". On a phone the history comes up from the bottom of the screen; on a wider screen it opens on the right. Close it with the cross, by tapping outside it or with Escape. It comes from Home Assistant's own history of each person's and pet's room and floor sensors (`sensor.<person>_sextant_person_room` and `_floor`, `sensor.<pet>_sextant_pet_room` and `_floor`), so anyone who can open the panel can read it, and it is only there for sensors the recorder keeps. A stay that began before the 24 hours shows from the start of the window.

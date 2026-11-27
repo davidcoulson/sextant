@@ -290,5 +290,6 @@ every room would go off and back on. Instead:
 - [Edit](edit.md#mmwave-sensors): placing mmWave radars and presence
   sensors.
 - [Live](live.md#occupancy-tab): the Occupancy tab, which shows every room
-  and why it is on.
+  and why it is on. Tap a person, pet, room or floor there for its last 24
+  hours: who was where, when and for how long.
 - [Tuning](tuning.md): changing the defaults.

@@ -154,3 +154,57 @@ test("rooms with activity come first, then empty ones, each alphabetical", () =>
   const out = occupancyByFloor({ "binary_sensor.a": st("off", "Attic", "G"), "binary_sensor.b": st("on", "Study", "G"), "binary_sensor.c": st("off", "Den", "G", { mode: "Movie" }), "binary_sensor.d": st("on", "Hall", "G"), "binary_sensor.e": st("off", "Bath", "G") }, []);
   assert.deepEqual(out[0].rooms.map((r) => r.room), ["Den", "Hall", "Study", "Attic", "Bath"]);
 });
+
+test("trackedPeople finds each person's or pet's room and floor sensors", async () => {
+  const { trackedPeople } = await import("../../custom_components/sextant/frontend/sextant-occupancy-data.js");
+  const states = {
+    "person.michelle": { state: "home", attributes: { friendly_name: "Michelle" } },
+    "sensor.michelle_sextant_person_room": { state: "Master Bedroom" },
+    "person.meg": { state: "home", attributes: { friendly_name: "Meg" } },
+    "sensor.meg_sextant_pet_room": { state: "Catwalk" },
+    "person.guest": { state: "not_home", attributes: {} },
+  };
+  assert.deepEqual(trackedPeople(states), [
+    { name: "Meg", pet: true, room: "sensor.meg_sextant_pet_room", floor: "sensor.meg_sextant_pet_floor" },
+    { name: "Michelle", pet: false, room: "sensor.michelle_sextant_person_room", floor: "sensor.michelle_sextant_person_floor" },
+  ]);
+});
+
+test("staysFromHistory joins room and floor changes into stays, one move per cycle", async () => {
+  const { staysFromHistory } = await import("../../custom_components/sextant/frontend/sextant-occupancy-data.js");
+  const room = [{ s: "Great Room", lu: 100 }, { s: "Great Room", lu: 150 }, { s: "Master Bedroom", lu: 200.5 }, { s: "unavailable", lu: 400 }, { s: "Master Bedroom", lc: 500, lu: 510 }];
+  const floor = [{ s: "Ground Floor", lu: 100 }, { s: "Second Floor", lu: 200 }];
+  assert.deepEqual(staysFromHistory(room, floor, 1000), [
+    { start: 100, end: 200, room: "Great Room", floor: "Ground Floor" },
+    { start: 200, end: 400, room: "Master Bedroom", floor: "Second Floor" },
+    { start: 400, end: 500, room: null, floor: "Second Floor" },
+    { start: 500, end: 1000, room: "Master Bedroom", floor: "Second Floor" },
+  ]);
+  // A floor change a moment before the room flips back is not a stay of its own.
+  assert.deepEqual(staysFromHistory([{ s: "A", lu: 0 }, { s: "A", lu: 10.5 }], [{ s: "F", lu: 0 }, { s: "G", lu: 10 }, { s: "F", lu: 11 }], 50),
+    [{ start: 0, end: 50, room: "A", floor: "F" }]);
+  assert.deepEqual(staysFromHistory(undefined, undefined, 5), []);
+});
+
+test("subjectHistory lists a person's stays, or everyone's in a room or on a floor, newest first", async () => {
+  const { subjectHistory } = await import("../../custom_components/sextant/frontend/sextant-occupancy-data.js");
+  const people = [
+    { name: "Michelle", pet: false, stays: [{ start: 100, end: 200, room: "Great Room", floor: "Ground" }, { start: 200, end: 300, room: null, floor: null }, { start: 300, end: 900, room: "Master Bedroom", floor: "Second" }] },
+    { name: "Meg", pet: true, stays: [{ start: 50, end: 400, room: "Master Bedroom", floor: "Second" }, { start: 400, end: 900, room: "Catwalk", floor: "Second" }] },
+  ];
+  assert.deepEqual(subjectHistory(people, { kind: "person", name: "Michelle" }).map((r) => r.room), ["Master Bedroom", null, "Great Room"]);
+  assert.deepEqual(subjectHistory(people, { kind: "room", room: "Master Bedroom", floor: "Second" }).map((r) => [r.name, r.start]), [["Michelle", 300], ["Meg", 50]]);
+  assert.deepEqual(subjectHistory(people, { kind: "room", room: "Master Bedroom", floor: "Ground" }), []);
+  assert.deepEqual(subjectHistory(people, { kind: "floor", floor: "Second" }).map((r) => r.room), ["Catwalk", "Master Bedroom", "Master Bedroom"]);
+  assert.equal(subjectHistory(people, { kind: "floor", floor: "Second" }, 1).length, 1);
+});
+
+test("clockAt says the day when it is not today, and a room carries its since", async () => {
+  const { clockAt } = await import("../../custom_components/sextant/frontend/sextant-occupancy-data.js");
+  const now = new Date(2026, 10, 27, 9, 0).getTime() / 1000;
+  assert.doesNotMatch(clockAt(now - 3600, now), /Yesterday/);
+  assert.match(clockAt(now - 86400, now), /^Yesterday /);
+  const out = occupancyByFloor({ "binary_sensor.a": st("on", "A", "F", { since: "2026-11-27T08:00:00+00:00" }), "binary_sensor.b": st("off", "B", "F", { since: "garbage" }) }, []);
+  assert.equal(out[0].rooms.find((r) => r.room === "A").since, Date.parse("2026-11-27T08:00:00+00:00") / 1000);
+  assert.equal(out[0].rooms.find((r) => r.room === "B").since, null);
+});

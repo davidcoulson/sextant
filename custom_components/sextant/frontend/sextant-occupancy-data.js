@@ -23,7 +23,7 @@ export function occupancyByFloor(states, planFloors) {
     if (!id.startsWith("binary_sensor.") || a.room == null || a.floor == null) continue;
     const key = `${a.floor}\u0000${a.room}`;
     if (a.people_only) people.set(key, s.state === "on");
-    else rooms.set(key, { room: a.room, floor: a.floor, on: s.state === "on", people: a.people || [], pets: a.pets || [], things: a.things || [], ids: a.ids || {}, sources: a.sources || [], mode: a.mode || null });
+    else rooms.set(key, { room: a.room, floor: a.floor, on: s.state === "on", people: a.people || [], pets: a.pets || [], things: a.things || [], ids: a.ids || {}, sources: a.sources || [], mode: a.mode || null, since: Date.parse(a.since) / 1000 || null });   // ISO; null when missing or unreadable
   }
   const byFloor = new Map();
   for (const [key, r] of rooms) {
@@ -89,6 +89,76 @@ export function chipDetail(states, name, ids, classes) {
     accessPoint: a.access_point || null, gpsAccuracy: a.gps_accuracy ?? null,
     heardAt: heard ? Date.parse(heard) : null,
   };
+}
+
+/** The people and pets with Sextant room sensors: {name, pet, room, floor} (entity ids), by name. */
+export function trackedPeople(states) {
+  states = states || {};
+  const out = [];
+  for (const [id, s] of Object.entries(states)) {
+    if (!id.startsWith("person.")) continue;
+    const slug = id.slice(7);
+    for (const kind of ["person", "pet"]) {
+      const room = `sensor.${slug}_sextant_${kind}_room`;
+      if (states[room]) { out.push({ name: s.attributes?.friendly_name || slug, pet: kind === "pet", room, floor: `sensor.${slug}_sextant_${kind}_floor` }); break; }
+    }
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// What a room or floor sensor reads while nobody knows where its person is.
+const NOWHERE = new Set(["unknown", "unavailable", "", "none"]);
+const changes = (rows) => (rows || []).map((r) => ({ t: r.lc ?? r.lu, v: NOWHERE.has(String(r.s ?? "").toLowerCase()) ? null : r.s })).filter((r) => typeof r.t === "number");
+
+/** One person's stays, [{start, end, room, floor}] oldest first, from Home Assistant's history
+ *  (history/history_during_period, compressed rows {s, lu, lc?}) of their room and floor sensors.
+ *  A stay is a run with the same room on the same floor; room null is "not placed". The last
+ *  stay runs to ``now``. */
+export function staysFromHistory(roomRows, floorRows, now) {
+  const ev = [...changes(roomRows).map((r) => ({ ...r, k: "room" })), ...changes(floorRows).map((r) => ({ ...r, k: "floor" }))].sort((a, b) => a.t - b.t);
+  const stays = [];
+  const cur = { room: null, floor: null };
+  for (const e of ev) {
+    cur[e.k] = e.v;
+    const last = stays[stays.length - 1];
+    if (last && last.room === cur.room && last.floor === cur.floor) continue;
+    // The room and floor sensors change in the same cycle, a moment apart: one move, not two.
+    if (last && e.t - last.start < 2) {
+      Object.assign(last, cur);
+      const prev = stays[stays.length - 2];
+      if (prev && prev.room === last.room && prev.floor === last.floor) { stays.pop(); prev.end = now; }
+      continue;
+    }
+    if (last) last.end = e.t;
+    stays.push({ start: e.t, end: now, room: cur.room, floor: cur.floor });
+  }
+  return stays;
+}
+
+/** The history rows for one subject, newest first: a person's or pet's own stays
+ *  ({kind: "person", name}), everyone's stays in a room ({kind: "room", room, floor}),
+ *  or on a floor ({kind: "floor", floor}). ``people`` is [{name, pet, stays}]. A room or
+ *  floor lists only placed stays; a person's list keeps "not placed" ones. */
+export function subjectHistory(people, subject, limit = 100) {
+  const rows = [];
+  for (const p of people || []) {
+    if (subject.kind === "person" && p.name !== subject.name) continue;
+    for (const s of p.stays || []) {
+      if (subject.kind === "room" && !(s.room === subject.room && s.floor === subject.floor)) continue;
+      if (subject.kind === "floor" && !(s.room && s.floor === subject.floor)) continue;
+      rows.push({ name: p.name, pet: p.pet, ...s });
+    }
+  }
+  return rows.sort((a, b) => b.start - a.start || a.name.localeCompare(b.name)).slice(0, limit);
+}
+
+/** A time of day for a history row; "yesterday" or the weekday when it is not today. */
+export function clockAt(t, now = Date.now() / 1000) {
+  const d = new Date(t * 1000), n = new Date(now * 1000);
+  const hm = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  if (d.toDateString() === n.toDateString()) return hm;
+  const y = new Date(n); y.setDate(n.getDate() - 1);
+  return `${d.toDateString() === y.toDateString() ? "Yesterday" : d.toLocaleDateString([], { weekday: "short" })} ${hm}`;
 }
 
 /** A person's chip label: the first word of their name, capitalised ("david coulson" -> "David"). */
