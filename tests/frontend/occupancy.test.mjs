@@ -279,3 +279,32 @@ test("review fixes: ongoing row, label spells, recent outage, mode entity", () =
   assert.equal(modeEntityOf("binary_sensor.a_asleep, switch.b"), "binary_sensor.a_asleep");
   assert.equal(modeEntityOf(null), null);
 });
+
+test("roomChip lists people before pets with their person pictures; lastOccupants finds the newest names", async () => {
+  const { roomChip, fmtFor, lastOccupants } = await import("../../custom_components/sextant/frontend/sextant-occupancy-data.js");
+  const states = {
+    "binary_sensor.kitchen_sextant_occupancy": { state: "on", attributes: { room: "Kitchen", people: ["Michelle Bauer"], pets: ["Socks"], mode: "Cooking", since: "2026-11-27T10:00:00+00:00" } },
+    "person.michelle_bauer": { state: "home", attributes: { entity_picture: "/api/image/m" } },
+  };
+  const r = roomChip(states, "binary_sensor.kitchen_sextant_occupancy");
+  assert.deepEqual(r.faces, [{ name: "Michelle Bauer", pet: false, picture: "/api/image/m" }, { name: "Socks", pet: true, picture: null }]);
+  assert.equal(r.on, true); assert.equal(r.mode, "Cooking"); assert.equal(r.since, Date.parse("2026-11-27T10:00:00Z") / 1000);
+  assert.equal(roomChip(states, "binary_sensor.nope"), null);
+  assert.deepEqual([fmtFor(59), fmtFor(720), fmtFor(5280), fmtFor(3 * 86400)], ["0m", "12m", "1h 28m", "3d"]);
+  assert.deepEqual(lastOccupants([{ a: { people: ["Jack"] } }, { a: { people: ["Michelle"], pets: ["Meg"] } }, { a: { people: [], pets: [] } }]), ["Michelle", "Meg"]);
+  assert.deepEqual(lastOccupants(undefined), []);
+});
+
+test("the room chip asks Strimmer for the person entities it finds at runtime", async () => {
+  // The card needs a DOM to load, so this checks its source: the ask must run on every hass update.
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../../custom_components/sextant/frontend/sextant-room-chip.js", import.meta.url), "utf8");
+  assert.match(src, /import \{[^}]*\baskStrimmer\b[^}]*\} from "\.\/sextant-occupancy-data\.js"/);
+  assert.match(src, /updated\(changed\) \{[^}]*if \(changed\.has\("hass"\)\) askStrimmer\(this\.hass\?\.connection\);/);
+});
+
+test("roomChip finds an accented name's person entity the way Home Assistant slugs it", async () => {
+  const { roomChip } = await import("../../custom_components/sextant/frontend/sextant-occupancy-data.js");
+  const states = { "binary_sensor.r": { state: "on", attributes: { people: ["José Silva"] } }, "person.jose_silva": { attributes: { entity_picture: "/p" } } };
+  assert.equal(roomChip(states, "binary_sensor.r").faces[0].picture, "/p");
+});

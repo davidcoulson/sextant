@@ -285,3 +285,31 @@ export function askStrimmer(conn) {
   ask();
   conn.addEventListener?.("ready", ask);
 }
+
+/** A room chip's facts from the room's sensor: faces (people first, with their person entity's picture),
+ *  when it last turned on or off, and the mode. Null when the sensor is missing. */
+export function roomChip(states, entity) {
+  const s = states?.[entity];
+  if (!s) return null;
+  const a = s.attributes || {};
+  const pic = (name) => states[`person.${String(name).normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "")}`]?.attributes?.entity_picture || null;
+  const faces = [...(a.people || []).map((name) => ({ name, pet: false })), ...(a.pets || []).map((name) => ({ name, pet: true }))]
+    .map((f) => ({ ...f, picture: pic(f.name) }));
+  return { room: a.room ?? entity, on: s.state === "on", faces, since: Date.parse(a.since) / 1000 || null, mode: a.mode || null };
+}
+
+/** A short how-long: "12m", "1h 28m", "3d". */
+export function fmtFor(seconds) {
+  const m = Math.max(0, Math.floor(seconds / 60));
+  return m < 60 ? `${m}m` : m < 1440 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${Math.floor(m / 1440)}d`;
+}
+
+/** Who was last in a room: the names in the newest recorder row that has any (rows oldest first). */
+export function lastOccupants(rows) {
+  for (let i = (rows?.length || 0) - 1; i >= 0; i--) {
+    const a = rows[i].a || rows[i].attributes || {};
+    const names = [...(a.people || []), ...(a.pets || [])];
+    if (names.length) return names;
+  }
+  return [];
+}
