@@ -92,10 +92,9 @@ pytest tests
 - `tools/brand/` builds the logo from the same compass rose the sidebar uses.
 - The panel is plain Lit modules under `custom_components/sextant/frontend/`
   with no build step. The backend registers the panel module with the
-  manifest version in its URL, so a page loaded before an update reloads
-  itself the next time it is in view, unless the editor holds unsaved
-  changes. It tries once per version; after that the banner offers a Reload
-  button.
+  manifest version in its URL, so a Live or Occupancy page loaded before an
+  update reloads itself the next time it is in view, once per version. Other
+  pages may hold a draft, so they offer a Reload button instead.
 
 Issues and pull requests are welcome on
 [davidcoulson/sextant](https://github.com/davidcoulson/sextant).
