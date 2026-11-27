@@ -38,7 +38,7 @@ def tracker_module(monkeypatch):
 
 def test_a_new_tracker_is_unknown_not_away(tracker_module):
     t = tracker_module.SextantPersonTracker("Primrose", "primrose", is_pet=True)
-    assert t.state is None   # unknown: person entities and state triggers ignore it
+    assert t.state is None   # unknown: person entities ignore it; a trigger needs not_from: unknown to
     assert t._attr_extra_state_attributes["presence"] is None
 
 
