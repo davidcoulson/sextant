@@ -84,7 +84,7 @@ export function whereRows(states, entries, now) {
     const pet = e.pet ?? (/_pet_location$/.test(e.entity) || PET_CLASSES.has(a.via_class));
     const room = BLANK.has(a.room) ? null : a.room;
     const floor = BLANK.has(a.floor) ? null : a.floor;
-    let where, away = false, zone = null, moving = null;
+    let where, away = false, zone = null, moving = null, place = null;
     if (!st || st.state === "unavailable") where = "Unavailable";
     else if (a.kind === "zone" || a.presence === "away") {
       away = true;
@@ -97,22 +97,29 @@ export function whereRows(states, entries, now) {
       const gs = e.place ? states?.[e.place] : null;
       const g = gs && !BLANK.has(gs.state) ? gs.attributes || {} : {};  // a dead geocoder keeps its last town
       // A geocoder's town and state; a Life360 tracker's named place, else its street and state.
-      const place = [g.Locality ?? g.locality, g["Administrative Area"] ?? g.administrative_area ?? g.admin_area].filter((x) => x && x !== "N/A").join(", ")
+      place = [g.Locality ?? g.locality, g["Administrative Area"] ?? g.administrative_area ?? g.admin_area].filter((x) => x && x !== "N/A").join(", ")
         || (gs?.state !== "home" && g.place) || g.address || "";  // Life360 lagging at its home place: not a place to show
+      place ||= null;
       where = zone || (moving ? `${moving.label}${place ? ` near ${place}` : ""}` : place || "Away");
     } else where = room || title(st.state);
     rows.push({
-      id: e.entity, name, pet, away, zone: !!zone, moving,
+      id: e.entity, name, pet, away, zone: !!zone, moving, place: zone ? null : place,
       picture: person?.attributes?.entity_picture || null,
       where, room: away ? null : room, spot: away ? null : (a.spot || null),
       floor: away ? null : floor,
-      stay: typeof a.since === "number" ? now - a.since : null,
+      // Away has no since: time since the sensor last changed, when they left or reached the zone.
+      stay: typeof a.since === "number" ? now - a.since : away && st?.last_changed ? now - Date.parse(st.last_changed) / 1000 : null,
       conf: typeof a.conf === "number" ? a.conf : null,
       level: away ? null : confLevel(a.conf),
       via: a.via_class || null, source: a.source || null,
     });
   }
   return rows;
+}
+
+/** The one most precise place for a row: its spot, room, floor, else "Home"; away keeps its away line. */
+export function preciseWhere(r) {
+  return r.away || r.where === "Unavailable" ? r.where : r.spot || r.room || r.floor || "Home";
 }
 
 /** Occupied rooms in order of first appearance, each with its rows and room mode. Away people are left out: away is not a room. */
