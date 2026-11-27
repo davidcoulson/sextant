@@ -138,7 +138,7 @@ class SextantOccupancy extends LitElement {
   }
 
   /** Where a person or pet is now, as a short summary: the place in large type, then small facts with icons.
-   *  The numbers behind "Sure" are in its tooltip, and written out under the facts when ``full`` (the history sheet,
+   *  The numbers behind "Confident" are in its tooltip, and written out under the facts when ``full`` (the history sheet,
    *  where a phone has no hover). */
   _details(d, pet = false, full = false) {
     if (!d) return html`<div class="hint">No Sextant location sensor found.</div>`;

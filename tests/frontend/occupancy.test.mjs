@@ -217,12 +217,12 @@ test("clockAt says the day when it is not today, and a room carries its since", 
   assert.equal(out[0].rooms.find((r) => r.room === "B").since, null);
 });
 
-test("confidenceLevel turns a confidence into a word and bars", async () => {
+test("confidenceLevel turns a confidence into a word and a target icon", async () => {
   const { confidenceLevel } = await import("../../custom_components/sextant/frontend/sextant-occupancy-data.js");
-  assert.equal(confidenceLevel(0.77).word, "Sure");
-  assert.equal(confidenceLevel(0.7).word, "Sure");
+  assert.equal(confidenceLevel(0.77).word, "Confident");
+  assert.equal(confidenceLevel(0.7).word, "Confident");
   assert.equal(confidenceLevel(0.53).word, "Likely");
-  assert.equal(confidenceLevel(0.1).icon, "mdi:signal-cellular-1");
+  assert.equal(confidenceLevel(0.1).icon, "mdi:crosshairs-question");
   assert.equal(confidenceLevel(null), null);
   assert.equal(confidenceLevel(NaN), null);
 });
