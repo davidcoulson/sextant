@@ -150,7 +150,10 @@ export function subjectHistory(people, subject, limit = 100) {
       // Outside keeps the floor it left from, but is on no floor.
       if (subject.kind === "floor" && !(s.room && s.room !== "Outside" && s.floor === subject.floor)) return;
       // ``from``: the room they came from, for "Great Room → Kitchen"; null when unplaced or the first stay.
-      rows.push({ name: p.name, pet: p.pet, from: p.stays[i - 1]?.room ?? null, ...s });
+      // The same room name on another floor says which floor, or it would read "Hall → Hall".
+      const prev = p.stays[i - 1];
+      const from = !prev?.room ? null : prev.room === s.room && prev.floor ? `${prev.room} (${prev.floor})` : prev.room;
+      rows.push({ name: p.name, pet: p.pet, from, ...s });
     });
   }
   return rows.sort((a, b) => b.start - a.start || a.name.localeCompare(b.name)).slice(0, limit);

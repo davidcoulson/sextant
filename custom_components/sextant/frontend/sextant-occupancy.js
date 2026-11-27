@@ -103,7 +103,8 @@ class SextantOccupancy extends LitElement {
     .now { padding: 10px 0 12px; margin-bottom: 4px; border-bottom: 1px solid var(--divider-color); }
     /* The history: a timeline, a ring on a line for each move, newest at the top. */
     .tl { position: relative; list-style: none; margin: 6px 0 0; padding: 0 0 0 22px; font-size: 14px; }
-    .tl::before { content: ""; position: absolute; left: 6px; top: 14px; bottom: 14px; width: 2px; border-radius: 1px; background: var(--divider-color); }
+    /* The line runs from each dot to the next one, so a wrapped last row has none hanging below its dot. */
+    .ev:not(:last-child)::after { content: ""; position: absolute; left: -16px; top: 24px; bottom: -12px; width: 2px; background: var(--divider-color); }
     .ev { position: relative; display: flex; align-items: baseline; gap: 10px; padding: 7px 0; }
     .ev::before { content: ""; position: absolute; left: -21px; top: 12px; width: 8px; height: 8px; border-radius: 50%;
       border: 2px solid var(--primary-color); background: var(--card-background-color); }

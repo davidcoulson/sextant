@@ -53,14 +53,17 @@ const AUTO_RELOAD_MODES = new Set(["live", "occupancy"]);
 /** Reload into the installed version. Home Assistant's service worker answers
  *  same-site files from its cache and refreshes that copy behind the scenes, so a
  *  plain reload brings the old panel back once more: drop Sextant's files first. */
-async function reloadFresh() {
-  try {
+async function reloadFresh(stillWanted = () => true) {
+  const mine = (req) => { const u = new URL(req.url); return u.origin === location.origin && u.pathname.startsWith("/sextant/"); };
+  const drop = (async () => {
     for (const name of await caches.keys()) {
       const cache = await caches.open(name);
-      for (const req of await cache.keys()) if (new URL(req.url).pathname.startsWith("/sextant/")) await cache.delete(req);
+      await Promise.allSettled((await cache.keys()).filter(mine).map((req) => cache.delete(req)));
     }
-  } catch { /* no Cache Storage (plain http): nothing cached there to drop */ }
-  window.location.reload();
+  })().catch(() => { /* no Cache Storage (plain http): nothing cached there to drop */ });
+  // A cache that never answers must not hold the reload back.
+  await Promise.race([drop, new Promise((r) => setTimeout(r, 3000))]);
+  if (stillWanted()) window.location.reload();
 }
 // Pages that change the layout, the things or Bermuda, or expose every
 // address the house hears: administrators only (the backend refuses the
@@ -159,7 +162,12 @@ class SextantPanel extends LitElement {
       if (sessionStorage.getItem("sextant.autoReloaded") === installed) return;
       sessionStorage.setItem("sextant.autoReloaded", installed);
     } catch { return; }
-    reloadFresh();
+    // Moved to a page with a draft while the cache was cleared: stay, and try again on the way back.
+    reloadFresh(() => {
+      if (this.isConnected && AUTO_RELOAD_MODES.has(this._mode)) return true;
+      try { sessionStorage.removeItem("sextant.autoReloaded"); } catch { /* reload offered by the banner */ }
+      return false;
+    });
   }
 
   async _load() {
@@ -258,7 +266,7 @@ class SextantPanel extends LitElement {
         ${this.hass?.user?.is_admin ? html`<button @click=${() => this._restartHa()}>Restart</button>` : nothing}</div>`;
     }
     if (installed && PANEL_VERSION && installed !== PANEL_VERSION) {
-      return html`<div class="banner update">Sextant ${installed} is installed; this page is still ${PANEL_VERSION}. <button @click=${reloadFresh}>Reload</button></div>`;
+      return html`<div class="banner update">Sextant ${installed} is installed; this page is still ${PANEL_VERSION}. <button @click=${() => reloadFresh()}>Reload</button></div>`;
     }
     return nothing;
   }
