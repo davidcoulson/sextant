@@ -3110,7 +3110,8 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
     switch_secs = _tuning(layout, "floor_switch_secs")
     # Shut in a room on this floor (_elect_zone forgets it when the door opens): no stairs
     # behind a shut door, so only a strong lead held for door_leave_secs moves it.
-    shut_in = incumbent is not None and (_shut_in.get(entity) or (None,))[0] == incumbent
+    # Only while still in that room: one let out into the hall may take the stairs.
+    shut_in = _floor_held_by_door(entity, incumbent)
     if shut_in:
         margin = max(margin, _tuning(layout, "door_floor_margin"))
         switch_secs = max(switch_secs, _tuning(layout, "door_leave_secs"))
@@ -6428,6 +6429,11 @@ def _update_floor_probabilities(entity, scores, valid_floors=None, now=None):
         for floor in probs:
             probs[floor] /= norm
     return dict(probs)
+
+
+def _floor_held_by_door(entity, floor):
+    """Whether the thing is still in the room it was shut in on this floor (see _shut_in)."""
+    return floor is not None and _shut_in.get(entity) == (floor, (_zone_state.get(entity) or {}).get("zone"))
 
 
 def _elect_floor(probs, incumbent, solved, challenge, now=None,

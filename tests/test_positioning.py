@@ -2963,3 +2963,17 @@ def test_a_thing_shut_in_keeps_its_floor_against_a_small_lead():
     for t in (0.0, 3600.0):
         floor, ch = sextant._elect_floor(probs, "Second", solved, ch, now=t, switch_secs=30.0, margin=0.25, scores=scores)
     assert floor == "Ground"
+
+
+def test_the_floor_is_held_only_while_still_in_the_shut_room():
+    """Codex review: one let out into the hall may take the stairs."""
+    sextant._shut_in.clear()
+    sextant._zone_state.clear()
+    sextant._shut_in["meg"] = ("Second", "Eilee")
+    sextant._zone_state["meg"] = {"zone": "Eilee"}
+    assert sextant._floor_held_by_door("meg", "Second")
+    assert not sextant._floor_held_by_door("meg", "Ground")
+    sextant._zone_state["meg"] = {"zone": "Hall"}
+    assert not sextant._floor_held_by_door("meg", "Second")
+    sextant._shut_in.clear()
+    sextant._zone_state.clear()
