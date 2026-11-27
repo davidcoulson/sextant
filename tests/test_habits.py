@@ -137,3 +137,62 @@ def test_running_pauses_are_the_live_ones_soonest_first():
     assert [p["until"] for p in habits.running_pauses(layout, 20)] == [50.0, 90.0]
     assert habits.running_pauses({"habit_pauses": [{"until": 1e20}]}, 0) == []   # hand-edited nonsense: not shown
     assert habits.running_pauses({}, 0) == [] and habits.running_pauses({"habit_pauses": "x"}, 0) == []
+
+
+def test_the_floor_prior_waits_for_an_hour_with_a_clear_floor():
+    s = habits.new_store()
+    _spend(s, "c", "Second|Bed", MON_7AM, 25 * 60)
+    _spend(s, "c", "Ground|Kitchen", MON_7AM + 25 * 60, 20 * 60)
+    now = MON_7AM + 45 * 60
+    assert habits.floor_factors(s, "c", ["Second", "Ground"], now, 0.2, timezone.utc, min_share=0.7) == {}   # 56% upstairs: a wanderer
+    assert habits.floor_factors(s, "c", ["Second", "Ground"], now, 0.2, timezone.utc, min_share=0.5) != {}
+
+
+def test_spots_are_learned_beside_rooms_kept_by_clean_and_fade_with_them():
+    s = habits.new_store()
+    bed = habits.spot_key("Second|Eilee's Room", "Bed")
+    _spend(s, "meg", "Second|Eilee's Room", MON_7AM, 40 * 60)
+    t = MON_7AM
+    while t < MON_7AM + 30 * 60:
+        habits.learn(s, "meg", bed, t + 30, t, timezone.utc, field="s")
+        t += 30
+    row = s["meg"]["wd7"]
+    assert abs(row["s"][bed] - 30 * 60) < 1 and "Bed" not in str(row["z"])
+    assert habits.clean(s)["meg"]["wd7"]["s"] == row["s"]
+    assert "s" not in habits.clean({"p": {"wd7": {"at": 1, "z": {"A": 5}, "s": "junk"}}})["p"]["wd7"]
+    spot0, room0 = row["s"][bed], row["z"]["Second|Eilee's Room"]
+    later = MON_7AM + 7 * 86400 + 60
+    habits.learn(s, "meg", "Second|Hall", later, later - 60, timezone.utc)   # a week on: both fade alike
+    assert abs(row["s"][bed] / spot0 - row["z"]["Second|Eilee's Room"] / room0) < 1e-9 and row["s"][bed] < spot0
+
+
+def test_usual_names_the_top_floor_room_and_spot_with_shares():
+    s = habits.new_store()
+    floors = ["Second", "Ground"]
+    assert habits.usual(s, "meg", MON_7AM, floors, timezone.utc) == {}
+    _spend(s, "meg", "Second|Eilee's Room", MON_7AM, 30 * 60)
+    _spend(s, "meg", "Second|Hall", MON_7AM + 30 * 60, 10 * 60)
+    _spend(s, "meg", "Ground|Kitchen", MON_7AM + 40 * 60, 10 * 60)
+    s["meg"]["wd7"]["s"] = {habits.spot_key("Second|Eilee's Room", "Bed"): 1500.0, "no separator": 9999.0}
+    u = habits.usual(s, "meg", MON_7AM + 50 * 60, floors, timezone.utc)
+    assert u["floor"] == ("Second", 0.8)
+    assert u["room"] == ("Second", "Eilee's Room", 0.6)
+    assert u["spot"] == ("Second", "Eilee's Room", "Bed", 0.5)
+    assert habits.usual(s, "meg", SAT_7AM, floors, timezone.utc) == {}               # no weekend history
+    assert "spot" not in habits.usual({"m": {"wd7": {"at": MON_7AM, "z": {"Gone|X": 3600.0}}}}, "m", MON_7AM, floors, timezone.utc)
+
+
+def test_usual_attributes_for_the_sensors_and_none_while_paused(monkeypatch):
+    core = sextant
+    now = __import__("time").time()
+    s = {"meg": {habits.slot_of(now): {"at": now, "z": {"Second|Bed": 3000.0, "Ground|Kitchen": 600.0},
+                                        "s": {habits.spot_key("Second|Bed", "Pillow"): 1800.0}}}}
+    monkeypatch.setattr(core, "_habits", s)
+    monkeypatch.setattr(core, "_local_tz", None)
+    layout = {"floor": [{"name": "Second"}, {"name": "Ground"}]}
+    f, r, sp = core._usual_attrs(layout, "meg", now)
+    assert f == {"usual_floor": "Second", "usual_share": 0.83}
+    assert r == {"usual_floor": "Second", "usual_room": "Bed", "usual_share": 0.83}
+    assert sp == {"usual_floor": "Second", "usual_room": "Bed", "usual_spot": "Pillow", "usual_share": 0.5}
+    layout["habit_pauses"] = [{"until": now + 60}]
+    assert core._usual_attrs(layout, "meg", now) == ({}, {}, {})

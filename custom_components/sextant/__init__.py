@@ -579,6 +579,7 @@ _zone_state = {}
 _shut_in = {}   # entity -> (floor, room) it was in when that room's door shut
 _habits = habits_mod.new_store()   # where each thing usually is, by day type and hour (habits.py)
 _habits_last = {}                   # entity -> when it was last counted into _habits
+_habits_spot_last = {}              # entity -> when its spot was last counted
 _local_tz = None                    # the house's time zone, for the hour of the day
 HABIT_CONFIDENT_SHARE = 0.8         # an election counts toward the habits only when this sure
 _subzone_state = {}
@@ -917,6 +918,10 @@ TUNING_SPEC = {
     # hour the thing is usually on it, to this power (habits.floor_factors). 0 turns it off; a class
     # can have its own (layout class_habit_floor_weight).
     "habit_floor_weight": (0.0, float, 0.0, 1.0),
+    # ...but only at an hour when one floor has at least this share of its time: a cat that wanders
+    # then has no floor to be held to. Replayed over 40 h at weight 0.2, 0.6-0.75 kept Meg's nights
+    # right and halved the cats' missed moves; 0.8 lost Meg's nights.
+    "habit_floor_min_share": (0.7, float, 0.0, 1.0),
     # A room held for a closed door (room "door") lets go after this long even if the door never opens.
     "door_hold_max_secs": (28800.0, float, 60.0, 172800.0),
     # How long someone must keep reading in a room after its door closed to count as shut in.
@@ -3257,6 +3262,13 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
             _floor_sub_zone_polygons(hass, new_global_data, entity, lowest_floor_name), scale, layout, now=now,
             fp=elected.get("fp"),
         )
+        # Spot habits: only where the room itself is sure, as for the rooms (_elect_zone).
+        if (sub_zone and sub_zone != "unknown" and not is_outside
+                and ((_zone_state.get(entity) or {}).get("probs") or {}).get(zone, 0.0) >= HABIT_CONFIDENT_SHARE
+                and not habits_mod.paused(layout, entity, now)):
+            habits_mod.learn(_habits, entity, habits_mod.spot_key(_habit_zone(lowest_floor_name, zone), sub_zone),
+                             now, _habits_spot_last.get(entity), _local_tz, field="s")
+        _habits_spot_last[entity] = now
         row = {
                 "ent": entity,
                 "cords": [avg_x, avg_y],
@@ -3340,11 +3352,12 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
             loc_state, loc_attrs = "Outside", {**loc_attrs, "kind": "outside", "spot": None}
             zone = "Outside"
         loc_attrs = {**loc_attrs, **{k: row.get(k) for k in persons_mod.FIT_KEYS if row.get(k) is not None}}
+        u_floor, u_room, u_spot = _usual_attrs(layout, entity, now)
         update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_room", zone,
-                                    {"area_id": room_area(layout, lowest_floor_name, zone)[0], **here})
+                                    {"area_id": room_area(layout, lowest_floor_name, zone)[0], **here, **u_room})
         update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_nearest_room", nearest_zone, dict(here))
-        update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_floor", lowest_floor_name, dict(here))
-        update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_spot", sub_zone, {"room": parent_zone, **here})
+        update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_floor", lowest_floor_name, {**here, **u_floor})
+        update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_spot", sub_zone, {"room": parent_zone, **here, **u_spot})
         loc_attrs = {**loc_attrs, **here}
         if (settled := rooms_mod.settled_conf_of(loc_attrs, row["updated"])) is not None:
             loc_attrs["settled_conf"] = settled
@@ -3577,10 +3590,11 @@ async def prune_stale_positions(hass):
         gone = _presence_attrs((_last_seen.get(ent) or {}).get("updated"), now, layout if isinstance(layout, dict) else {})
         _presence_published[ent] = gone["presence"]
         loc_state, loc_attrs = _location_state("unknown", "unknown", "unknown", "unknown")
-        update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_room", "unknown", {"area_id": None, **gone})
-        update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_floor", "unknown", dict(gone))
+        u_floor, u_room, u_spot = _usual_attrs(layout if isinstance(layout, dict) else {}, ent, now)
+        update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_room", "unknown", {"area_id": None, **gone, **u_room})
+        update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_floor", "unknown", {**gone, **u_floor})
         update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_nearest_room", "unknown", dict(gone))
-        update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_spot", "unknown", {"room": "unknown", **gone})
+        update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_spot", "unknown", {"room": "unknown", **gone, **u_spot})
         update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_location", loc_state, {**loc_attrs, **gone})
 
 # How long a slug Bermuda no longer tracks keeps its settings before the
@@ -5481,7 +5495,22 @@ def _habit_floor_factors(hass, layout, entity, floors):
         from . import watch_adverts  # noqa: PLC0415
         if watch_adverts.worn_now(hass, entity, _tuning(layout, "stale_after_secs")) is False:
             return {}
-    return habits_mod.floor_factors(_habits, entity, floors, now, weight, _local_tz)
+    return habits_mod.floor_factors(_habits, entity, floors, now, weight, _local_tz,
+                                    min_share=_tuning(layout, "habit_floor_min_share"))
+
+
+def _usual_attrs(layout, entity, now):
+    """usual_* attributes for a thing's floor, room and spot sensors: where it usually is at
+    this hour (habits.usual). Nothing while its slot has too little history or a pause runs."""
+    if habits_mod.paused(layout, entity, now):
+        return {}, {}, {}
+    floors = [f.get("name") for f in (layout.get("floor") or []) if isinstance(f, dict) and isinstance(f.get("name"), str)]
+    u = habits_mod.usual(_habits, entity, now, floors, _local_tz)
+    floor = {"usual_floor": u["floor"][0], "usual_share": u["floor"][1]} if "floor" in u else {}
+    room = {"usual_floor": u["room"][0], "usual_room": u["room"][1], "usual_share": u["room"][2]} if "room" in u else {}
+    spot = ({"usual_floor": u["spot"][0], "usual_room": u["spot"][1], "usual_spot": u["spot"][2], "usual_share": u["spot"][3]}
+            if "spot" in u else {})
+    return floor, room, spot
 
 
 def _wifi_floor_factor(entity, layout, floor_name):
