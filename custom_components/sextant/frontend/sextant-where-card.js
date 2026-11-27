@@ -10,6 +10,7 @@
  *       name: David                    # optional
  *       activity: sensor.davids_iphone_activity           # optional: "Driving near …" when away
  *       place: sensor.davids_iphone_geocoded_location     # optional: the town when away
+ *       # either key may instead name a Life360 tracker (device_tracker.*): its driving flag, its place or address
  *     - sensor.meg_sextant_pet_location
  *   rooms:                       # optional: room occupancy sensors, for modes (rooms layout)
  *     - binary_sensor.great_room_sextant_occupancy
