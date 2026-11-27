@@ -105,11 +105,14 @@ class SextantPanel extends LitElement {
     this._load();
     this._subscribe();
     this._clock = setInterval(() => { this._now = Date.now() / 1000; }, 1000);
+    this._onVisible = () => this._autoReload();
+    document.addEventListener("visibilitychange", this._onVisible);
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     clearInterval(this._clock);
+    document.removeEventListener("visibilitychange", this._onVisible);
     if (this._unsub) { this._unsub.then((u) => u()).catch(() => {}); this._unsub = null; }
   }
 
@@ -125,6 +128,21 @@ class SextantPanel extends LitElement {
     const now = Date.now();
     if (changed.has("hass") && this.hass && !this._data && !this._loading && !retryWait(this._loadFailedAt, now)) this._load();
     if (changed.has("hass") && this.hass && !this._unsub && !retryWait(this._subFailedAt, now)) this._subscribe();
+    this._autoReload();
+  }
+
+  /** A newer version is installed: reload into it once the tab is in view and
+   * the editor holds nothing unsaved. Once per version per tab, so a browser
+   * that serves the old files again cannot loop; the banner's button stays. */
+  _autoReload() {
+    const installed = this._data?.app_version;
+    if (!installed || !PANEL_VERSION || installed === PANEL_VERSION || this._data?.restart_needed) return;
+    if (document.visibilityState !== "visible" || this.renderRoot?.querySelector("sextant-edit")?.unsaved) return;
+    try {
+      if (sessionStorage.getItem("sextant.autoReloaded") === installed) return;
+      sessionStorage.setItem("sextant.autoReloaded", installed);
+    } catch { return; }
+    window.location.reload();
   }
 
   async _load() {
