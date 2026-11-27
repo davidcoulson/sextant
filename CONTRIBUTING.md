@@ -77,3 +77,14 @@ they differ). The frontend is served from disk, so a release that only
 touches `frontend/` needs a page reload, not a Home Assistant restart; the
 panel asks for a restart only when the Python sources on disk differ from
 the ones that were loaded.
+
+While developing, the `sextant.reload_code` action (admins only) replaces
+that restart: it unloads Sextant, imports the Python files from disk again
+and sets it up. It leans on Home Assistant internals, so a restart remains
+the supported way to load a release. Reload any open Sextant page
+afterwards: a map that stays open keeps its old data feed. The `/api/sextant/...` HTTP endpoints,
+the config flow and anything in `manifest.json` still need a restart.
+So does a service or websocket command you removed or renamed (the old one
+stays callable), and a setup that failed part-way: if `reload_code` reports
+that the new code did not set up and a second call after the fix fails too,
+restart.

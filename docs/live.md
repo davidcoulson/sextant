@@ -10,7 +10,8 @@ administrator, and links to [Edit](edit.md) and
 
 The floor plan with every tracked thing drawn as an avatar in its own colour, the
 same colour as its row in the list. Click a thing (row or avatar) to
-focus it: everything else fades, it grows a halo, the panel switches to its
+focus it: the map zooms to its room, the other things fade and lose their names,
+it is drawn on top with a halo, the panel switches to its
 floor, and the side panel shows its room, spot, floor, the proxy it is
 anchored to if any, and every proxy that hears it with the distance. Click
 a **proxy** instead and a card says what it is and what it is doing: its
@@ -33,8 +34,8 @@ plan image, the labels, the trails, the spots, the proxies, the Wi-Fi
 access points placed on the plan, the solver's distance circles and the
 fingerprint fix; each lights up while it is on.
 Labels names the rooms and the things (and whichever proxy you point at); a room's name sits at its most open point, so an L-shaped room's label is never in a corner or outside it,
-while Proxies draws the proxies themselves, which a busy plan is often
-better without. In the corner, a countdown says how many seconds until the
+while Proxies and Wi-Fi (both off by default) draw the proxies and the access
+points themselves, which a busy plan is often better without. In the corner, a countdown says how many seconds until the
 next positioning cycle, and falls back to how long ago the last one was
 when a cycle is late. For an admin it is also a menu: pick 5 or 10 seconds
 to watch something move (or 30 or 60 to go easy on the box) and Sextant
@@ -81,6 +82,16 @@ be true at once, and usually are: a tag that has gone quiet because its
 battery is dying looks exactly like a thing that has left, until the battery
 says why.
 
+A tag that puts its level in its own adverts needs no sensor set: Sextant
+reads it from the last advert Home Assistant heard and publishes it as
+`sensor.<thing>_sextant_battery`, on the thing's device, for automations too.
+That covers Holy-IoT tags (byte 8 of their 0x180A service data, sent only in
+a scan response, so at least one proxy must scan actively) and any tag with
+the standard Battery Service (0x180F). The sensor appears the first time a
+level is read and keeps its last value while the tag is out of range. A
+Battery sensor set on the thing wins while it has a number to give; when it
+goes unavailable, Sextant's own is used.
+
 What you see while a thing is late or away is where it *was*; its room and
 spot sensors still say the same, because nothing has contradicted them yet.
 Every thing Sextant knows stays in the list, so a phone that left the house
@@ -101,11 +112,11 @@ point on every room and spot change.
 
 On a phone those buttons collapse behind a single options button so they
 never force sideways scrolling, the floor picker and the countdown move to
-a bar under the page, and a row of **quick actions** — self-test, and for an administrator, adding a
-thing and starting calibration — jumps straight to the right page
-without hunting through the tabs. The map takes about half the screen and
-can be put away: **Hide map** in the Things heading, which stays put as the
-list scrolls, or the button on the map itself. Picking a thing opens it
+a bar under the page. The page opens on the search box (or, with eight things or fewer, a count) and the list; for an
+administrator a pin button and, under it, a **+** to add a thing float at the
+bottom right. The map takes about half the screen: the map button beside the
+search box, which stays put as the list scrolls, shows and hides it, as does
+the button on the map itself. Picking a thing opens it
 again, under that thing's details. Editing the floor plan itself is still
 a desktop job.
 
@@ -115,9 +126,13 @@ and on the right the room it is in with its Home Assistant area's icon, the
 spot underneath.
 A small badge on the disc says what is special about it: a location marker
 for the thing its owner's location is being read from, an hourglass while
-it is late, a ghost once it is away.
+it is late, a ghost once it is away, and a lock on a watch that says it is
+locked (off a wrist, so it does not place its owner).
 
 ## Grouped by person
+
+With more than eight things, a **Find a thing** box above the list narrows
+it by name or room.
 
 When things have owners (**Belongs to** on the Things page), each person
 gets a heading in the list - their picture, their name, and under it where
@@ -158,7 +173,10 @@ and fingerprint match and every reference gain, and shows how far each
 lands from your pin and how often it gets the room right. **Apply** on a
 row makes those the thing's settings (its blend weight, and a gain
 multiplier folded into its learned gain). One pin can overfit, so pin a
-thing in two or three rooms.
+thing in two or three rooms. Where the other floors' proxies heard the
+thing too, a line under the table says how far the fit would have landed
+with them helping, beside this floor's proxies alone. That is a comparison
+only: nothing is placed that way yet.
 
 A pin inside a spot is also evidence of being in that spot: a fix is the
 weighted blend of the pins and proxies it matched, and the share of that
@@ -186,6 +204,19 @@ a watch on a wrist does not look like a phone in a hand
 A selected thing lists its own pins - which pin, its floor, when it was
 placed and over how many cycles - each with a bin to forget it.
 
+A pin for something that never moves - a wallet on its hook, a tag on a
+shelf, a dock - can be **kept fresh**: the pin button beside the bin. A kept
+pin re-takes its readings at most once an hour, whenever its thing has
+sat still for the whole five-minute window, so it follows the house as
+furniture, doors and proxies change instead of describing the day it was
+placed. The fresh readings are taken only while they still look like the
+pin's own (the nearest proxies within about 28% of what they read
+last time, and about 65% of what they read when it was first kept, so
+nothing walks a pin away an hour at a time): a thing that has been moved, or a spot that changed overnight,
+leaves the pin as it was and marks it *readings changed - moved? Re-pin
+it*. The mark clears itself when the readings match again; turning keep
+fresh off and on again accepts the pin's readings as they are now.
+
 Pins stay, with their samples, in `.storage/sextant_truth`, and do two
 more jobs. The Tuning page's **Accuracy** card re-solves every pin under
 the settings in force and reports, per thing, the mean error in metres
@@ -210,12 +241,13 @@ week. Asking for more than is kept says how far back it goes.
 
 ## Signal lines
 
-With a thing selected, **Signal lines** (on by default) draws a line from it
+With a thing selected, **Signal lines** (off by default, an Expert layer) draws a line from it
 to every proxy the solver used for it this cycle. Each line is green when the
 proxy is close and red by ten metres, labelled with the distance, and thicker
 for the proxies the solver weighted most. A phone or watch also gets a dashed
 line to the Wi-Fi access point it is joined to, when its owner's Wi-Fi tracker
-of the same kind is on an access point placed on this floor.
+of the same kind is on an access point placed on this floor. The thing's
+[location pins](live.md#location-pins) carry their numbers while the lines are on.
 
 A key in the bottom-left corner says what the colours mean while the lines
 show. The thing's details list the same proxies under **In the solve**: each one's
@@ -314,3 +346,17 @@ Floors are placed through their anchors (Edit → Anchor), the same registration
 **Lining up** (admins): until the house has a site, it is drawn at the home location from Settings → System → General, unturned. Press **Line up the house**, drag the plan onto its footprint on the map, turn it with the rotate buttons (15° and 1° steps, about the middle of the house) until the walls match, and **Save**. The site is stored with the layout and restored with layout snapshots. **Cancel** puts it back.
 
 Drag to pan, scroll, pinch or use **+**/**−** to zoom (past the map's last tile level the photo is enlarged), and the house button brings the view back to the house.
+
+## Occupancy tab
+
+A read-only page beside Live: floors stacked top to bottom, and on each floor a row per room with something going on (alphabetical), then one line naming the empty ones ("Empty: Gillian's Room"; "Nobody:" when the whole floor is empty). A row shows the room's name, its mode if it has one ("Sleep"), the people and pets in it as chips, and icons for why the room is on (Bluetooth, media playing, radar, door held; hover for the name; see [How occupancy works](occupancy.md)). The row's left edge says what kind of on it is: solid for people, faint for pets only, orange (with a tinted row) for a room in a mode. On a wider screen each room fits one line, with the time it last turned on or off; on a phone the chips sit under the name. It reads the room sensors, so it follows them live.
+
+A person's chip shows their first name (the full name is in the details), and a chip names the spot when the person or pet is in one ("Meg · Cafe"). With a mouse, hover a chip for a short summary: the room and spot, the floor, and icons for how long they have been in the room (a spot's own time is in brackets after it, "Eilee's Room · Bedside Table (8m)"), when they were last heard (and by Bluetooth, Wi-Fi or GPS), how sure Sextant is of the room (crosshairs: Confident in green from 70%, Likely in amber from 40%, else Unsure in red; hover it for the percentages) and what tracks them. On a phone, tap the chip: the same summary heads its history, with the percentages written out.
+
+**History.** Tap or click a person's or pet's chip, a room's name (empty ones too) or a floor's name to see the last 24 hours of it as a timeline, newest first. Each move reads like "Michelle Great Room → Master Bedroom": the room they came from, then the room they went to, with how long they stayed on the right.
+
+- a person or pet: their details as above, then each room they were in, when they arrived and how long they stayed ("Not placed" while Sextant had no room for them; a gap under two minutes, such as Sextant reloading, is left out and the stays either side are joined);
+- a room: who was in it, when and for how long, and when its mode began and how long it lasted ("Eilee's Room → Sleep", from the room's mode entity);
+- a floor: who was on it, in which room, when and for how long, and its rooms' modes.
+
+Each dot is in the colour the map gives that person's or pet's name, and a mode's dot is amber. The same move made several times in a row, such as a cat going from Jack's Room to the Catwalk again and again, is one row: "12 times since 12:08 AM", with the time there in all on the right. The current stay reads "now" and has a filled dot. On a phone the history comes up from the bottom of the screen; on a wider screen it opens on the right. Close it with the cross, by tapping outside it or with Escape. A pet known only by its tag (no person entity) has no room sensors, so it has no history. It comes from Home Assistant's own history of each person's and pet's room and floor sensors (`sensor.<person>_sextant_person_room` and `_floor`, `sensor.<pet>_sextant_pet_room` and `_floor`) and of each room's mode entity, so anyone who can open the panel can read it, and it is only there for sensors the recorder keeps. A stay that began before the 24 hours shows from the start of the window.

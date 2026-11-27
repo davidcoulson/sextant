@@ -2,7 +2,7 @@
 
 # Sensors, card, services and API
 
-Each tracked device gets five sensors under its own `<device> (Sextant)`
+Each tracked device gets five sensors under its own `<device>`
 device, nested beneath its Bermuda device:
 
 | Sensor | State |
@@ -28,7 +28,7 @@ lookup:
 | `area_id`, `floor_id` | the linked Home Assistant area and floor, or `None` where unlinked |
 | `presence` | `here` (heard within `stale_after_secs`, 2 min), `quiet` (until `away_after_secs`, 15 min), `away` — on every one of the five sensors |
 | `last_heard` | on the **location** sensor only: when the thing was last heard, ISO 8601 UTC, to within five minutes. While it is the only thing changing it is written every five minutes rather than every cycle, and exactly whenever the state or another attribute changes. Not recorded. The other four sensors write only when what they say changes |
-| `outside_m`, `rms_m`, `conf`, `n_prox`, `nearest_m` | on the **location** and person sensors: how far beyond the rooms the fix was, the fit's residual and confidence, how many proxies heard it and how near the nearest was. They wobble every cycle, so like `last_heard` they are written at once with any other change and otherwise every five minutes. Not recorded |
+| `outside_m`, `rms_m`, `conf`, `n_prox`, `nearest_m` | on the **location** and person sensors: how far beyond the rooms the fix was, the fit's residual and confidence, how many proxies heard it and how near the nearest was. `settled_conf` is `conf` lifted by how long it has stayed (at most half the way to 1, 63 % of that after ten minutes; none while it is only quiet, and none outside), what the Occupancy popup shows as Confidence. They wobble every cycle, so like `last_heard` they are written at once with any other change and otherwise every five minutes. Not recorded |
 
 When the state is a spot, `room` is the room that spot belongs to rather
 than the separately elected room. The two disagree for a cycle or so while
@@ -62,9 +62,30 @@ put stands (`source: held`): they have not left the house. Unless GPS has
 already seen them go: a fix made since the last sighting, outside the home
 zone and at least `gps_leave_m` (200 m) from home, ends the hold at once
 and the person is `away` now rather than when `away_after_secs` runs out.
+Any of their GPS sources can be the one to see it: the first in their order is
+read, unless another has a fix from since that sighting that shows the
+departure while the first still has them at or by the house. Between gone and
+home the newer fix wins: a fix in the home zone as new or newer, from either
+source, ends the departure. A source that goes
+unavailable keeps its last fix for `gps_stale_secs` (two hours) after its last
+report: dropping out is no news, so a departure it saw still stands, and the
+person does not return to their last room meanwhile. That kept fix counts only
+if it was made since they were last heard, whichever way it points: a tracker
+that drops out on a "home" from before then keeps nobody home. `gps_ignored`
+still names it (`unavailable; last fix kept`), and once the kept fix runs out
+the sources that are left speak again. Sextant times each fix
+itself, from when a source's zone or coordinates change: a restart, a battery
+level or a tracker coming back from unavailable with the fix it had is no
+news, and a source counts this way only once it has moved since Home Assistant
+started. The time is that of the first update Sextant's cycle sees the new fix
+in, so another update in between (a battery level) dates it a few seconds
+late. Another source is only
+read this way once Sextant has lost the person: with one of their things
+still heard in the house (a watch left at home), or for someone with GPS
+sources and no things, the first source alone speaks.
 So the phone reports promptly, the moment a person goes quiet (`stale_after_secs`,
 two minutes) Sextant asks their Home Assistant companion app (`notify.mobile_app_<device>`) for a fresh
-location, once per quiet spell. It is skipped when `gps_leave_m` is 0.
+location, once per quiet spell. It is skipped when `gps_leave_m` is 0, and when GPS already shows them gone.
 Once Sextant has lost them (`presence: away`), a phone or watch of theirs still joined to one
 of the house's Wi-Fi access points keeps them home (`source: wifi`): the
 location is `home` (an access point's room is a guess, so no room), the floor is
@@ -74,11 +95,11 @@ would start a new visit (an arrival) must read home for `wifi_confirm_secs`
 (5 minutes) first; a visit already under way is carried on at once.
 Every cycle, each person's result and inputs are written to
 `config/sextant_person_log` (hourly files, `person_log_hours`, 48 h) to measure how often Wi-Fi misleads. A router
-holds a client home for minutes after it last saw it, so a GPS fix that far
-from home, made over a minute after the access point last saw the phone
-(UniFi), overrules it. After
+holds a client home for minutes after it last heard it, so a GPS fix that far
+from home, made over 10 s after the access point last heard the phone
+(UniFi's `last_seen` less its `idletime`, once it has been idle 90 s; `last_seen` before that), overrules it. After
 that the first GPS tracker in their list that is neither broken nor stale
-gives the zone (`source: gps`), or the state is `away` with nothing usable
+gives the zone (`source: gps`; another while its newer fix shows a departure the first has not seen), or the state is `away` with nothing usable
 (`source: none`). [Wi-Fi](things.md#wi-fi) says where the trackers come from. The list is set per person on
 the Things page (People card) and lives in the layout as `person_trackers`;
 a tracker that is unknown, unavailable, or has not reported within
@@ -94,7 +115,8 @@ with the coordinates kept.
 | `source` | `ble`, `held`, `wifi`, `gps` or `none` |
 | `access_point` | with `source: wifi`, the access point the phone or watch is joined to |
 | `presence` | as for things: the most present of the person's things |
-| `via`, `considered` | the thing that placed them, and every thing that was in the running: `thing`, `where`, `here_since` (when it arrived there, UTC) and `on_charger` |
+| `via`, `considered` | the thing that placed them, and every thing that was in the running: `thing`, `where`, `here_since` (when it arrived there, UTC), `on_charger`, and for a watch `worn` (true when on a wrist and unlocked, false when locked, missing when unknown) |
+| `watches` | each of their watches whose lock state is known this cycle: `true` on a wrist and unlocked, `false` locked (`considered` can be the snapshot from when a held place was set) |
 | `zone`, `latitude`, `longitude`, `gps_accuracy`, `tracker` | the GPS side, carried whichever source is speaking |
 | `distance_m` | from Home Assistant's home location, when there are coordinates |
 | `gps_ignored` | `[{entity, reason}, …]` |
@@ -118,6 +140,13 @@ a departure, so the recorder gets one row per event: trigger on the
 attribute leaving `None` and the time is in the event
 ([recipe](recipes.md#when-someone-left)).
 
+`sensor.sextant_household_floor` is the one floor everyone at home is on:
+the floor's name, `mixed` when people are on more than one, `unknown` while
+anyone at home is on no floor (lost, outside, or held home by Wi-Fi alone)
+and `away` with nobody home. `floors` lists who is on each and `unplaced`
+who is on none. Pets do not count. "Everyone has been upstairs for 20
+minutes" is a state trigger on it, `to: Second Floor`, `for: "00:20:00"`.
+
 ### Events
 
 The same arrivals and departures are on the event bus, for a trigger that
@@ -127,6 +156,8 @@ needs no state to compare:
 |---|---|---|
 | `sextant_person_arrived` | a person's tracker goes from away to home | `person`, `source` (`ble`, `wifi` or `gps`), `time`, `people_home` |
 | `sextant_person_left` | a person's tracker goes from home to away | `person`, `source` (what last had them home), `time`, `people_home` |
+| `sextant_person_room_changed` | a person moves from one room to another while home (not on arriving or leaving) | `person`, `from_room`, `from_floor`, `room`, `floor` |
+| `sextant_room_occupancy_changed` | a room's occupancy `state` changes between `clear`, `occupied` and `extended` | `entity_id`, `room`, `floor`, `area_id`, `state`, `previous`, `people`, `pets`, `sources`, `mode`, `dark`, `asleep` |
 | `sextant_first_arrived` | an arrival into a house with nobody home | `person`, `source`, `time` |
 | `sextant_everyone_left` | a departure leaves nobody home | `person` (the last to leave), `source`, `time` |
 
@@ -146,6 +177,21 @@ triggers:
 ```
 
 ## Rooms
+
+[How occupancy works](occupancy.md) explains how a room turns on and
+off, with examples; this section lists the sensors and their attributes.
+
+Each room also gets `binary_sensor.<room>_sextant_people_occupancy`, the same
+answer without the pets: a cat's or dog's tag alone leaves it `off`, so
+lights can switch off on it while the pets stay put. Radars, other sensors
+and the force switch cannot tell a pet from a person, so they turn it `on`.
+
+After a Home Assistant restart a room that was `on` stays `on` for up to ten
+minutes while Sextant places things again, unless the first readings say it
+is occupied; both room sensors carry over this way.
+
+Floors and the house have people-only twins too: `binary_sensor.<floor>_sextant_floor_people_occupancy` and
+`binary_sensor.sextant_house_people_occupancy`, rolled up from the rooms' people-only sensors.
 
 Each room on the plan gets `binary_sensor.<room>_sextant_occupancy`
 (device class occupancy): `on` while Sextant places a person or a pet in
@@ -171,10 +217,11 @@ sensor:
 | `spots` | the spots they are in (the Couch, a bedside table) |
 | `presence` | `here` while any of them was heard within `stale_after_secs`, `quiet` while all have gone quiet (the sensor stays `on` until they are `away`), `None` when empty |
 | `radar` | how many people the mmWave sensors see in the room, held ones included; 1 when only the room's presence sensor says so |
+| `unknown` | how many of the room's mmWave targets no tracked thing has claimed, held ones included: a guest, or someone without their phone. A pet's tag and a robot claim theirs; a pet without a tag counts. 0 when only the room's presence sensor says someone is there. It can read 1 while a phone's position lags its owner, so give an automation a `for:` |
 | `held` | `true` while the room is `on` only because its hold has not run out since the radar lost everyone |
 | `room`, `floor`, `area_id`, `floor_id` | the room, its floor, and the linked Home Assistant area and floor |
 
-The sensor sits on a `<Room> (Sextant)` device that is put in the room's
+The sensor sits on a `<Room>` device that is put in the room's
 linked area when it is first created, and left wherever you move it
 afterwards. Two floors with a room of the same name get the floor in the
 entity id (`binary_sensor.second_floor_office_sextant_occupancy`).
@@ -188,6 +235,21 @@ alongside the room's motion and media sensors.
 (presence `here` or `quiet`), with `home` and `away` listing them by name
 and `pets_home` the pets, kept apart (a cat may be a person to Home
 Assistant, but not to this count).
+
+`sensor.sextant_habit_pauses` counts the habit pauses running
+(`sextant.pause_habits`, for a holiday: see [positioning](positioning.md)),
+with `pauses` listing each one's end and what it covers and `until` the
+last end; 0 means the routines are in use.
+
+Where a thing usually is at this hour (its routine, the same counts the
+habit pulls use) is on its floor, room and spot sensors: `usual_floor` on
+`_sextant_floor`; `usual_floor` and `usual_room` on `_sextant_room`;
+`usual_floor`, `usual_room` and `usual_spot` on `_sextant_spot`; each with
+`usual_share`, the fraction of this hour's time it spends there (a spot's
+is of all the hour, so it is at most the room's). They are left out while
+the hour has under about 20 minutes of history, while a habit pause
+covers the thing and while it is away, so "the dog is usually upstairs
+now" can be checked against where it is.
 
 [Recipes](recipes.md) has automations and cards built on all of this.
 
@@ -240,7 +302,7 @@ file in `config/sextant_maps/`) overrides the floor's plan.
   `history/get`, `history/clear`, `kpi`, `kpi/baselines`,
   `kpi/baseline/save`, `kpi/baseline/delete`, `tuning/set`,
   `thing/tune`, `selftest`, `truth/mark`, `truth/list`,
-  `truth/delete`, `truth/evaluate`, `truth/apply`, `proxy/info`, `advice`,
+  `truth/delete`, `truth/evaluate`, `truth/health`, `truth/apply`, `proxy/info`, `advice`,
   `snapshots/list`, `snapshots/restore`, `thing/forget`,
   `person/trackers/set`, and under `bermuda/`: `candidates`,
   `tracked`, `track`, `scanners`, `scanner_ranging`, `options`,

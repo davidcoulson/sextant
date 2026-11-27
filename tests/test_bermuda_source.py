@@ -278,6 +278,13 @@ def test_direct_path_honours_stale_reading_max_age(monkeypatch):
     assert "distance" not in rec
 
 
+def test_a_near_zero_distance_is_no_reading(monkeypatch):
+    """~0 m is a scanner's sentinel (a wall tablet read a phone across the house
+    at 0.0), not a measurement: it would anchor the thing to that scanner."""
+    assert "distance" not in _run_radii_direct(monkeypatch, 0.003)
+    assert abs(_run_radii_direct(monkeypatch, 0.2)["distance"] - 0.2) < 1e-9
+
+
 def test_direct_path_drops_receiver_when_bermuda_reports_no_distance(monkeypatch):
     """distance None is Bermuda's own 'this scanner can no longer hear it'
     timeout, and must take the receiver out of the solve."""

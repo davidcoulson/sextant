@@ -14,6 +14,7 @@ message is meant to be shown to the user as is.
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import math
@@ -33,7 +34,7 @@ from . import truth as truth_mod
 from . import robots as robots_mod
 from .storage import (
     maps_dir,
-    LAYOUT_LOCK, get_layout, get_layout_for_edit, get_layout_version, load_kpi_baselines, save_kpi_baselines,
+    LAYOUT_LOCK, TRUTH_LOCK, KPI_LOCK, get_layout, get_layout_for_edit, get_layout_version, load_kpi_baselines, save_kpi_baselines,
     load_truth, save_truth,
     save_layout,
 )
@@ -137,7 +138,7 @@ def _thing_names(hass, entities, layout=None) -> dict:
         ent_reg, dev_reg = er.async_get(hass), dr.async_get(hass)
         for ent in entities:
             # Only a name the user typed counts here: the registry's own name
-            # is Sextant's "<slug> (Sextant)" device or Bermuda's, which the
+            # is Sextant's "<slug>" device or Bermuda's, which the
             # tracked list already gave us in a nicer form.
             for entity_id in (f"sensor.{ent}_sextant_room", f"sensor.{ent}_area", f"device_tracker.{ent}"):
                 entry = ent_reg.async_get(entity_id)
@@ -387,6 +388,12 @@ async def ws_tuning_set(hass, connection, msg):
     vol.Optional("always_home"): vol.Any(None, bool),
     # The same for every thing of this thing's class (layout class_always_home).
     vol.Optional("class_always_home"): bool,
+    # How far this class's usual rooms by hour ease a close room switch (layout
+    # class_habit_gain, 0..0.3); None goes back to the default.
+    vol.Optional("class_habit_gain"): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=0.0, max=0.3))),
+    # How hard its usual floor at this hour pulls the floor election (layout
+    # class_habit_floor_weight, 0..1); None goes back to the default.
+    vol.Optional("class_habit_floor_weight"): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=0.0, max=1.0))),
     # A tracker of the thing's own (a car's or a phone's GPS): home there while
     # away here raises the dead-thing repair.
     vol.Optional("home_entity"): vol.Any(None, str),
@@ -532,6 +539,16 @@ async def ws_thing_tune(hass, connection, msg):
             values = data.get("class_always_home")
             data["class_always_home"] = {**(values if isinstance(values, dict) else {}), cls: msg["class_always_home"]}
             changes["class_always_home"] = msg["class_always_home"]
+        for key in ("class_habit_gain", "class_habit_floor_weight"):
+            if key not in msg or not cls:
+                continue
+            values = dict(data.get(key) if isinstance(data.get(key), dict) else {})
+            if msg[key] is None:
+                values.pop(cls, None)
+            else:
+                values[cls] = msg[key]
+            data[key] = values
+            changes[key] = msg[key]
         for key in ("charging_entity", "battery_entity", "home_entity"):
             if key not in msg:
                 continue
@@ -564,11 +581,12 @@ def _zone_lookup(core, hass, data, entity, floor):
 
 
 def _mark_public(mark):
-    return {k: v for k, v in mark.items() if k != "samples"} | {"samples": len(mark.get("samples") or [])}
+    return {k: v for k, v in mark.items() if k not in ("samples", "origin")} | {"samples": len(mark.get("samples") or [])}
 
 
-async def _evaluate_mark(hass, core, mark, weights=None, gains=None):
-    """Re-solve one mark's samples under the sweep (or the current settings only)."""
+def _mark_setup(hass, core, mark, exclude=()):
+    """What re-solving one mark needs: layout, scale, room lookup, its gain and
+    its fingerprint references by gain (never its own, nor the pins in ``exclude``)."""
     layout = get_layout(hass)
     layout = layout if isinstance(layout, dict) else {}
     # The positioning helpers take the per-cycle list of {entity, data}; one entry is enough here.
@@ -582,17 +600,35 @@ async def _evaluate_mark(hass, core, mark, weights=None, gains=None):
     vectors = core._fingerprint_db.vectors()
     extra = core._mark_refs(layout, mark["entity"])
     # A mark must not match its own reference, or the score would be circular.
-    own = f"mark:{mark['id']}"
-    extra = [r for r in extra if r.get("slug") != own] if extra else None
+    skip = {f"mark:{mark['id']}", *(f"mark:{i}" for i in exclude)}
+    extra = [r for r in extra if r.get("slug") not in skip] if extra else None
 
     def refs_for_gain(gain):
         return fingerprint_mod.build_references(layout, vectors, gain, extra=extra).get(floor)
 
+    return layout, scale, zone_of, base_gain, refs_for_gain
+
+
+async def _mark_guides(hass, core, mark):
+    """Ids of the pins the fingerprint match leans on for this mark's samples."""
+    layout, _scale, _zone_of, base_gain, refs_for_gain = _mark_setup(hass, core, mark)
+    refs = refs_for_gain(base_gain)   # here, not in the executor: the reference cache belongs to the loop
+    return await hass.async_add_executor_job(
+        lambda: truth_mod.influencers(
+            core._rebased_samples(layout, mark), refs,
+            core._tuning(layout, "fingerprint_k"), core._tuning(layout, "fingerprint_missing_m")))
+
+
+async def _evaluate_mark(hass, core, mark, weights=None, gains=None, exclude=()):
+    """Re-solve one mark's samples under the sweep (or the current settings only)."""
+    layout, scale, zone_of, base_gain, refs_for_gain = _mark_setup(hass, core, mark, exclude)
+    floor = mark["floor"]
     kwargs = {"k": core._tuning(layout, "fingerprint_k"), "missing_m": core._tuning(layout, "fingerprint_missing_m"), "base_gain": base_gain}
     if weights is not None:
         kwargs["weights"] = weights
     if gains is not None:
         kwargs["gains"] = gains
+    kwargs["cross"] = weights is None   # the full sweep only: "current settings" must stay rows[0]
     return await hass.async_add_executor_job(
         lambda: truth_mod.evaluate(core._rebased_samples(layout, mark), floor, (mark["x"], mark["y"]), scale, zone_of, core._solve_floor_jobs, refs_for_gain, **kwargs)
     )
@@ -630,15 +666,26 @@ async def ws_truth_mark(hass, connection, msg):
     samples = core._truth_buffer.samples(msg["entity"], since=since, floor=msg["floor"])
     if len(samples) < truth_mod.MIN_SAMPLES:
         return _error(connection, msg, f"Only {len(samples)} recent cycle(s) placed this thing on {msg['floor']}; wait a minute with it in place and try again")
-    store = await load_truth(hass)
-    mark = {
-        "id": int(store.get("next_id") or 1), "entity": msg["entity"], "floor": msg["floor"],
-        "x": round(float(msg["x"]), 2), "y": round(float(msg["y"]), 2), "t": time.time(), "samples": samples,
-    }
-    store["next_id"] = mark["id"] + 1
-    store.setdefault("marks", []).append(mark)
-    await save_truth(hass, store)
-    _refresh_mark_refs(core, store)
+    async with TRUTH_LOCK:
+        store = await load_truth(hass)
+        x, y = round(float(msg["x"]), 2), round(float(msg["y"]), 2)
+        # The same thing pinned at the same point from the very same cycles (a
+        # repeated submit) is that pin, untouched, not a copy of it: copies
+        # take every one of the k match slots and add nothing. New cycles make
+        # a new pin, so Undo on the Live page only ever removes what it added.
+        span = (samples[0].get("t"), samples[-1].get("t"))
+        mark = next((
+            m for m in store.get("marks", [])
+            if (m.get("entity"), m.get("floor"), m.get("x"), m.get("y")) == (msg["entity"], msg["floor"], x, y)
+            and m.get("samples") and (m["samples"][0].get("t"), m["samples"][-1].get("t")) == span
+            and not m.get("refreshed")   # a kept pin's fresh window is not this submit
+        ), None)
+        if mark is None:
+            mark = {"id": int(store.get("next_id") or 1), "entity": msg["entity"], "floor": msg["floor"], "x": x, "y": y, "t": time.time(), "samples": samples}
+            store["next_id"] = mark["id"] + 1
+            store.setdefault("marks", []).append(mark)
+            await save_truth(hass, store)
+            _refresh_mark_refs(core, store)
     rows = await _evaluate_mark(hass, core, mark)
     connection.send_result(msg["id"], {"mark": _mark_public(mark), "rows": rows, "current_weight": _current_weight(core, get_layout(hass), mark["entity"])})
 
@@ -657,12 +704,37 @@ async def ws_truth_list(hass, connection, msg):
 @websocket_api.async_response
 async def ws_truth_delete(hass, connection, msg):
     core = _core()
-    store = await load_truth(hass)
-    before = len(store.get("marks", []))
-    store["marks"] = [m for m in store.get("marks", []) if m.get("id") != msg["mark_id"]]
-    await save_truth(hass, store)
-    _refresh_mark_refs(core, store)
+    async with TRUTH_LOCK:
+        store = await load_truth(hass)
+        before = len(store.get("marks", []))
+        store["marks"] = [m for m in store.get("marks", []) if m.get("id") != msg["mark_id"]]
+        await save_truth(hass, store)
+        _refresh_mark_refs(core, store)
     connection.send_result(msg["id"], {"removed": before - len(store["marks"])})
+
+
+@websocket_api.websocket_command({vol.Required("type"): "sextant/truth/keep", vol.Required("mark_id"): vol.Coerce(int), vol.Required("keep"): bool})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_truth_keep(hass, connection, msg):
+    """Keep a pin fresh (it re-takes its readings hourly while its thing sits
+    still there, see truth.refresh), or stop."""
+    core = _core()
+    async with TRUTH_LOCK:
+        store = await load_truth(hass)
+        mark = next((m for m in store.get("marks", []) if m.get("id") == msg["mark_id"]), None)
+        if mark is None:
+            return _error(connection, msg, f"No pin {msg['mark_id']}")
+        if msg["keep"]:
+            mark["keep"] = True
+            mark["origin"] = truth_mod.origin(mark.get("samples") or [])
+            mark.pop("stale", None)
+        else:
+            for k in ("keep", "stale", "origin"):
+                mark.pop(k, None)
+        await save_truth(hass, store)
+        _refresh_mark_refs(core, store)
+    connection.send_result(msg["id"], {"mark": _mark_public(mark)})
 
 
 @websocket_api.websocket_command({vol.Required("type"): "sextant/truth/evaluate", vol.Optional("entity"): str, vol.Optional("mark_id"): vol.Coerce(int)})
@@ -689,6 +761,56 @@ async def ws_truth_evaluate(hass, connection, msg):
         by_mark[mark["id"]] = (mark["entity"], row)
         per_mark.append({**_mark_public(mark), "current": row})
     connection.send_result(msg["id"], {"things": truth_mod.summarize(by_mark), "marks": per_mark})
+
+
+@websocket_api.websocket_command({vol.Required("type"): "sextant/truth/health"})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_truth_health(hass, connection, msg):
+    """The pins worth a second look (truth.pin_health): each pin re-solved at
+    its thing's current settings with and without every pin that guides it.
+    And where a pin is missing: the places things rest with none near."""
+    core = _core()
+    store = await load_truth(hass)
+    data = get_layout(hass)
+    marks = list(store.get("marks", []))   # a copy: a pin can be forgotten while this awaits
+    effects = {}
+    for mark in marks:
+        w = _current_weight(core, data, mark["entity"])
+        rows = {r["weight"]: r for r in await _evaluate_mark(hass, core, mark, weights=(0.0, w) if w > 0 else (0.0,), gains=(1.0,))}
+        effect = effects[mark["id"]] = {"own_m": (rows.get(0.0) or {}).get("mean_m"), "without": {}}
+        if w <= 0 or w not in rows:
+            continue
+        for pin_id in await _mark_guides(hass, core, mark):
+            without = await _evaluate_mark(hass, core, mark, weights=(w,), gains=(1.0,), exclude=(pin_id,))
+            # Only the same cycles compare: one that cannot be placed without the pin would skew the mean.
+            # shortcut: the count is compared, not the cycles; upgrade if truth.evaluate ever returns which were placed.
+            if without and without[0]["samples"] == rows[w]["samples"]:
+                effect["without"][pin_id] = round(rows[w]["mean_m"] - without[0]["mean_m"], 2)
+    connection.send_result(msg["id"], {"pins": truth_mod.pin_health(marks, effects), "checked": len(marks), **await _pin_gaps(hass, core, data)})
+
+
+async def _pin_gaps(hass, core, layout):
+    """Where things rest with no pin near (advice.pin_gaps), and the hours of history that is from."""
+    from .advice import pin_gaps  # noqa: PLC0415 - shapely and numpy, only when asked
+
+    if not isinstance(layout, dict):
+        return {"gaps": [], "history_hours": 0.0}
+    hist, now = core.get_position_history(hass), time.time()
+    # Copies of the tracks (cheap on the loop), read in the executor. Only the
+    # things Bluetooth places: a robot rests on its dock and takes no pin. A
+    # thing on the geometric fit alone is listed too: its first pin is how it
+    # finds out whether the fingerprint would place it better (Apply best fit).
+    wins = {ent: win[0] for ent in core._truth_buffer.entities() if (win := hist.window(ent, 0.0, now))}
+    scales = {f.get("name"): f.get("scale") for f in layout.get("floor", [])}
+    pins = {
+        ent: [(r["floor"], r["x"] / scales[r["floor"]], r["y"] / scales[r["floor"]]) for r in core._mark_refs(layout, ent) or [] if scales.get(r["floor"])]
+        for ent in wins
+    }
+    gaps = await hass.async_add_executor_job(
+        lambda: pin_gaps(layout, {ent: history_mod._PointView(w, 0, len(w.t)) for ent, w in wins.items()}, pins))
+    oldest = min((w.t[0] for w in wins.values()), default=now)
+    return {"gaps": gaps, "history_hours": round((now - oldest) / 3600, 1)}
 
 
 @websocket_api.websocket_command({
@@ -1059,6 +1181,63 @@ async def ws_beacon_links(hass, connection, msg):
     connection.send_result(msg["id"], {"beacons": _safe(lambda: core._beacon_links(hass), [])})
 
 
+def _firmware_by_address(hass):
+    """Each Bluetooth address's node firmware, as Home Assistant records it:
+    "<project version> (ESPHome <version>)". The address's own device hangs off
+    the node (via_device), which carries the version.
+    """
+    from homeassistant.helpers import device_registry as dr  # noqa: PLC0415
+
+    devices = dr.async_get(hass)
+    out = {}
+    for d in _core()._iter_registry_devices(devices):
+        node = devices.async_get(d.via_device_id) if getattr(d, "via_device_id", None) else d
+        fw = getattr(node, "sw_version", None)
+        for kind, value in getattr(d, "connections", ()) or ():
+            if kind == "bluetooth" and fw:
+                out.setdefault(str(value).lower(), fw)
+    return out
+
+
+_FIRMWARE_PARTS = (("ESPHome", re.compile(r"\(ESPHome (\d+(?:\.\d+)*)(?![\d.])")), ("ble-proxy", re.compile(r"\+ble(\d+(?:\.\d+)*)(?![\d.])")))
+
+
+def firmware_behind(rows):
+    """Mark each row whose ESPHome or ble-proxy version is older than the one
+    most of the placed proxies run: an update that failed, or one that never
+    reached it. Sets row["firmware_behind"] to a short reason, or None.
+    Only builds of the ble-proxy package ("+ble" in the version) are compared:
+    wall tablets and vendor firmware keep their own ESPHome on purpose.
+    """
+    def ver(s):
+        return tuple(int(x) for x in s.split("."))
+
+    found = {name: {} for name, _ in _FIRMWARE_PARTS}
+    for i, r in enumerate(rows):
+        fw = r.get("firmware") or ""
+        if "+ble" not in fw:
+            continue
+        for name, pattern in _FIRMWARE_PARTS:
+            m = pattern.search(fw)
+            if m:
+                found[name][i] = m.group(1)
+    reasons = {}
+    for name, versions in found.items():
+        counts = {}
+        for v in versions.values():
+            counts[v] = counts.get(v, 0) + 1
+        if len(counts) < 2:
+            continue
+        # The most common version; a tie goes to the newer one.
+        usual = max(counts, key=lambda v: (counts[v], ver(v)))
+        for i, v in versions.items():
+            if ver(v) < ver(usual):
+                reasons.setdefault(i, []).append(f"{name} {v}, most run {usual}")
+    for i, r in enumerate(rows):
+        r["firmware_behind"] = "; ".join(reasons[i]) if i in reasons else None
+    return rows
+
+
 @websocket_api.websocket_command({vol.Required("type"): "sextant/receivers"})
 @websocket_api.require_admin
 @websocket_api.async_response
@@ -1072,6 +1251,7 @@ async def ws_receivers(hass, connection, msg):
     directory = bermuda_source.async_get_scanner_directory(hass) or {}
     by_slug = {info.get("slug"): (addr, info) for addr, info in directory.items() if info.get("slug")}
     layout = get_layout(hass) or {}
+    firmware = _firmware_by_address(hass)
     placed = []
     placed_addresses = set()
     for floor in layout.get("floor", []) if isinstance(layout, dict) else []:
@@ -1097,7 +1277,9 @@ async def ws_receivers(hass, connection, msg):
                 "area": info.get("area_name") if info else None,
                 "last_seen_age": info.get("last_seen_age") if info else None,
                 "matched": info is not None,
+                "firmware": firmware.get(address) if address else None,
             })
+    firmware_behind(placed)
     ignored = ignored_scanners(layout)
     unplaced = [
         {"address": addr, "slug": info.get("slug"), "name": info.get("name"), "area": info.get("area_name"),
@@ -1202,6 +1384,52 @@ async def _compute_kpi(hass, hours):
     }
 
 
+# An hour of log is some 10,000 rows held in memory, so one replay runs at a time.
+REPLAY_MAX_HOURS = 48
+_replay_running = False
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): "sextant/replay",
+    vol.Required("tuning"): dict,
+    vol.Optional("hours", default=6.0): vol.All(vol.Coerce(float), vol.Range(min=0.5, max=REPLAY_MAX_HOURS)),
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_replay(hass, connection, msg):
+    """What other room tuning would have done over the election log (replay.compare)."""
+    from . import election_log, replay  # noqa: PLC0415
+
+    core = _core()
+    layout = get_layout(hass)
+    if not isinstance(layout, dict) or not layout.get("floor"):
+        return _error(connection, msg, "No floor plan yet")
+    unknown = sorted(k for k in msg["tuning"] if k not in replay.ROOM_KEYS)
+    if unknown:
+        return _error(connection, msg, f"Only the room election can be replayed, not {', '.join(unknown)}")
+    # An out-of-range value would be replayed as the default while the page showed the value asked for.
+    bad = sorted(k for k, v in msg["tuning"].items() if core._coerce_tuning(k, v) is None)
+    if bad:
+        return _error(connection, msg, "Out of range: " + ", ".join(f"{k} takes {core.TUNING_SPEC[k][2]:g} to {core.TUNING_SPEC[k][3]:g}" for k in bad))
+    global _replay_running
+    if _replay_running:
+        return _error(connection, msg, "A replay is already running")
+    habits = copy.deepcopy(core._habits)   # here on the loop, where they are learned
+
+    def work():
+        global _replay_running
+        try:
+            return replay.compare(core, layout, replay.load_rows(election_log.get(hass).dirpath, msg["hours"]), msg["tuning"], habits)
+        finally:
+            _replay_running = False   # here, not after the await: a closed page cancels that, not the thread
+
+    _replay_running = True
+    out = await hass.async_add_executor_job(work)
+    if not out.get("rows"):
+        return _error(connection, msg, "The election log has nothing for that window: set election_log_hours above 0 and let it record")
+    connection.send_result(msg["id"], out)
+
+
 @websocket_api.websocket_command({
     vol.Required("type"): "sextant/kpi",
     vol.Optional("hours", default=12.0): vol.Coerce(float),
@@ -1265,12 +1493,13 @@ async def ws_kpi_baseline_save(hass, connection, msg):
         return _error(connection, msg, str(e))
     if not result["entities"]:
         return _error(connection, msg, "no zone sensors in the recorder window; nothing to save")
-    baselines = await load_kpi_baselines(hass)
-    baselines[name] = {
-        "saved_at": result["generated_at"], "hours": hours,
-        "entities": result["entities"], "summary": result["summary"],
-    }
-    await save_kpi_baselines(hass, baselines)
+    async with KPI_LOCK:
+        baselines = await load_kpi_baselines(hass)
+        baselines[name] = {
+            "saved_at": result["generated_at"], "hours": hours,
+            "entities": result["entities"], "summary": result["summary"],
+        }
+        await save_kpi_baselines(hass, baselines)
     connection.send_result(msg["id"], {"name": name, "saved_at": result["generated_at"], "things": len(result["entities"])})
 
 
@@ -1278,11 +1507,12 @@ async def ws_kpi_baseline_save(hass, connection, msg):
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_kpi_baseline_delete(hass, connection, msg):
-    baselines = await load_kpi_baselines(hass)
-    if msg["name"] not in baselines:
-        return _error(connection, msg, f"no KPI baseline named {msg['name']!r}")
-    del baselines[msg["name"]]
-    await save_kpi_baselines(hass, baselines)
+    async with KPI_LOCK:
+        baselines = await load_kpi_baselines(hass)
+        if msg["name"] not in baselines:
+            return _error(connection, msg, f"no KPI baseline named {msg['name']!r}")
+        del baselines[msg["name"]]
+        await save_kpi_baselines(hass, baselines)
     connection.send_result(msg["id"], {"deleted": msg["name"]})
 
 
@@ -1583,7 +1813,8 @@ async def ws_scanner_ignore(hass, connection, msg):
 @websocket_api.async_response
 async def ws_advice(hass, connection, msg):
     """Which rooms the proxies serve worst and where a proxy would help (sextant.advice)."""
-    from .advice import advise  # noqa: PLC0415
+    from . import person_log  # noqa: PLC0415
+    from .advice import advise, room_usage  # noqa: PLC0415
     from .calibration import get_calibration_state  # noqa: PLC0415
 
     core = _core()
@@ -1593,7 +1824,11 @@ async def ws_advice(hass, connection, msg):
     samples = {k: list(v) for k, v in get_calibration_state(hass).get("samples", {}).items()}
     selftest = await hass.async_add_executor_job(core.run_selftest, hass, samples)
     unplaced = _unplaced_scanners(hass, layout)
-    out = await hass.async_add_executor_job(advise, layout, selftest, unplaced)
+    # shortcut: every request reads the person log's whole window, in the executor with the rest: about 30,000 lines
+    # (12 MB) a person for 48 hours at a six-second cycle, some 3 s for twelve; keep a sum per hour file if that gets slow.
+    since = time.time() - core._tuning(layout, "person_log_hours") * 3600.0
+    out = await hass.async_add_executor_job(
+        lambda: advise(layout, selftest, unplaced, room_usage(person_log.rows(hass.config.path(person_log.LOG_DIRNAME), since))))
     out["ignored"] = _ignored_scanner_rows(hass, layout)
     connection.send_result(msg["id"], out)
 
@@ -2040,6 +2275,44 @@ async def ws_election_log_clear(hass, connection, msg):
     connection.send_result(msg["id"], {"files": files, "bytes": size})
 
 
+@websocket_api.websocket_command({vol.Required("type"): "sextant/election_log/usage"})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_election_log_usage(hass, connection, msg):
+    """What the election log holds on disk now."""
+    from . import election_log  # noqa: PLC0415
+
+    files, size = await hass.async_add_executor_job(election_log.usage, election_log.get(hass).dirpath)
+    connection.send_result(msg["id"], {"files": files, "bytes": size})
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): "sextant/receiver_report",
+    vol.Optional("hours", default=6.0): vol.All(vol.Coerce(float), vol.Range(min=0.25, max=24.0)),
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_receiver_report(hass, connection, msg):
+    """Each placed receiver's ranges against the fixes they went into, from the
+    election log (receiver_report.py). Read-only."""
+    from . import election_log, receiver_report  # noqa: PLC0415
+
+    layout = get_layout(hass)
+    if not isinstance(layout, dict):
+        return _error(connection, msg, "No floor plan yet")
+    dirpath, since = election_log.get(hass).dirpath, time.time() - msg["hours"] * 3600.0
+
+    def _run():
+        lines = receiver_report.report(election_log.iter_rows(dirpath, since), layout)
+        return lines, receiver_report.silent(lines, layout)
+    lines, quiet = await hass.async_add_executor_job(_run)
+    connection.send_result(msg["id"], {
+        "hours": msg["hours"],
+        "rows": [{"floor": f, "receiver": slug, "heard": n, "bias_m": bias, "off_m": off} for f, slug, n, bias, off in lines],
+        "silent": [{"floor": f, "receiver": slug} for f, slug in quiet] if lines else [],
+    })
+
+
 @websocket_api.websocket_command({
     vol.Required("type"): "sextant/interval/set",
     # Seconds between cycles for the next quarter hour; null goes back to the
@@ -2078,14 +2351,14 @@ COMMANDS = (
     ws_advice,
     ws_snapshots_list, ws_snapshots_restore, ws_thing_forget, ws_person_trackers_set, ws_person_wifi_set,
     ws_wifi_heat, ws_wifi_heat_clear, ws_property, ws_site_set,
-    ws_robot_list, ws_robot_align, ws_robot_dock, ws_robot_remove, ws_election_log_clear, ws_interval_set,
+    ws_robot_list, ws_robot_align, ws_robot_dock, ws_robot_remove, ws_election_log_clear, ws_election_log_usage, ws_receiver_report, ws_interval_set,
     ws_radar_devices, ws_radar_targets,
     ws_layout_get, ws_layout_save, ws_tuning_set, ws_thing_tune,
     ws_history_index, ws_history_get, ws_history_timeline, ws_history_clear, ws_thing_readings, ws_floor_bias_map,
-    ws_calibration_status, ws_calibration_action, ws_selftest, ws_scanner_linking, ws_receivers, ws_beacon_links,
+    ws_calibration_status, ws_calibration_action, ws_selftest, ws_replay, ws_scanner_linking, ws_receivers, ws_beacon_links,
     ws_proxy_info,
     ws_adjust_zones, ws_registration, ws_scanner_ignore, ws_kpi, ws_kpi_baselines, ws_kpi_baseline_save, ws_kpi_baseline_delete,
-    ws_truth_mark, ws_truth_list, ws_truth_delete, ws_truth_evaluate, ws_truth_apply,
+    ws_truth_mark, ws_truth_list, ws_truth_delete, ws_truth_keep, ws_truth_evaluate, ws_truth_health, ws_truth_apply,
     ws_bermuda_candidates, ws_bermuda_tracked, ws_bermuda_track, ws_bermuda_findmy, ws_bermuda_findmy_add,
     ws_bermuda_findmy_remove, ws_bermuda_options, ws_bermuda_options_set, ws_bermuda_scanners, ws_bermuda_tiles,
     ws_bermuda_scanner_ranging, ws_bermuda_tile_identities, ws_bermuda_tile_bind, ws_bermuda_tile_adopt,

@@ -65,7 +65,9 @@ triggers:
     entity_id: sensor.alex_smith_sextant_person_room
 conditions:
   - condition: template
-    value_template: "{{ trigger.to_state.attributes.area_id is not none }}"
+    value_template: >
+      {{ trigger.from_state is not none and trigger.to_state is not none
+         and trigger.to_state.attributes.area_id is not none }}
 actions:
   - action: light.turn_on
     target:
@@ -85,6 +87,43 @@ mode: queued
 Rooms are linked to areas on the Edit page (a room's **Home Assistant
 area**); an unlinked room has `area_id: none` and the condition above skips
 it.
+
+### Music follows a person
+
+The same `area_id` finds the speakers. This joins the speaker in the room
+the person walked into to the one playing in the room they left.
+
+```yaml
+alias: Music follows Alex
+triggers:
+  - trigger: state
+    entity_id: sensor.alex_smith_sextant_person_room
+conditions:
+  - condition: template
+    value_template: "{{ trigger.from_state is not none and trigger.to_state is not none }}"
+actions:
+  - variables:
+      was: "{{ area_entities(trigger.from_state.attributes.area_id or '') | select('match', 'media_player[.]') | list }}"
+      now: "{{ area_entities(trigger.to_state.attributes.area_id or '') | select('match', 'media_player[.]') | list }}"
+  - condition: template
+    value_template: >
+      {{ was | count > 0 and now | count > 0 and was[0] != now[0]
+         and is_state(was[0], 'playing') }}
+  - action: media_player.join
+    target:
+      entity_id: "{{ was[0] }}"
+    data:
+      group_members: "{{ [now[0]] }}"
+```
+
+It takes the first media player of each area, so give a room with a TV and
+a speaker its own choice. Grouping is the speaker system's own:
+`media_player.join` works between speakers of one system that supports it
+(Sonos, for one).
+
+The room they left keeps playing, which is right when someone else is
+still in it. To stop it there, `media_player.unjoin` that speaker once its
+room is empty: the helper in the next recipe says when.
 
 ### Nobody left in a room
 
@@ -328,6 +367,121 @@ rooms:                 # optional, rooms layout: shows each room's mode
 The card reads only the entities its config names, so it works on
 dashboards served through Strimmer without an override rule.
 
+### A room at a glance
+
+Three ways to show who is in a room and what it is doing, for a room's own
+dashboard view. Each takes the room's occupancy sensor; copy the block and
+change every `binary_sensor.kitchen_sextant_occupancy` in it (the chips name
+it three times) to the room's own.
+
+The chip: faces of who is in the room, how long it has been on, and the
+mode's icon. An empty room shows how long it has been empty and who was in
+it last (from the recorder). Add the resource `/sextant/sextant-room-chip.js`
+(JavaScript module) once.
+
+```yaml
+type: custom:sextant-room-chip
+entity: binary_sensor.kitchen_sextant_occupancy
+max: 3          # faces before "+N"
+```
+
+Mushroom chips for a view's chip row: who is in the room ("2 people · 1
+cat"), then the mode and how long ("Cooking · on for 12m", or "Empty since
+2:14 PM").
+
+```yaml
+type: custom:mushroom-chips-card
+chips:
+  - type: conditional
+    conditions:
+      - entity: binary_sensor.kitchen_sextant_occupancy
+        state: "on"
+    chip:
+      type: template
+      entity: binary_sensor.kitchen_sextant_occupancy
+      icon: mdi:account-multiple
+      icon_color: green
+      tap_action:
+        action: more-info
+      content: >
+        {%- set a = states[entity].attributes if states[entity] else {} -%}
+        {%- set p = a.get('people', []) | count -%}
+        {%- set ns = namespace(k={}, out=([p ~ (' person' if p == 1 else ' people')] if p else [])) -%}
+        {%- for n in a.get('pets', []) -%}
+          {%- set c = state_attr('sensor.' ~ (n | slugify) ~ '_sextant_pet_location', 'via_class') or 'pet' -%}
+          {%- set ns.k = dict(ns.k, **{c: ns.k.get(c, 0) + 1}) -%}
+        {%- endfor -%}
+        {%- for c, n in ns.k.items() -%}{%- set ns.out = ns.out + [n ~ ' ' ~ c ~ ('' if n == 1 else 's')] -%}{%- endfor -%}
+        {{ ns.out | join(' · ') or 'On' }}
+  - type: template
+    entity: binary_sensor.kitchen_sextant_occupancy
+    tap_action:
+      action: more-info
+    icon: >
+      {%- set ns = namespace(i='') -%}
+      {%- for w in (state_attr(entity, 'mode') or '') | lower | regex_findall('[a-z0-9]+') if not ns.i -%}
+        {%- for re, ic in [['^(movie|film|cinema|theat)', 'mdi:movie-open'], ['^(tv|watch)', 'mdi:television-play'], ['^gam', 'mdi:controller'], ['^(music|party|listen)', 'mdi:music'], ['^(sleep|night|bed)', 'mdi:sleep'], ['^read', 'mdi:book-open-variant'], ['^(work|meeting|call|office)', 'mdi:briefcase'], ['^(cook|dinner|meal|bak)', 'mdi:silverware-fork-knife'], ['^(away|vacation)', 'mdi:airplane'], ['^guest', 'mdi:account-multiple']] if not ns.i and w is match(re) -%}
+          {%- set ns.i = ic -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ ns.i or ('mdi:tag' if state_attr(entity, 'mode') else ('mdi:clock-outline' if is_state(entity, 'on') else 'mdi:account-off-outline')) }}
+    icon_color: >
+      {{ 'amber' if state_attr(entity, 'mode') else ('green' if is_state(entity, 'on') else 'disabled') }}
+    content: >
+      {%- set mode = state_attr(entity, 'mode') -%}
+      {%- set s = as_datetime(state_attr(entity, 'since'), default=none) -%}
+      {%- set m = ((now() - s).total_seconds() // 60) | int if s else 0 -%}
+      {%- set d = (m // 60) ~ 'h ' ~ (m % 60) ~ 'm' if m >= 60 else m ~ 'm' -%}
+      {{ (mode ~ ' · ' if mode else '') ~ (('on for ' ~ d) if is_state(entity, 'on') else ('Empty since ' ~ (s | as_local).strftime('%-I:%M %p') if s else 'Empty')) }}
+```
+
+A one-row card: the room and its mode, who is there and for how long, the
+mode as the icon (amber), and why the room is on as the badge.
+
+```yaml
+type: custom:mushroom-template-card
+entity: binary_sensor.kitchen_sextant_occupancy
+tap_action:
+  action: more-info
+primary: >
+  {{ state_attr(entity, 'room') }} · {{ state_attr(entity, 'mode') or ('Occupied' if is_state(entity, 'on') else 'Empty') }}
+secondary: >
+  {%- set a = states[entity].attributes if states[entity] else {} -%}
+  {%- set s = as_datetime(a.get('since'), default=none) -%}
+  {%- set m = ((now() - s).total_seconds() // 60) | int if s else 0 -%}
+  {%- set d = (m // 60) ~ 'h ' ~ (m % 60) ~ 'm' if m >= 60 else m ~ 'm' -%}
+  {%- if is_state(entity, 'on') -%}
+    {{ (a.get('people', []) | map('regex_replace', ' .*', '') | list + a.get('pets', [])) | join(', ') or 'Someone' }} · {{ d }}
+  {%- else -%}
+    since {{ (s | as_local).strftime('%-I:%M %p') if s else '?' }}
+  {%- endif %}
+icon: >
+  {%- set ns = namespace(i='') -%}
+  {%- for w in (state_attr(entity, 'mode') or '') | lower | regex_findall('[a-z0-9]+') if not ns.i -%}
+    {%- for re, ic in [['^(movie|film|cinema|theat)', 'mdi:movie-open'], ['^(tv|watch)', 'mdi:television-play'], ['^gam', 'mdi:controller'], ['^(music|party|listen)', 'mdi:music'], ['^(sleep|night|bed)', 'mdi:sleep'], ['^read', 'mdi:book-open-variant'], ['^(work|meeting|call|office)', 'mdi:briefcase'], ['^(cook|dinner|meal|bak)', 'mdi:silverware-fork-knife'], ['^(away|vacation)', 'mdi:airplane'], ['^guest', 'mdi:account-multiple']] if not ns.i and w is match(re) -%}
+      {%- set ns.i = ic -%}
+    {%- endfor -%}
+  {%- endfor -%}
+  {{ ns.i or ('mdi:tag' if state_attr(entity, 'mode') else ('mdi:home' if is_state(entity, 'on') else 'mdi:home-outline')) }}
+icon_color: >
+  {{ 'amber' if state_attr(entity, 'mode') else ('green' if is_state(entity, 'on') else 'disabled') }}
+badge_icon: >
+  {%- set s = (state_attr(entity, 'sources') or [none])[0] -%}
+  {{ {'bluetooth': 'mdi:bluetooth', 'radar': 'mdi:radar', 'media_player': 'mdi:television-play', 'sensor': 'mdi:motion-sensor', 'door': 'mdi:door', 'forced': 'mdi:toggle-switch', 'keep': 'mdi:pin', 'hold': 'mdi:timer-sand', 'restored': 'mdi:restart'}.get(s, '') }}
+badge_color: grey
+```
+
+The mode icons match the Occupancy page's.
+
+Behind Strimmer: the room sensor named in `entity` is forwarded because
+the card names it. The chip also reads each occupant's `person.<name>` for
+the picture; it asks Strimmer for `*_sextant_*` and `person.*` itself, and
+shows "Waiting for …" until the reconnect brings them. The Mushroom
+templates read the pets' `sensor.<pet>_sextant_pet_location`, but Home
+Assistant renders templates itself, so they need nothing forwarded. To
+avoid the ask and reconnect, list the `person.*` entities in Strimmer's
+`always_forward`.
+
 ### Who is where
 
 An entities card, one line per person, with how long they have been there:
@@ -359,7 +513,7 @@ title: Who is where
 content: >
   {% for p in states.sensor | selectattr('entity_id', 'search', '_sextant_person_location$') | sort(attribute='name') %}
   {% set a = p.attributes %}
-  **{{ p.name | replace(' Sextant Location', '') }}** — {{ p.state }}
+  **{{ p.name | replace(' Location', '') }}** — {{ p.state }}
   {%- if a.source == 'held' %} *(not heard for a bit)*{% endif %}
   {%- if a.source == 'gps' and a.distance_m %} *({{ (a.distance_m / 1000) | round(1) }} km away)*{% endif %}
   {%- if a.source == 'none' %} *(no location)*{% endif %}

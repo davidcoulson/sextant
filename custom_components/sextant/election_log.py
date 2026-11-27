@@ -12,15 +12,19 @@ one JSON line per thing per cycle, in hourly files under
 ``config/sextant_election_log``, dropped once they are older than the window.
 tools/replay_floors.py reads the directory and replays the elections under
 other settings. Measured at about 6 MB an hour for twenty things at
-fifteen-second cycles (1.2 KB a row, most of it the per-floor candidates); a
-day is some 150 MB, a week a gigabyte, which is why it is off by default.
+fifteen-second cycles (1.2 KB a row, most of it the per-floor candidates),
+and several times that in a house with many proxies. An hour's file is
+gzipped once the hour is over (about a sixth of the size), so only the hour
+in progress is plain text; ``open_text`` reads either.
 
 This module imports nothing from the rest of the package.
 """
 import asyncio
+import gzip
 import logging
 import os
 import re
+import threading
 import time
 
 _LOGGER = logging.getLogger(__name__)
@@ -29,10 +33,12 @@ LOG_DIRNAME = "sextant_election_log"
 # What is kept of a published row: everything the replay needs and nothing the
 # panel alone wants (the trilateration circles, the fingerprint telemetry).
 KEEP = (
-    "ent", "floor", "floors", "floor_cands", "speed", "zone", "zone_raw", "zone_locked",
+    "ent", "floor", "floors", "floor_cands", "speed", "zone", "zone_raw", "zone_locked", "closed",
     "nearest_zone", "sub_zone", "anchor", "conf", "cords", "raw", "rms_m", "estimator", "updated",
 )
-_NAME = re.compile(r"^(\d{4})-(\d{2})-(\d{2})T(\d{2})Z\.jsonl$")
+# One writer, compressor or clear at a time: a clear must not race a gzip in flight.
+_FILES = threading.Lock()
+_NAME = re.compile(r"^(\d{4})-(\d{2})-(\d{2})T(\d{2})Z\.jsonl(\.gz)?$")
 
 
 def file_for(stamp: float) -> str:
@@ -46,7 +52,7 @@ def hour_of(name: str):
     if not m:
         return None
     try:
-        return _timegm(*(int(g) for g in m.groups()))
+        return _timegm(*(int(g) for g in m.groups()[:4]))
     except (ValueError, OverflowError):
         return None
 
@@ -70,6 +76,101 @@ def expired(names, now: float, hours: float):
         if start is not None and start + 3600 < cutoff:
             out.append(name)
     return out
+
+
+def open_text(path: str):
+    """An hour's file for reading, gzipped or not."""
+    return gzip.open(path, "rt", encoding="utf-8") if path.endswith(".gz") else open(path, encoding="utf-8")
+
+
+def iter_rows(dirpath: str, since: float = 0.0):
+    """Every logged row from ``since`` on, one at a time (a day is hundreds of
+    megabytes: never the whole log in memory). Files in name order."""
+    import json
+    try:
+        names = sorted(os.listdir(dirpath))
+    except OSError:
+        return
+    for name in names:
+        hour = hour_of(name)
+        if hour is None or hour + 3600.0 < since:
+            continue
+        if name + ".gz" in names:
+            continue   # listed mid-compression: the gzip has the same rows
+        path = os.path.join(dirpath, name)
+        try:
+            fh = open_text(path)
+        except FileNotFoundError:
+            try:
+                fh = open_text(path + ".gz")   # gzipped since the listing
+            except OSError:
+                continue
+        with fh:
+            try:
+                for line in fh:
+                    try:
+                        row = json.loads(line)
+                    except ValueError:
+                        continue   # a line cut short by a restart
+                    if isinstance(row, dict) and row.get("t", 0) >= since:
+                        yield row
+            except (OSError, EOFError) as e:
+                _LOGGER.debug("Election log %s not read to its end: %s", name, e)
+
+
+def usage(dirpath: str):
+    """(files, bytes) the log holds on disk now."""
+    files = size = 0
+    try:
+        names = os.listdir(dirpath)
+    except OSError:
+        return 0, 0
+    for name in names:
+        if hour_of(name) is not None:
+            try:
+                size += os.path.getsize(os.path.join(dirpath, name))
+                files += 1
+            except OSError:
+                pass
+    return files, size
+
+
+def _archived(path: str) -> bool:
+    """The plain file's rows already end its gzip (a stop between the gzip
+    landing and the plain file's removal), so appending them would log the hour twice."""
+    try:
+        with open(path, "rb") as src, gzip.open(path + ".gz", "rb") as gz:
+            tail = src.read()
+            return gz.read().endswith(tail)
+    except (OSError, EOFError):  # a truncated archive: keep the plain rows (appended, as before)
+        return False
+
+
+def compress_closed(dirpath: str, now: float):
+    """Gzip every plain file whose hour is over. The plain file goes only
+    after its gzip is in place under the final name. Caller holds ``_FILES``."""
+    import shutil
+    this_hour = now // 3600 * 3600
+    for name in os.listdir(dirpath):
+        start = hour_of(name)
+        if start is None or name.endswith(".gz") or start >= this_hour:
+            continue
+        path = os.path.join(dirpath, name)
+        try:
+            if os.path.exists(path + ".gz") and _archived(path):
+                pass  # already archived: stopped between the gzip landing and this remove
+            elif os.path.exists(path + ".gz"):
+                # The clock stepped back into an archived hour: add the late
+                # rows as a second gzip member instead of replacing the archive.
+                with open(path, "rb") as src, gzip.open(path + ".gz", "ab") as dst:
+                    shutil.copyfileobj(src, dst)
+            else:
+                with open(path, "rb") as src, gzip.open(path + ".gz.tmp", "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+                os.replace(path + ".gz.tmp", path + ".gz")
+            os.remove(path)
+        except OSError as e:
+            _LOGGER.debug("Election log %s not compressed: %s", name, e)
 
 
 def slim(row: dict, stamp: float) -> dict:
@@ -123,19 +224,21 @@ class ElectionLog:
 
     def _write(self, rows, now, hours):
         import json
-        os.makedirs(self.dirpath, exist_ok=True)
-        with open(os.path.join(self.dirpath, file_for(now)), "a", encoding="utf-8") as fh:
-            for rec in rows:
-                fh.write(json.dumps(rec, separators=(",", ":"), default=str) + "\n")
-        hour = int(now // 3600)
-        if self._pruned_hour == hour:
-            return
-        self._pruned_hour = hour
-        for name in expired(os.listdir(self.dirpath), now, hours):
-            try:
-                os.remove(os.path.join(self.dirpath, name))
-            except OSError as e:
-                _LOGGER.debug("Election log %s not removed: %s", name, e)
+        with _FILES:
+            os.makedirs(self.dirpath, exist_ok=True)
+            with open(os.path.join(self.dirpath, file_for(now)), "a", encoding="utf-8") as fh:
+                for rec in rows:
+                    fh.write(json.dumps(rec, separators=(",", ":"), default=str) + "\n")
+            hour = int(now // 3600)
+            if self._pruned_hour == hour:
+                return
+            self._pruned_hour = hour
+            for name in expired(os.listdir(self.dirpath), now, hours):
+                try:
+                    os.remove(os.path.join(self.dirpath, name))
+                except OSError as e:
+                    _LOGGER.debug("Election log %s not removed: %s", name, e)
+            compress_closed(self.dirpath, now)
 
 
 async def clear(dirpath: str):
@@ -144,6 +247,10 @@ async def clear(dirpath: str):
     Turning the log off calls this once; the ``sextant/election_log/clear``
     command calls it too.
     """
+    def _locked():
+        with _FILES:
+            return _clear()
+
     def _clear():
         files = size = 0
         try:
@@ -161,7 +268,7 @@ async def clear(dirpath: str):
             except OSError as e:
                 _LOGGER.debug("Election log %s not removed: %s", name, e)
         return files, size
-    return await asyncio.to_thread(_clear)
+    return await asyncio.to_thread(_locked)
 
 
 def get(hass) -> ElectionLog:

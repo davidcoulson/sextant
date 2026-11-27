@@ -1,0 +1,21 @@
+# Copy to /config/custom_sentences/en/sextant.yaml
+language: "en"
+intents:
+  SextantWhoIsIn:
+    data:
+      - sentences:
+          - "who is in [the] {area}"
+          - "who is [in] [the] {area}"
+          - "(is|are) (anyone|anybody|someone|somebody) in [the] {area}"
+          - "is [the] {area} occupied"
+  SextantWhereIs:
+    data:
+      - sentences:
+          - "where is {name}"
+          - "where [is|are] {name} at"
+          - "(is|are) {name} (home|here)"
+  SextantWhoIsHome:
+    data:
+      - sentences:
+          - "who is (home|here)"
+          - "how many people are (home|here)"

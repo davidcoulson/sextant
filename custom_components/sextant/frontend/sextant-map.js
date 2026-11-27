@@ -869,6 +869,19 @@ export class SextantMap {
     return !!f && Math.abs(v.k - f.k) <= f.k * 1e-3 && Math.abs(v.tx - f.tx) < 1 && Math.abs(v.ty - f.ty) < 1;
   }
 
+  /** Show one room: zoom to it and fade the rest. null shows the whole floor again. */
+  setFocusZone(zoneId) {
+    this.focusZone = zoneId || null;
+    const c = this._focusCords();
+    if (c) this.zoomTo(c, 0.15); else this.fit();
+  }
+
+  _focusCords() {
+    if (!this.focusZone) return null;
+    const c = (this.floor?.zones || []).find((z) => z.zone_id === this.focusZone || z.entity_id === this.focusZone)?.cords;
+    return c?.length >= 3 ? c : null;
+  }
+
   /** Zoom so these map points fill the view, with a margin: a spot fills a phone screen. */
   zoomTo(points, margin = 0.2) {
     const rect = this.canvas.getBoundingClientRect();
@@ -1261,9 +1274,13 @@ export class SextantMap {
     const m = this.toMap(p);
     const slop = HIT_SLOP / this.view.k;
     if (this.mode !== "edit") {
-      for (let i = this.things.length - 1; i >= 0; i--) {
+      // The focused thing is drawn on top, so it is hit first.
+      const fi = this.things.findIndex((t) => t.ent === this.options.focus);
+      const order = [...this.things.keys()].reverse();
+      if (fi >= 0) order.unshift(fi);
+      for (const i of order) {
         const t = this.things[i];
-        if (!t.cords) continue;
+        if (!t?.cords) continue;
         if (Math.hypot(t.cords[0] - m.x, t.cords[1] - m.y) <= (THING_RADIUS + 4) / this.view.k) return { kind: "thing", index: i, ent: t.ent };
       }
     }
@@ -1298,7 +1315,8 @@ export class SextantMap {
       }
     }
     const rs = ((edit ? RECEIVER_SIZE_EDIT : RECEIVER_SIZE) + (edit ? 6 : 0)) / this.view.k;
-    if (!(edit && this.locks.receiver)) {
+    // Proxies that are not drawn are not clickable either.
+    if (!(edit && this.locks.receiver) && (edit || this.options.receivers !== false)) {
       for (let i = (f.receivers || []).length - 1; i >= 0; i--) {
         const r = f.receivers[i];
         if (r.cords && Math.abs(r.cords.x - m.x) <= slop + rs && Math.abs(r.cords.y - m.y) <= slop + rs) return { kind: "receiver", index: i, id: r.entity_id };
@@ -1338,7 +1356,7 @@ export class SextantMap {
   draw() {
     const ctx = this.ctx, dpr = window.devicePixelRatio || 1;
     const rect = this.canvas.getBoundingClientRect();
-    if (!this._fitted) this.fit();
+    if (!this._fitted) { if (this._focusCords()) this.zoomTo(this._focusCords(), 0.15); else this.fit(); }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, rect.width, rect.height);
     const f = this.floor;
@@ -1408,6 +1426,21 @@ export class SextantMap {
     if (this.mode !== "edit") { this._drawThings(ctx); this._drawMarks(ctx); }
     this._drawProxyPeeks(ctx);
     this._flushLabels(ctx);
+    // Live only zooms to the room: its lines, pins and heat reach into other rooms.
+    const focus = this.mode === "edit" ? this._focusCords() : null;
+    if (focus) {
+      // One room at a time: a scrim over everything but the room, so the rest stays as a faint guide.
+      ctx.save();
+      ctx.globalAlpha = 0.7;
+      ctx.fillStyle = this._css("--sextant-map-bg", "#ffffff");
+      ctx.beginPath();
+      const far = 1e5;
+      ctx.rect(-far, -far, 2 * far, 2 * far);
+      focus.forEach((q, i) => (i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)));
+      ctx.closePath();
+      ctx.fill("evenodd");
+      ctx.restore();
+    }
     ctx.restore();
     // Every frame is a chance the view moved: the host's own overlays (the
     // quick-pin ring's "Couch · Great Room") follow the plan under them.
@@ -1478,13 +1511,16 @@ export class SextantMap {
       const selected = this.selection && this.selection.kind === kind && this.selection.index === index;
       const hovered = this.hover && this.hover.kind === kind && this.hover.index === index;
       const noGo = !!item.no_go;
+      // Live is for reading where things are: the rooms and spots sit back as
+      // a tint. Edit keeps them strong, since there they are what you work on.
+      const soft = this.mode === "edit" ? 1 : 0.5;
       const hue = kind === "subzone" ? null : thingHue(item.entity_id || "");
       ctx.beginPath();
       pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
       if (pts.length >= 3) ctx.closePath();
       if (kind === "subzone") {
-        ctx.fillStyle = withAlpha(item.color || "hsl(175,70%,45%)", 0.22);
-        ctx.strokeStyle = item.color || "hsl(175,70%,45%)";
+        ctx.fillStyle = withAlpha(item.color || "hsl(175,70%,45%)", 0.22 * soft);
+        ctx.strokeStyle = withAlpha(item.color || "hsl(175,70%,45%)", soft);
       } else if (noGo) {
         // A void is read at a glance, not studied: the dashed outline and a
         // wash say "nothing here" without the heavy fill and close hatch that
@@ -1493,11 +1529,11 @@ export class SextantMap {
         ctx.strokeStyle = "rgba(70,70,70,0.75)";
       } else if (item.color) {
         // A colour picked for the room (Edit, from Home Assistant's list).
-        ctx.fillStyle = withAlpha(item.color, selected || hovered ? 0.28 : 0.16);
-        ctx.strokeStyle = withAlpha(item.color, 0.9);
+        ctx.fillStyle = withAlpha(item.color, (selected || hovered ? 0.28 : 0.16) * soft);
+        ctx.strokeStyle = withAlpha(item.color, 0.9 * soft);
       } else {
-        ctx.fillStyle = `hsla(${hue}, 60%, 55%, ${selected || hovered ? 0.28 : 0.16})`;
-        ctx.strokeStyle = `hsla(${hue}, 60%, 40%, 0.9)`;
+        ctx.fillStyle = `hsla(${hue}, 60%, 55%, ${(selected || hovered ? 0.28 : 0.16) * soft})`;
+        ctx.strokeStyle = `hsla(${hue}, 60%, 40%, ${0.9 * soft})`;
       }
       ctx.lineWidth = (selected ? 3 : hovered ? 2 : 1.25) / k;
       if (noGo) ctx.setLineDash([6 / k, 4 / k]);
@@ -2238,7 +2274,8 @@ export class SextantMap {
     const clusters = this.options.cluster === false ? [] : clusterThings(this.things, (THING_RADIUS * 1.8) / k, picked);
     const clustered = new Map();
     for (const c of clusters) for (const m of c.members) clustered.set(m.ent, c);
-    for (const t of this.things) {
+    // The focused thing is drawn last, on top of whatever shares its spot.
+    for (const t of focus ? [...this.things].sort((a, b) => (a.ent === focus) - (b.ent === focus)) : this.things) {
       if (!t.cords) continue;
       const custom = t.color || null;
       const color = thingColor(t.ent, custom);
@@ -2249,7 +2286,7 @@ export class SextantMap {
       // solid dot claiming a position nobody has confirmed.
       const { age, ghost } = staleness(t, this.options.staleAfter);
       ctx.save();
-      if (focus && !focused) ctx.globalAlpha = 0.28;   // everything but the one you clicked fades back
+      if (focus && !focused) ctx.globalAlpha = 0.16;   // everything but the one you clicked fades back
       if (ghost) ctx.globalAlpha *= 0.4;
       const trail = this.options.trails ? this.trails.get(t.ent) : null;
       if (trail && trail.length > 1) {
@@ -2319,7 +2356,8 @@ export class SextantMap {
         ctx.fillText((t.label || t.ent).slice(0, 2).toUpperCase(), t.cords[0], t.cords[1]);
       }
       const label = ghost ? `${t.label || t.ent} · ${shortAge(age)} ago` : (t.label || t.ent);
-      if (this.options.labels || focused || ghost) {
+      // With one thing picked out, the others keep their faded dots and lose their names.
+      if (focused || (!focus && (this.options.labels || ghost))) {
         this._label(ctx, label, t.cords[0], t.cords[1] + r + 9 / k, focused ? 13 : 11, 0.9, null,
                     focused ? LABEL_PRIO.focus : LABEL_PRIO.thing);
       }
@@ -2339,7 +2377,7 @@ export class SextantMap {
     const custom = lead.color || null;
     const stale = c.members.every((t) => staleness(t, this.options.staleAfter).ghost);
     ctx.save();
-    if (focus) ctx.globalAlpha = 0.28;   // a cluster is never the focused thing
+    if (focus) ctx.globalAlpha = 0.16;   // a cluster is never the focused thing
     if (stale) ctx.globalAlpha *= 0.4;
     ctx.beginPath(); ctx.arc(c.x, c.y, r * 1.9, 0, Math.PI * 2);
     ctx.fillStyle = thingRgba(lead.ent, custom, 0.18); ctx.fill();
@@ -2353,7 +2391,7 @@ export class SextantMap {
     ctx.fillText(String(c.members.length), c.x, c.y);
     const names = c.members.map((t) => t.label || t.ent);
     const label = names.length > 2 ? `${names[0]}, ${names[1]} +${names.length - 2}` : names.join(", ");
-    if (this.options.labels) this._label(ctx, label, c.x, c.y + r + 9 / k, 11, 0.9, null, LABEL_PRIO.thing);
+    if (this.options.labels && !focus) this._label(ctx, label, c.x, c.y + r + 9 / k, 11, 0.9, null, LABEL_PRIO.thing);
     this._thingMarks.push({ x: c.x, y: c.y, r });
     ctx.restore();
   }

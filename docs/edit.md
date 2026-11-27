@@ -19,6 +19,25 @@ target:
   area_id: "{{ state_attr('sensor.alex_sextant_person_location', 'area_id') }}"
 ```
 
+**The toolbar** shows the four tools used every day: Select, Room, Proxy
+and Spot. No-go, Scale, Anchor, mmWave, Wi-Fi and Note are under **More
+tools** (the **⋯** button); the one in use shows in the toolbar until you
+go back to Select. A selected item's card shows its main fields, and the
+rest are under **More options**. A new room offers this floor's Home
+Assistant areas first, and takes the name of the one you pick.
+
+What you select opens at the top of the side panel. The set-once parts -
+floor alignment, floor bias, adding a floor and the save history - are folded
+under **Floor setup**, which opens by itself while the Anchor tool is in
+use. The padlock in the toolbar is the **Layers** menu: lock rooms, spots,
+proxies or anchors to reach what is underneath them.
+
+**One room at a time:** the focus button next to it lists the floor's rooms.
+Pick one and the map zooms to that room and fades the rest of the floor, so
+you can place its proxies, spots and sensors without the whole plan in the
+way. The room's name then shows in the toolbar; click it, or pick **Whole
+floor**, to go back.
+
 **Keys:** **Esc** cancels whatever is in progress. In the middle of a drag
 it puts the item, and anything it carried, back where it was; while drawing
 it drops the shape; otherwise it returns the tool to Select, then clears the
@@ -99,6 +118,10 @@ change, once nothing is mid-drag or mid-draw. Every write, by hand or
 automatic, keeps a copy of the plan it replaces under History, and a
 change that would break a shape (a spot squashed to a line, say) is never
 written quietly: auto-save says so and waits for Save, which asks.
+A save sends every floor whole, so before each one the editor checks the
+stored plan is still the one it loaded. If another tab, another person or
+the Health page's **Move it there** changed it meanwhile, auto-save holds
+off and Save asks first; **Discard** loads the other copy.
 
 ## Colours and scale
 
@@ -230,7 +253,7 @@ With its tracks, a placed sensor does four things:
 - **Fills the room sensors.** A room with a track in it is occupied
   (`binary_sensor.<room>_sextant_occupancy`) whether or not the person
   carries anything, and stays so through the hold: see
-  [Rooms](automation.md#rooms).
+  [Rooms](automation.md#rooms) and [How occupancy works](occupancy.md).
 
 A room's **Presence sensor** adds a plain occupancy sensor to the last of
 those: one that says someone is there without saying where, such as the
@@ -322,7 +345,7 @@ the anchor to its ring's corner, or to whatever point really is straight above
 - or delete it, which is usually the better answer: an anchor does not have to
 exist on every floor, it only links the floors that carry it.
 Anchors sit on corners, where proxies and walls also are, so they have their
-own padlock in the toolbar: lock them to reach a proxy underneath one.
+own lock under the padlock menu in the toolbar: lock them to reach a proxy underneath one.
 With fewer than five shared anchors nothing can be set aside with any
 confidence, which is one more reason to place more than two.
 

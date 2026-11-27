@@ -89,7 +89,7 @@ def test_setup_nests_under_the_bermuda_device_when_it_can_find_one(tmp_path, mon
     er.async_get(hass).add("sensor.cat_distance_to_kitchen", platform="bermuda", device_id=dev.id)
     added, add = _added()
     run(sn.async_setup_entry(hass, None, add))
-    assert hass.data["sextant_sensors"]["sensor.cat_sextant_floor"]._attr_device_info["via_device"] == ("bermuda", "aa:bb")
+    assert hass.data["sextant_sensors"]["sensor.cat_sextant_floor"]._attr_device_info["via_device_id"] == dev.id
     assert sn.find_bermuda_via_device(hass, "dog") is None
 
 
@@ -108,10 +108,13 @@ def test_setup_migrates_renamed_kinds_and_removes_legacy_and_stale_entries(tmp_p
     reg.add("sensor.someone_else", platform="other", unique_id="sextant_zone_other")
     reg.add("binary_sensor.kitchen_sextant_occupancy", unique_id="sextant_room_occupancy_ground_floor_kitchen")  # a room's, not a thing's
     reg.add("device_tracker.alex_sextant", unique_id="sextant_person_tracker_alex")  # a person's tracker
+    reg.add("switch.kitchen_sextant_force_occupied", unique_id="sextant_room_force_ground_floor_kitchen")  # a room's force switch
+    reg.add("switch.stray_sextant", unique_id="sextant_room_occupancy_ground_floor_stray")  # a room prefix on a switch is not a room's sensor
     added, add = _added()
     run(sn.async_setup_entry(hass, None, add))
     ids = set(reg.entities)
     assert "binary_sensor.kitchen_sextant_occupancy" in ids and "device_tracker.alex_sextant" in ids
+    assert "switch.kitchen_sextant_force_occupied" in ids and "switch.stray_sextant" not in ids
     assert "sensor.cat_sextant_spot" in ids and "sensor.cat_sextant_sub_zone" not in ids
     assert "sensor.cat_sextant_zone" not in ids  # rename blocked -> removed
     assert "sensor.cat_cat_sextant_floor" not in ids and "sensor.cat_cat_sextant_floor" not in hass.states.states
@@ -253,3 +256,32 @@ def test_location_sensor_restores_last_state_over_a_restart():
     stale._test_last_state = types.SimpleNamespace(state="unavailable", attributes={})
     asyncio.run(stale.async_added_to_hass())
     assert stale.state == "unknown"
+
+
+def test_only_an_empty_device_may_be_deleted_from_the_ui(tmp_path):
+    hass = _hass(tmp_path, tracked=set())
+    empty, used = dr.async_get(hass).add({("sextant", "gone")}), dr.async_get(hass).add({("sextant", "cat")})
+    er.async_get(hass).add("sensor.cat_sextant_room", device_id=used.id)
+    assert run(sextant.async_remove_config_entry_device(hass, None, empty)) is True
+    assert run(sextant.async_remove_config_entry_device(hass, None, used)) is False
+
+
+def test_person_and_thing_devices_are_named_without_sextant():
+    """Neither a person nor a thing device carries "(Sextant)" in its name."""
+    person = sn.CustomDistanceSensor("Meg Room", "sextant_person_room_meg", "sensor.meg_sextant_pet_room", "person_meg", device_name="Meg")
+    thing = sn.CustomDistanceSensor("meg Sextant Room", "sextant_room_meg", "sensor.meg_sextant_room", "meg")
+    assert person._attr_device_info["name"] == "Meg" and thing._attr_device_info["name"] == "meg"
+
+
+def test_setup_brings_back_a_battery_sensor_made_before_and_drops_an_untracked_ones(tmp_path, monkeypatch):
+    """Made at once, so it restores its last level: a dead collar never sends the advert that would make it."""
+    hass = _hass(tmp_path, tracked={"cat"})
+    _patch_bermuda(monkeypatch, hass)
+    reg = er.async_get(hass)
+    reg.add("sensor.cat_sextant_battery", unique_id="sextant_battery_cat")
+    reg.add("sensor.gone_sextant_battery", unique_id="sextant_battery_gone")
+    added, add = _added()
+    run(sn.async_setup_entry(hass, None, add))
+    assert "sensor.cat_sextant_battery" in {e.entity_id for e in added}
+    assert reg.async_get("sensor.gone_sextant_battery") is None
+    assert "sensor.dog_sextant_battery" not in hass.data["sextant_sensors"]

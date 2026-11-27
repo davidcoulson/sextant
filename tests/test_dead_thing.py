@@ -182,3 +182,34 @@ def test_restored_sighting_counts_as_fresh_only_briefly_after_restart(monkeypatc
     assert sextant._graced(880.0, 1000.0 + sextant.RESTORE_GRACE_S + 1) == 880.0   # grace over
     monkeypatch.setattr(sextant, "_restored_at", 0.0)
     assert sextant._graced(880.0, 1100.0) == 880.0           # nothing restored
+
+
+def test_a_stuck_room_sensor_raises_one_repair_and_clears_when_it_reads_normally():
+    from datetime import datetime, timezone
+    hass = make_hass()
+    states = {"binary_sensor.mm": types.SimpleNamespace(state="on", last_changed=datetime.fromtimestamp(time.time() - 30 * 3600, timezone.utc))}
+    hass.states = types.SimpleNamespace(get=states.get)
+    hass.data["sextant_room_keys"] = [{"floor": "G", "room": "Office", "inputs": ["binary_sensor.mm"], "door": None}]
+    key = ("sextant", "room_sensor_binary_sensor__mm")
+    for _ in range(2):
+        sextant._update_sensor_issues(hass, {})
+        assert list(hass.data["issues"]) == [key]
+    assert hass.data["issues"][key]["translation_placeholders"] == {"name": "binary_sensor.mm", "where": "Office (G)", "problem": "has read on for 1 day, which keeps the room occupied"}
+    states["binary_sensor.mm"] = types.SimpleNamespace(state="off", last_changed=datetime.fromtimestamp(time.time(), timezone.utc))
+    sextant._update_sensor_issues(hass, {})
+    assert not hass.data["issues"]
+    hass.data["issues"][key] = {}
+    sextant._update_sensor_issues(hass, {})   # nothing is broken now: an old repair is not left behind
+    assert not hass.data["issues"]
+
+
+def test_the_battery_read_from_its_adverts_counts_when_no_sensor_is_set_or_it_is_gone():
+    hass = make_hass()
+    states = {"sensor.primrose_battery": types.SimpleNamespace(state="unavailable"),
+              "sensor.primrose_sextant_battery": types.SimpleNamespace(state="3")}
+    hass.states = types.SimpleNamespace(get=states.get)
+    _heard(5)
+    sextant._update_dead_issues(hass, LAYOUT)
+    assert hass.data["issues"][KEY]["translation_placeholders"]["battery"] == " Its battery last read 3%."
+    sextant._update_dead_issues(hass, {**LAYOUT, "thing_battery_entity": {}})
+    assert KEY in hass.data["issues"]

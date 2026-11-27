@@ -2,7 +2,7 @@
 
 # Things
 
-![The Things page: every tracked thing with its class icon, where it is, its height and its reference trim](../img/screenshots/sextant-things.png)
+![The Things page: every tracked thing with its class icon and where it is](../img/screenshots/sextant-things.png)
 
 Bermuda's device management without its options flow. **Add a thing…** asks
 what you are adding, because how a thing is followed depends on whether its
@@ -16,14 +16,14 @@ Bluetooth address stays put:
 | Anything else | Nothing. An iBeacon, a fitness band or a tag with a fixed address simply appears below once a couple of proxies hear it. |
 
 The top list is what
-is tracked: click the name or the icon to open the thing dialog and set a
+is tracked, with its class and where it is: click the name or the icon to open the thing dialog and set a
 display name, a class (person, dog, cat, phone, watch, headphones, keys, tag and more,
 each with its icon on the map), pronouns (he, she, they or it: how the panel
 refers to it; left unset, a man is he, a woman she, a device it, and a
 person, child or pet they), who it belongs to (a Home Assistant person),
 a colour used everywhere it is drawn, a
 photo framed in a circle that replaces the icon, the height it is carried
-at, a reference-power trim, and its own position estimator. **Untrack** removes it from Bermuda and
+at, a reference-power trim (with Expert on), and its own position estimator. **Untrack** removes it from Bermuda and
 removes its five Sextant sensors and its device with it; a device untracked
 while Home Assistant was down is cleaned up on the next cycle.
 
@@ -38,16 +38,26 @@ scale works on what is left.
 A thing Bermuda no longer tracks under a slug it once did - a rename, an IRK
 swap, a Tile whose ID rotated - would otherwise live on in the list on the
 [Live](live.md) page as a ghost that is *away* for ever, still pinned to its
-owner. After an hour of Bermuda not naming the slug, Sextant forgets it by
-itself: its settings, its remembered last sighting and its history go (the
-same as selecting it on the Live page and choosing **Forget**). The hour is a
+owner. **If the device is still tracked under its new name, its settings
+follow it there first**: Sextant remembers which slug is which device by
+Bermuda's stable unique id, and a rename moves the name, class, colour,
+owner, remembered sighting and pins to the new slug in one cycle. Its
+sensors do get new entity ids under the new slug, so an automation that
+names the old ones needs updating, and their history stays with the old
+ids. Only a slug whose device is gone entirely is forgotten, and after
+an hour of Bermuda not naming the slug at that: its settings, its
+remembered last sighting and its history go (the same as selecting it on
+the Live page and choosing **Forget**). The one exception is a new slug
+that already has settings of its own: nothing is moved onto it, and the old
+slug's settings are forgotten once Bermuda has not named that slug for the
+hour. The hour is a
 grace, so a Bermuda reload, a restart, or an untrack undone within it costs a
 thing nothing. Robots are never forgotten this way, and nothing is while a
 FindMy accessory set up in Bermuda has not been heard since Bermuda started:
 Bermuda does not count it as tracked until then, and an AirTag that is only
 away must not lose its settings.
 
-Below is everything Bermuda hears but does not track, with the kind of
+Below, folded until you tap it (it opens by itself while nothing is tracked, after **Add a thing…** for a phone or a plain device, or with Find near on), is everything Bermuda hears but does not track, with the kind of
 device (iBeacon, Tile, Apple, IRK, plain address), what it appears to be
 (the Bermuda fork names families the Bluetooth SIG's lists cannot — a Govee
 sensor, a Samsung SmartTag — and says when that kind rotates its address,
@@ -60,19 +70,28 @@ proxies' own probe beacons are hidden. **Track…** opens the same dialog
 first, so you choose the name, class and height before Bermuda is told and
 reloads.
 
+To find which entry is the device in your hand, pick a proxy in **Find
+near** and hold the device against it. The list then shows only what that
+proxy hears, loudest first, and refreshes every 3 seconds, so the device
+rises to the top. Set Find near back to Off when you're done.
+
 ## People
 
 Give things an owner - **Belongs to**, a Home Assistant person - and two
 things follow. On Live, each owner gets a heading of their own (their
-picture, and where they are), which folds their things away with a click. And each owner gets three sensors of their own:
+picture, and where they are), which folds their things away with a click. And each owner gets four sensors of their own:
 `sensor.<person>_sextant_person_location` (the spot, or the room),
-`_sextant_person_room` and `_sextant_person_floor` (and a
+`_sextant_person_room`, `_sextant_person_floor` and `_sextant_person_sleep` (and a
 `device_tracker.<person>_sextant`), with `via` naming the
 thing they came from and `via_class` its class (`phone`, `watch`, `cat`...). Automations can then ask where Alex is rather than
 where his phone is.
 A pet's are named `sensor.<pet>_sextant_pet_location`, `_sextant_pet_room` and
 `_sextant_pet_floor` instead (a pet is one whose things are all cat, dog or
 paw tags); an existing pet's sensors are renamed on the next start.
+`_sextant_person_sleep` ("Slept In") is the room they spent most of the night in,
+22:00 to 06:00 by default (`sleep_start_hour`, `sleep_end_hour`); `minutes` has the
+time in each room ("Bedroom (Second Floor)"), `floor` the winner's floor, `night` the date the night began, and `tonight` is true while it is
+still counting (equal hours switch it off). It keeps last night's answer through the day and starts again at 22:00.
 
 Which thing speaks for a person: only things that **give their owner's
 location** count - by default a watch, a phone, or a person's or pet's own
@@ -83,12 +102,35 @@ it is in the last ten minutes, beats one that has sat still longer (the
 phone left on the couch is not you), and among those a pet's own tag, a
 watch, then a phone. When nothing is on the move, the one that arrived
 where it is most recently wins - the phone you carried downstairs, not the
-watch on its charger since last night.
+watch on its charger since last night. One exception: a watch placed at
+least as well as that phone still wins, since a phone is set down more
+often than a watch is taken off - unless the phone went to another room
+when the watch had already been still for four hours (`watch_still_secs`):
+that watch was left behind. If the phone is on another floor the watch only needs to have been still
+for ten minutes.
+
+An Apple Watch says whether it is on a wrist and unlocked: a bit in what it
+broadcasts, which clears when the watch locks, the moment it comes off a wrist,
+and stays clear on a table or its charger. Sextant reads it for a watch added
+through Private BLE Device (its tracker shows the address the watch uses now).
+A watch that says it is worn speaks for its owner, ahead of any phone, even
+one that just moved or is placed better; a watch that says it is locked takes no
+part, like one on its charger. The rules above, and the charger sensor below,
+decide only while the lock state is unknown: no Private BLE tracker for the
+watch, or nothing heard from it within `stale_after_secs`. A watch put on but
+not yet unlocked counts as locked, so the phone places you until you unlock it.
+The `considered` list shows `worn` true or false when it is known, and on the
+[Live](live.md) page a locked watch has a lock badge on its disc.
 
 A thing can also name an **On-charger sensor** - its battery state from
 iCloud3, the companion app, or any `binary_sensor` that is on while it
-charges. While that reads Charging, Charged or Full, the thing does not
+charges. While that reads Charging, the thing does not
 speak for its owner at all: a watch on its charger is on nobody's wrist.
+Once seen charging, a thing counts as on its charger until it moves away:
+a watch held at its charge limit reads "not charging" while it still sits
+on the puck. Charged and Full work the same way: they hold the thing only
+until it moves, because a sensor that refreshes rarely goes on saying
+Charged for hours after the watch is back on your wrist.
 Unavailable or unknown counts as not charging, so a sensor that has nothing
 to say never takes a thing out of the running. The location sensor's
 `considered` list marks a thing left out this way with `on_charger`.
@@ -100,8 +142,11 @@ Below the things, a **People** card lists each owner: where they read as
 being and how (by their things, the last place held while unheard, or a
 GPS tracker), and their **GPS sources** in order. Add the Companion app,
 Life360 or any `device_tracker` with coordinates; the first one that is
-neither broken nor stale is used once Sextant has lost the person. The card
-also says which sources are being passed over right now, and why. See
+neither broken nor stale is used once Sextant has lost the person. Another
+one still counts when its fix is the newer: down the road while the first
+source still says home from before it, or back home while the first still
+shows the road. The card also says which sources are being passed over right now,
+and why. See
 [People](automation.md#people) for what the sensors then carry.
 
 ### Wi-Fi
@@ -149,7 +194,8 @@ Things page lines that map up with one of your floors:
    because the robot's millimetres are real ones. The card shows how well
    the rooms agree (a few tenths of a metre is good) and any room left out
    because the two maps disagree about it; a Foyer that is the front hall on
-   one map and the whole open ground floor on the other is typical.
+   one map and the whole open ground floor on the other is typical. The
+   fit's numbers, read counts and unmatched rooms are under **Details**.
 2. On Live, select the robot and use **Mark dock**
    (<ha-icon icon="mdi:home-import-outline"></ha-icon>), then tap where
    its dock is. The robot reports its dock itself, so it need not be on it.

@@ -16,12 +16,18 @@ coverage, one-sided geometry, or fine - and, for coverage and geometry,
 picks wall spots (an outlet or a switch is on a wall) one at a time, each
 the spot that best covers what is still uncovered, until the room is
 covered or MAX_ADD spots are used.
+
+Each room also carries how much it is used (room_usage, from the person
+log): the rooms that need attention are listed most used first.
 """
 
 import math
+from collections import Counter
 
 import numpy as np
 from shapely.geometry import Point, Polygon
+
+from .replay import bounce_pairs, switches
 
 GRID_M = 0.5            # interior sample spacing
 WALL_STEP_M = 0.25      # candidate spacing along the walls
@@ -32,10 +38,11 @@ COVERED_FRAC = 0.85     # a room is covered when this share of its points pass b
 MAX_ADD = 2
 WEAK_M = 3.0            # a proxy this far off, and twice the room's median, is a weak proxy
 GOOD_MEDIAN_M = 2.0     # a room measuring this well gets no coverage advice
+USE_STEP_MAX_S = 300.0  # the longest cycle the options allow; a longer wait for a person's next log line is a restart or the log off
 
 
 def _ring(zone):
-    return [(float(c["x"]), float(c["y"])) for c in zone.get("cords", []) if c.get("x") is not None and c.get("y") is not None]
+    return [(float(c["x"]), float(c["y"])) for c in zone.get("cords") or [] if c.get("x") is not None and c.get("y") is not None]
 
 
 def _largest(geom):
@@ -143,13 +150,49 @@ def _stats(errors):
     return round(float(np.median(arr)), 3), round(float(arr.max()), 3)
 
 
-def advise(layout, selftest, unplaced=None):
-    """Advice rows, worst first, plus the unplaced proxies worth placing.
+def room_usage(lines):
+    """How much each room is used, from person log lines (person_log.rows), oldest first.
+
+    {"hours": the span of the lines, "rooms": {(floor, room): (seconds, bounces)}}.
+    A line's place holds until the person's next line, so the seconds do not
+    depend on how often the cycle ran (the Live page can speed it up). A
+    place can be Outside, which is on no plan. A bounce (replay.bounce_pairs)
+    counts for both its rooms: the log cannot say which of the two the
+    person was in.
+    """
+    series, prev, secs, first, last = {}, {}, Counter(), None, None
+    for r in lines:
+        try:
+            t, person, place = float(r["t"]), str(r["p"]), r["place"]
+            if place is not None:
+                room, floor = place
+                place = (str(room), str(floor))
+        except (KeyError, TypeError, ValueError, OverflowError):
+            continue   # from before lines had a place, or not one this integration wrote
+        first, last = (t if first is None else first), t
+        was = prev.get(person)
+        if was and was[1]:
+            secs[was[1]] += min(max(t - was[0], 0.0), USE_STEP_MAX_S)
+        if not was or was[1] != place:
+            # Floor None: a bounce across floors counts too (the place carries its floor).
+            series.setdefault(person, []).append((t, None, place))
+        prev[person] = (t, place)
+    bounced = Counter(p for pair in bounce_pairs(switches(series)) for p in pair)
+    return {"hours": 0.0 if first is None else round((last - first) / 3600.0, 1),
+            "rooms": {(floor, room): (s, bounced[(room, floor)]) for (room, floor), s in secs.items() if s > 0}}
+
+
+def advise(layout, selftest, unplaced=None, usage=None):
+    """Advice rows, most used of the flagged rooms first, plus the unplaced proxies worth placing.
 
     ``layout`` is the stored layout, ``selftest`` a run_selftest result (its
     rows carry entity, floor, room, error_m), ``unplaced`` a list of
-    {slug, name} for proxies that are heard but placed on no floor.
+    {slug, name} for proxies that are heard but placed on no floor,
+    ``usage`` a room_usage result. A room's share is of the time spent in
+    the rooms listed here, so Outside is in neither side of it. A room the
+    usage does not name gets None for its share and bounces: no data is not zero.
     """
+    used = (usage or {}).get("rooms") or {}
     solved = [r for r in selftest.get("receivers", []) if isinstance(r.get("error_m"), (int, float))]
     rows = []
     for floor in layout.get("floor", []):
@@ -159,7 +202,7 @@ def advise(layout, selftest, unplaced=None):
         name = floor.get("name")
         rooms = _rooms_of(floor)
         placed = [(float(r["cords"]["x"]), float(r["cords"]["y"]), str(r.get("entity_id")))
-                  for r in floor.get("receivers", []) if isinstance(r.get("cords"), dict)]
+                  for r in floor.get("receivers") or [] if isinstance(r.get("cords"), dict) and {"x", "y"} <= r["cords"].keys()]   # no x and y: not placed
         positions = [(x, y) for x, y, _s in placed]
         for room, poly in rooms:
             inside = [s for x, y, s in placed if poly.covers(Point(x, y))]
@@ -226,13 +269,89 @@ def advise(layout, selftest, unplaced=None):
                         row["add"] = 1
                         row["note"] += "; a fourth proxy on the far wall gives the room another opinion"
             rows.append(row)
+    listed = sum(used[k][0] for k in {(r["floor"], r["room"]) for r in rows} & used.keys())
+    for r in rows:
+        secs, r["bounces"] = used.get((r["floor"], r["room"]), (None, None))
+        r["time_share"] = None if secs is None else round(secs / listed, 3)
     rank = {"no proxy": 0, "weak proxy": 1, "one-sided": 2, "coverage": 2, "noisy": 3, "ok": 4}
-    rows.sort(key=lambda r: (rank[r["issue"]], -(r["median_m"] or 0), r["floor"], r["room"]))
-    # Proxies heard but placed nowhere: hand each the next open spot, worst room first.
+    # Rooms that need something first, most used first: poor coverage where
+    # people live comes before a closet with no proxy. With no usage this is
+    # worst issue first, as it was.
+    rows.sort(key=lambda r: (r["issue"] == "ok", -(r["time_share"] or 0), rank[r["issue"]], -(r["median_m"] or 0), r["floor"], r["room"]))
+    # Proxies heard but placed nowhere: hand each the next open spot, in the rows' order.
     unplaced = [dict(u) for u in (unplaced or [])]
     open_spots = [(r["floor"], r["room"], s) for r in rows for s in r["spots"]]
     for u, (fl, room, spot) in zip(unplaced, open_spots):
         u["suggest"] = {"floor": fl, "room": room, "x": spot["x"], "y": spot["y"]}
-    return {"rooms": rows, "unplaced": unplaced,
+    return {"rooms": rows, "unplaced": unplaced, "usage_hours": (usage or {}).get("hours"),
             "summary": {"rooms": len(rows), "to_add": sum(r["add"] for r in rows),
                         "issues": {k: sum(1 for r in rows if r["issue"] == k) for k in rank if any(r["issue"] == k for r in rows)}}}
+
+
+# --- where a location pin would help -------------------------------------------
+
+REST_CELL_M = 2.0        # stays are pooled in cells this size: a resting thing's fix wanders about this far
+# Four grids, each shifted half a cell: a place on one grid's line sits inside a
+# cell of another, so a stay is never split in two and missed.
+_REST_GRIDS = ((0.0, 0.0), (0.5, 0.0), (0.0, 0.5), (0.5, 0.5))
+REST_MIN_HOURS = 2.0     # a place counts once a thing has spent this long there in the history kept
+REST_MAX_STEP_S = 600.0  # two points further apart than this are a silence, not a stay
+PIN_NEAR_M = 2.0         # a pin this near already covers the place (measured: a pin helps within about 2 m)
+REST_PER_THING = 2
+REST_MAX_ROWS = 12
+
+
+def pin_gaps(layout, tracks, pins):
+    """Where things rest with no location pin near, most hours first.
+
+    ``tracks`` is {entity: points (t, floor name, x_m, y_m, gap), oldest
+    first} from the position history; ``pins`` is {entity: [(floor name,
+    x_m, y_m), ...]}, the pins that guide that thing. A row is the thing,
+    the floor and room, the place in floor pixels, the hours spent there
+    and the nearest pin's distance (None with no pin on the floor). The
+    place is where Sextant PUT the thing, so it is only roughly where it
+    was: the advice is to pin the thing next time it is there, never to
+    pin that point.
+    """
+    floors = {f.get("name"): f for f in layout.get("floor", []) if f.get("scale")}
+    rooms = {name: _rooms_of(f) for name, f in floors.items()}
+    rows = []
+    for entity, points in tracks.items():
+        cells, last = {}, None
+        for t, floor, x, y, gap in points:
+            # A stay is a step that ends where it began: the time of a trip
+            # between two places belongs to neither.
+            if (last is not None and not gap and floor == last[1] and 0 < t - last[0] <= REST_MAX_STEP_S
+                    and math.hypot(x - last[2], y - last[3]) < REST_CELL_M):
+                dt = t - last[0]
+                for ox, oy in _REST_GRIDS:
+                    acc = cells.setdefault((floor, ox, oy, math.floor(last[2] / REST_CELL_M + ox), math.floor(last[3] / REST_CELL_M + oy)), [0.0, 0.0, 0.0])
+                    acc[0] += dt
+                    acc[1] += last[2] * dt
+                    acc[2] += last[3] * dt
+            last = (t, floor, x, y)
+        places = []
+        for (floor, ox, oy, i, j), (secs, sx, sy) in sorted(cells.items(), key=lambda kv: -kv[1][0]):
+            if secs < REST_MIN_HOURS * 3600 or len(places) >= REST_PER_THING:
+                break
+            if floor not in floors:
+                continue
+            x, y = sx / secs, sy / secs
+            near = min((math.hypot(x - px, y - py) for f, px, py in pins.get(entity) or () if f == floor), default=None)
+            # Covered by a pin, or a place already listed, seen through another
+            # grid: a cell that overlaps a listed one holds some of the same time.
+            cx, cy = (i - ox) * REST_CELL_M, (j - oy) * REST_CELL_M
+            if (near is not None and near < PIN_NEAR_M) or any(
+                    f == floor and (math.hypot(x - px, y - py) < PIN_NEAR_M or (abs(cx - qx) < REST_CELL_M and abs(cy - qy) < REST_CELL_M))
+                    for f, px, py, qx, qy in places):
+                continue
+            places.append((floor, x, y, cx, cy))
+            scale = floors[floor]["scale"]
+            at = Point(x * scale, y * scale)
+            rows.append({
+                "entity": entity, "floor": floor, "room": next((name for name, poly in rooms[floor] if poly.covers(at)), None),
+                "x": round(at.x, 1), "y": round(at.y, 1), "hours": round(secs / 3600, 1),
+                "nearest_pin_m": None if near is None else round(near, 1),
+            })
+    rows.sort(key=lambda r: -r["hours"])
+    return rows[:REST_MAX_ROWS]

@@ -40,9 +40,11 @@ This is the short version. [Getting started](getting-started.md) is the
 same thing step by step, with what to check when a thing lands in the
 wrong room.
 
-1. HACS → Integrations → ⋮ → **Custom repositories**. Add
-   `davidcoulson/sextant` as an Integration, then install **Sextant** and
-   restart Home Assistant.
+1. **Settings → Marketplace → Add from link**. Enter
+   `davidcoulson/sextant`, then install **Sextant** (restart Home Assistant
+   if it asks). Adding from a link needs a one-time GitHub sign-in. On
+   Home Assistant 2026.9 or 2026.10, use HACS → ⋮ → **Custom
+   repositories**, add it as an Integration, download it and restart.
 2. **Settings → Devices & Services → Add Integration → Sextant**. Bermuda
    must already be set up.
 3. Open **Sextant** in the sidebar. On the **Edit** page add a floor from a
@@ -53,6 +55,25 @@ wrong room.
 
 The integration's options (⋮ on its card) hold the sidebar toggle and the
 positioning interval (15 s by default, 1 to 300).
+
+### Who can see and change what
+
+Every Home Assistant user gets Sextant in the sidebar with two pages,
+**Live** and **Occupancy**: the plan, where every tracked thing and person
+is, and which rooms are occupied. The map card shows the plan and the
+positions on it to anyone who can open the dashboard it is on.
+
+Changing anything needs an administrator. The Edit, Things, Bermuda,
+Proxies, Calibration, Tuning and Advice pages, the pin buttons on Live and
+every `sextant.*` service are for administrators only, and Home Assistant
+refuses them for anyone else. The one exception is a room's
+[force occupied switch](occupancy.md), an ordinary Home Assistant switch
+that any user can turn on and off.
+
+Nothing hides the panel from some users and not others: the sidebar
+toggle above takes it away for everyone. Home Assistant shows its
+entities to every user, so the room and person sensors can be read by any
+user either way.
 
 ### Upgrading from BPS or BPS-improved
 

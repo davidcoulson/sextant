@@ -80,7 +80,16 @@ def test_expired_files_are_removed_on_the_first_flush_of_an_hour(tmp_path):
     log = el.ElectionLog(str(d))
     log.add(_row(), NOW)
     run(log.flush(24, now=NOW))
-    assert not old.exists() and kept.exists() and foreign.exists()
+    assert not old.exists() and foreign.exists()
+    # The hour that is over is gzipped (its rows intact); the one in progress stays plain.
+    assert not kept.exists() and el.open_text(str(kept) + ".gz").read() == "x\n"
+    assert (d / el.file_for(NOW)).exists() and el.hour_of(kept.name + ".gz") == el.hour_of(kept.name)
+    assert el.expired([kept.name + ".gz"], NOW + 40 * HOUR, 24) == [kept.name + ".gz"]
+    # The clock steps back into the archived hour: its late rows join the archive, they do not replace it.
+    kept.write_text("late\n")
+    log.add(_row(), NOW + HOUR)
+    run(log.flush(24, now=NOW + HOUR))
+    assert not kept.exists() and el.open_text(str(kept) + ".gz").read() == "x\nlate\n"
 
 
 def test_one_log_per_hass_under_the_config_directory(tmp_path):
@@ -119,3 +128,45 @@ def test_switching_off_deletes_the_files_once_and_then_stops_scanning(tmp_path):
     run(log.flush(24, now=NOW))
     run(log.flush(0, now=NOW))
     assert not (d / el.file_for(NOW)).exists(), "switched on and off again: swept again"
+
+
+def test_rows_are_read_once_plain_or_gzipped_and_usage_counts_our_files(tmp_path):
+    import gzip
+    old, new = el.file_for(NOW - HOUR), el.file_for(NOW)
+    with gzip.open(tmp_path / (old + ".gz"), "wt") as fh:
+        fh.write(json.dumps({"t": NOW - HOUR, "ent": "a"}) + "\n")
+    # Listed mid-compression: the plain copy of a gzipped hour is not read twice.
+    (tmp_path / old).write_text(json.dumps({"t": NOW - HOUR, "ent": "a"}) + "\n")
+    (tmp_path / new).write_text(json.dumps({"t": NOW, "ent": "b"}) + "\n" + '{"t": cut short')
+    (tmp_path / "notes.txt").write_text("not ours")
+    assert [r["ent"] for r in el.iter_rows(str(tmp_path))] == ["a", "b"]
+    assert [r["ent"] for r in el.iter_rows(str(tmp_path), NOW - 60)] == ["b"]
+    files, size = el.usage(str(tmp_path))
+    assert files == 3 and size > 0
+    assert el.usage(str(tmp_path / "missing")) == (0, 0)
+
+
+def test_a_plain_hour_left_behind_by_a_crash_after_its_gzip_is_not_archived_twice(tmp_path):
+    import gzip, os
+    d = tmp_path / "log"
+    d.mkdir()
+    plain = d / el.file_for(NOW - 2 * HOUR)
+    plain.write_text("x\n")
+    with gzip.open(str(plain) + ".gz", "wt") as fh:
+        fh.write("x\n")
+    os.utime(plain, (NOW - 100, NOW - 100))  # the gzip landed after the plain file's last row
+    el.compress_closed(str(d), NOW)
+    assert not plain.exists() and el.open_text(str(plain) + ".gz").read() == "x\n"
+
+
+def test_late_rows_after_a_clock_step_back_are_appended_even_when_older_than_the_archive(tmp_path):
+    import gzip, os
+    d = tmp_path / "log"
+    d.mkdir()
+    plain = d / el.file_for(NOW - 2 * HOUR)
+    with gzip.open(str(plain) + ".gz", "wt") as fh:
+        fh.write("x\n")
+    plain.write_text("late\n")
+    os.utime(plain, (NOW - 9999, NOW - 9999))  # written under the stepped-back clock
+    el.compress_closed(str(d), NOW)
+    assert not plain.exists() and el.open_text(str(plain) + ".gz").read() == "x\nlate\n"

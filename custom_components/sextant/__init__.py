@@ -1,5 +1,8 @@
 import aiofiles
 import aiofiles.os
+import importlib
+import importlib.util
+import sys
 import time
 from pathlib import Path
 from aiohttp import web
@@ -39,6 +42,7 @@ except ImportError:  # very old shapely
     shapely_make_valid = None
 from asyncio import wait_for, TimeoutError
 
+from .const import INVALID_RANGE_M
 from .const import DOMAIN, DEFAULT_UPDATE_INTERVAL, FIT_ATTRIBUTES, OPTION_SHOW_SIDEBAR_PANEL, OPTION_UPDATE_INTERVAL
 from .calibration import (
     DUMP_DEVICES_TIMEOUT_S,
@@ -59,25 +63,30 @@ from .storage import (
     maps_dir,
     migrate_maps_out_of_www,
     LAYOUT_LOCK,
+    TRUTH_LOCK,
     get_layout,
     get_layout_for_edit,
     get_layout_version,
     load_fp_gains,
+    load_habits,
     load_wifi_heat,
     load_layout,
     load_runtime,
     load_truth,
     save_truth,
     save_fp_gains,
+    save_habits,
     save_wifi_heat,
     save_runtime,
     migrate_from_bps,
     migrate_legacy,
     save_layout,
 )
-from .const import ACCURACY_ENTITY_ID, PEOPLE_HOME_ENTITY_ID, UNTRACKED_ENTITY_ID
+from .const import ACCURACY_ENTITY_ID, HABIT_PAUSES_ENTITY_ID, HOUSEHOLD_FLOOR_ENTITY_ID, PEOPLE_HOME_ENTITY_ID, UNTRACKED_ENTITY_ID
 from . import history as history_mod
+from . import habits as habits_mod
 from . import bermuda_source
+from . import tag_battery
 from . import layout_check
 from . import election_log
 from . import robots as robots_mod
@@ -328,6 +337,17 @@ def _admin_only(request):
 _PROTECTED_MAPS_FILES = {"bpsdata.txt", "sextant_calibration_state.json"}
 
 
+def _map_key(name):
+    """A map file or floor name as the panel's mapUrlFor matches them."""
+    return re.sub(r"[\s_-]+", "", re.sub(r"\.[a-z0-9]+$", "", str(name).lower()))
+
+
+def _map_taken(maps_path, filename):
+    """A map is already there for this name, under any extension."""
+    key = _map_key(filename)
+    return any(p.is_file() and _map_key(p.name) == key for p in Path(maps_path).iterdir())
+
+
 def _safe_maps_child(maps_path, raw_name, allowed_exts=None):
     """Resolve raw_name to a path guaranteed to sit directly inside maps_path.
 
@@ -457,6 +477,11 @@ MIN_WEIGHT_RADIUS_M = 0.5
 # smoothed per-floor probability, and the elected floor only changes when a
 # challenger clearly and persistently outscores the incumbent.
 FLOOR_CANDIDATES = 3         # solve at most this many floors per cycle
+# Cross-floor shadow fix (logged only, see _cross_floor_points): a slant longer
+# than this through a slab says little, and a borrowed reading counts for half
+# because the slab's own loss is not corrected yet.
+CROSS_FLOOR_MAX_M = 6.0
+CROSS_FLOOR_WEIGHT = 0.5
 # A floor with fewer than three receivers is placed by its fingerprint alone
 # only when the nearest reads within this (m). The same 3 m as
 # outside_faint_m: inside, a thing's nearest proxy read 0.25-1.5 m.
@@ -468,6 +493,14 @@ FLOOR_SWITCH_MARGIN = 0.05   # probability lead that starts/keeps a challenge
 # The default lives in TUNING_SPEC ("floor_switch_secs") so it can be changed
 # live; this is the fallback when _elect_floor is called without one.
 FLOOR_SWITCH_SECS = 60.0
+# A challenger ahead by any amount, unbroken, for this many switch_secs (and
+# at least FLOOR_LASTING_LEAD_MIN_S) takes the floor whatever the margin.
+FLOOR_LASTING_LEAD_X = 4.0
+FLOOR_LASTING_LEAD_MIN_S = 120.0
+# ...and this long while the thing is still in a locked room (_elect_floor's held).
+FLOOR_HELD_LEAD_S = 900.0
+# shortcut: fixed, not a tuning value; make it one if a house needs another ratio.
+FLOOR_NEAR_RATIO = 0.5
 FLOOR_DARK_GRACE_S = 45.0    # how long a dark incumbent holds everything frozen (was 3 cycles at 15 s)
 
 # The smoothing weights (FLOOR_PROB_SMOOTHING, zone_prob_smoothing) are the
@@ -501,6 +534,13 @@ COVERAGE_TARGET_N = 5.0      # heard receivers at which the coverage term satura
 # candidate still wins and its position is snapped out to the nearest allowed
 # zone — so a thing is never left position-less.
 NO_GO_CONF_PENALTY = 0.15
+# A fit only just inside a no-go zone is within the fit's own error (about a
+# metre) of the walkway beside it: Jack's watch in a bedroom beside the Foyer
+# Upper void fitted 0.5-0.7 m into it and lost its floor to the room below.
+# No penalty within NO_GO_GRACE_M of the edge, the full one from NO_GO_FULL_M
+# in, linear between.
+NO_GO_GRACE_M = 0.75
+NO_GO_FULL_M = 1.5
 # When snapping a fix out of dead space, grow the no-go footprint by this many
 # pixels before subtracting it from the allowed region, so the snap target's
 # boundary sits clear of the (boundary-inclusive) no-go edge rather than
@@ -536,6 +576,12 @@ _kf_position_state = {}
 # sub-zone's dwell state (see _elect_subzone). Reset on floor change and
 # on prune, like the Kalman state.
 _zone_state = {}
+_shut_in = {}   # entity -> (floor, room) it was in when that room's door shut
+_habits = habits_mod.new_store()   # where each thing usually is, by day type and hour (habits.py)
+_habits_last = {}                   # entity -> when it was last counted into _habits
+_habits_step = {}                   # entity -> (when, since, room key): the step just counted into its room
+_local_tz = None                    # the house's time zone, for the hour of the day
+HABIT_CONFIDENT_SHARE = 0.8         # an election counts toward the habits only when this sure
 _subzone_state = {}
 # thing -> {"out_since", "in_since", "outside"}: the outside-the-house election.
 _outside_state = {}
@@ -583,12 +629,14 @@ def _outside_election(entity, dist_m, margin_m, secs, now, faint=None):
             st["out_since"] = now
         if not st["outside"] and now - st["out_since"] >= secs:
             st["outside"] = True
+            st["outside_at"] = st["out_since"]   # when the spell began: the Occupancy popup's "Out for"
     else:
         st["out_since"] = None
         if st["in_since"] is None:
             st["in_since"] = now
         if st["outside"] and now - st["in_since"] >= secs:
             st["outside"] = False
+            st["outside_at"] = None
     return st["outside"]
 
 
@@ -736,6 +784,14 @@ TUNING_SPEC = {
     # receivers in the room (a dog on the sun-room floor: basement 1.7 m,
     # ground 1.9 m); the three nearest cannot (3.1 m vs 4.9 m).
     "floor_proximity_k": (3, int, 1, 8),
+    # ...unless the nearest reads under this and no other floor has a reading
+    # within twice it (FLOOR_NEAR_RATIO): then it alone is the floor's
+    # proximity. A phone 0.4 m from a bedside proxy, the room's others 3 m
+    # off, averaged 2.4 m, level with three ceiling relays on the floor
+    # below, and dropped to the kitchen six times in a night. Without the
+    # ratio, ceiling lights reading short through the slab made it worse
+    # (a day replayed: 5 % more wrong cycles; with it, 3 % fewer). 0 = off.
+    "floor_proximity_near_m": (1.0, float, 0.0, 10.0),
     # Where receiver calibration writes its corrections. "sextant": a per-receiver
     # distance multiplier in this layout (the original behaviour). "bermuda":
     # the equivalent per-scanner rssi offset written into Bermuda itself
@@ -794,6 +850,9 @@ TUNING_SPEC = {
     "anchor_ratio": (2.0, float, 1.0, 10.0),
     "anchor_secs": (20.0, float, 0.0, 600.0),
     "anchor_release_m": (1.5, float, 0.1, 10.0),
+    # An anchored thing's room is its proxy's room at once (see _elect_zone),
+    # when that proxy sits at least this far (m) inside the room. 0 = never.
+    "zone_anchor_inset_m": (0.5, float, 0.0, 5.0),
     # How long a thing may go unheard before the Live page draws it as a
     # ghost - translucent, with how long ago it was last heard - because the
     # position shown is then a memory rather than a reading. Display only:
@@ -817,6 +876,18 @@ TUNING_SPEC = {
     # its own accuracy), when they are away now (persons.gps_left). Far enough
     # that a fix wandering about the property line never counts. 0 = off.
     "gps_leave_m": (200.0, float, 0.0, 100000.0),
+    # A person who goes quiet in a room with an outside door (the Edit page's
+    # "Has an outside door") went out of it: after this long unheard they read
+    # Outside instead of being held in that room. 0 = off.
+    "exit_quiet_secs": (120.0, float, 0.0, 3600.0),
+    # ...and, where the room's outside door has a contact sensor (the Edit
+    # page's "Outside door contact"), only if some outside door was open
+    # within this long of when they were last heard. 0 = doors not asked.
+    "exit_door_secs": (300.0, float, 0.0, 3600.0),
+    # A watch that had been still this long when its owner's phone went to
+    # another room was left behind: the phone speaks for them (persons.pick).
+    # 0 = off.
+    "watch_still_secs": (14400.0, float, 0.0, 86400.0),
     # A Wi-Fi tracker reading home must stand this long before it starts a
     # visit for someone BLE has lost (persons.wifi_gate): a router holds a
     # client minutes after it left, which made false arrivals. 0 = off.
@@ -825,6 +896,49 @@ TUNING_SPEC = {
     # what Wi-Fi said) in config/sextant_person_log for this many hours, to
     # find out why a location or an arrival was wrong. 0 = off. See person_log.py.
     "person_log_hours": (48.0, float, 0.0, 720.0),
+    # The night the "slept in" sensor counts: local hours, from start to end (may wrap midnight; equal = off).
+    "sleep_start_hour": (22.0, float, 0.0, 24.0),
+    "sleep_end_hour": (6.0, float, 0.0, 24.0),
+    # A room's occupancy stays on this long after its last reading says
+    # occupied (0 = follow the readings), and its state attribute reads
+    # "extended" once it has been occupied for room_extended_secs.
+    "room_hold_secs": (0.0, float, 0.0, 3600.0),
+    "room_extended_secs": (600.0, float, 30.0, 86400.0),
+    # The clear-after while someone sleeps in the room (its "sleep" entity is on) and once a stay
+    # is extended. -1 = the same as room_hold_secs.
+    "room_sleep_hold_secs": (-1.0, float, -1.0, 86400.0),
+    "room_extended_hold_secs": (-1.0, float, -1.0, 86400.0),
+    # A room's "force occupied" switch turns itself off after this long (0 = never).
+    # shortcut: one time for every room, give rooms their own when one needs a different one
+    "room_force_max_secs": (0.0, float, 0.0, 604800.0),
+    # Time-of-day prior (habits.py): how far a thing's usual room at this hour moves the margin a
+    # challenger room must lead by. 0 turns it off.
+    "habit_margin_gain": (0.10, float, 0.0, 0.3),
+    # The same habits on the floor election: each floor's score is multiplied by the share of this
+    # hour the thing is usually on it, to this power (habits.floor_factors). 0 turns it off; a class
+    # can have its own (layout class_habit_floor_weight).
+    "habit_floor_weight": (0.0, float, 0.0, 1.0),
+    # ...but only at an hour when one floor has at least this share of its time: a cat that wanders
+    # then has no floor to be held to. Replayed over 40 h at weight 0.2, 0.6-0.75 kept Meg's nights
+    # right and halved the cats' missed moves; 0.8 lost Meg's nights.
+    "habit_floor_min_share": (0.7, float, 0.0, 1.0),
+    # A room held for a closed door (room "door") lets go after this long even if the door never opens.
+    "door_hold_max_secs": (28800.0, float, 60.0, 172800.0),
+    # How long someone must keep reading in a room after its door closed to count as shut in.
+    "door_settle_secs": (90.0, float, 0.0, 600.0),
+    # Once a room's door has read closed this long, nothing outside the room is moved into it
+    # (a cat read through the wall is not in a room it cannot open); a thing that went in just
+    # before the door closed, and was placed a little late, still gets this long.
+    "door_entry_grace_secs": (180.0, float, 0.0, 3600.0),
+    # A thing in a room when its door shut is only placed outside it once another room has led
+    # clearly and without a break this long; until then a blip through the wall changes nothing.
+    "door_leave_secs": (600.0, float, 0.0, 7200.0),
+    # The floor lead that moves a thing shut in a room to another floor (held door_leave_secs).
+    "door_floor_margin": (0.25, float, 0.0, 1.0),
+    # A repair is raised for a room's sensor (other sensors, door contact) that has been unavailable
+    # this long, or a binary sensor that has read on this long (it would hold its room occupied).
+    "sensor_gone_secs": (21600.0, float, 600.0, 2592000.0),
+    "sensor_stuck_secs": (86400.0, float, 3600.0, 2592000.0),
     # Keep every floor election (each cycle's per-floor candidates, the odds
     # and the winner, per thing) for this many hours in
     # config/sextant_election_log, for tools/replay_floors.py. 0 = off. About
@@ -931,6 +1045,44 @@ def _set_truth_marks(marks):
     """Replace the marks the fingerprint matcher draws references from."""
     _truth_marks[:] = list(marks or [])
     _mark_ref_cache["key"] = None
+
+
+_kept_pin_tried = {}   # mark id -> when it last tried fresh readings
+
+
+def _keep_pins_fresh(hass, entity, floor, now):
+    """Start a refresh of this thing's kept pins on ``floor`` (the one it was
+    just elected to) that are due, when it has been still for a whole pin
+    window: every sample is then from where it sits.
+    shortcut: stillness is the room election's clock, so with no rooms drawn a kept pin never refreshes."""
+    due = [m for m in _truth_marks if m.get("keep") and m.get("entity") == entity and m.get("floor") == floor
+           and now - _kept_pin_tried.get(m.get("id"), -math.inf) >= truth_mod.KEEP_EVERY_S]
+    still = (_zone_state.get(entity) or {}).get("still_since")
+    if not due or still is None or now - still < truth_mod.DEFAULT_WINDOW_SECS:
+        return
+    for m in due:
+        _kept_pin_tried[m.get("id")] = now
+    hass.async_create_task(_refresh_kept_pins(hass, entity, [m.get("id") for m in due], now))
+
+
+async def _refresh_kept_pins(hass, entity, ids, now):
+    async with TRUTH_LOCK:  # the Live page edits the same file
+        store = await load_truth(hass)
+        changed = False
+        for mark in store.get("marks", []):
+            if mark.get("id") not in ids or not mark.get("keep") or mark.get("entity") != entity:
+                continue
+            samples = _truth_buffer.samples(entity, since=now - truth_mod.DEFAULT_WINDOW_SECS, floor=mark.get("floor"))
+            if len(samples) < truth_mod.MIN_SAMPLES:
+                continue
+            was = (mark.get("refreshed"), mark.get("stale"))
+            d = truth_mod.refresh(mark, samples, now)
+            if (mark.get("refreshed"), mark.get("stale")) != was:
+                changed = True
+                _LOGGER.debug("Kept pin %s for %s: drift %.2f, %s", mark.get("id"), entity, d, "stale" if mark.get("stale") else "refreshed")
+        if changed:
+            await save_truth(hass, store)
+            _set_truth_marks(store["marks"])
 
 
 def _raw_vector(layout):
@@ -1139,6 +1291,18 @@ def _solves(receiver):
     return receiver.get("solve") is not False
 
 
+def _votes_floor(receiver):
+    """Whether a placed proxy's readings count toward choosing the floor.
+
+    ``"floor_vote": false`` (the "Use for floor choice" switch on the Edit
+    page) is for a proxy mounted between storeys - a basement ceiling light
+    a foot and a half under the floor above - that hears the floor above as
+    well as its own. It still helps its own floor's x/y fix, but its short
+    through-ceiling readings no longer pull the election toward its floor.
+    """
+    return receiver.get("floor_vote") is not False
+
+
 def _close_fade_params(data):
     """(on, near_m, far_m) for _close_range_correction, read once per call site."""
     near = _tuning(data, "correction_fade_near_m")
@@ -1213,6 +1377,8 @@ def _median_distance(reading, window_secs, min_samples):
             rssi, stamp = float(item[0]), float(item[1])
         except (TypeError, ValueError, IndexError):
             continue
+        if not math.isfinite(rssi) or rssi >= 0:
+            continue    # Android's 127 = "no RSSI", relayed as +127 dBm by some proxies; no BLE reading is >= 0 dBm
         if newest is None:
             newest = stamp
         if age + (newest - stamp) <= window_secs:
@@ -1713,9 +1879,20 @@ async def update_tracked_entities(hass):
                 # carries for a device outside it (untracked while HA was down)
                 # is an orphan and goes. One set comparison per cycle.
                 from .sensor import prune_sensors_for_untracked  # noqa: PLC0415 - sensor imports this package
+                # A slug Bermuda reports now is tracked, even one the cached set has not caught up with.
+                devices = bermuda_source.async_get_tracked_devices(hass)
+                ids = bermuda_source.async_get_tracked_unique_ids(hass, devices)
                 # Robots are Sextant's own things, not Bermuda's: keep theirs.
-                full_tracked = set(tracked_prefixes) | set(robot_things(get_layout(hass)))
+                full_tracked = set(tracked_prefixes) | set(robot_things(get_layout(hass))) | set(ids or ())
                 prune_sensors_for_untracked(hass, full_tracked)
+                # Before the guards below: a tag's battery needs no fix, only an advert.
+                from .sensor import publish_tag_batteries  # noqa: PLC0415 - sensor.py imports this package
+                publish_tag_batteries(hass, tag_battery.levels_now(hass, devices))
+                # A device Bermuda renamed under a new slug: its settings
+                # follow it there, matched by the stable unique_id thing_ids
+                # remembers - before the sweep below could delete them.
+                if ids:
+                    await carry_renamed_thing_settings(hass, full_tracked, ids)
                 # And what the sensors' reconcile cannot reach - the settings of
                 # a slug Bermuda has left for good - goes too, once the grace in
                 # sweep_untracked_things has run out.
@@ -1738,13 +1915,17 @@ async def update_tracked_entities(hass):
 
             if not unique_values:
                 _LOGGER.info("There are no devices present to track, sleep 10 seconds")
-                _maintain_rooms(hass)
+                _update_people(hass)
                 _maintain_dead_issues(hass)
                 await asyncio.sleep(10)
                 continue  # Skip and start over
             if num_points < 3:
                 _LOGGER.info("There are not enough things with available data to track, sleep 10 seconds")
-                _maintain_rooms(hass)
+                # Too few readings to solve, but a thing one proxy still hears is here, not leaving.
+                heard_now = _heard_now(hass, readings if tracked_prefixes is not None else None, tracked_entities)
+                for ent in heard_now & set(unique_values):
+                    _last_seen[ent] = {**(_last_seen.get(ent) or {}), "updated": time.time()}
+                _update_people(hass)
                 _maintain_dead_issues(hass)
                 await asyncio.sleep(10)
                 continue  # Skip and start over
@@ -2286,6 +2467,8 @@ def _build_device_availability(hass):
     slug_to_device = {}
     ambiguous = set()
     for d in _iter_registry_devices(dev_reg):
+        if any(i[0] == DOMAIN for i in (getattr(d, "identifiers", None) or ())):
+            continue  # Sextant's own room/floor/thing devices share proxy-like names ("Kitchen") and are never a proxy
         name = d.name_by_user or d.name
         if not name:
             continue
@@ -2582,8 +2765,10 @@ async def update_receiver_radii(hass, eids):
 
             # A distance must be a positive, finite number of metres: -1 is a
             # common "no reading" sentinel, and a NaN would carry through the
-            # solve into the Kalman state and stay there.
-            if not (isinstance(distance_m, (int, float)) and math.isfinite(distance_m) and distance_m > 0):
+            # solve into the Kalman state and stay there. A raw range under
+            # INVALID_RANGE_M is one too: a wall tablet read a phone across the
+            # house at ~0 m, and each one anchored the phone to the tablet.
+            if not (isinstance(distance_m, (int, float)) and math.isfinite(distance_m) and distance_m >= INVALID_RANGE_M):
                 receiver.pop("distance", None)
                 continue
 
@@ -2806,6 +2991,7 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
             "heard": cand.get("heard") or [],
             "min_wr": min_wr, "stable_hint": stable_hint, "scale": scale,
             "zone_polys": zone_polys,
+            "no_vote": cand.get("no_vote") or set(),
             "fingerprint": None if not thing_vec or floor_name not in refs_by_floor else {
                 "mode": estimator,
                 "thing": thing_vec,
@@ -2818,9 +3004,18 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
             },
         })
     # Keep this cycle's inputs so a truth mark can re-solve it under other settings.
+    # The other floors' proxies as points on each floor's plan: kept with the
+    # mark's inputs, and solved as a shadow below while the election log records.
+    # Donors are every floor that heard it, not just the solved ones: one
+    # basement light is exactly the reading worth borrowing.
+    borrowed = {}
     if jobs:
+        try:
+            borrowed = _cross_floor_points(layout, _floor_frames(hass, layout), to_solve, candidates, _thing_height(layout, entity))
+        except Exception as e:  # noqa: BLE001 - a comparison must never cost the thing its position
+            _LOGGER.debug("Cross-floor points skipped for %s: %s", entity, e)
         _truth_buffer.remember(entity, jobs, thing_vec if estimator != "geometric" else fingerprint.thing_vector(layout), fp_gain, estimator,
-                               raw_vec=_raw_vector(layout))
+                               raw_vec=_raw_vector(layout), cross=borrowed)
 
     solved = {}  # floor name -> everything the publish pipeline needs
     if jobs:
@@ -2831,6 +3026,14 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
         results = await hass.async_add_executor_job(_solve_floor_jobs, jobs)
     else:
         results = []
+    # Shadow only, and only while the election log records: what each floor's
+    # fix would be with the other floors' proxies helping. Nothing reads it.
+    shadows = {}
+    if results and borrowed and _tuning(layout, "election_log_hours") > 0:
+        try:
+            shadows = await hass.async_add_executor_job(_solve_cross_floor, jobs, results, borrowed)
+        except Exception as e:  # noqa: BLE001 - a log line must never cost the thing its position
+            _LOGGER.debug("Cross-floor shadow fix skipped for %s: %s", entity, e)
     for job, outcome in zip(jobs, results, strict=False):
         if outcome is None:
             continue  # this floor's readings don't converge; not a contender
@@ -2899,6 +3102,7 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
         {c["name"]: c.get("near_k_m", c.get("nearest_m")) for c in candidates},
         _tuning(layout, "floor_proximity_weight"),
         _tuning(layout, "floor_proximity_blend"),
+        {c["name"]: c.get("near_k_any_m") for c in candidates},
     )
     # The floor's own prior (layout floor["bias"], default 1): in a house the
     # ground floor is where things usually are, and a phone on the kitchen
@@ -2910,7 +3114,9 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
     # learned footprint (wifi.py): a floor that access point never means
     # scores less. Only for the owner's phones and watches; see wifi_floor_weight.
     wifi_factors = {f: _wifi_floor_factor(entity, layout, f) for f in prox_scores}
-    scores = {f: s * biases[f] * wifi_factors[f] for f, s in prox_scores.items()}
+    # Where this thing usually is at this hour (habits.py), when switched on for it.
+    habit_factors = _habit_floor_factors(hass, layout, entity, list(prox_scores))
+    scores = {f: s * biases[f] * wifi_factors[f] * habit_factors.get(f, 1.0) for f, s in prox_scores.items()}
     # Every contender's own fix and how its score was built, not just the
     # winner's. A bias field is tuned against exactly this: where did each
     # floor's solve land, and what did the election make of it. The published
@@ -2929,12 +3135,15 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
             "prox": round(prox_scores[f], 4),
             "bias": round(biases[f], 4),
             "wifi": round(wifi_factors[f], 4),
+            **({"habit": round(habit_factors[f], 4)} if f in habit_factors else {}),
             "score": round(scores[f], 4),
             # Which proxies said what, per floor. The scores alone cannot tell
             # a floor that lost from a floor that was not listening: Meg's
             # catwalk went from eight receivers to three and the floor below
             # won on what was left, and no telemetry said so.
             "heard": [[name, metres] for name, metres in (solved[f].get("heard") or [])],
+            # The shadow fix with the other floors' proxies borrowed (logged only).
+            **({"cross": shadows[f]} if f in shadows else {}),
         }
         for f in scores
     }
@@ -2947,9 +3156,19 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
     margin = _tuning(layout, "floor_switch_margin") + _tuning(layout, "floor_tenure_bonus") * min(
         1.0, tenure / _tuning(layout, "floor_tenure_full_secs")
     )
+    zs = _zone_state.get(entity) or {}   # last cycle's room, on the incumbent floor
+    switch_secs = _tuning(layout, "floor_switch_secs")
+    # Shut in a room on this floor (_elect_zone forgets it when the door opens): no stairs
+    # behind a shut door, so only a strong lead held for door_leave_secs moves it.
+    # Only while still in that room: one let out into the hall may take the stairs.
+    shut_in = _floor_held_by_door(entity, incumbent)
+    if shut_in:
+        margin = max(margin, _tuning(layout, "door_floor_margin"))
+        switch_secs = max(switch_secs, _tuning(layout, "door_leave_secs"))
     lowest_floor_name, challenge = _elect_floor(
         probs, incumbent, solved, _floor_challenge.get(entity),
-        now=now, switch_secs=_tuning(layout, "floor_switch_secs"), margin=margin,
+        now=now, switch_secs=switch_secs, margin=margin, scores=scores,
+        held=bool(zs.get("locked")) and zs.get("still_since") is not None, shut_in=shut_in,
     )
     if challenge is None:
         _floor_challenge.pop(entity, None)
@@ -2958,7 +3177,8 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
     if lowest_floor_name is None:
         return  # nothing electable this cycle: keep last values
 
-    if update_trilateration_and_zone.last_floor.get(entity) != lowest_floor_name:
+    came_from = update_trilateration_and_zone.last_floor.get(entity)
+    if came_from != lowest_floor_name:
         # The Kalman state holds pixel coordinates in the previously elected
         # floor's map space; it must not carry over to the newly elected floor.
         # Neither may the zone election: its polygons are that floor's.
@@ -3062,10 +3282,15 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
         # elect its room and spot from the point, not the filter's old
         # uncertainty ellipse, which would keep a small spot from ever winning.
         kf_for_election = None if anchor is not None else _kf_position_state.get(entity)
+        closed = _closed_rooms(hass, zone_polys, layout, now)
+        doors_shut = _doors_shut(hass, zone_polys)
         zone, zone_locked, zone_speed = _elect_zone(
             entity, lowest_floor_name, instant_zone, test_point,
             kf_for_election, zone_polys, scale, layout, now=now,
-            hold=_floor_challenge.get(entity) is not None,
+            hold=(_floor_challenge.get(entity) or {}).get("since") is not None,  # a margin challenge, not a small lead
+            anchor_point=Point(anchor["x"], anchor["y"]) if anchor is not None else None,
+            closed=closed, doors_shut=doors_shut,
+            new_floor=came_from is not None and came_from != lowest_floor_name,
         )
         # Sub-zone: only the elected zone's own sub-zones are eligible, with
         # membership smoothing, exit hysteresis, dwell and the zone lock (see
@@ -3075,11 +3300,20 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
             _floor_sub_zone_polygons(hass, new_global_data, entity, lowest_floor_name), scale, layout, now=now,
             fp=elected.get("fp"),
         )
+        # Spot habits: the same step _elect_zone just counted into this spot's room, and only then.
+        step = _habits_step.pop(entity, None)
+        if (step and step[0] == now and step[2] == _habit_zone(lowest_floor_name, zone)
+                and sub_zone and sub_zone != "unknown" and not is_outside):
+            habits_mod.learn(_habits, entity, habits_mod.spot_key(step[2], sub_zone), now, step[1], _local_tz, field="s")
+        # After the election: its stillness clock now includes this cycle.
+        if not is_outside:
+            _keep_pins_fresh(hass, entity, lowest_floor_name, now)
         row = {
                 "ent": entity,
                 "cords": [avg_x, avg_y],
                 "zone": zone,
                 "zone_raw": instant_zone,
+                "closed": sorted(closed),   # rooms shut to it this cycle, for the replay
                 # Beyond every room for long enough: "Outside", not the nearest room.
                 "outside": is_outside,
                 # What the fit looked like: proxies used, nearest one in metres
@@ -3091,7 +3325,8 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
                 "zone_locked": zone_locked,
                 # When this room and this spot were entered: kept across a
                 # restart, where the sensors' own timestamps are not.
-                "since": (_zone_state.get(entity) or {}).get("since"),
+                # Outside: when the spell outside began (not kept over a restart: the election starts again).
+                "since": (_outside_state.get(entity) or {}).get("outside_at") if is_outside else (_zone_state.get(entity) or {}).get("since"),
                 "spot_since": (_subzone_state.get(entity) or {}).get("since"),
                 "sub_zone": sub_zone,
                 # Smoothed sub-zone membership shares (name -> share, plus
@@ -3156,12 +3391,18 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
             loc_state, loc_attrs = "Outside", {**loc_attrs, "kind": "outside", "spot": None}
             zone = "Outside"
         loc_attrs = {**loc_attrs, **{k: row.get(k) for k in persons_mod.FIT_KEYS if row.get(k) is not None}}
+        u_floor, u_room, u_spot = _usual_attrs(layout, entity, now)
         update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_room", zone,
-                                    {"area_id": room_area(layout, lowest_floor_name, zone)[0], **here})
+                                    {"area_id": room_area(layout, lowest_floor_name, zone)[0], **here, **u_room})
         update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_nearest_room", nearest_zone, dict(here))
-        update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_floor", lowest_floor_name, dict(here))
-        update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_spot", sub_zone, {"room": parent_zone, **here})
-        update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_location", loc_state, {**loc_attrs, **here})
+        update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_floor", lowest_floor_name, {**here, **u_floor})
+        update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_spot", sub_zone, {"room": parent_zone, **here, **u_spot})
+        loc_attrs = {**loc_attrs, **here}
+        if (settled := rooms_mod.settled_conf_of(loc_attrs, row["updated"])) is not None:
+            loc_attrs["settled_conf"] = settled
+        else:
+            loc_attrs.pop("settled_conf", None)
+        update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_location", loc_state, loc_attrs)
 
 def room_area(layout, floor_name, room_name):
     """(area_id, floor_id): the Home Assistant area a room is linked to, and
@@ -3233,13 +3474,19 @@ def _solve_floor_jobs(jobs):
                 min_weight_radius=job["min_wr"], stable_hint=job["stable_hint"],
             )
         if fix is not None:
+            # Position-only proxies helped place the fix but don't vouch for the floor.
+            # job["heard"] is (entity_id, m) in the same order as weighted.
+            no_vote = job.get("no_vote") or ()
             conf, rms_m, _coverage = _score_floor_fit(fix, job["weighted"], job["scale"])
+            if no_vote:
+                voters = [p for p, h in zip(job["weighted"], job.get("heard") or ()) if h[0] not in no_vote]
+                if voters:
+                    conf = _score_floor_fit(fix, voters, job["scale"])[0]  # rms_m stays the whole solve's
             # A fit landing in this floor's no-go zone is physically impossible
             # here (issue #60): down-weight it so the competition prefers the
             # floor where that spot is a real room. Down-weight, not eliminate -
             # a sole candidate still wins and is snapped out by the caller.
-            if _point_in_no_go(fix, job["zone_polys"]):
-                conf *= NO_GO_CONF_PENALTY
+            conf *= _no_go_factor(fix, job["zone_polys"], job["scale"])
         geometric = fix is not None
         fix, conf, fp = _fuse_fingerprint(job.get("fingerprint"), fix, conf)
         # A fingerprint-only fix has no geometry to check it, so check it
@@ -3326,7 +3573,7 @@ def _forget_thing_state(ent, keep_sighting=False):
     stale-position prune can still say "away since". For a thing forgotten on
     purpose (ws_thing_forget) that memory is the point, and its radar pin,
     robot and error bookkeeping go too."""
-    tables = [_kf_position_state, _zone_state, _outside_state, _subzone_state, _anchor_state, _floor_probability,
+    tables = [_kf_position_state, _zone_state, _shut_in, _outside_state, _subzone_state, _anchor_state, _floor_probability,
               _floor_probability_at, _floor_challenge, _floor_dark_cycles, _floor_since, _arrivals]
     if not keep_sighting:
         tables += [_last_seen, _presence_published, _radar_still, _radar_last_pin, _robot_state, _thing_error_counts]
@@ -3382,6 +3629,7 @@ async def prune_stale_positions(hass):
         gone = _presence_attrs((_last_seen.get(ent) or {}).get("updated"), now, layout if isinstance(layout, dict) else {})
         _presence_published[ent] = gone["presence"]
         loc_state, loc_attrs = _location_state("unknown", "unknown", "unknown", "unknown")
+        # No usual_* here: only presence is patched while it is away, so they would freeze at this hour.
         update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_room", "unknown", {"area_id": None, **gone})
         update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_floor", "unknown", dict(gone))
         update_sextant_sensor_state(hass, f"sensor.{ent}_sextant_nearest_room", "unknown", dict(gone))
@@ -3394,6 +3642,122 @@ async def prune_stale_positions(hass):
 # has left for good (a rename, an IRK swap, a Tile whose ID rotated) is a
 # ghost after that, and nothing else ever removes it.
 ORPHAN_GRACE_S = 3600.0
+
+
+def _thing_settings_tables(layout):
+    """The layout's per-thing tables, minus thing_ids.
+
+    thing_ids is the memory of which slug was which device (see
+    carry_renamed_thing_settings), not settings: it is written by the rename
+    carry, read to answer "is this the same device?", and deliberately never
+    swept - an old name's identity is exactly what a future rename needs.
+    """
+    return {key: table for key, table in (layout or {}).items()
+            if key.startswith("thing_") and key != "thing_ids" and isinstance(table, dict)}
+
+
+async def carry_renamed_thing_settings(hass, tracked, ids):
+    """A device Bermuda renamed takes its settings to the new slug.
+
+    Bermuda names a device after whatever it can resolve - its beacon id, or
+    a name the beacon advertises - and which of those wins can change across
+    a restart: the same beacon has been tracked under three slugs in a week,
+    and every rename stranded its name, class, colour and owner on the old
+    one until someone set them up again by hand.
+
+    ``ids`` is Bermuda's current ``{slug: unique_id}`` for the tracked set
+    (bermuda_source.async_get_tracked_unique_ids); the unique_id is the
+    device, constant across every rename. Each sighting of a slug is
+    remembered against it in the layout's ``thing_ids``. When a tracked slug
+    carries no settings of its own and an untracked slug with the same
+    unique_id has some - the same device's previous name - they move across,
+    remembered sighting and learned gains included, and the old name's state
+    is forgotten. A rename costs one cycle instead of a re-setup; without
+    this the sweep would delete the old name's settings once its grace ran
+    out, and the device would start from scratch under the new one.
+    """
+    # Every slug Bermuda reports now counts as tracked, even one the caller's set
+    # has not caught up with, or one two devices share (its id is None).
+    tracked = set(tracked) | set(ids)
+    shared = {u for u in ids.values() if u and list(ids.values()).count(u) > 1}
+
+    def plan(layout):
+        """(identities to remember, {receiver: donors}) for this layout."""
+        # shortcut: thing_ids keeps every slug ever seen and never shrinks; prune it if a layout ever nears MAX_ITEMS_PER_LIST-sized tables.
+        known = {s: u for s, u in (layout.get("thing_ids") or {}).items() if isinstance(s, str) and isinstance(u, str)}
+        seated = {ent for table in _thing_settings_tables(layout).values() for ent in table}
+        # A slug still holding another device's settings keeps that device's
+        # identity until they have moved: relabelling it would hand them to the newcomer.
+        fresh = {slug: uid for slug, uid in ids.items()
+                 if uid and known.get(slug) != uid and not (slug in seated and slug in known)}
+        # Matched by the identity each slug had when its settings were made (the
+        # memory, before this cycle's update): a slug another device has since
+        # taken still hands its settings to the device they belong to.
+        by_uid: dict[str, list[str]] = {}
+        for slug, uid in {**{s: u for s, u in ids.items() if u}, **known}.items():
+            by_uid.setdefault(uid, []).append(slug)
+        moves, taken = {}, set()
+        for slug in sorted(tracked & set(ids)):
+            if slug in seated or not ids.get(slug) or ids[slug] in shared:
+                continue   # it has settings of its own, no identity, or one two slugs claim
+            donors = sorted(s for s in by_uid.get(ids[slug], ()) if s != slug and s in seated and s not in taken
+                            and (s not in tracked or (ids.get(s) and ids[s] != known.get(s))))
+            if donors:
+                moves[slug] = donors
+                taken.update(donors)
+        return fresh, moves
+
+    # Cheap look first, so a cycle with nothing to do never takes the lock.
+    layout = get_layout(hass)
+    if not isinstance(layout, dict) or not any(plan(layout)):
+        return
+    async with LAYOUT_LOCK:
+        layout = get_layout_for_edit(hass)
+        if not isinstance(layout, dict):
+            return
+        # Planned again from the layout the lock protects: whatever was saved
+        # while this waited (a name set by hand, a restore) is what it decides on.
+        fresh, moves = plan(layout)
+        if not fresh and not moves:
+            return
+        table = dict(layout.get("thing_ids") or {})
+        table.update(fresh)
+        # A slug whose old settings do move out now is the newcomer's from now on.
+        table.update({d: ids[d] for donors in moves.values() for d in donors if d in tracked and ids.get(d)})
+        layout["thing_ids"] = table
+        for receiver, donors in moves.items():
+            for settings in _thing_settings_tables(layout).values():
+                for donor in donors:
+                    if donor in settings:
+                        settings[receiver] = settings.pop(donor)
+            # The sighting and the learned scales are the same device's; the
+            # newest sighting wins if more than one old name carried one. A
+            # donor still tracked is another device's now: its live state is that one's.
+            donors = [d for d in donors if d not in tracked]
+            seen = max((_last_seen[d] for d in donors if d in _last_seen),
+                       key=lambda s: s.get("updated") or 0, default=None)
+            if seen is not None:
+                _last_seen[receiver] = dict(seen)
+            for donor in donors:
+                for runtime in (_fingerprint_db.thing_gain, _range_scale):
+                    if donor in runtime and receiver not in runtime:
+                        runtime[receiver] = runtime.pop(donor)
+                _forget_thing_state(donor)
+            _LOGGER.info("%s is a device Bermuda renamed (%s); its settings followed it across",
+                         receiver, ", ".join(donors))
+        await save_layout(hass, layout)
+    if moves:
+        # Its pins are the same device's too.
+        renamed = {d: r for r, donors in moves.items() for d in donors}
+        async with TRUTH_LOCK:
+            store = await load_truth(hass)
+            hit = [m for m in store.get("marks", []) if m.get("entity") in renamed]
+            for m in hit:
+                m["entity"] = renamed[m["entity"]]
+            if hit:
+                # shortcut: a failed write here leaves these pins on the old slug for good (the layout has already moved); add a retry if it is ever seen.
+                await save_truth(hass, store)
+                _set_truth_marks(store["marks"])
 
 
 def _findmy_not_all_tracked(hass):
@@ -3432,7 +3796,7 @@ async def forget_thing_settings(hass, ents):
         if isinstance(layout, dict):
             for ent in ents:
                 for key, table in layout.items():
-                    if key.startswith("thing_") and isinstance(table, dict) and ent in table:
+                    if key.startswith("thing_") and key != "thing_ids" and isinstance(table, dict) and ent in table:
                         del table[ent]
                         dropped.append(key)
             if dropped:
@@ -3468,9 +3832,8 @@ async def sweep_untracked_things(hass, tracked):
     tracked = set(tracked) | {robot_thing(v) for v in _robots(layout)}
     candidates = {ent for ent in _last_seen if ent}
     if isinstance(layout, dict):
-        for key, table in layout.items():
-            if key.startswith("thing_") and isinstance(table, dict):
-                candidates.update(ent for ent in table if isinstance(ent, str))
+        candidates.update(ent for table in _thing_settings_tables(layout).values()
+                          for ent in table if isinstance(ent, str))
     orphans = {ent for ent in candidates if ent not in tracked}
     dom = hass.data.setdefault(DOMAIN, {}) if isinstance(getattr(hass, "data", None), dict) else {}
     since = dict(dom.get("orphan_since") or {})
@@ -3697,16 +4060,7 @@ async def process_entities(hass, new_global_data):
             if n == 1 or n % CYCLE_ERROR_REPEAT_EVERY == 0:
                 _LOGGER.exception("Positioning failed for %s (%d cycle%s in a row)", ent, n, "" if n == 1 else "s")
         await asyncio.sleep(0)  # a thing with nothing to solve never awaits: yield for it
-    try:
-        _update_person_sensors(hass)
-    except Exception as e:  # noqa: BLE001 - a person's sensor must never stop the things'
-        _LOGGER.warning("Person locations not updated: %s", e)
-    _maintain_rooms(hass)
-    try:
-        layout = get_layout(hass)
-        _publish_presence(hass, layout if isinstance(layout, dict) else {})
-    except Exception as e:  # noqa: BLE001 - an attribute must never stop the things'
-        _LOGGER.debug("Presence not published: %s", e)
+    _update_people(hass)
     _maintain_dead_issues(hass)
     try:
         layout = get_layout(hass)
@@ -4023,17 +4377,17 @@ async def _radar_cycle(hass, layout, now=None):
     if _tuning(layout, "mmwave_rooms"):
         for t in counted:
             if t.get("room") and t["room"] != "unknown":
-                seen = by_room.setdefault((t["floor"], t["room"]), {"count": 0, "held": 0})
+                seen = by_room.setdefault((t["floor"], t["room"]), {"count": 0, "held": 0, "unknown": 0})
                 seen["count"] += 1
                 seen["held"] += t["state"] == "held"
+                seen["unknown"] += not t["thing"]   # no phone, watch, pet tag or robot accounts for it
         # shortcut: read on the radar's clock, so a room's presence sensor counts only while some radar is placed; give it its own tick if one is wanted without.
         sensors = {(f.get("name"), z.get("entity_id")): getattr(hass.states.get(z["presence_entity"]), "state", None) == "on"
                    for f in layout["floor"] for z in (f.get("zones") or [])
                    if isinstance(z, dict) and not z.get("no_go") and isinstance(z.get("presence_entity"), str) and z["presence_entity"]}
         by_room = radars_mod.presence_rooms(by_room, sensors, _room_presence_on, now, holds, _radar_tracker.hold_s)
-    if hass.data.get("sextant_radar_rooms") != by_room:
-        hass.data["sextant_radar_rooms"] = by_room
-        _publish_rooms(hass)
+    hass.data["sextant_radar_rooms"] = by_room
+    _publish_rooms(hass)       # every reading: a hold or "extended" runs out with nothing else changing
     _radar_push(hass, tracks)
     if _tuning(layout, "mmwave_auto_pins"):
         await _radar_auto_pins(hass, layout, tracks, rows, now, seen_by)
@@ -4085,22 +4439,24 @@ async def _add_auto_pin(hass, ent, target, scale, now):
     if len(samples) < truth_mod.MIN_SAMPLES:
         return False
     x, y = target["cords"]
-    store = await load_truth(hass)
-    marks = store.setdefault("marks", [])
-    mine = [m for m in marks if m.get("entity") == ent and str(m.get("source") or "").startswith(AUTO_PIN_SOURCE)]
-    if any(m.get("floor") == target["floor"] and math.hypot(m["x"] - x, m["y"] - y) < AUTO_PIN_MIN_GAP_M * scale for m in mine[-5:]):
-        return False
-    mark = {"id": int(store.get("next_id") or 1), "entity": ent, "floor": target["floor"], "x": round(float(x), 2),
-            "y": round(float(y), 2), "t": now, "samples": samples,
-            "source": f"{AUTO_PIN_SOURCE}:{'+'.join(_radar_names(target))}"}
-    store["next_id"] = mark["id"] + 1
-    marks.append(mark)
-    extra = len(mine) + 1 - AUTO_PIN_KEEP
-    if extra > 0:
-        drop = {id(m) for m in mine[:extra]}
-        store["marks"] = [m for m in marks if id(m) not in drop]
-    await save_truth(hass, store)
-    _set_truth_marks(store["marks"])
+    async with TRUTH_LOCK:  # the Tune page edits the same file
+        store = await load_truth(hass)
+        marks = store.setdefault("marks", [])
+        mine = [m for m in marks if m.get("entity") == ent and str(m.get("source") or "").startswith(AUTO_PIN_SOURCE)]
+        if any(m.get("floor") == target["floor"] and math.hypot(m["x"] - x, m["y"] - y) < AUTO_PIN_MIN_GAP_M * scale for m in mine[-5:]):
+            return False
+        mark = {"id": int(store.get("next_id") or 1), "entity": ent, "floor": target["floor"], "x": round(float(x), 2),
+                "y": round(float(y), 2), "t": now, "samples": samples,
+                "source": f"{AUTO_PIN_SOURCE}:{'+'.join(_radar_names(target))}"}
+        store["next_id"] = mark["id"] + 1
+        marks.append(mark)
+        loose = [m for m in mine if not m.get("keep")]   # a pin kept fresh is the user's, not the cap's
+        extra = len(loose) + 1 - AUTO_PIN_KEEP
+        if extra > 0:
+            drop = {id(m) for m in loose[:extra]}
+            store["marks"] = [m for m in marks if id(m) not in drop]
+        await save_truth(hass, store)
+        _set_truth_marks(store["marks"])
     _LOGGER.info("mmWave pin for %s on %s at (%.0f, %.0f) from %s", ent, target["floor"], x, y,
                  ", ".join(_radar_names(target)))
     return True
@@ -4251,6 +4607,9 @@ _presence_published = {}
 _person_last = {}
 # person -> the last_heard a location request was sent for (persons.should_ask_gps).
 _gps_asked = {}
+# tracker -> (its place, when that fix was made, the fix) (persons.usable_gps). Not kept over a
+# restart; it holds one entry for each tracker listed since the start.
+_gps_fixes = {}
 # Each person's visit (persons.visit): {person: {"arrived", "departed"}}; saved with the runtime.
 _person_visits = {}
 # person -> when Wi-Fi first read them home in an unbroken run (persons.wifi_gate);
@@ -4261,6 +4620,12 @@ _person_log_key = {}
 # telling starts: a restart's first minutes, with GPS and Wi-Fi not loaded yet,
 # can read someone away who never moved, and that must not run a routine.
 _event_visits = None
+# person -> (room, floor) while in a real room, now and as the events last saw it.
+_person_places = {}
+# person -> the night's time in each room (persons.sleep_tally), kept over a restart.
+_person_sleep = {}
+_event_places = {}
+_place_pending = {}
 _events_from = 0.0
 EVENTS_SETTLE_S = 300.0
 # What Wi-Fi association has taught (wifi.py): access-point footprints and
@@ -4298,6 +4663,40 @@ def _presence_attrs(updated, now, layout):
     return {"presence": _presence_of(updated, now, layout), "last_heard": iso}
 
 
+def _heard_now(hass, readings, entity_ids):
+    """Things with a live, fresh distance this cycle, by the solver's own
+    staleness rule: a frozen value must not keep a departed phone "here"."""
+    if readings is None:  # entity mode: a distance sensor with a value
+        return {e.split("_distance_to_")[0].replace("sensor.", "") for e in entity_ids or []
+                if (st := hass.states.get(e)) is not None and st.state not in ("unknown", "unavailable", "")}
+    layout = get_layout(hass) or {}
+    max_age, factor = _reading_max_age(layout), _tuning(layout, "stale_interval_factor")
+    heard = set()
+    for (prefix, _scanner), r in readings.items():
+        if not isinstance(r, dict) or r.get("distance") is None:
+            continue
+        age, limit = r.get("age"), _stale_limit(r, max_age, factor)
+        if not (limit and isinstance(age, (int, float)) and age > limit):
+            heard.add(prefix)
+    return heard
+
+
+def _update_people(hass):
+    """Person sensors, rooms and the things' quiet/away presence. Also run on a
+    cycle with too few readings to solve: that is the house everyone has left,
+    and nothing else would ever tell their sensors they went."""
+    try:
+        _update_person_sensors(hass)
+    except Exception as e:  # noqa: BLE001 - a person's sensor must never stop the things'
+        _LOGGER.warning("Person locations not updated: %s", e)
+    _maintain_rooms(hass)
+    try:
+        layout = get_layout(hass)
+        _publish_presence(hass, layout if isinstance(layout, dict) else {})
+    except Exception as e:  # noqa: BLE001 - an attribute must never stop the things'
+        _LOGGER.debug("Presence not published: %s", e)
+
+
 def _publish_presence(hass, layout):
     """Write a presence transition (here -> quiet -> away) to the sensors of a
     thing the cycle did not hear. A thing that is heard gets its presence with
@@ -4320,19 +4719,20 @@ def _publish_presence(hass, layout):
             continue
         attrs = _presence_attrs(seen.get("updated"), now, layout)
         for suffix in THING_SENSOR_SUFFIXES:
-            _patch_sensor_attrs(hass, f"sensor.{ent}{suffix}", attrs)
+            # A stay-lifted figure is a fit's, and presence moved on without one.
+            _patch_sensor_attrs(hass, f"sensor.{ent}{suffix}", attrs, drop=("settled_conf",))
         _presence_published[ent] = presence
 
 
 THING_SENSOR_SUFFIXES = ("_sextant_room", "_sextant_floor", "_sextant_nearest_room", "_sextant_spot", "_sextant_location")
 
 
-def _patch_sensor_attrs(hass, entity_id, attrs):
-    """Change some attributes of a registered Sextant sensor, keeping the rest."""
+def _patch_sensor_attrs(hass, entity_id, attrs, drop=()):
+    """Change some attributes of a registered Sextant sensor, keeping the rest (minus ``drop``)."""
     sensor = (hass.data.get("sextant_sensors") or {}).get(entity_id)
     if sensor is None:
         return
-    update_sextant_sensor_state(hass, entity_id, sensor._state, {**(sensor._attrs or {}), **attrs})
+    update_sextant_sensor_state(hass, entity_id, sensor._state, {k: v for k, v in {**(sensor._attrs or {}), **attrs}.items() if k not in drop})
 
 
 # A thing is called dead - a repair, not a badge on a card nobody opened - in
@@ -4361,10 +4761,14 @@ def _dead_things(hass, layout, now):
         updated = seen.get("updated") if isinstance(seen, dict) else None
         if not isinstance(updated, (int, float)) or _presence_of(updated, now, layout) != "away":
             continue
-        try:
-            level = float(hass.states.get(batteries[ent]).state)
-        except (KeyError, AttributeError, TypeError, ValueError):  # no sensor, or nothing to say
-            level = None
+        level = None
+        # The Battery sensor set for it, else the one Sextant reads from its adverts.
+        for bid in (batteries.get(ent), f"sensor.{ent}_sextant_battery"):
+            try:
+                level = float(hass.states.get(bid).state)
+                break
+            except (AttributeError, TypeError, ValueError):  # no sensor, or nothing to say
+                continue
         age = now - updated
         flat = level is not None and level <= DEAD_BATTERY_PCT
         # Home for as long as away_after_secs, not just now: a phone back from
@@ -4409,6 +4813,10 @@ def _maintain_dead_issues(hass):
         _update_dead_issues(hass, layout if isinstance(layout, dict) else {})
     except Exception as e:  # noqa: BLE001
         _LOGGER.warning("Dead-thing repairs not updated: %s", e)
+    try:
+        _update_sensor_issues(hass, layout if isinstance(layout, dict) else {})
+    except Exception as e:  # noqa: BLE001
+        _LOGGER.warning("Room sensor repairs not updated: %s", e)
 
 
 def _update_dead_issues(hass, layout):
@@ -4424,6 +4832,29 @@ def _update_dead_issues(hass, layout):
         )
     for domain, issue_id in list(ir.async_get(hass).issues):
         if domain == DOMAIN and issue_id.startswith(DEAD_ISSUE_PREFIX) and issue_id[len(DEAD_ISSUE_PREFIX):] not in dead:
+            ir.async_delete_issue(hass, DOMAIN, issue_id)
+
+
+SENSOR_ISSUE_PREFIX = "room_sensor_"
+_sensor_bad_since: dict = {}   # entity id -> when it was first seen missing or unavailable
+_sensor_on_since: dict = {}    # binary sensor -> when it turned on; both are kept over a restart
+_SENSOR_TEXT = {"missing": "does not exist in Home Assistant", "gone": "has been unavailable for {age}",
+                "stuck": "has read on for {age}, which keeps the room occupied"}
+
+
+def _update_sensor_issues(hass, layout):
+    """One repair per broken room sensor, under a stable id; gone as soon as it reads normally or leaves the room."""
+    found = rooms_mod.sensor_problems(hass.data.get("sextant_room_keys") or [], hass.states.get, time.time(),
+                                      _tuning(layout, "sensor_stuck_secs"), _tuning(layout, "sensor_gone_secs"), _sensor_bad_since, _sensor_on_since)
+    for ent, p in found.items():
+        ir.async_create_issue(
+            hass, DOMAIN, SENSOR_ISSUE_PREFIX + ent.replace(".", "__"), is_fixable=False, severity=ir.IssueSeverity.WARNING,
+            translation_key="room_sensor",
+            translation_placeholders={"name": ent, "where": ", ".join(p["rooms"]), "problem": _SENSOR_TEXT[p["kind"]].format(age=_ago(p["age"]))},
+        )
+    live = {SENSOR_ISSUE_PREFIX + e.replace(".", "__") for e in found}
+    for domain, issue_id in list(ir.async_get(hass).issues):
+        if domain == DOMAIN and issue_id.startswith(SENSOR_ISSUE_PREFIX) and issue_id not in live:
             ir.async_delete_issue(hass, DOMAIN, issue_id)
 
 
@@ -4447,6 +4878,8 @@ async def _restore_runtime(hass):
         return
     back = runtime_mod.restore(data, time.time(), _tuning(layout, "restore_state_secs"))
     _last_seen.update(back["last"])
+    _sensor_bad_since.update(back["sensors"]["bad"])
+    _sensor_on_since.update({e: [t, None] for e, t in back["sensors"]["on"].items()})
     global _restored_at
     _restored_at = time.time() if back["last"] else 0.0
     _seed_last_seen_from_history(hass)
@@ -4478,8 +4911,12 @@ async def _restore_runtime(hass):
             state = {**state, "pending": (tuple(pending[0]), pending[1])}
         _subzone_state[entity] = {**_new_subzone_state(state.get("floor"), state.get("zone"), now), **state}
     _arrivals.update(back["arrivals"])
+    # Near-field anchors: without them every anchored thing drops from 0.9 confidence until it has dwelt again.
+    _anchor_state.update(back.get("anchors") or {})
     _person_visits.update(back.get("visits") or {})
+    _person_sleep.update(back.get("sleep") or {})
     _gps_asked.update(back.get("asked") or {})
+    _last_charging.update(back.get("charging") or {})
     if back.get("wifi"):
         _wifi_store.update(back["wifi"])
     # The floor election, and with it the fact that this thing's floor is not
@@ -4596,6 +5033,11 @@ async def _save_runtime(hass, final=False):
     global _wifi_heat_saved_at
     now = time.time()
     if final or now - _wifi_heat_saved_at >= WIFI_HEAT_SAVE_EVERY_S:
+        try:
+            await save_habits(hass, _habits)
+        except Exception as e:  # noqa: BLE001
+            _LOGGER.warning("Could not save the room habits: %s", e)
+    if final or now - _wifi_heat_saved_at >= WIFI_HEAT_SAVE_EVERY_S:
         _wifi_heat_saved_at = now
         try:
             await save_wifi_heat(hass, _wifi_heat)
@@ -4610,8 +5052,8 @@ async def _save_runtime(hass, final=False):
         # a dying tag, was gone entirely after the 15:34 restart.
         rows = _rows_with_last_seen(rows, _last_seen)
         data = runtime_mod.snapshot(time.time(), kf=_kf_position_state, zones=_zone_state,
-                                    spots=_subzone_state, arrivals=_arrivals, rows=rows, visits=_person_visits, asked=_gps_asked, wifi=_wifi_store,
-                                    floors=_floor_elections())
+                                    spots=_subzone_state, arrivals=_arrivals, rows=rows, visits=_person_visits, sleep=_person_sleep, asked=_gps_asked, wifi=_wifi_store, charging=_last_charging, anchors=_anchor_state,
+                                    floors=_floor_elections(), sensors={"bad": _sensor_bad_since, "on": {e: v[0] for e, v in _sensor_on_since.items()}})
         await save_runtime(hass, data)
     except Exception as e:  # noqa: BLE001
         _LOGGER.warning("Could not save the runtime state: %s", e)
@@ -4637,6 +5079,38 @@ def _history_arrival(hass, ent, floor, x, y, now):
 # How long after first seeing a thing the history is asked again when it had
 # no answer: it is loaded from disk a little after the first cycle of a start.
 ARRIVAL_RETRY_SECS = 600.0
+
+
+_last_charging: dict = {}   # ent -> when its on-charger sensor last began to say charging
+_watch_worn: dict = {}      # watch ent -> [worn, since, partial, restored] (watch_adverts.since)
+_charging_asked: set = set()   # (thing, sensor) pairs whose charge sensor's history has been asked (once a run)
+CHARGE_LOOKBACK_S = 3 * 86400.0
+
+
+def _ask_last_charge(hass, ent, sensor, now):
+    """A charge that finished before this run began (a restart, an upgrade) left no
+    record, and a watch full on its puck then won over the phone its owner carries.
+    Ask the recorder once for the sensor's last charging state."""
+    if (ent, sensor) in _charging_asked:
+        return
+    _charging_asked.add((ent, sensor))
+
+    async def ask():
+        try:
+            from homeassistant.components.recorder import get_instance, history  # noqa: PLC0415
+            start = datetime.fromtimestamp(now - CHARGE_LOOKBACK_S, timezone.utc)
+            found = await get_instance(hass).async_add_executor_job(
+                lambda: history.state_changes_during_period(
+                    hass, start, None, sensor, no_attributes=True, include_start_time_state=False))
+            began = persons_mod.last_charge_began(found.get(sensor))
+            same = (get_layout(hass) or {}).get("thing_charging_entity", {}).get(ent) == sensor   # not re-pointed meanwhile
+            if began is not None and same and _last_charging.get(ent) is None:   # a charge seen live meanwhile wins
+                _last_charging[ent] = began
+        except Exception as e:  # noqa: BLE001 - no recorder: the hold starts with the next charge
+            _LOGGER.debug("Charge history for %s not read: %s", sensor, e)
+            if "recorder" in hass.config.components:
+                _charging_asked.discard((ent, sensor))   # the recorder was not ready: ask again next cycle
+    hass.async_create_task(ask())
 
 
 def _arrived_at(hass, layout, ent, row, now):
@@ -5044,6 +5518,41 @@ def _wifi_for(person, view, skip=()):
     return None
 
 
+def _habit_floor_factors(hass, layout, entity, floors):
+    """{floor: multiplier} from where this thing usually is at this hour (habits.floor_factors),
+    or {} when off for its class or unlearned, and when the habit is not where the thing
+    is now: it is charging, or it is a watch off a wrist, so it sits where it was put."""
+    weight = habits_mod.gain_for(layout, entity, _tuning(layout, "habit_floor_weight"),
+                                 table_key="class_habit_floor_weight", top=1.0, pets_off=False)
+    now = time.time()
+    if weight <= 0 or habits_mod.paused(layout, entity, now):
+        return {}
+    charger = (layout.get("thing_charging_entity") or {}).get(entity)
+    st = hass.states.get(charger) if isinstance(charger, str) else None
+    if st is not None and persons_mod.charging_now(st.state):
+        return {}
+    if (layout.get("thing_classes") or {}).get(entity) == "watch":
+        from . import watch_adverts  # noqa: PLC0415
+        if watch_adverts.worn_now(hass, entity, _tuning(layout, "stale_after_secs")) is False:
+            return {}
+    return habits_mod.floor_factors(_habits, entity, floors, now, weight, _local_tz,
+                                    min_share=_tuning(layout, "habit_floor_min_share"))
+
+
+def _usual_attrs(layout, entity, now):
+    """usual_* attributes for a thing's floor, room and spot sensors: where it usually is at
+    this hour (habits.usual). Nothing while its slot has too little history or a pause runs."""
+    if habits_mod.paused(layout, entity, now):
+        return {}, {}, {}
+    floors = [f.get("name") for f in (layout.get("floor") or []) if isinstance(f, dict) and isinstance(f.get("name"), str)]
+    u = habits_mod.usual(_habits, entity, now, floors, _local_tz)
+    floor = {"usual_floor": u["floor"][0], "usual_share": u["floor"][1]} if "floor" in u else {}
+    room = {"usual_floor": u["room"][0], "usual_room": u["room"][1], "usual_share": u["room"][2]} if "room" in u else {}
+    spot = ({"usual_floor": u["spot"][0], "usual_room": u["spot"][1], "usual_spot": u["spot"][2], "usual_share": u["spot"][3]}
+            if "spot" in u else {})
+    return floor, room, spot
+
+
 def _wifi_floor_factor(entity, layout, floor_name):
     """The Wi-Fi hint's multiplier on one floor's election score for one thing:
     the access point the owner's phone or watch is joined to, through its
@@ -5058,6 +5567,16 @@ def _wifi_floor_factor(entity, layout, floor_name):
     wifi = (_wifi_now.get("by_person") or {}).get(owner)
     if not wifi or not wifi.get("odds"):
         return 1.0
+    # A watch keeps the access point it joined, however far away: Michelle's
+    # stayed on the garage one with her upstairs. Only a phone's says the floor.
+    names = {e: c.get("name") for e, c in (_wifi_now.get("candidates") or {}).items()}
+    if wifi_mod.is_watch(wifi.get("entity"), names.get(wifi.get("entity"))):
+        # The first home tracker was a watch: a phone further down the list still counts.
+        watches = {a["entity"] for a in (_wifi_now.get("assigned") or {}).get(owner) or []
+                   if wifi_mod.is_watch(a["entity"], names.get(a["entity"]))}
+        wifi = _wifi_for(owner, _wifi_now, skip=watches)
+        if not wifi or not wifi.get("odds"):
+            return 1.0
     return wifi_mod.floor_factor(wifi["odds"], floor_name, weight)
 
 
@@ -5083,6 +5602,20 @@ def _ask_phones_for_location(hass, layout, person):
     return sent
 
 
+# Outside door contacts (persons.exit_doors), when each was last seen open, and
+# person -> the last sighting they went out after (so a later opening of the
+# door does not bring them back in).
+# shortcut: not saved, so someone who goes quiet just before a restart is held in the room, not Outside; save with _save_runtime if that shows up.
+_exit_doors, _exit_door_opened, _exit_out = frozenset(), {}, {}
+
+
+def note_exit_door(entity_id, state):
+    """An outside door's new state, from the state listener (sensor.py): an
+    opening is shorter than a cycle, so the cycle alone would miss it."""
+    if entity_id in _exit_doors and state is not None and rooms_mod.door_closed(state.state) is False:
+        _exit_door_opened[entity_id] = time.time()
+
+
 def _update_person_sensors(hass):
     """Each owner's location from the thing that speaks for them (persons.py)."""
     layout = get_layout(hass)
@@ -5104,6 +5637,8 @@ def _update_person_sensors(hass):
         del _arrivals[ent]
     for person in [p for p in _person_visits if p not in by_person]:
         del _person_visits[person]
+    for person in [p for p in _person_sleep if p not in by_person]:
+        del _person_sleep[person]
     for person in [p for p in _person_log_key if p not in by_person]:
         _person_log_key.pop(person, None)
         _wifi_since.pop(person, None)
@@ -5115,6 +5650,7 @@ def _update_person_sensors(hass):
     sensor_mod.ensure_person_sensors(hass, list(by_person), pets)
     rows = {r.get("ent"): r for r in (hass.data.get(DOMAIN, {}).get("apitricords") or []) if isinstance(r, dict)}
     chargers = layout.get("thing_charging_entity") or {}
+    from . import watch_adverts  # noqa: PLC0415
     now, stale = time.time(), _tuning(layout, "stale_after_secs")
     home = (getattr(hass.config, "latitude", None), getattr(hass.config, "longitude", None))
     gps_stale = _tuning(layout, "gps_stale_secs")
@@ -5136,11 +5672,14 @@ def _update_person_sensors(hass):
         wifi_clients = _unifi_clients(hass) or {}
     except Exception:  # noqa: BLE001 - no last-seen times: Wi-Fi stands as it reads
         wifi_clients = {}
-    global _event_visits, _events_from
+    global _event_visits, _events_from, _event_places, _place_pending, _exit_doors
+    _exit_doors = frozenset(persons_mod.exit_doors(layout))
+    for door in _exit_doors:
+        note_exit_door(door, hass.states.get(door))   # a door standing open
     if _event_visits is None:
         _event_visits, _events_from = dict(_person_visits), now + EVENTS_SETTLE_S
     for person, things in by_person.items():
-        candidates, presences, heard, presence_by_ent = [], [], [], {}
+        candidates, presences, heard, presence_by_ent = [], [], {}, {}
         for ent in things:
             if not persons_mod.locates_owner(layout, ent, classes.get(ent)):
                 continue
@@ -5148,21 +5687,41 @@ def _update_person_sensors(hass):
             presence_by_ent[ent] = _presence_of(seen.get("updated") if isinstance(seen, dict) else None, now, layout)
             presences.append(presence_by_ent[ent])
             if isinstance(seen, dict) and isinstance(seen.get("updated"), (int, float)):
-                heard.append(seen["updated"])
+                heard[ent] = seen["updated"]
             row = rows.get(ent)
             if not row:
                 continue
+            arrived = _arrived_at(hass, layout, ent, row, now)
+            charging = False
+            if chargers.get(ent):
+                cst = hass.states.get(chargers[ent])
+                if _last_charging.get(ent) is None:
+                    _ask_last_charge(hass, ent, chargers[ent], now)
+                changed = getattr(cst, "last_changed", None)
+                reading = getattr(cst, "state", None)
+                charging, _last_charging[ent] = persons_mod.still_on_charger(
+                    persons_mod.charging_now(reading), arrived, _last_charging.get(ent),
+                    changed.timestamp() if changed else now, full=persons_mod.on_charger(reading))
+            else:
+                _last_charging.pop(ent, None)   # no sensor named any more: nothing holds it
             candidates.append({
                 "ent": ent, "cls": classes.get(ent), "updated": _graced(row.get("updated"), now),
-                "arrived": _arrived_at(hass, layout, ent, row, now),
-                "zone": row.get("zone"), "sub_zone": row.get("sub_zone"), "floor": row.get("floor"),
+                "arrived": arrived,
+                "zone": row.get("zone"), "zone_raw": row.get("zone_raw"), "sub_zone": row.get("sub_zone"), "floor": row.get("floor"),
                 "outside": bool(row.get("outside")), **{k: row.get(k) for k in persons_mod.FIT_KEYS},
                 "area": room_area(layout, row.get("floor"), row.get("zone")),
-                "on_charger": bool(chargers.get(ent)) and persons_mod.on_charger(
-                    getattr(hass.states.get(chargers[ent]), "state", None)),
+                "on_charger": charging,
+                "worn": watch_adverts.worn_now(hass, ent, stale) if classes.get(ent) == "watch" else None,
             })
+        # Their watches' lock state this cycle; not the held place's snapshot in considered.
+        watches_now = {c["ent"]: c["worn"] for c in candidates if c.get("worn") is not None}
         slug = person.split(".", 1)[1]
-        gps, ignored = persons_mod.choose_gps(hass.states.get, layout, person, now, gps_stale)
+        sources, ignored = persons_mod.usable_gps(hass.states.get, layout, person, now, gps_stale, _gps_fixes)
+        last_heard = max(heard.values()) if heard else None
+        # The first usable source, unless BLE has lost them and another has a newer fix
+        # that shows them gone, or back (persons.choose_gps).
+        gps = persons_mod.choose_gps(
+            sources, persons_mod.presence_of_things(presences), last_heard, home, _tuning(layout, "gps_leave_m"))
         # A thing that came to rest before a GPS fix far from home was made did not
         # go with them: a watch left on the bedside table while the phone walks down
         # the road must not keep the person in the house (persons.gps_left, with the
@@ -5178,9 +5737,12 @@ def _update_person_sensors(hass):
             else:
                 candidates = kept
                 presences = [p for e, p in presence_by_ent.items() if e not in gone]
+                # A watch left on the charger is still heard: it must not stand for their last
+                # sighting, or the fix that shows the phone gone is older than it and never counts.
+                last_heard = max((t for e, t in heard.items() if e not in gone), default=None)
         why = persons_mod.considered(candidates, now)
         presence = persons_mod.presence_of_things(presences)
-        best = persons_mod.pick(candidates, now, stale)
+        best = persons_mod.pick(candidates, now, stale, _tuning(layout, "watch_still_secs"))
         if best is not None:
             _person_last[person] = (best, why)
         elif left_behind:
@@ -5190,13 +5752,28 @@ def _update_person_sensors(hass):
         # placed this cycle (too few proxies for a fix) holds the same way:
         # a person Sextant can hear has not left the house.
         held, held_why = _person_last.get(person, (None, None)) if best is None and presence in ("here", "quiet") else (None, None)
-        last_heard = max(heard) if heard else None
         # Except when GPS has already seen them leave: a quiet spell with a
         # fix made since the last sighting, outside the home zone and well
         # down the road, is a departure, not a pause, and the person is away
         # now rather than when away_after_secs runs out (persons.gps_left).
         if best is None and presence == "quiet" and persons_mod.gps_left(gps, last_heard, home, _tuning(layout, "gps_leave_m")):
             presence, held, held_why = "away", None, None
+        # Last heard in a room with an outside door, and quiet since: out of
+        # it, not asleep in it. Every proxy losing a phone at once is a phone
+        # leaving the house; one dying on the dryer reads Outside too. The last
+        # fix's own room counts as well: walking out fast, the election can
+        # still be holding the room before (Kitchen) when the phone goes quiet.
+        # Not a cat: it does not let itself out, and a tag it sleeps on goes quiet.
+        exit_secs = _tuning(layout, "exit_quiet_secs")
+        if (best is None and presence == "quiet" and held and last_heard and exit_secs > 0
+                and now - last_heard >= exit_secs and not (things and all(classes.get(t) == "cat" for t in things))
+                and persons_mod.held_by_exit(layout, held)
+                and (_exit_out.get(person) == last_heard or persons_mod.door_backs_exit(
+                    layout, held, _exit_door_opened, last_heard,
+                    # At least the quiet wait: an opening during the wait must not fall outside the window.
+                    _tuning(layout, "exit_door_secs") and max(_tuning(layout, "exit_door_secs"), exit_secs)))):
+            _exit_out[person] = last_heard
+            held = {**held, "outside": True, "since": last_heard}
         if _tuning(layout, "gps_leave_m") > 0 and persons_mod.should_ask_gps(
                 presence, best is not None, last_heard, _gps_asked.get(person)):
             if _ask_phones_for_location(hass, layout, person):
@@ -5215,7 +5792,7 @@ def _update_person_sensors(hass):
             outrun = {
                 a["entity"] for a in (view.get("assigned") or {}).get(person) or []
                 if persons_mod.wifi_outrun(
-                    gps, (wifi_clients.get(((view.get("candidates") or {}).get(a["entity"]) or {}).get("mac")) or {}).get("last_seen"),
+                    gps, wifi_mod.seen_for_gps(wifi_clients.get(((view.get("candidates") or {}).get(a["entity"]) or {}).get("mac"))),
                     home, _tuning(layout, "gps_leave_m"))
             }
             if outrun:
@@ -5252,29 +5829,54 @@ def _update_person_sensors(hass):
                 ap_floor, _room = wifi_mod.best_place(_wifi_store, c["ap"], (info.get("floor"), info.get("room")))
                 same_floor = (ap_floor == ble_floor) if ap_floor else None
             wifi_mod.match_update(_wifi_store, tracker, person, wifi_mod.agreement(c["home"], person_home, same_floor), now)
-        for suffix, (state, attrs) in persons_mod.fuse(best, why if best else held_why, presence, held, gps, ignored, home, wifi_home).items():
+        for suffix, (state, attrs) in persons_mod.fuse(best, why if best else held_why, presence, held, gps, ignored, home, wifi_home,
+                                                             dog=bool(things) and all(classes.get(t) == "dog" for t in things)).items():
             # What kind of thing speaks for them (phone, watch, cat...), so a card need not guess from its name.
             attrs["via_class"] = classes.get(attrs["via"]) if attrs.get("via") else None
-            update_sextant_sensor_state(hass, persons_mod.sensor_entity_id(slug, suffix, person in pets), state, attrs)
+            sensor_id = persons_mod.sensor_entity_id(slug, suffix, person in pets)
+            if suffix == "sextant_person_location":
+                prev = hass.states.get(sensor_id)
+                attrs["watches"] = watches_now
+                attrs["watches_since"] = watch_adverts.since(_watch_worn, watches_now, now, prev.attributes if prev else None)
+                # Away last cycle (a visit with no arrival): nothing from before carries over.
+                visit = _person_visits.get(person)
+                arrived = (visit.get("arrived") or now) if visit else None
+                persons_mod.keep_since(prev.attributes if prev else None, attrs, arrived)
+                if (settled := rooms_mod.settled_conf_of(attrs, now, arrived)) is not None:
+                    attrs["settled_conf"] = settled
+            update_sextant_sensor_state(hass, sensor_id, state, attrs)
             if suffix == "sextant_person_location":
                 logged = (state, attrs.get("source"))
+                # A dog's GPS Outside is no room to sleep in or move between.
+                room_ok = attrs.get("room") not in (None, "unknown") and attrs.get("source") != "gps"
+                _person_places[person] = (attrs["room"], attrs.get("floor")) if room_ok else None
         _person_visits[person] = persons_mod.visit(_person_visits.get(person), persons_mod.home_via(presence, gps, wifi_home), last_heard, now)
+        _person_sleep[person] = persons_mod.sleep_tally(_person_sleep.get(person), _person_places.get(person), now, _local_tz,
+                                                        _tuning(layout, "sleep_start_hour"), _tuning(layout, "sleep_end_hour"))
+        update_sextant_sensor_state(hass, persons_mod.sensor_entity_id(slug, "sextant_person_sleep", person in pets),
+                                    *persons_mod.sleep_state(_person_sleep[person]))
         try:
             if _tuning(layout, "person_log_hours") > 0:
                 cand = {c["ent"]: c for c in candidates}
                 trackers_in = [
                     {"e": a["entity"], "home": c.get("home"), "ap": c.get("ap"),
-                     "seen_age": None if not isinstance(seen_at, (int, float)) else round(now - seen_at)}
+                     "seen_age": None if not isinstance(seen_at, (int, float)) else round(now - seen_at),
+                     "idle": raw.get("idletime"),
+                     "heard_age": None if heard is None else round(now - heard)}
                     for a in (view.get("assigned") or {}).get(person) or []
                     for c in [(view.get("candidates") or {}).get(a["entity"]) or {}]
-                    for seen_at in [(wifi_clients.get(c.get("mac")) or {}).get("last_seen")]
+                    for raw in [wifi_clients.get(c.get("mac")) or {}]
+                    for seen_at in [raw.get("last_seen")]
+                    for heard in [wifi_mod.heard_at(raw)]
                 ]
                 line, key = person_log_mod.row(
                     person, now, logged[1], presence, logged[0], _person_visits[person].get("arrived") is not None, wifi_raw, wifi_home,
                     None if last_heard is None else now - last_heard, (gps or {}).get("zone"),
                     (wifi_raw or {}).get("ap_name") or (wifi_raw or {}).get("ap"),
                     best=(best or {}).get("ent"), held=bool(held), left_behind=sorted(c["ent"] for c in left_behind),
+                    place=_person_places.get(person), gps_src=(gps or {}).get("entity"),
                     things=[{"e": e, "cls": classes.get(e), "pres": pr, "zone": (cand.get(e) or {}).get("zone"),
+                             "worn": (cand.get(e) or {}).get("worn"),
                              "age": None if not cand.get(e) or cand[e].get("updated") is None else round(now - cand[e]["updated"])}
                             for e, pr in presence_by_ent.items()],
                     trk=trackers_in)
@@ -5293,6 +5895,9 @@ def _update_person_sensors(hass):
         for event, data in persons_mod.visit_events(_event_visits, _person_visits, pets):
             hass.bus.async_fire(event, data)
         _event_visits = dict(_person_visits)
+        _event_places, _place_pending, moves = persons_mod.room_changes(_event_places, _place_pending, _person_places, pets)
+        for event, data in moves:
+            hass.bus.async_fire(event, data)
     try:
         _wifi_heat_cycle(hass, layout, view, by_person, rows, classes, now)
     except Exception as e:  # noqa: BLE001 - the signal map is a picture, never a stop
@@ -5321,6 +5926,9 @@ def _update_room_sensors(hass):
     if hass.data.get("sextant_room_keys") != keys:
         rooms_platform.prune_room_sensors(hass, layout)
         rooms_platform.ensure_room_sensors(hass, layout)
+        rooms_platform.ensure_aggregate_sensors(hass, layout)
+        from . import switch as switch_platform  # noqa: PLC0415
+        switch_platform.ensure_room_switches(hass, layout)
         hass.data["sextant_room_keys"] = keys
     rooms_platform.link_room_areas(hass, layout)
     cache = hass.data.get("sextant_room_sensors") or {}
@@ -5338,6 +5946,7 @@ def _update_room_sensors(hass):
     classes = layout.get("thing_classes") or {}
     owners = layout.get("thing_owners") or {}
     person_rooms, presences, pet_persons, speaking = {}, {}, set(), set()
+    person_floors = {}
     for person, things in persons_mod.owners(layout).items():
         slug = person.split(".", 1)[1]
         st = hass.states.get(f"sensor.{slug}_sextant_person_location") or hass.states.get(f"sensor.{slug}_sextant_pet_location")
@@ -5347,14 +5956,20 @@ def _update_room_sensors(hass):
         presences[name] = st.attributes.get("presence") or "away"
         if presences[name] == "away" and st.attributes.get("source") == "wifi":
             presences[name] = "wifi"       # BLE lost them, Wi-Fi still has them in the house
-        if st.attributes.get("via") and st.attributes.get("source") in ("ble", "held"):
+        elif presences[name] == "away" and st.attributes.get("source") == "gps" and st.attributes.get("kind") == "outside":
+            presences[name] = "gps"        # a dog BLE lost whose collar says home: in the garden
+        # Gone out (kind outside): the thing left in the room speaks for no one there.
+        if st.attributes.get("via") and st.attributes.get("source") in ("ble", "held") and st.attributes.get("kind") != "outside":
             speaking.add(st.attributes["via"])
         if things and all(classes.get(t) in rooms_mod.PET_CLASSES for t in things):
             pet_persons.add(name)
             continue
         room, floor = st.attributes.get("room"), st.attributes.get("floor")
-        if presences[name] in rooms_mod.COUNTED and room and room != "unknown" and floor and floor != "unknown":
-            person_rooms[name] = (floor, room)
+        # Outside keeps the floor but is no room, even one that happens to be called "Outside".
+        if presences[name] in rooms_mod.COUNTED and floor and floor != "unknown" and st.attributes.get("kind") != "outside":
+            person_floors[name] = floor   # a floor alone is enough here: Wi-Fi gives one with no room
+            if room and room != "unknown":
+                person_rooms[name] = (floor, room)
     names = _thing_names(hass, {r.get("ent") for r in rows if r.get("ent")}, layout)
     counts = rooms_mod.stands_for_someone(owners, speaking, lambda ent: persons_mod.locates_owner(layout, ent, classes.get(ent)))
     hass.data["sextant_room_answers"] = rooms_mod.occupancy(keys, rows, presence_of, classes, names, person_rooms, stands_for_someone=counts)
@@ -5362,6 +5977,53 @@ def _update_room_sensors(hass):
     # Nobody owning anything publishes 0 and empty lists, not the last count.
     count, attrs = rooms_mod.people_home(presences, pet_persons)
     update_sextant_sensor_state(hass, PEOPLE_HOME_ENTITY_ID, count, attrs)
+    update_sextant_sensor_state(hass, HOUSEHOLD_FLOOR_ENTITY_ID, *rooms_mod.household_floor(
+        attrs["home"], person_floors))
+    pauses = [{"until": datetime.fromtimestamp(p["until"], _local_tz).isoformat(timespec="seconds"),
+               **{k: p[k] for k in ("things", "classes") if p.get(k)}} for p in habits_mod.running_pauses(layout, time.time())]
+    update_sextant_sensor_state(hass, HABIT_PAUSES_ENTITY_ID, len(pauses),
+                                {"pauses": pauses, "until": pauses[-1]["until"] if pauses else None})
+
+
+def _restoring(sensor, sensed, now):
+    """True while a sensor restored as on after a restart has not yet been
+    confirmed or has not run out its grace; real evidence ends the grace."""
+    until = getattr(sensor, "restore_until", 0)
+    if not until:
+        return False
+    if sensed or now >= until:
+        sensor.restore_until = 0
+        return False
+    return True
+
+
+def _restored_memory(sensor, now):
+    """The first settle after a restart starts from the door hold the room had, if any (once)."""
+    if getattr(sensor, "memory", None) is None and getattr(sensor, "restored_door_hold", False):
+        sensor.restored_door_hold = False
+        at = getattr(sensor, "restored_door_at", None)
+        at = at if at is not None and at <= now else now     # the hold keeps its first start: a restart does not renew the timeout
+        return {"on": True, "state": "occupied", "since": now, "last_raw": None,
+                "door_hold": True, "door_at": at, "door_closed_at": at}
+    return getattr(sensor, "memory", None)
+
+
+def _carry_since(sensor, m, grace, now, extended_s):
+    """Keep the room's ``since`` (and so occupied/extended) over a restart: while
+    the restored state still shows, and after it if the first real answer agrees
+    with it. Edits ``m`` (a settle() result)."""
+    keep = getattr(sensor, "restored_since", None)
+    if keep is None:
+        return
+    since, was_on = keep
+    shown = m["on"] or grace
+    if not grace:
+        sensor.restored_since = None     # the first real answer: carried once, then the memory holds it
+    m["since"] = min(since, now) if shown == was_on else now
+    m["state"] = "clear" if not shown else ("extended" if now - m["since"] >= extended_s else "occupied")
+
+
+_rooms_from = 0.0     # when the rooms first published this run
 
 
 def _publish_rooms(hass):
@@ -5375,16 +6037,126 @@ def _publish_rooms(hass):
     cache = hass.data.get("sextant_room_sensors") or {}
     answers = hass.data.get("sextant_room_answers") or {}
     radar = hass.data.get("sextant_radar_rooms") or {}
+    switches = hass.data.get("sextant_room_switches") or {}
     links = {(k["floor"], k["room"]): k for k in hass.data.get("sextant_room_keys") or []}
+    layout = get_layout(hass)
+    layout = layout if isinstance(layout, dict) else {}
+    hold, extended, now = _tuning(layout, "room_hold_secs"), _tuning(layout, "room_extended_secs"), time.time()
+    door_settle, door_max = _tuning(layout, "door_settle_secs"), _tuning(layout, "door_hold_max_secs")
+    sleep_hold, long_hold = _tuning(layout, "room_sleep_hold_secs"), _tuning(layout, "room_extended_hold_secs")
+    force_max = _tuning(layout, "room_force_max_secs")
+    global _rooms_from
+    _rooms_from = _rooms_from or now
+
+    def elsewhere(here):
+        """The people the other rooms hold right now."""
+        return {p for k, (_on, a) in answers.items() if k != here and a for p in a.get("people") or []}
+
+    def state_of(entity_id):
+        st = hass.states.get(entity_id)
+        return st.state if st is not None else None
+    published, published_people = {}, {}
+    people_sensors = hass.data.get("sextant_room_people") or {}
     for key, sensor in cache.items():
         is_on, attrs = answers.get(key) or (False, None)
         if attrs is None:
             link = links.get(key) or {}
             attrs = {"room": key[1], "floor": key[0], "area_id": link.get("area_id"), "floor_id": link.get("floor_id"),
-                     "count": 0, "people": [], "pets": [], "things": [], "spots": [], "presence": None}
+                     "count": 0, "people": [], "pets": [], "things": [], "ids": {}, "spots": [], "presence": None}
         seen = radar.get(key) or {"count": 0, "held": 0}
-        attrs = {**attrs, "radar": seen["count"], "held": not is_on and seen["count"] > 0 and seen["held"] == seen["count"]}
-        sensor.set_occupancy(bool(is_on) or seen["count"] > 0, attrs)
+        switch = switches.get(key)
+        if force_max > 0 and getattr(switch, "_attr_is_on", False) and now - (getattr(switch, "on_since", None) or now) >= force_max:
+            switch.expire()
+        forced = bool(getattr(switch, "_attr_is_on", False))
+        link = links.get(key) or {}
+        inputs = rooms_mod.inputs_on(link.get("inputs"), state_of)
+        keep = rooms_mod.inputs_on(link.get("keep"), state_of)
+        asleep = bool(link.get("sleep_entity")) and bool(rooms_mod.inputs_on([link["sleep_entity"]], state_of))
+        sensed = bool(is_on) or seen["count"] > 0 or bool(inputs)
+        grace = _restoring(sensor, sensed, now)
+        door = rooms_mod.door_closed(state_of(link["door"])) if link.get("door") else None
+        own_hold, own_ext = link.get("hold_secs"), link.get("extended_secs")
+        own_sleep, own_long = link.get("sleep_hold_secs"), link.get("extended_hold_secs")
+
+        def settled(prev, raw, held=None):
+            """(settle()'s answer, kept): a keep-only sensor holds a room that is already on, and the
+            clear-after is the sleep or extended one when that applies."""
+            prev = prev or {}
+            # Only a stay confirmed since the start is kept: a restored "on" proves nobody is here now.
+            kept = bool(keep) and not raw and bool(prev.get("on"))
+            ext_s = extended if own_ext is None else own_ext
+            # By the clock, not the last published state: a publish may come after the stay passed the threshold.
+            long = bool(prev.get("on")) and prev.get("since") is not None and now - prev["since"] >= ext_s
+            # The sleep hold is for people seen nowhere (a flat phone): once everyone it held for is placed in another room, they are up.
+            # shortcut: someone who left the house unseen on the way out still gets the sleep hold; count "not home" as elsewhere if that shows up.
+            sleeping = asleep and not (held and set(held) <= elsewhere(key))
+            hold_s = rooms_mod.hold_for(sleeping, long, hold if own_hold is None else own_hold,
+                                        sleep_hold if own_sleep is None else own_sleep, long_hold if own_long is None else own_long)
+            # A keep-only sensor is not a person: it never starts the door's shut-in wait (an open door still ends one).
+            return rooms_mod.settle(prev, raw or kept, now, hold_s, ext_s,
+                                    None if kept and door else door, door_settle, door_max), kept
+        sensor.memory, kept = settled(_restored_memory(sensor, now), sensed or forced, getattr(sensor, "door_people", None))
+        if sensed and attrs.get("people"):
+            # Everyone named since the room came on (a lingering radar track names none), so one whose phone went quiet is
+            # still held for - less anyone since placed in another room, who walked out while others stayed.
+            sensor.door_people = sorted((set(getattr(sensor, "door_people", None) or []) - elsewhere(key)) | set(attrs["people"]))
+        if not sensed and rooms_mod.release_if_elsewhere(sensor.memory, getattr(sensor, "door_people", None), elsewhere(key)):
+            sensor.memory, kept = settled(sensor.memory, forced, getattr(sensor, "door_people", None))
+        m = sensor.memory
+        if not m["on"] and not grace:
+            sensor.door_people = []   # the next stay is held for its own people
+        _carry_since(sensor, m, grace, now, extended if own_ext is None else own_ext)
+        since = datetime.fromtimestamp(m["since"], timezone.utc).isoformat(timespec="seconds")
+        attrs = {**attrs, "radar": seen["count"], "unknown": seen.get("unknown", 0),
+                 "held": not is_on and seen["count"] > 0 and seen["held"] == seen["count"],
+                 "state": m["state"], "since": since, "forced": forced, "inputs": inputs, "door_hold": m["door_hold"],
+                 "door_at": m["door_at"], "door_people": list(getattr(sensor, "door_people", None) or []),
+                 "hold_over": m["on"] and not sensed and not forced and not kept and not m["door_hold"],
+                 "keep": keep, "asleep": asleep, "dark": rooms_mod.is_dark(link.get("dark"), state_of),
+                 "mode": rooms_mod.mode_of(state_of(link["mode_entity"]), link.get("mode_label"), link["mode_entity"].split(".")[0] in ("input_select", "select")) if link.get("mode_entity") else None}
+        attrs["sources"] = rooms_mod.sources(bool(is_on), seen["count"] > 0, inputs, forced, m["door_hold"],
+                                             grace and not m["on"], attrs["hold_over"], kept)
+        on = m["on"] or grace          # a restart's carried-over state shows, but never feeds the hold or the door latch
+        sensor.set_occupancy(on, attrs)
+        was, sensor.event_state = getattr(sensor, "event_state", None), m["state"]
+        # Never the first answer after a start, nor while the house settles (radar-only houses never set _events_from).
+        if was is not None and was != m["state"] and now >= max(_events_from, _rooms_from + EVENTS_SETTLE_S):
+            hass.bus.async_fire("sextant_room_occupancy_changed", {
+                "entity_id": getattr(sensor, "entity_id", None), "room": key[1], "floor": key[0], "area_id": attrs.get("area_id"),
+                "state": m["state"], "previous": was, "people": attrs.get("people") or [], "pets": attrs.get("pets") or [],
+                "sources": attrs["sources"], "mode": attrs["mode"], "dark": attrs["dark"], "asleep": asleep})
+        published[key] = (on, attrs)
+        who = people_sensors.get(key)
+        if who is not None:
+            # Radars, inputs and the force switch cannot tell a pet from a person, so they count as people here.
+            humans = bool(attrs.get("humans") or attrs.get("people")) or seen["count"] > 0 or bool(inputs)
+            if humans and attrs.get("people"):
+                who.door_people = sorted((set(getattr(who, "door_people", None) or []) - elsewhere(key)) | set(attrs["people"]))
+            who_grace = _restoring(who, humans, now)
+            who.memory, who_kept = settled(_restored_memory(who, now), humans or forced, getattr(who, "door_people", None))
+            if not humans and rooms_mod.release_if_elsewhere(who.memory, getattr(who, "door_people", None), elsewhere(key)):
+                who.memory, who_kept = settled(who.memory, forced, getattr(who, "door_people", None))
+            wm = who.memory
+            if not wm["on"] and not who_grace:
+                who.door_people = []
+            _carry_since(who, wm, who_grace, now, extended if own_ext is None else own_ext)
+            hold_over = wm["on"] and not humans and not forced and not who_kept and not wm["door_hold"]
+            people_on = wm["on"] or who_grace
+            who.set_occupancy(people_on, {**attrs, "state": wm["state"],
+                                         "sources": rooms_mod.sources(bool(attrs.get("humans") or attrs.get("people")), seen["count"] > 0, inputs, forced,
+                                                                      wm["door_hold"], who_grace and not wm["on"], hold_over, who_kept),
+                                         "since": datetime.fromtimestamp(wm["since"], timezone.utc).isoformat(timespec="seconds"), "people_only": True,
+                                         "door_hold": wm["door_hold"],
+                                         "door_at": wm["door_at"], "door_people": list(getattr(who, "door_people", None) or []),
+                                         "hold_over": hold_over})
+            published_people[key] = (people_on, {**attrs, "pets": [], "count": attrs.get("humans") or len(attrs.get("people") or [])})
+    keys = hass.data.get("sextant_room_keys") or []
+    rolled = {"": rooms_mod.aggregate(keys, published), "_people": rooms_mod.aggregate(keys, published_people)}
+    for (kind, floor), sensor in (hass.data.get("sextant_aggregate_sensors") or {}).items():
+        floors, house = rolled["_people" if kind.endswith("_people") else ""]
+        on, attrs = house if kind.startswith("house") else floors.get(floor, (False, None))
+        if attrs is not None:
+            sensor.set_occupancy(on, attrs)
 
 
 def extract_candidate_floors(new_global_data, tmpentity):
@@ -5416,8 +6188,10 @@ def extract_candidate_floors(new_global_data, tmpentity):
         max_range = _tuning(layout, "solver_max_range")
         near_always = _tuning(layout, "solver_near_always")
         prox_k = max(1, int(_tuning(layout, "floor_proximity_k")))
+        near_m = _tuning(layout, "floor_proximity_near_m")
         for floor in layout["floor"]:
             entries = []
+            no_vote = set()
             for receiver in floor["receivers"]:
                 distance = receiver.get("distance")
                 if distance is None or "r" not in receiver.get("cords", {}):
@@ -5428,6 +6202,8 @@ def extract_candidate_floors(new_global_data, tmpentity):
                 if not isinstance(quality, (int, float)) or isinstance(quality, bool) \
                         or not 0 < quality <= 1:
                     quality = 1.0
+                if not _votes_floor(receiver) and receiver.get("entity_id"):
+                    no_vote.add(receiver["entity_id"])
                 entries.append((distance, (
                     receiver["cords"]["x"], receiver["cords"]["y"],
                     receiver["cords"]["r"], distance * floor["scale"], float(quality),
@@ -5435,20 +6211,113 @@ def extract_candidate_floors(new_global_data, tmpentity):
             # Nearest-K cap: with thirty receivers on a floor, the far ones
             # contribute mostly noise, and 1/r^2 does not zero them out.
             cords, heard = _select_receivers(entries, max_receivers, max_range, near_always)
-            nearest = min((e[0] for e in entries), default=float("inf"))
-            ranked = sorted(e[0] for e in entries)[:prox_k]
+            voting = [e[0] for e in entries if e[2] not in no_vote]
+            nearest = min(voting, default=float("inf"))  # admission and the fingerprint-only gate: voters only
+            ranked = sorted(voting)[:prox_k]
+            any_k = sorted(e[0] for e in entries)[:prox_k]
             if cords:
                 candidates.append({
                     "name": floor["name"],
                     "cords": cords,
                     "heard": heard,
                     "nearest_m": nearest,
-                    # Mean of the floor_proximity_k nearest slants: what the
-                    # proximity term compares across floors.
+                    # Mean of the floor_proximity_k nearest slants (the nearest alone
+                    # when under floor_proximity_near_m): what the proximity term
+                    # compares across floors.
                     "near_k_m": sum(ranked) / len(ranked) if ranked else float("inf"),
+                    # The same over every proxy, voters or not: the stand-in when no voter heard it.
+                    "near_k_any_m": sum(any_k) / len(any_k) if any_k else float("inf"),
+                    "no_vote": no_vote,  # entity_ids of this floor's position-only proxies
+                    "_first": ranked[:1], "_first_any": any_k[:1],
                 })
+    # A voting receiver under floor_proximity_near_m, and at most FLOOR_NEAR_RATIO
+    # of the nearest reading on any other floor, speaks for its floor alone. Not
+    # for the position-only stand-in: that is a through-slab guard, kept a mean.
+    for c in candidates:
+        others = min((o["_first_any"][0] for o in candidates if o is not c and o["_first_any"]), default=float("inf"))
+        first = c["_first"]
+        if first and first[0] < near_m and first[0] <= FLOOR_NEAR_RATIO * others:
+            c["near_k_m"] = first[0]
+    for c in candidates:
+        del c["_first"], c["_first_any"]
     candidates.sort(key=lambda c: c["nearest_m"])  # stable: file order breaks ties
     return candidates
+
+
+def _cross_floor_points(layout, frames, targets, donors, thing_h):
+    """Each target floor's neighbours' readings, as solver points on its own plan.
+
+    A ceiling light in the basement is nearer a cat on the ground floor than
+    most of the ground floor's own proxies. Its plan position goes through
+    the house frame (registration.py) onto the other floor's plan, and the
+    slant loses its vertical leg: the two floors' elevations plus the mount
+    height against the thing's. Returns ``{floor: (points, heard)}`` for the
+    registered floors that have anything to borrow.
+    """
+    floors = {f.get("name"): f for f in (layout or {}).get("floor", []) if isinstance(f, dict)}
+    out = {}
+    for cand in targets:
+        home = frames.get(cand["name"])
+        if not home or not home.get("ok"):
+            continue
+        points, heard = [], []
+        own = {slug for slug, _m in cand.get("heard") or ()}  # a proxy placed on both floors counts once
+        for other in donors:
+            frame = frames.get(other["name"])
+            if other["name"] == cand["name"] or not frame or not frame.get("ok"):
+                continue
+            placed = {r.get("entity_id"): r for r in floors.get(other["name"], {}).get("receivers", []) if _placed(r)}
+            for slug, metres in other.get("heard") or ():
+                rx = placed.get(slug)
+                if rx is None or slug in own or not 0 < metres <= CROSS_FLOOR_MAX_M:
+                    continue
+                x, y = registration.from_house(home, *registration.to_house(frame, rx["cords"]["x"], rx["cords"]["y"]))
+                height = rx.get("height")
+                if not isinstance(height, (int, float)) or isinstance(height, bool) or not 0 <= height <= 10:
+                    height = thing_h  # no mount height: only the storeys separate them
+                dz = frame["elevation"] + height - home["elevation"] - thing_h
+                # Floored like a same-floor mount height (see the slant correction).
+                horizontal = math.sqrt(max(metres * metres - dz * dz, min(metres * metres, MIN_WEIGHT_RADIUS_M ** 2)))
+                points.append((x, y, horizontal * home["scale"], CROSS_FLOOR_WEIGHT, metres * home["scale"]))
+                heard.append([slug, round(horizontal, 2)])
+        if points:
+            out[cand["name"]] = (points, heard)
+    return out
+
+
+def _solve_cross_floor(jobs, results, borrowed):
+    """The shadow fix per solved floor: its own points plus the borrowed ones.
+
+    Pure CPU, executor-safe. ``{floor: {"fix", "own", "rms_m", "own_rms_m", "n"}}``
+    (``own`` is the same solve without the borrowed points, ``n`` how many
+    were borrowed; which ones is in the other floors' own ``heard``):
+    rms over every point, and over the floor's own points alone so it pairs
+    with the floor's own ``rms_m``.
+    """
+    out = {}
+    for job, outcome in zip(jobs, results, strict=False):
+        points, heard = borrowed.get(job["floor"]) or ((), ())
+        if outcome is None or not points or len(job["weighted"]) < 3:
+            continue
+        every = list(job["weighted"]) + list(points)
+        fix = trilaterate(every, bounds=job["bounds"], min_weight_radius=job["min_wr"], stable_hint=job["stable_hint"])
+        if fix is None:
+            continue
+        # The like-for-like partner: the floor's published fix may be fused with
+        # the fingerprint, which the shadow is not.
+        own = outcome[3]["geo"] if outcome[3] else outcome[0]  # no match: the fix is the geometric one
+        rms_m = _score_floor_fit(fix, every, job["scale"])[1]
+        own_rms_m = _score_floor_fit(fix, job["weighted"], job["scale"])[1]
+        if own is None or not all(math.isfinite(v) for v in (fix[0], fix[1], own[0], own[1], rms_m, own_rms_m)):
+            continue  # this goes out as JSON
+        out[job["floor"]] = {
+            "fix": [round(float(fix[0]), 1), round(float(fix[1]), 1)],
+            "own": [round(float(own[0]), 1), round(float(own[1]), 1)],
+            "rms_m": round(rms_m, 3),
+            "own_rms_m": round(own_rms_m, 3),
+            "n": len(heard),   # not the list: it tripled the election log
+        }
+    return out
 
 
 def _score_floor_fit(fix, weighted, scale):
@@ -5581,7 +6450,7 @@ def floor_bias_map(layout, frames, floor_name, other_name, cell_m=0.5):
     return {"cell_px": step, "registered": registered, "cells": cells, "min": min(ratios), "max": max(ratios)}
 
 
-def _proximity_weighted_scores(scores, nearest_by_floor, weight, blend="gated"):
+def _proximity_weighted_scores(scores, nearest_by_floor, weight, blend="gated", stand_in_by_floor=None):
     """Scale each solved floor's confidence by receiver proximity.
 
     ``prox`` for a floor is the nearest measured distance on ANY competing
@@ -5593,7 +6462,11 @@ def _proximity_weighted_scores(scores, nearest_by_floor, weight, blend="gated"):
     whose fit is poor (a fix a metre over a void, the no-go penalty applied)
     is not capped by that fit when its proxies are plainly the nearest. With
     one solved floor, an unusable distance, or weight 0, the scores pass
-    through unchanged. Distances are the raw slants (metres) the candidate
+    through unchanged. A floor with no usable distance but a ``stand_in_by_floor``
+    one (heard only by proxies whose "Use for floor choice" is off) is scored
+    on that, capped at prox 1, but never sets the nearest for the others: a
+    through-slab ceiling light must neither elect its floor for free nor mark
+    down the floor the thing is on. Distances are the raw slants (metres) the candidate
     ranking already uses, so a through-slab reading directly below a thing
     counts against the floor below it just as it did in the old
     nearest-receiver election - but now as one weighted term inside the fit
@@ -5607,12 +6480,18 @@ def _proximity_weighted_scores(scores, nearest_by_floor, weight, blend="gated"):
         if f in scores and isinstance(d, (int, float)) and not isinstance(d, bool)
         and d > 0 and math.isfinite(d)
     }
-    if len(usable) < 2:
-        return dict(scores)
+    stand_in = {
+        f: float(d) for f, d in (stand_in_by_floor or {}).items()
+        if f in scores and f not in usable and isinstance(d, (int, float)) and not isinstance(d, bool)
+        and d > 0 and math.isfinite(d)
+    }
+    if not usable or len(usable) + len(stand_in) < 2:
+        return dict(scores)  # no voting baseline: stand-ins never set one
     best = min(usable.values())
     out = {}
     for floor, conf in scores.items():
-        prox = best / usable[floor] if floor in usable else 1.0
+        d = usable.get(floor, stand_in.get(floor))
+        prox = min(1.0, best / d) if d else 1.0
         if blend == "geometric":
             out[floor] = (max(conf, 0.0) ** (1.0 - weight)) * (prox ** weight)
         else:
@@ -5652,8 +6531,13 @@ def _update_floor_probabilities(entity, scores, valid_floors=None, now=None):
     return dict(probs)
 
 
+def _floor_held_by_door(entity, floor):
+    """Whether the thing is still in the room it was shut in on this floor (see _shut_in)."""
+    return floor is not None and _shut_in.get(entity) == (floor, (_zone_state.get(entity) or {}).get("zone"))
+
+
 def _elect_floor(probs, incumbent, solved, challenge, now=None,
-                 switch_secs=FLOOR_SWITCH_SECS, margin=FLOOR_SWITCH_MARGIN):
+                 switch_secs=FLOOR_SWITCH_SECS, margin=FLOOR_SWITCH_MARGIN, scores=None, held=False, shut_in=False):
     """Pick the floor to publish. Returns (floor, challenge_state).
 
     The caller guarantees the incumbent is either solved this cycle or None
@@ -5671,6 +6555,23 @@ def _elect_floor(probs, incumbent, solved, challenge, now=None,
     floor must not be the cure. Wall clock rather than cycles because the
     update interval is configurable: "three cycles" meant 30 s at one
     setting and 3 s at another.
+
+    ``scores`` are this cycle's raw floor scores. The probabilities are
+    smoothed, so one bad cycle (a floor scoring 0) leaves the challenger ahead
+    for many cycles after the scores have recovered: the switch only happens on
+    a cycle whose scores also put the challenger ahead (the dwell keeps running
+    meanwhile, so a real move that scores noisily still gets there).
+
+    ``held``: the thing is still and its room is locked. A lead under the
+    margin then has to last FLOOR_HELD_LEAD_S, not minutes: a cat on the
+    catwalk, heard by the receivers below it, lost its floor to a 0.01 lead
+    every few minutes. A lead over the margin still wins as before, moving
+    releases the lock, and a room locked on the wrong floor is still left
+    in the end.
+
+    ``shut_in``: the thing is shut in a room on the incumbent floor. A lead
+    under the margin never wins, however long it lasts (Meg, on Eilee's bed
+    over the Sewing Room proxy, lost his floor to a +0.1 lead held 10 minutes).
     """
     now = time.time() if now is None else now
     contenders = {f: p for f, p in probs.items() if f in solved}
@@ -5679,12 +6580,25 @@ def _elect_floor(probs, incumbent, solved, challenge, now=None,
     best = max(contenders, key=contenders.get)
     if incumbent is None or incumbent not in contenders:
         return best, None  # no standing incumbent: adopt the best immediately
-    if best == incumbent or contenders[best] - contenders[incumbent] < margin:
+    lead = contenders[best] - contenders[incumbent]
+    if best == incumbent or lead <= 0:
         return incumbent, None
-    since = challenge["since"] if challenge and challenge.get("floor") == best else now
-    if now - since >= switch_secs:
+    mine = challenge if challenge and challenge.get("floor") == best else {}
+    # A lead under the margin that never lapses still wins in the end: David's
+    # phone led the kitchen floor by 0.06 against a 0.15 margin for ten minutes.
+    # "led" is how long the incumbent has been behind anyone, so two challengers
+    # trading first place cannot keep restarting it.
+    led = (challenge or {}).get("led", now)
+    lasting = not shut_in and now - led >= max(FLOOR_LASTING_LEAD_MIN_S, FLOOR_LASTING_LEAD_X * switch_secs)
+    agree = not (scores and scores.get(best, 0.0) <= scores.get(incumbent, 0.0))
+    if lead < margin:
+        if lasting and agree and not (held and now - led < FLOOR_HELD_LEAD_S):
+            return best, None
+        return incumbent, {"floor": best, "led": led}  # no "since": not a margin challenge
+    since = mine.get("since", now)
+    if (lasting or now - since >= switch_secs) and agree:
         return best, None
-    return incumbent, {"floor": best, "since": since}
+    return incumbent, {"floor": best, "since": since, "led": led}
 
 
 # --- Zone election ------------------------------------------------------------
@@ -5758,7 +6672,49 @@ def _zone_membership(zone_polys, samples):
     return {z: s / total for z, s in shares.items()} if total > 0 else {}
 
 
-def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, scale, layout, now=None, hold=False):
+def _habit_zone(floor_name, zone):
+    """Rooms of the same name on two floors are two places."""
+    return f"{floor_name}|{zone}"
+
+
+_door_seen: dict[str, tuple] = {}  # door entity -> (state last cycle, last_changed then, close earns grace)
+
+
+def _closed_rooms(hass, zone_polys, layout, now):
+    """The zones whose door has read closed for door_entry_grace_secs: no thing outside one moves in.
+
+    The grace is for a real close: the door read open, or closed and then changed again (open and
+    shut between cycles), on the cycle before. A door that comes back closed from unavailable or
+    unknown, or is closed when Sextant starts (every HA restart does both), closes its room at once."""
+    grace, out = _tuning(layout, "door_entry_grace_secs"), set()
+    for zid, door in (getattr(zone_polys, "doors", None) or {}).items():
+        st = hass.states.get(door)
+        if st is None:
+            _door_seen.pop(door, None)
+            continue
+        closed, changed = rooms_mod.door_closed(st.state), st.last_changed.timestamp()
+        prev = _door_seen.get(door)
+        if prev is not None and prev[1] == changed:
+            earns = prev[2]
+        else:  # a cover's opening/closing counts as open; only unavailable/unknown is no sighting
+            earns = prev is not None and str(prev[0]).lower() not in ("unavailable", "unknown", "none", "") and (
+                rooms_mod.door_closed(prev[0]) is not True or bool(closed))
+        _door_seen[door] = (st.state, changed, earns)
+        if closed and (not earns or now - changed >= grace):
+            out.add(zid)
+    return out
+
+
+def _doors_shut(hass, zone_polys):
+    """{zone: seen shut} for the zones whose door reads closed now, grace or not: who is inside is
+    decided when it shuts. Seen shut is False for a door found closed at start or back from
+    unavailable (see _closed_rooms, which runs first): nobody saw who was inside then."""
+    return {zid: bool((_door_seen.get(door) or (None, None, False))[2])
+            for zid, door in (getattr(zone_polys, "doors", None) or {}).items()
+            if (st := hass.states.get(door)) is not None and rooms_mod.door_closed(st.state)}
+
+
+def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, scale, layout, now=None, hold=False, anchor_point=None, closed=(), new_floor=False, doors_shut=None):
     """The zone to PUBLISH for a thing this cycle. Returns
     (zone, locked, speed_m_s).
 
@@ -5772,6 +6728,10 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
     2. Margin and dwell. The incumbent zone holds until a challenger leads
        its smoothed share by zone_switch_margin continuously for
        zone_switch_secs of wall clock.
+       A room in ``closed`` (its door shut past the grace) is no challenger:
+       the strongest open room challenges instead. The first pick after a
+       restart is not held back; after a floor change the room is unknown
+       until an open room has evidence.
     3. Stationary lock. When the filter's speed stays under stationary_speed
        for stationary_secs, the thing is on a table and the zone locks -
        but only a zone it has EARNED: held for stationary_secs already, and
@@ -5796,11 +6756,16 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
     valid = {zid for zid, _p, _b, no_go in zone_polys if not no_go}
     if not _tuning(layout, "zone_hysteresis") or not valid:
         _zone_state.pop(entity, None)
+        _shut_in.pop(entity, None)
         return instant_zone, False, None
 
     st = _zone_state.get(entity)
-    if st is None or st["floor"] != floor_name or (st["zone"] is not None and st["zone"] not in valid):
+    # Come up or down the stairs, not a first sighting (the caller has usually dropped the old state already).
+    new_floor = new_floor or (st is not None and st["floor"] != floor_name)
+    if st is None or new_floor or (st["zone"] is not None and st["zone"] not in valid):
         st = _zone_state[entity] = _new_zone_state(floor_name, now)
+    if new_floor:
+        st["entering"] = True   # kept until an open room wins the first pick
 
     # 1. Membership, smoothed.
     center = (point.x, point.y) if isinstance(point, Point) else (point[0], point[1])
@@ -5838,12 +6803,61 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
         st["still_since"] = st["moving_since"] = None
 
     incumbent = st["zone"]
+    # A thing in a room when its door shut is inside: it may always come back to
+    # that room, and leaves it only on a long clear lead (door_leave_secs), so a
+    # blip cannot put it outside a shut door. Kept apart from _zone_state, which
+    # a floor blip drops; the door opening forgets it.
+    # doors_shut, not closed: the entry grace must not leave a thing just shut in free to blip out.
+    doors_shut = closed if doors_shut is None else doors_shut
+    home = _shut_in.get(entity)
+    if home is not None and home[0] == floor_name and home[1] not in doors_shut:
+        _shut_in.pop(entity, None)
+        home = None
+    if incumbent is not None and incumbent in doors_shut and not st.get("entering"):
+        _shut_in[entity] = home = (floor_name, incumbent)
+    home = home[1] if home is not None and home[0] == floor_name else None
+    closed = set(closed) - {home}
     if not probs:
         return (incumbent if incumbent is not None else instant_zone), False, speed
     best = max(probs, key=probs.get)
     if incumbent is None:
-        st.update(zone=best, since=now, challenge=None, locked=False, away_since=None)
+        if st.get("entering"):   # a thing arriving from another floor cannot walk into a shut room either
+            best = max((z for z in probs if z not in closed), key=probs.get, default=None)
+            if home in probs:   # nor out of the one it was shut in: back from a floor blip, it is still there
+                best = home
+            if best is None:   # only shut rooms have evidence: no room until an open one does,
+                # or one shut unseen (see unseen below) has led alone for door_leave_secs
+                lead = max((z for z in probs if z in doors_shut and isinstance(doors_shut, dict) and not doors_shut[z]),
+                           key=probs.get, default=None)
+                if lead is None or (st.get("unseen") or (None,))[0] != lead:
+                    st["unseen"] = (lead, now)
+                if lead is None or now - st["unseen"][1] < _tuning(layout, "door_leave_secs"):
+                    return "unknown", False, speed
+                best = lead
+        st.update(zone=best, since=now, challenge=None, locked=False, away_since=None, entering=False)
         return best, False, speed
+    # Anchored: the thing sits on a proxy (one reads it within anchor_max_m,
+    # every other at least anchor_ratio farther, for anchor_secs), so its room
+    # is that proxy's room - no smoothing lag, dwell or lock to wait out. Only
+    # a proxy well inside its room, though: most are wall plugs, and one on a
+    # shared wall anchors things on both sides of it. Replayed over 10 h of the
+    # election log, an inset of 0.5 m published 11 moves ~32 s sooner with no
+    # extra switch or bounce; 0.1 m added 33 bounces.
+    # The proxy's own position, not the filtered point: the filter lags it and
+    # a snap can move it. Before habit learning, so the room left gains nothing.
+    inset = _tuning(layout, "zone_anchor_inset_m")
+    if anchor_point is not None and inset > 0 and not hold and incumbent != home and not _point_in_no_go(anchor_point, zone_polys):
+        az = next((zid for zid, p, _b, no_go in zone_polys if not no_go and p.covers(anchor_point)), None)
+        if az is not None and az != incumbent and az not in closed and _inset_m(zone_polys, az, anchor_point, scale) >= inset:
+            st["probs"] = {az: 1.0}
+            st.update(zone=az, since=now, challenge=None, locked=False,
+                      still_since=None, away_since=None, outvoted_since=None)
+            _habits_last[entity] = now
+            return az, False, speed
+    if best == incumbent and probs[best] >= HABIT_CONFIDENT_SHARE and not habits_mod.paused(layout, entity, now):
+        habits_mod.learn(_habits, entity, _habit_zone(floor_name, incumbent), now, _habits_last.get(entity), _local_tz)
+        _habits_step[entity] = (now, _habits_last.get(entity), _habit_zone(floor_name, incumbent))
+    _habits_last[entity] = now
 
     # 3b. Lock and unlock.
     stationary_secs = _tuning(layout, "stationary_secs")
@@ -5898,10 +6912,26 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
         st.update(locked=False, still_since=None, away_since=None, outvoted_since=None)
 
     # 2. Margin and dwell. A far move (see far_move_margin) is held to more.
+    # A shut room is no challenger, so the strongest open one challenges instead (after the lock
+    # check above, so a thing kept out of a room does not earn a lock where it is kept).
+    # A room whose shutting nobody saw (closed at start, back from unavailable) may be wrong either
+    # way, so a long clear lead lets a thing in, as one lets a thing out.
+    unseen = {z for z, seen in (doors_shut.items() if isinstance(doors_shut, dict) else ()) if not seen}
+    best = max((z for z in probs if z == incumbent or z not in closed or z in unseen), key=probs.get, default=incumbent)
     margin, dwell = _tuning(layout, "zone_switch_margin"), _tuning(layout, "zone_switch_secs")
     if best != incumbent and _far_move(zone_polys, incumbent, best, scale):
         margin = max(margin, _tuning(layout, "far_move_margin"))
         dwell = max(dwell, _tuning(layout, "far_move_secs"))
+    if best != incumbent and (incumbent == home or best in closed):
+        dwell = max(dwell, _tuning(layout, "door_leave_secs"))
+        challenge_since = None   # time away from the room is not a lead held
+    if best != incumbent:
+        # Where this thing usually is at this hour tips a close call, never a clear one.
+        gain = habits_mod.gain_for(layout, entity, _tuning(layout, "habit_margin_gain"))
+        if gain > 0 and not habits_mod.paused(layout, entity, now):
+            shifted = max(0.05, margin + habits_mod.prior_shift(
+                _habits, entity, _habit_zone(floor_name, incumbent), _habit_zone(floor_name, best), now, gain, _local_tz))
+            margin = min(shifted, max(margin, 0.9))   # a habit never makes a unanimous challenger unable to win
     if best == incumbent or probs[best] - probs.get(incumbent, 0.0) < margin:
         st["challenge"] = None
         return incumbent, False, speed
@@ -5919,6 +6949,15 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
     # its clock, so a challenge that lapses costs the room switch nothing.
     st["challenge"] = {"zone": best, "since": since}
     return incumbent, False, speed
+
+
+def _inset_m(zone_polys, zone, point, scale):
+    """How far (m) the point sits inside the zone's outline; 0 outside it or without a scale."""
+    poly = next((p for zid, p, _b, _n in zone_polys if zid == zone), None)
+    if poly is None or not isinstance(scale, (int, float)) or scale <= 0:
+        return 0.0
+    pt = point if isinstance(point, Point) else Point(point[0], point[1])
+    return poly.boundary.distance(pt) / scale if poly.covers(pt) else 0.0
 
 
 def _far_move(zone_polys, a, b, scale):
@@ -6141,11 +7180,20 @@ def _elect_anchor(entity, floor_name, receivers, layout, now=None):
     if candidate is not None and candidate.get("entity_id") != st["slug"]:
         return _adopt_anchor(entity, floor_name, candidate, now)
     current = by_slug.get(st["slug"])
-    if current is not None and current[0] <= release_m:
+    # Another proxy reading it clearly closer (10%) means it is not on this
+    # one, however near this one reads. A near-tie neither starts the release
+    # clock nor stops one already running: readings jittering around equal
+    # must not hold a beaten anchor forever.
+    rival = next((d for d, rx in ranked if rx.get("entity_id") != st["slug"]), None)
+    beaten = current is not None and rival is not None and rival * 1.1 < current[0]
+    tied = current is not None and rival is not None and not beaten and rival < current[0] * 1.1
+    # Only a clock a rival started survives a tie; one the release distance started does not.
+    if current is not None and current[0] <= release_m and not beaten and not (tied and st.get("away_since") and st.get("away_beaten")):
         st["away_since"] = None
         return _place(current[1])
-    # Reading gone or opened past the release distance: let go after the dwell.
-    st["away_since"] = st.get("away_since") or now
+    # Reading gone, opened past the release distance, or beaten: let go after the dwell.
+    if not st.get("away_since"):
+        st["away_since"], st["away_beaten"] = now, beaten
     if now - st["away_since"] >= dwell:
         _anchor_state.pop(entity, None)
         return None
@@ -6367,7 +7415,7 @@ class _FloorZones(list):
     call over the floor instead of one Python call per zone.
     """
 
-    __slots__ = ("allowed_ids", "allowed_geoms", "allowed_rings", "allowed_boundaries", "snap", "snap_own", "snap_nogo_grown")
+    __slots__ = ("allowed_ids", "allowed_geoms", "allowed_rings", "allowed_boundaries", "snap", "snap_own", "snap_nogo_grown", "doors")
 
     def __init__(self, tuples):
         super().__init__(tuples)
@@ -6420,7 +7468,7 @@ def _floor_zone_polygons(hass, data, entity, floor_name):
             key=lambda coord: np.arctan2(coord["y"] - center_y, coord["x"] - center_x)
         )
 
-    results = []
+    results, doors = [], {}
     for entity_data in data:
         if entity_data["entity"] == entity:
             for floor in entity_data["data"]["floor"]:
@@ -6456,9 +7504,12 @@ def _floor_zone_polygons(hass, data, entity, floor_name):
                         height = max(ys) - min(ys)
                         buffer_size = ((width + height) / 2) * buffer_percent
                         results.append((zone["entity_id"], polygon, buffer_size, bool(zone.get("no_go"))))
+                        if door := rooms_mod.room_options(zone)["door"]:
+                            doors[zone["entity_id"]] = door
             break
 
     results = _FloorZones(results)
+    results.doors = doors
     cache[cache_key] = (version, results)
     return results
 
@@ -6476,6 +7527,24 @@ def _point_in_no_go(point, zone_polys):
         point = Point(float(point[0]), float(point[1]))
     return any(no_go and polygon.contains(point)
                for _zone_id, polygon, _buffer_size, no_go in zone_polys)
+
+
+def _no_go_factor(point, zone_polys, scale):
+    """The election-confidence multiplier for a fit at point: 1 outside every
+    no-go zone and within NO_GO_GRACE_M of its edge, NO_GO_CONF_PENALTY from
+    NO_GO_FULL_M in, linear between. No scale: the full penalty when inside."""
+    if not isinstance(point, Point):
+        point = Point(float(point[0]), float(point[1]))
+    # The union, so a repaired MultiPolygon, a hole or two overlapping zones
+    # measure depth from the void's real edge, not each drawing's own.
+    void = unary_union([polygon for _zid, polygon, _b, no_go in zone_polys if no_go])
+    if void.is_empty or not void.contains(point):
+        return 1.0
+    depth = void.boundary.distance(point)
+    if not scale:
+        return NO_GO_CONF_PENALTY
+    t = (depth / scale - NO_GO_GRACE_M) / (NO_GO_FULL_M - NO_GO_GRACE_M)
+    return 1.0 - (1.0 - NO_GO_CONF_PENALTY) * min(1.0, max(0.0, t))
 
 
 def find_zone_for_point(hass, data, entity, floor_name, point):
@@ -7094,6 +8163,56 @@ def _register_calibration_services(hass) -> None:
         }),
     )
 
+    async def _pause_habits(call: ServiceCall) -> None:
+        """Stop using and learning habits until a time (habits.paused), for some things or all."""
+        now = time.time()
+        if call.data.get("until") is not None:
+            from datetime import datetime as _dt  # noqa: PLC0415
+            from homeassistant.util import dt as dt_util  # noqa: PLC0415
+            until = call.data["until"]
+            if not isinstance(until, _dt):   # an all-day calendar event ends on a date: its local midnight
+                until = _dt(until.year, until.month, until.day)
+            if until.tzinfo is None:   # Home Assistant's zone, not the process's (UTC on HA OS)
+                until = until.replace(tzinfo=dt_util.get_default_time_zone())
+            until = until.timestamp()
+        elif call.data.get("hours") is not None:
+            until = now + 3600.0 * call.data["hours"]
+        else:
+            raise HomeAssistantError("pause_habits needs until or hours")
+        if until <= now:
+            raise HomeAssistantError("pause_habits: until is already past")
+        if until - now > habits_mod.MAX_PAUSE_S:
+            raise HomeAssistantError("pause_habits: a pause can last at most a year")
+        pause = {"until": until, **{k: list(call.data[k]) for k in ("things", "classes") if call.data.get(k)}}
+        async with LAYOUT_LOCK:
+            data = get_layout_for_edit(hass)
+            if not isinstance(data, dict):
+                raise HomeAssistantError("No Sextant layout saved yet; place receivers first.")
+            live = [p for p in data.get("habit_pauses") or [] if isinstance(p, dict) and (p.get("until") or 0) > now]
+            if len(live) >= habits_mod.MAX_PAUSES:   # never end a running pause to make room
+                raise HomeAssistantError(f"pause_habits: {len(live)} pauses already running; resume_habits ends them")
+            data["habit_pauses"] = live + [pause]
+            await save_layout(hass, data)
+        _LOGGER.info("sextant.pause_habits: %s", pause)
+
+    async def _resume_habits(call: ServiceCall) -> None:
+        """End every habit pause now."""
+        async with LAYOUT_LOCK:
+            data = get_layout_for_edit(hass)
+            if isinstance(data, dict) and data.pop("habit_pauses", None) is not None:
+                await save_layout(hass, data)
+
+    async_register_admin_service(hass,
+        DOMAIN, "pause_habits", _pause_habits,
+        schema=vol.Schema({
+            vol.Optional("until"): vol.Any(cv.datetime, cv.date),
+            vol.Optional("hours"): vol.All(vol.Coerce(float), vol.Range(min=0.01, max=24 * 31)),
+            vol.Optional("things"): vol.All(cv.ensure_list, [cv.string], vol.Length(max=200)),
+            vol.Optional("classes"): vol.All(cv.ensure_list, [cv.string], vol.Length(max=50)),
+        }),
+    )
+    async_register_admin_service(hass, DOMAIN, "resume_habits", _resume_habits, schema=vol.Schema({}))
+
     async def _get_map(call: ServiceCall) -> ServiceResponse:
         """The plan and who is where, in metres (export.py)."""
         from . import export as export_mod  # noqa: PLC0415 - shapely, only wanted here
@@ -7124,6 +8243,113 @@ def _register_calibration_services(hass) -> None:
         supports_response=SupportsResponse.ONLY,
     )
 
+    async def _reload_code(call: ServiceCall) -> None:
+        # One at a time: a second call would see the entries already unloaded
+        # and purge under the first one's setup.
+        if hass.data.get("sextant_reloading"):
+            raise HomeAssistantError("Sextant is already reloading its code")
+        hass.data["sextant_reloading"] = True
+        try:
+            await _reload_code_once()
+        finally:
+            hass.data.pop("sextant_reloading", None)
+
+    async def _reload_code_once() -> None:
+        # Disabled and ignored entries are never set up, so they are not ours to reload.
+        entries = hass.config_entries.async_entries(DOMAIN, include_ignore=False, include_disabled=False)
+        if not hass.config_entries.async_loaded_entries(DOMAIN):
+            # Nothing is running, so an earlier reload failed: Home Assistant
+            # imports the package to unload it, and a half-imported module
+            # left in the caches would fail that again after the file is fixed.
+            _forget_code(hass, __name__, DOMAIN)
+        for entry in entries:
+            if not await hass.config_entries.async_unload(entry.entry_id):
+                raise HomeAssistantError("Sextant did not unload; restart Home Assistant instead")
+        # As after a restart, nothing of the old code's may be left to reuse.
+        # The HTTP views and stop listeners cannot be registered twice, so
+        # their flags stay: the views run the old code until a restart.
+        from .storage import LAYOUT_LOCK  # noqa: PLC0415
+        # Under the layout lock, and with no await inside: a layout save still
+        # in flight finishes first, instead of landing on the new code's state.
+        async with LAYOUT_LOCK:
+            for key in [k for k in hass.data if str(k).startswith("sextant_")
+                        and k not in ("sextant_views_registered", "sextant_stop_listeners", "sextant_reloading")]:
+                hass.data.pop(key, None)
+            hass.data.pop(DOMAIN, None)
+            _forget_code(hass, __name__, DOMAIN)
+        try:
+            await hass.async_add_import_executor_job(_import_code, __name__)
+        except Exception as err:
+            # This handler stays registered, so the action works again once the code is fixed.
+            raise HomeAssistantError(f"Sextant is unloaded: the new code did not load ({err}). "
+                                     "Fix it and call sextant.reload_code again, or restart Home Assistant") from err
+        failed = [entry.title for entry in entries if not await hass.config_entries.async_setup(entry.entry_id)]
+        if failed:
+            # This handler stays registered, so the action works again once the code is fixed.
+            raise HomeAssistantError("Sextant is unloaded: the new code did not set up (see the log). "
+                                     "Fix it and call sextant.reload_code again, or restart Home Assistant")
+
+    async_register_admin_service(hass, DOMAIN, "reload_code", _reload_code, schema=vol.Schema({}))
+
+
+# The version this module's code is, read at import (which runs in the import executor).
+_CODE_VERSION = json.loads((Path(__file__).parent / "manifest.json").read_text())["version"]
+
+
+def _clear_marketplace_restart(hass, same_code: bool = False) -> None:
+    """Drop Marketplace's "restart to finish the update" repair once that version runs.
+
+    Marketplace cannot see reload_code, so the repair would stay until a restart.
+    Called from entry setup, so it is the new code's version even when the old
+    code's reload_code handler did the reload. A repair for any other version
+    (an update downloaded after this code was imported) still waits, unless
+    ``same_code``: the Python on disk is the code running, so the update changed
+    only the frontend and there is nothing to restart for.
+    """
+    for (domain, issue_id), issue in list(ir.async_get(hass).issues.items()):
+        if (domain == "marketplace" and issue_id.startswith("restart_required_")
+                and issue.issue_domain == DOMAIN and (same_code or issue_id.endswith(f"/{_CODE_VERSION}"))):
+            ir.async_delete_issue(hass, domain, issue_id)
+
+
+async def _clear_restart_if_same_code(hass) -> None:
+    """Drop Sextant's restart repairs when the Python on disk is the code running (a frontend-only update)."""
+    from . import ws as ws_mod  # noqa: PLC0415
+
+    if ws_mod.RUNNING_CODE is not None and await hass.async_add_executor_job(ws_mod.code_signature) == ws_mod.RUNNING_CODE:
+        _clear_marketplace_restart(hass, same_code=True)
+
+
+def _import_code(package: str) -> None:
+    """Import the new code in the import executor, not the event loop.
+
+    After an unload HA still lists "<domain>.<platform>" as loaded, so it
+    would import the new modules in the event loop (and warn about it);
+    once they are in sys.modules its own import is a cache hit.
+    """
+    from homeassistant.loader import BASE_PRELOAD_PLATFORMS  # noqa: PLC0415  (the test stubs have no loader)
+    module = importlib.import_module(package)
+    # The new module's list, plus what HA preloads with a package (diagnostics, ...).
+    for name in (*module._PLATFORMS, *BASE_PRELOAD_PLATFORMS):
+        if importlib.util.find_spec(f"{package}.{name}") is not None:
+            importlib.import_module(f"{package}.{name}")
+
+
+_PLATFORMS = ("sensor", "binary_sensor", "switch", "device_tracker")
+
+def _forget_code(hass, package: str, domain: str) -> None:
+    """Drop a package's modules so the next setup imports them from disk again.
+
+    Home Assistant keeps its own copy of each imported integration module
+    (loader.py: hass.data["components"], keyed "<domain>" and
+    "<domain>.<platform>") next to Python's sys.modules; both have to go.
+    """
+    for cache, root in ((sys.modules, package), (hass.data.get("components", {}), domain),
+                        (hass.data.get("missing_platforms", {}), domain)):
+        for name in [n for n in cache if n == root or n.startswith(root + ".")]:
+            del cache[name]
+    importlib.invalidate_caches()  # or a file added since the last import may not be found
+
 
 async def async_setup(hass, config):
     """Set up the Sextant integration."""
@@ -7140,7 +8366,12 @@ async def async_setup(hass, config):
     # comes first and FINAL_WRITE last, which is where Home Assistant expects
     # its stores to be written; taking both costs one extra write.
     async def _on_stop(_event):
-        await _save_runtime(hass, final=True)
+        # Through sys.modules: after sextant.reload_code this listener belongs
+        # to the old module, whose state stopped changing at the reload.
+        # A reload whose new code failed leaves no module, or one that never
+        # restored its state: saving that would overwrite what the unload wrote.
+        if (live := sys.modules.get(__name__)) is not None and hass.config_entries.async_loaded_entries(DOMAIN):
+            await live._save_runtime(hass, final=True)
 
     # Once per Home Assistant run: sextant_initialized is cleared on unload,
     # so every reload (each options change) used to add another set, and a
@@ -7205,6 +8436,13 @@ async def async_setup(hass, config):
         if "sextant" in panels:
             async_remove_panel(hass, "sextant")
 
+        from . import ws as ws_running  # noqa: PLC0415
+
+        # The Python this import is, hashed once: an options reload runs setup again on the same modules,
+        # and reload_code imports a fresh ws module, so it is hashed again only when the code really changed.
+        if ws_running.RUNNING_CODE is None:
+            ws_running.RUNNING_CODE = await hass.async_add_executor_job(ws_running.code_signature)
+
         if show_sidebar_panel:
             try:
                 _LOGGER.debug("Registering the custom panel for Sextant...")
@@ -7224,7 +8462,6 @@ async def async_setup(hass, config):
                 from . import ws as ws_mod  # noqa: PLC0415
 
                 ws_mod.RUNNING_VERSION = str(integration.version) if integration.version else None
-                ws_mod.RUNNING_CODE = await hass.async_add_executor_job(ws_mod.code_signature)
                 await panel_custom.async_register_panel(
                     hass,
                     frontend_url_path="sextant",
@@ -7302,6 +8539,12 @@ async def async_setup(hass, config):
 
     return True
 
+async def async_remove_config_entry_device(hass: HomeAssistant, entry, device_entry):
+    """Let an empty Sextant device be deleted from the UI; one that still has
+    entities belongs to something tracked and is refused."""
+    return not any(e.device_id == device_entry.id for e in er.async_get(hass).entities.values())
+
+
 async def async_unload_entry(hass: HomeAssistant, entry):
     """Remove a configuration entry"""
     _LOGGER.info("Attempting to offload platforms for entry: %s", entry.entry_id)
@@ -7327,6 +8570,18 @@ async def async_unload_entry(hass: HomeAssistant, entry):
         if task:
             task.cancel()
     await _save_runtime(hass, final=True)
+    # The cancelled loop flushes the election log only at the end of a cycle.
+    try:
+        layout = get_layout(hass)
+        await election_log.get(hass).flush(
+            _tuning(layout, "election_log_hours") if isinstance(layout, dict) and layout else None)
+    except Exception as e:  # noqa: BLE001 - a log must never stop the unload
+        _LOGGER.debug("Election log not flushed on unload: %s", e)
+    for domain, issue_id in list(ir.async_get(hass).issues):
+        if domain == DOMAIN and issue_id.startswith(SENSOR_ISSUE_PREFIX):
+            ir.async_delete_issue(hass, DOMAIN, issue_id)
+    _sensor_bad_since.clear()
+    _sensor_on_since.clear()
 
     # Get whatever the tracking loop buffered since the last 60 s flush onto
     # disk before the task goes away. The in-memory ring survives an unload
@@ -7347,7 +8602,7 @@ async def async_unload_entry(hass: HomeAssistant, entry):
     # settings (area, name, disabled) and rewrote the whole registry twice.
 
     try: # Attempt to unload platforms
-        unload_ok = await hass.config_entries.async_unload_platforms(entry, ["sensor", "binary_sensor", "device_tracker"])
+        unload_ok = await hass.config_entries.async_unload_platforms(entry, ["sensor", "binary_sensor", "switch", "device_tracker"])
     except Exception as e:
         _LOGGER.error(f"Error during offloading of platforms for entry {entry.entry_id}: {e}")
         return False
@@ -7381,7 +8636,7 @@ async def async_unload_entry(hass: HomeAssistant, entry):
     hass.data.pop("sextant_initialized", None)
     hass.data.pop("sextant_sensors", None)
     hass.data.pop("sextant_add_entities", None)
-    for key in ("sextant_room_sensors", "sextant_room_add", "sextant_room_keys", "sextant_room_unlinked"):
+    for key in ("sextant_room_sensors", "sextant_room_people", "sextant_aggregate_sensors", "sextant_room_switches", "sextant_switch_add", "sextant_room_add", "sextant_room_keys", "sextant_room_unlinked"):
         hass.data.pop(key, None)
 
     return True
@@ -7399,13 +8654,35 @@ async def async_setup_entry(hass, entry):
         _LOGGER.warning("Truth marks or learned gains not loaded: %s", e)
     global _wifi_heat
     _wifi_heat = heat_mod.clean(await load_wifi_heat(hass))
+    global _habits, _local_tz
+    _habits = habits_mod.clean(await load_habits(hass))
+    try:
+        from homeassistant.util import dt as dt_util
+        _local_tz = dt_util.get_default_time_zone()
+    except Exception:  # noqa: BLE001
+        _local_tz = None
     await _restore_runtime(hass)
     # (the sensor platform removes legacy duplicated-name entities as it sets up)
-    await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "binary_sensor", "device_tracker"])
+    await hass.config_entries.async_forward_entry_setups(entry, _PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(async_update_options))
+    from . import watch_adverts
+    if (stop := watch_adverts.setup(hass)) is not None:
+        entry.async_on_unload(stop)
 
     """Set up Sextant from a config entry."""
-    return await async_setup(hass, entry)
+    ok = await async_setup(hass, entry)
+    if ok:
+        # Marketplace raises its repair after it has written the files, so the check then sees the new Python.
+        # Listening before the sweep, so a repair raised in between is not missed; a re-download updates it.
+        async def _on_issue(event) -> None:
+            if (event.data.get("action") in ("create", "update") and event.data.get("domain") == "marketplace"
+                    and str(event.data.get("issue_id", "")).startswith("restart_required_")):
+                await _clear_restart_if_same_code(hass)
+
+        entry.async_on_unload(hass.bus.async_listen("repairs_issue_registry_updated", _on_issue))
+        _clear_marketplace_restart(hass)
+        await _clear_restart_if_same_code(hass)
+    return ok
 
 
 async def async_update_options(hass, entry):
@@ -7580,6 +8857,9 @@ class SextantSaveAPIText(HomeAssistantView):
         # --- Inputs valid: persist. Map first (so the saved layout never names
         # a map that failed to write), then the layout, then delete the old map. ---
         if map_target is not None:
+            # A second editor adding the same floor: its upload must not replace the first's map.
+            if await hass.async_add_executor_job(_map_taken, maps_path, map_target.name):
+                return web.Response(status=409, text=f"A map named {map_target.name} is already there: pick another floor name")
             try:
                 async with aiofiles.open(map_target, "wb") as f:
                     await f.write(map_bytes)
@@ -7980,6 +9260,21 @@ def _room_at(rooms, x, y):
     return None
 
 
+# A proxy the self-test calls misplaced: located at least this far from its
+# placement, by at least this many proxies, whose ranges miss the located spot
+# by no more than MISPLACED_MAX_FIT_M (median) and by under MISPLACED_FIT_RATIO
+# of what they miss the placement by.
+MISPLACED_MIN_ERROR_M = 3.0
+MISPLACED_MIN_HEARERS = 5
+MISPLACED_MAX_FIT_M = 2.0
+MISPLACED_FIT_RATIO = 0.5
+
+
+def _range_misfit_m(pts, x, y, scale):
+    """Median of how far each proxy's projected range misses the point (m)."""
+    return float(np.median([abs(math.hypot(px - x, py - y) - pr) for px, py, pr, _slant in pts])) / scale
+
+
 def run_selftest(hass, samples=None, corrections=None, floors=None):
     """Leave-one-out receiver self-localization accuracy against known positions.
 
@@ -8053,13 +9348,24 @@ def run_selftest(hass, samples=None, corrections=None, floors=None):
             unsolved.append({"entity": slug, "floor": tgt["floor"], "room": room, "heard_by": len(pts), "reason": "no convergence"})
             continue
         err_px = math.hypot(fix[0] - tgt["x"], fix[1] - tgt["y"])
-        solved.append({
+        error_m = err_px / tgt["scale"]
+        fit_m, placed_fit_m = (_range_misfit_m(pts, x, y, tgt["scale"]) for x, y in ((fix[0], fix[1]), (tgt["x"], tgt["y"])))
+        row = {
             "entity": slug, "floor": tgt["floor"], "room": room,
             "known": [round(tgt["x"], 1), round(tgt["y"], 1)],
             "est": [round(float(fix[0]), 1), round(float(fix[1]), 1)],
-            "error_m": round(err_px / tgt["scale"], 3),
+            "error_m": round(error_m, 3),
             "heard_by": len(pts),
-        })
+            "fit_m": round(fit_m, 2), "placed_fit_m": round(placed_fit_m, 2),
+        }
+        # Probably drawn in the wrong place, not just ranged badly: enough
+        # proxies hear it, they agree with each other on a spot well away from
+        # the placement, and their ranges fit that spot far better.
+        if (error_m >= MISPLACED_MIN_ERROR_M and len(pts) >= MISPLACED_MIN_HEARERS
+                and fit_m <= MISPLACED_MAX_FIT_M and fit_m <= MISPLACED_FIT_RATIO * placed_fit_m):
+            row["misplaced"] = True
+            row["est_room"] = _room_at(rooms.get(tgt["floor"]), float(fix[0]), float(fix[1]))
+        solved.append(row)
     return {
         "receivers": solved,
         "unsolved": unsolved,

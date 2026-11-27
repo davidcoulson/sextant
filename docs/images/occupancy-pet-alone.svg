@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="940" height="290" viewBox="0 0 940 290" role="img" aria-label="Example 3: Pepper the cat is alone in the lounge">
+<title>Example 3: Pepper the cat is alone in the lounge</title>
+<rect x="0.5" y="0.5" width="939" height="289" rx="10" fill="#ffffff" stroke="#d0d7de"/>
+<text x="20" y="30" font-size="16" fill="#1f2328" text-anchor="start" font-weight="bold" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">Example 3: Pepper the cat is alone in the lounge</text>
+<line x1="210.0" y1="68" x2="210.0" y2="210" stroke="#eaeef2"/>
+<text x="210.0" y="228" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">0</text>
+<line x1="256.7" y1="68" x2="256.7" y2="210" stroke="#eaeef2"/>
+<text x="256.6666666666667" y="228" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">1</text>
+<line x1="303.3" y1="68" x2="303.3" y2="210" stroke="#eaeef2"/>
+<text x="303.3333333333333" y="228" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">2</text>
+<line x1="350.0" y1="68" x2="350.0" y2="210" stroke="#eaeef2"/>
+<text x="350.0" y="228" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">3</text>
+<line x1="396.7" y1="68" x2="396.7" y2="210" stroke="#eaeef2"/>
+<text x="396.66666666666663" y="228" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">4</text>
+<line x1="443.3" y1="68" x2="443.3" y2="210" stroke="#eaeef2"/>
+<text x="443.33333333333337" y="228" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">5</text>
+<line x1="490.0" y1="68" x2="490.0" y2="210" stroke="#eaeef2"/>
+<text x="490.0" y="228" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">6</text>
+<line x1="536.7" y1="68" x2="536.7" y2="210" stroke="#eaeef2"/>
+<text x="536.6666666666667" y="228" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">7</text>
+<line x1="583.3" y1="68" x2="583.3" y2="210" stroke="#eaeef2"/>
+<text x="583.3333333333333" y="228" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">8</text>
+<line x1="630.0" y1="68" x2="630.0" y2="210" stroke="#eaeef2"/>
+<text x="630.0" y="228" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">9</text>
+<line x1="676.7" y1="68" x2="676.7" y2="210" stroke="#eaeef2"/>
+<text x="676.6666666666667" y="228" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">10</text>
+<line x1="723.3" y1="68" x2="723.3" y2="210" stroke="#eaeef2"/>
+<text x="723.3333333333334" y="228" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">11</text>
+<line x1="770.0" y1="68" x2="770.0" y2="210" stroke="#eaeef2"/>
+<text x="770.0" y="228" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">12</text>
+<line x1="816.7" y1="68" x2="816.7" y2="210" stroke="#eaeef2"/>
+<text x="816.6666666666666" y="228" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">13</text>
+<line x1="863.3" y1="68" x2="863.3" y2="210" stroke="#eaeef2"/>
+<text x="863.3333333333334" y="228" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">14</text>
+<line x1="910.0" y1="68" x2="910.0" y2="210" stroke="#eaeef2"/>
+<text x="910.0" y="228" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">15</text>
+<text x="910" y="244" font-size="11" fill="#59636e" text-anchor="end" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">time (min)</text>
+<line x1="490.0" y1="64" x2="490.0" y2="210" stroke="#1f2328" stroke-dasharray="4 3"/>
+<text x="20" y="95" font-size="13" fill="#1f2328" text-anchor="start" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">Pepper&#x27;s tag (Bluetooth)</text>
+<rect x="210.0" y="80" width="700.0" height="22" rx="4" fill="#0969da"/>
+<text x="560.0" y="96" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">placed in the Lounge (class: cat)</text>
+<text x="20" y="129" font-size="13" fill="#1f2328" text-anchor="start" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">Motion sensor (input)</text>
+<rect x="490.0" y="114" width="46.7" height="22" rx="4" fill="#8250df"/>
+<text x="513.3333333333334" y="130" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">on</text>
+<text x="20" y="163" font-size="13" fill="#1f2328" text-anchor="start" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">Lounge occupancy</text>
+<rect x="210.0" y="148" width="700.0" height="22" rx="4" fill="#2da44e"/>
+<text x="560.0" y="164" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">on: pets [Pepper], count 1</text>
+<text x="20" y="197" font-size="13" fill="#1f2328" text-anchor="start" font-weight="bold" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">Lounge people occupancy</text>
+<line x1="210" y1="174" x2="910" y2="174" stroke="#d0d7de"/>
+<rect x="210.0" y="182" width="280.0" height="22" rx="4" fill="#d8dee4"/>
+<text x="350.0" y="198" font-size="11" fill="#1f2328" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">clear</text>
+<rect x="490.0" y="182" width="46.7" height="22" rx="4" fill="#2da44e"/>
+<text x="513.3333333333334" y="198" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">on</text>
+<rect x="536.7" y="182" width="373.3" height="22" rx="4" fill="#d8dee4"/>
+<text x="723.3333333333334" y="198" font-size="11" fill="#1f2328" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">clear</text>
+<rect x="492.0" y="49" width="121.8" height="14" fill="#ffffff"/>
+<text x="494.0" y="60" font-size="11" fill="#1f2328" text-anchor="start" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">jumps onto the sofa</text>
+<text x="20" y="276" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">A pet&#x27;s tag counts for the room sensor but not for the people sensor. A motion sensor cannot tell a cat from a person.</text>
+</svg>

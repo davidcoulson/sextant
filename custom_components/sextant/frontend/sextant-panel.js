@@ -4,6 +4,7 @@
  * One websocket subscription (sextant/subscribe) feeds every mode; the
  * request/response commands in ws.py do the rest. Modes:
  *   live         the floor plan with things, trails and a history scrubber
+ *   occupancy    who is in each room, by floor (read only)
  *   edit         the floor-plan editor
  *   things     what Bermuda tracks, and what it hears but does not
  *   bermuda      Bermuda's own things: global options, FindMy, Tiles
@@ -13,14 +14,16 @@
  */
 import { LitElement, html, css, nothing } from "./lit.js";
 import { signalColour, distanceColour, SextantMap, thingColor, thingHue, staleness, shortAge, heatCells, pointInPolygon, polygonCentroid } from "./sextant-map.js";
-import { sharedStyles, widgetStyles, fmtAge, fmtNum, toast, confirmAsync, ensureHaComponents, uiSelect, uiButton, callWS, sortFloors, thingName, proxyName, fmtLen, fmtSpeed, classIcon, pronounsFor, uiIconButton, uiSegmented, isImperial, mapOverlayStyles, renderScaleBar, signalLegend, mapUrlFor, retryWait, loadLayout, subscribePositions } from "./sextant-ui.js";
-import { personGroups } from "./sextant-groups.js";
+import { sharedStyles, widgetStyles, fmtAge, fmtNum, toast, confirmAsync, ensureHaComponents, uiSelect, uiButton, callWS, sortFloors, thingName, proxyName, fmtLen, fmtSpeed, classIcon, pronounsFor, uiIconButton, uiSegmented, uiMenu, expertMode, setExpertMode, isImperial, mapOverlayStyles, renderScaleBar, signalLegend, mapUrlFor, retryWait, loadLayout, subscribePositions } from "./sextant-ui.js";
+import { personGroups, petBattery, PET_CLASSES } from "./sextant-groups.js";
+import { spotInRoom, askStrimmer } from "./sextant-occupancy-data.js";
 
 // What this page is running: the version of the files it was loaded from
 // (sextant-version.js), not the one in its URL - see that file.
 import { VERSION as PANEL_VERSION } from "./sextant-version.js";
 import "./sextant-devices.js";
 import "./sextant-health.js";
+import "./sextant-occupancy.js";
 import "./sextant-edit.js";
 import "./sextant-property.js";
 import "./sextant-stack.js";
@@ -31,6 +34,7 @@ const NO_SPOTS = Object.freeze([]);
 
 const MODES = [
   ["live", "Live", "mdi:map-marker-radius"],
+  ["occupancy", "Occupancy", "mdi:account-group-outline"],
   ["edit", "Edit", "mdi:vector-polygon"],
   ["things", "Things", "mdi:tag-multiple"],
   ["bermuda", "Bermuda", "mdi:bluetooth-settings"],
@@ -39,7 +43,28 @@ const MODES = [
   ["tuning", "Tuning", "mdi:chart-timeline-variant"],
   ["advice", "Advice", "mdi:lightbulb-on-outline"],
 ];
+// Pages for setting up and tuning, behind the one Setup tab.
+const SETUP_MODES = ["proxies", "bermuda", "calibration", "tuning", "advice"];
+const EXPERT_MODES = ["tuning"];   // pages shown only in expert mode
 const FLOOR_MODES = new Set(["live", "edit", "proxies", "calibration"]);
+// Pages with no form to lose: they reload themselves into a new version.
+const AUTO_RELOAD_MODES = new Set(["live", "occupancy"]);
+
+/** Reload into the installed version. Home Assistant's service worker answers
+ *  same-site files from its cache and refreshes that copy behind the scenes, so a
+ *  plain reload brings the old panel back once more: drop Sextant's files first. */
+async function reloadFresh(stillWanted = () => true) {
+  const mine = (req) => { const u = new URL(req.url); return u.origin === location.origin && u.pathname.startsWith("/sextant/"); };
+  const drop = (async () => {
+    for (const name of await caches.keys()) {
+      const cache = await caches.open(name);
+      await Promise.allSettled((await cache.keys()).filter(mine).map((req) => cache.delete(req)));
+    }
+  })().catch(() => { /* no Cache Storage (plain http): nothing cached there to drop */ });
+  // A cache that never answers must not hold the reload back.
+  await Promise.race([drop, new Promise((r) => setTimeout(r, 3000))]);
+  if (stillWanted()) window.location.reload();
+}
 // Pages that change the layout, the things or Bermuda, or expose every
 // address the house hears: administrators only (the backend refuses the
 // commands too; this just keeps the tabs out of a non-admin's way).
@@ -61,6 +86,7 @@ const BATTERY_CRITICAL = 10;
 
 class SextantPanel extends LitElement {
   static properties = {
+    _expert: { state: true },
     _spots: { state: true },
     hass: { attribute: false },
     narrow: { type: Boolean },
@@ -79,7 +105,8 @@ class SextantPanel extends LitElement {
   constructor() {
     super();
     this._mode = (() => { try { const m = localStorage.getItem("sextant.mode") || "live"; return MODE_ALIASES[m] || m; } catch { return "live"; } })();
-    if (!MODES.some(([id]) => id === this._mode)) this._mode = "live";
+    this._expert = expertMode();
+    if (!this._modes().some(([id]) => id === this._mode)) this._mode = "live";
     this._data = null;
     this._positions = { positions: [], offline_receivers: [], stamp: 0 };
     this._now = Date.now() / 1000;
@@ -96,15 +123,21 @@ class SextantPanel extends LitElement {
     this._load();
     this._subscribe();
     this._clock = setInterval(() => { this._now = Date.now() / 1000; }, 1000);
+    // Back in view: fetch the layout again, which carries the installed version.
+    this._onVisible = () => { if (document.visibilityState === "visible" && AUTO_RELOAD_MODES.has(this._mode)) this._load(); };
+    document.addEventListener("visibilitychange", this._onVisible);
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     clearInterval(this._clock);
+    document.removeEventListener("visibilitychange", this._onVisible);
     if (this._unsub) { this._unsub.then((u) => u()).catch(() => {}); this._unsub = null; }
   }
 
   willUpdate(changed) {
+    // Here, not connectedCallback: hass can arrive later, and with a new connection after a re-login.
+    if (changed.has("hass")) askStrimmer(this.hass?.connection);
     // A page remembered in this browser may be one this user cannot open (an
     // admin used it last): Live instead, as the tabs offer.
     if (changed.has("hass") && this.hass?.user && !this._modes().some(([id]) => id === this._mode)) this._mode = "live";
@@ -114,6 +147,27 @@ class SextantPanel extends LitElement {
     const now = Date.now();
     if (changed.has("hass") && this.hass && !this._data && !this._loading && !retryWait(this._loadFailedAt, now)) this._load();
     if (changed.has("hass") && this.hass && !this._unsub && !retryWait(this._subFailedAt, now)) this._subscribe();
+    this._autoReload();
+  }
+
+  /** A newer version is installed: reload into it while the tab is in view on
+   * a page with nothing to type into (any other page may hold a draft; it
+   * keeps the banner's button). Once per version per tab, so a browser that
+   * serves the old files again cannot loop. */
+  _autoReload() {
+    const installed = this._data?.app_version;
+    if (!installed || !PANEL_VERSION || installed === PANEL_VERSION || this._data?.restart_needed) return;
+    if (!this.isConnected || document.visibilityState !== "visible" || !AUTO_RELOAD_MODES.has(this._mode)) return;
+    try {
+      if (sessionStorage.getItem("sextant.autoReloaded") === installed) return;
+      sessionStorage.setItem("sextant.autoReloaded", installed);
+    } catch { return; }
+    // Moved to a page with a draft while the cache was cleared: stay, and try again on the way back.
+    reloadFresh(() => {
+      if (this.isConnected && AUTO_RELOAD_MODES.has(this._mode)) return true;
+      try { sessionStorage.removeItem("sextant.autoReloaded"); } catch { /* reload offered by the banner */ }
+      return false;
+    });
   }
 
   async _load() {
@@ -139,7 +193,7 @@ class SextantPanel extends LitElement {
 
   _isAdmin() { return this.hass?.user?.is_admin !== false; }
 
-  _modes() { return this._isAdmin() ? MODES : MODES.filter(([id]) => !ADMIN_MODES.has(id)); }
+  _modes() { return (this._isAdmin() ? MODES : MODES.filter(([id]) => !ADMIN_MODES.has(id))).filter(([id]) => this._expert || !EXPERT_MODES.includes(id)); }
 
   /** Switch pages. `target` is a mode id, or {mode, thing} to open that
    * thing's dialog once the destination page has loaded - which is how the
@@ -166,6 +220,9 @@ class SextantPanel extends LitElement {
 
   render() {
     const floors = this._data?.layout?.floor || [];
+    const setup = this._modes().filter(([id]) => SETUP_MODES.includes(id));
+    const inSetup = setup.some(([id]) => id === this._mode);
+    if (inSetup) this._lastSetup = this._mode;
     return html`
       <div class="topbar">
         <ha-menu-button .hass=${this.hass} .narrow=${this.narrow}></ha-menu-button>
@@ -174,16 +231,21 @@ class SextantPanel extends LitElement {
           <span class="brand-text"><span class="brand-name">Sextant</span><span class="brand-sub">Powered by Bermuda</span></span>
         </a>
         <nav class="modes" role="tablist">
-          ${this._modes().map(([id, label, icon]) => html`
-            <button role="tab" class=${this._mode === id ? "active" : ""} aria-selected=${this._mode === id}
-                    @click=${() => this._setMode(id)} title=${label}>
+          ${[...this._modes().filter(([id]) => !SETUP_MODES.includes(id)), ...(setup.length ? [["setup", "Setup", "mdi:cog-outline"]] : [])].map(([id, label, icon]) => {
+            const on = id === "setup" ? inSetup : this._mode === id;
+            return html`<button role="tab" class=${on ? "active" : ""} aria-selected=${on}
+                    @click=${() => this._setMode(id === "setup" ? (inSetup ? this._mode : this._lastSetup || setup[0][0]) : id)} title=${label}>
               <ha-icon icon=${icon}></ha-icon><span class="mode-label">${label}</span>
-            </button>`)}
+            </button>`; })}
         </nav>
         <div class="spacer"></div>
         <div class="wide-only floorstamp">${this._renderFloorAndStamp(floors)}</div>
         <a class="repo" href=${REPO_URL} target="_blank" rel="noopener" title="Sextant on GitHub"><ha-icon icon="mdi:github"></ha-icon></a>
       </div>
+      ${inSetup ? html`<nav class="subbar" aria-label="Setup pages">${uiSegmented({ value: this._mode, options: setup.map(([id, label]) => ({ value: id, label })),
+        onChange: (v) => this._setMode(v) })}<span class="grow"></span>
+        <label class="expert" title="Show the solver's own knobs and read-outs: the Tuning page, diagnostics, and the per-item corrections most homes never touch"><input type="checkbox" .checked=${this._expert}
+          @change=${(e) => { this._expert = e.target.checked; setExpertMode(this._expert); if (!this._modes().some(([id]) => id === this._mode)) this._setMode(setup[0][0]); }}> Expert mode</label></nav>` : nothing}
       ${this._error ? html`<div class="banner error">${this._error} <button @click=${() => this._load()}>Retry</button></div>` : nothing}
       ${this._renderVersionBanner()}
       <div class="body">${this._renderMode()}</div>
@@ -204,7 +266,7 @@ class SextantPanel extends LitElement {
         ${this.hass?.user?.is_admin ? html`<button @click=${() => this._restartHa()}>Restart</button>` : nothing}</div>`;
     }
     if (installed && PANEL_VERSION && installed !== PANEL_VERSION) {
-      return html`<div class="banner update">Sextant ${installed} is installed; this page is still ${PANEL_VERSION}. <button @click=${() => window.location.reload()}>Reload</button></div>`;
+      return html`<div class="banner update">Sextant ${installed} is installed; this page is still ${PANEL_VERSION}. <button @click=${() => reloadFresh()}>Reload</button></div>`;
     }
     return nothing;
   }
@@ -334,11 +396,13 @@ class SextantPanel extends LitElement {
     if (!this._data && !this._error) return html`<div class="empty">Loading…</div>`;
     switch (this._mode) {
       case "edit":
-        return html`<sextant-edit .hass=${this.hass} .data=${this._data} .floor=${this._floor} .narrow=${this.narrow} .spots=${this._spots || NO_SPOTS}
+        return html`<sextant-edit .expert=${this._expert} .hass=${this.hass} .data=${this._data} .floor=${this._floor} .narrow=${this.narrow} .spots=${this._spots || NO_SPOTS}
                                   @layout-changed=${() => this._onLayoutChanged()} @floor-changed=${(e) => { this._floor = e.detail; }}></sextant-edit>`;
+      case "occupancy":
+        return html`<sextant-occupancy .hass=${this.hass} .data=${this._data}></sextant-occupancy>`;
       case "things":
       case "bermuda":
-        return html`<sextant-devices .hass=${this.hass} .data=${this._data} .positions=${this._positions} .section=${this._mode}
+        return html`<sextant-devices .expert=${this._expert} .hass=${this.hass} .data=${this._data} .positions=${this._positions} .section=${this._mode}
                                      .openThing=${this._openThing}
                                      @layout-changed=${() => this._onLayoutChanged()}
                                      @thing-opened=${() => { this._openThing = null; }}
@@ -347,7 +411,7 @@ class SextantPanel extends LitElement {
       case "calibration":
       case "tuning":
       case "advice":
-        return html`<sextant-health .hass=${this.hass} .data=${this._data} .positions=${this._positions} .floor=${this._floor} .section=${this._mode}
+        return html`<sextant-health .expert=${this._expert} .hass=${this.hass} .data=${this._data} .positions=${this._positions} .floor=${this._floor} .section=${this._mode}
                                     @layout-changed=${() => this._onLayoutChanged()}
                                     @show-spots=${(e) => { this._spots = e.detail.spots; this._floor = e.detail.floor; this._setMode("edit"); this._spots = e.detail.spots; }}></sextant-health>`;
       default:
@@ -356,7 +420,7 @@ class SextantPanel extends LitElement {
                                         @layout-changed=${() => this._onLayoutChanged()}></sextant-property>`;
         }
         if (!(this._data?.layout?.floor || []).length) return this._renderFirstRun();
-        return html`<sextant-live .hass=${this.hass} .data=${this._data} .positions=${this._positions} .floor=${this._floor}
+        return html`<sextant-live .expert=${this._expert || !this._isAdmin()} .hass=${this.hass} .data=${this._data} .positions=${this._positions} .floor=${this._floor}
                                   @layout-changed=${() => this._onLayoutChanged()} @floor-changed=${(e) => { this._floor = e.detail; }}
                                   @quick-nav=${(e) => this._setMode(e.detail)}></sextant-live>`;
     }
@@ -371,6 +435,8 @@ class SextantPanel extends LitElement {
     .brand-name { font-weight: 600; font-size: 18px; }
     .brand-sub { font-size: 9px; letter-spacing: 0.04em; opacity: 0.75; text-transform: uppercase; }
     .modes { display: flex; gap: 2px; }
+    .subbar label.expert { flex: none; position: sticky; right: 0; background: var(--card-background-color); display: flex; align-items: center; gap: 6px; padding-left: 12px; font-size: 13px; color: var(--secondary-text-color); white-space: nowrap; cursor: pointer; }
+    .subbar { display: flex; flex: none; padding: 6px 12px; overflow-x: auto; background: var(--card-background-color); border-bottom: 1px solid var(--divider-color); }
     .modes button { display: flex; align-items: center; gap: 6px; background: transparent; color: inherit; border: 0; border-bottom: 3px solid transparent; padding: 0 10px; height: 56px; cursor: pointer; font: inherit; opacity: 0.8; }
     .modes button.active { opacity: 1; border-bottom-color: currentColor; }
     .modes button:hover { opacity: 1; }
@@ -448,6 +514,22 @@ class SextantPanel extends LitElement {
       /* Freeing the floor picker and stamp usually leaves enough room for
          all 8 tabs; this is only a safety net on a very narrow phone. */
       .modes { overflow-x: auto; scrollbar-width: none; }
+      /* Nine tabs share the row evenly, so none is off the right edge. */
+      .modes { flex: 1 1 auto; min-width: 0; }
+      .modes button { flex: 1 1 0; min-width: 0; padding: 0; justify-content: center; }
+      /* Nine bare icons do not say where you are: the current one carries its name. */
+      .modes button { min-width: 28px; }
+      .modes button.active { flex: 0 0 auto; flex-direction: column; gap: 2px; padding: 0 6px; }
+      .modes button.active .mode-label { display: block; font-size: 10px; line-height: 1; }
+      .spacer { display: none; }
+      /* The floor picker scrolls inside the bar: wider than the bar, it ran
+         off the left edge and took the first floors out of reach. */
+      .bottombar .floor-tabs { flex: 0 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+      .bottombar .floor-tabs button { flex: none; padding: 8px 12px; }
+      .bottombar .stampbtn { padding: 8px 6px; }
+    }
+    /* The mark is a second way to Live; a phone needs the width for the tabs. */
+    @media (max-width: 480px) { .brand { display: none; }
     }
   `];
 }
@@ -456,6 +538,7 @@ class SextantPanel extends LitElement {
 
 class SextantLive extends LitElement {
   static properties = {
+    expert: { type: Boolean },
     hass: { attribute: false },
     data: { attribute: false },
     positions: { attribute: false },
@@ -474,6 +557,7 @@ class SextantLive extends LitElement {
     _blend: { state: true },
     _optionsOpen: { state: true },
     _mapOpen: { state: true },
+    _find: { state: true },
     _timeline: { state: true },
     _timelineAll: { state: true },
     _pin: { state: true },
@@ -494,9 +578,15 @@ class SextantLive extends LitElement {
     this._truth = null;     // the last mark's evaluation {mark, rows, current_weight}
     this._marks = [];       // the selected thing's marks
     this._blend = null;     // slider value while it is being dragged (0..100)
-    this._options = { circles: false, fingerprint: false, trails: true, grid: "off", labels: true, subzones: true, receivers: true, access_points: true, links: true, all_links: false, image: true,
+    this._options = { circles: false, fingerprint: false, trails: true, grid: "off", labels: true, subzones: true, receivers: false, access_points: false, links: false, all_links: false, image: true,
                       view: "2d", walls: true, all_floors: false, spread: "apart" };
     try { Object.assign(this._options, JSON.parse(localStorage.getItem("sextant.live.options") || "{}")); } catch { /* ignore */ }
+    // Proxies, access points and signal lines used to be on by default, so a saved "on" from
+    // before then is the old default rather than a choice: switch them off once.
+    if (!this._options.quiet) {
+      Object.assign(this._options, { receivers: false, access_points: false, links: false, quiet: 1 });
+      try { localStorage.setItem("sextant.live.options", JSON.stringify(this._options)); } catch { /* ignore */ }
+    }
     this._history = null; // {ent, from, to, points:[{t,x,y,f}] }
     this._timeline = null; // {ent, at, stays:[{start,end,floor,room,spot,unheard?,partial?}], last_heard}
     this._timelineAll = false;
@@ -539,6 +629,7 @@ class SextantLive extends LitElement {
       this._pushHeat();
       this._pushWifiHeat();
       this._pushFocusWifi();
+      this._pushFocusRoom();
     }
   }
 
@@ -717,7 +808,7 @@ class SextantLive extends LitElement {
     const host = this.getBoundingClientRect().height || window.innerHeight;
     const h = (sel) => this.renderRoot.querySelector(sel)?.getBoundingClientRect().height || 0;
     const stage = this._mapOpen ? h(".stage") : 0;
-    return Math.max(80, Math.floor(host - h(".quick-actions") - stage - SextantLive.LIST_MIN));
+    return Math.max(80, Math.floor(host - stage - SextantLive.LIST_MIN));
   }
 
   _clampDetail(px) { return Math.round(Math.min(Math.max(px, SextantLive.DETAIL_MIN), Math.max(this._detailMax(), 80))); }
@@ -921,7 +1012,7 @@ class SextantLive extends LitElement {
 
   _renderPinDone() {
     const pin = this._pin, ent = pin.ent, name = this._label(ent), pn = this._pn(ent), t = pin.result;
-    const rows = (t?.rows || []).slice(0, 6), best = rows[0];
+    const rows = (t?.rows || []).filter((r) => !r.cross).slice(0, 6), best = rows[0];
     const where = pin.spot ? `${pin.spot} · ${pin.room || this.floor}` : (pin.room || this.floor);
     return html`<div class="pinsheet" role="dialog" aria-label="Quick pin: done">
       <div class="pinhead">
@@ -986,9 +1077,21 @@ class SextantLive extends LitElement {
     </div>`;
   }
 
+  /** A selected thing brings its room up close. Set when it is picked (or the
+   * floor changes), not as it moves, so the map never jumps under a pan. */
+  _pushFocusRoom() {
+    if (!this._map) return;
+    // The pin wizard zooms itself; leaving it zooms back to the room.
+    if (this._pin) { this._map.focusZone = null; return; }
+    const p = this._selected ? this._allRows().find((r) => r.ent === this._selected) : null;
+    const z = p?.floor === this.floor && p.zone ? (this._floorObj()?.zones || []).find((q) => q.entity_id === p.zone) : null;
+    const zone = z ? z.zone_id || z.entity_id : null;
+    if (zone !== this._map.focusZone) this._map.setFocusZone(zone);
+  }
+
   _pushMarks() {
     const mine = this._selected ? this._marks.filter((m) => m.floor === this.floor) : [];
-    this._map?.setMarks(mine.map((m) => ({ x: m.x, y: m.y, label: `mark ${m.id}` })));
+    this._map?.setMarks(mine.map((m) => ({ x: m.x, y: m.y, label: this._options.links ? `mark ${m.id}` : "" })));
   }
 
   /** The map click while marking: record where the selected thing really is, then evaluate. */
@@ -1016,6 +1119,11 @@ class SextantLive extends LitElement {
       this.dispatchEvent(new CustomEvent("layout-changed"));
     })();
     return true;
+  }
+
+  async _keepMark(id, keep) {
+    const r = await callWS(this, this.hass, { type: "sextant/truth/keep", mark_id: id, keep });
+    if (r) this._loadMarks(this._selected);
   }
 
   async _deleteMark(id) {
@@ -1089,7 +1197,8 @@ class SextantLive extends LitElement {
     if (changed.has("data") || changed.has("floor")) this._pushFloor();
     if (changed.has("positions") || changed.has("floor") || changed.has("data") || changed.has("_scrub") || changed.has("_history")) this._pushThings();
     if (changed.has("hass") && changed.get("hass")?.areas !== this.hass?.areas) this._map.setAreas(this.hass?.areas);
-    if (changed.has("floor") || changed.has("_marks")) this._pushMarks();
+    if (changed.has("floor") || changed.has("_marks") || changed.has("_options")) this._pushMarks();
+    if (["_selected", "floor", "_pin"].some((k) => changed.has(k))) this._pushFocusRoom();
     if (changed.has("floor") || changed.has("_heat") || changed.has("data")) this._pushHeat();
     if (changed.has("_options")) this._map.setOptions(this._options);
     if (changed.has("data")) this._map.setOptions({ staleAfter: this._staleAfter() });
@@ -1397,19 +1506,24 @@ class SextantLive extends LitElement {
     return html`
             <li class="${p.ent === this._selected ? "selected" : ""} ${st.ghost ? "ghost" : ""} ${st.away ? "away" : ""}" title=${st.ghost ? lastSeen : ""} @click=${() => { this._select(p.ent === this._selected ? null : p.ent); if (p.floor && p.floor !== this.floor) this.dispatchEvent(new CustomEvent("floor-changed", { detail: p.floor })); }}>
               ${(() => {
-                const who = this._speaksFor(p.ent);
-                // Three states, one badge: away (long gone), waiting (heard,
-                // but not lately), or the thing its owner is read from. A
+                // A locked watch places nobody, even while a held place still names it as via.
+                const locked = this._watchLocked(p.ent);
+                const who = locked ? null : this._speaksFor(p.ent);
+                // Four states, one badge: away (long gone), waiting (heard,
+                // but not lately), a watch that says it is locked (off a wrist,
+                // so it places nobody), or the thing its owner is read from. A
                 // thing not being heard cannot be any owner's source.
                 const badge = st.away ? html`<ha-icon class="viabadge ghostbadge" icon="mdi:ghost-outline"></ha-icon>`
                   : st.ghost ? html`<ha-icon class="viabadge waitbadge" icon="mdi:timer-sand"></ha-icon>`
+                  : locked ? html`<ha-icon class="viabadge lockbadge" icon="mdi:lock"></ha-icon>`
                   : who ? html`<ha-icon class="viabadge" icon="mdi:map-marker"></ha-icon>` : nothing;
                 // A low battery gets its own corner: it is a separate question
                 // from the status above, and both can be true at once - a tag
                 // going quiet BECAUSE its battery is dying is the whole point.
                 const battery = this._batteryBadge(p.ent);
                 if (badge === nothing && battery === nothing) return this._avatar(p.ent);
-                const why = badge === nothing ? "" : st.away ? lastSeen : st.ghost ? `Last heard ${fmtAge(st.age)} ago` : `Where ${who} is read from right now`;
+                const why = badge === nothing ? "" : st.away ? lastSeen : st.ghost ? `Last heard ${fmtAge(st.age)} ago`
+                  : locked ? "Locked: not on a wrist, so it places nobody" : `Where ${who} is read from right now`;
                 return html`<span class="avslot" title=${why}>${this._avatar(p.ent)}${badge}${battery}</span>`;
               })()}
               <span class="name">${this._label(p.ent)}</span>
@@ -1437,6 +1551,28 @@ class SextantLive extends LitElement {
     const st = this.hass?.states?.[`sensor.${person.split(".")[1]}_sextant_person_location`] || this.hass?.states?.[`sensor.${person.split(".")[1]}_sextant_pet_location`];
     if (st?.attributes?.via !== ent) return null;
     return this.hass?.states?.[person]?.attributes?.friendly_name || person.split(".")[1];
+  }
+
+  /** True when this watch's own advert says, this cycle, that it is locked (its owner's `watches`). */
+  _watchLocked(ent) {
+    const person = (this.data?.layout?.thing_owners || {})[ent];
+    const slug = person?.split(".")[1];
+    return !!slug && this.hass?.states?.[`sensor.${slug}_sextant_person_location`]?.attributes?.watches?.[ent] === false;
+  }
+
+  /** "Worn since 8:27 AM" / "Locked since 8:27 AM" from the owner's `watches` and `watches_since`; nothing when unknown. */
+  _renderWorn(ent) {
+    const slug = (this.data?.layout?.thing_owners || {})[ent]?.split(".")[1];
+    const attrs = slug && this.hass?.states?.[`sensor.${slug}_sextant_person_location`]?.attributes;
+    const worn = attrs?.watches?.[ent];
+    if (typeof worn !== "boolean") return nothing;
+    const [since, partial] = attrs?.watches_since?.[ent] || [];
+    const d = typeof since === "number" ? new Date(since * 1000) : null;
+    // A watch can sit locked for days: name the day when it is not today.
+    const at = !d ? null : d.toDateString() === new Date().toDateString()
+      ? d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+      : d.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    return html`<dt>Watch</dt><dd title=${worn ? "On a wrist and unlocked, by the watch's own advert" : "Locked: off a wrist, on a table or its charger"}>${worn ? "Worn" : "Locked"}${at ? html` <span class="muted small">since ${at}${partial ? " or earlier" : ""}</span>` : nothing}</dd>`;
   }
 
   /** The icon of the Home Assistant area a room is linked to, or null. */
@@ -1536,6 +1672,7 @@ class SextantLive extends LitElement {
                share: total > 0 ? (Number(r[3]) || 0) / total : null,
                colour: distanceColour(metres) };
     }).sort((a, b) => (b.share ?? 0) - (a.share ?? 0) || a.metres - b.metres);
+    if (!this.expert) return nothing;
     return html`<details class="telemetry heardby">
       <summary>In the solve <span class="muted small">${rows.length} ${rows.length === 1 ? "proxy" : "proxies"} the position comes from, the ones that count most first</span></summary>
       <ul class="plain heard">${rows.map((r) => html`<li><i class="dot" style=${`background:${r.colour}`}></i><span class="grow">${r.name}</span>
@@ -1599,6 +1736,8 @@ class SextantLive extends LitElement {
 
   render() {
     const rows = this._allRows();
+    const find = rows.length > 8 ? (this._find || "").trim().toLowerCase() : "";   // no box, no filter
+    const shown = find ? rows.filter((p) => `${this._label(p.ent)} ${p.ent} ${p.zone || ""}`.toLowerCase().includes(find)) : rows;
     const sel = rows.find((p) => p.ent === this._selected);
     const h = this._history;
     const pinning = this._pin?.step === "where";
@@ -1621,7 +1760,7 @@ class SextantLive extends LitElement {
       ["access_points", "Wi-Fi", "Draw the Wi-Fi access points placed on the plan. Point at one (or tap it) for its name and how many clients it has", "mdi:wifi"],
       ...(deep ? [] : [
         ...(this._isAdmin() ? [["wifi_heat", "Signal", "The Wi-Fi signal map: how strong the signal is in each square metre, or which access point clients are on there, measured from the proxies and the people's phones and watches", "mdi:wifi-strength-3"]] : []),
-        ["links", "Signal lines", "With a thing selected: a line to each proxy that heard it, green when close and red by ten metres, thicker for the ones that count most - and for a phone or watch, a dashed line to its Wi-Fi access point", "mdi:transit-connection-variant"],
+        ["links", "Signal lines", "With a thing selected: a line to each proxy that heard it, green when close and red by ten metres, thicker for the ones that count most - and for a phone or watch, a dashed line to its Wi-Fi access point. Also numbers the pins where you said it really was", "mdi:transit-connection-variant"],
         ["all_links", "All lines", "A line from every thing on the floor to the proxy that heard it best, without selecting one: which proxy is carrying what, at a glance", "mdi:vector-polyline"],
         ["circles", "Range circles", "The distance each proxy measured, as a circle: the fix is where they meet", "mdi:radar"],
         ["fingerprint", "Fingerprint fix", "Where the fingerprint estimator alone would put each thing (dashed), next to the published fix", "mdi:fingerprint"],
@@ -1629,6 +1768,11 @@ class SextantLive extends LitElement {
     ];
     // The map's own switches, as the pressed buttons the Edit tools and a
     // thing's quick actions use: an icon with its word under it.
+    // The switches used daily stay as buttons; the rest are one menu away.
+    const MAIN_LAYERS = ["labels", "receivers", "trails"];
+    const EXPERT_LAYERS = ["links", "all_links", "circles", "fingerprint"];
+    // An expert layer left switched on stays listed, so it can be switched off.
+    const layerShown = (k) => this.expert || !EXPERT_LAYERS.includes(k) || !!this._options[k];
     const optBtn = ([k, label, tip, icon]) => html`<button class="qa opt ${this._options[k] ? "on" : ""}" title=${`${label}: ${tip}`}
       aria-label=${label} aria-pressed=${!!this._options[k]} @click=${() => this._setOption(k, !this._options[k])}>
       <ha-icon icon=${icon}></ha-icon><span>${label}</span></button>`;
@@ -1664,12 +1808,6 @@ class SextantLive extends LitElement {
       <button title="Zoom out" aria-label="Zoom out" @click=${() => this._map.zoomBy(1 / 1.3)}><ha-icon icon="mdi:minus"></ha-icon></button>
     </div>`;
     return html`
-      <div class="quick-actions">
-        ${uiButton({ label: "Self-test", kind: "outline", icon: "mdi:clipboard-check-outline", onClick: () => this._goto("proxies") })}
-        ${this._isAdmin() ? html`
-          ${uiButton({ label: "New thing", kind: "outline", icon: "mdi:plus-circle-outline", onClick: () => this._goto("things") })}
-          ${uiButton({ label: "Calibrate", kind: "outline", icon: "mdi:tune-vertical", onClick: () => this._goto("calibration") })}` : nothing}
-      </div>
       <div class="stage ${this._mapOpen || pinning ? "" : "collapsed"}"><canvas class=${deep ? "hidden" : ""}></canvas>
         ${deep ? html`<sextant-stack .hass=${this.hass} .data=${this.data} .positions=${this.positions} .floor=${this.floor} .options=${this._options} .focus=${this._selected} .staleAfter=${this._staleAfter()}
                                      @thing-selected=${(e) => { this._proxy = null; this._select(e.detail); }}></sextant-stack>` : nothing}
@@ -1677,7 +1815,8 @@ class SextantLive extends LitElement {
         <div class="overlay" role="toolbar" aria-label="Map">
           <span class="wide-only">${deepBtn}</span>
           <span class="sep wide-only"></span>
-          <div class="chips wide-only">${switches.map(optBtn)}</div>
+          <div class="chips wide-only">${switches.filter(([k]) => MAIN_LAYERS.includes(k)).map(optBtn)}${uiMenu({ label: "More layers", icon: "mdi:layers-outline",
+            items: switches.filter(([k]) => !MAIN_LAYERS.includes(k) && layerShown(k)).map(([k, label, tip]) => ({ label, title: tip, icon: this._options[k] ? "mdi:checkbox-marked-outline" : "mdi:checkbox-blank-outline", onClick: () => this._setOption(k, !this._options[k]) })) })}</div>
           ${deep ? spreadBtn : html`<span class="sep wide-only"></span><span class="wide-only">${gridBtn}</span>`}
           <button class="iconbtn narrow-only" title="Map options" aria-label="Map options" @click=${() => { this._optionsOpen = !this._optionsOpen; }}><ha-icon icon="mdi:tune-variant"></ha-icon></button>
           <button class="iconbtn narrow-only" title="Hide the map" aria-label="Hide the map" @click=${() => { this._mapOpen = false; }}><ha-icon icon="mdi:map-minus"></ha-icon></button>
@@ -1693,7 +1832,7 @@ class SextantLive extends LitElement {
           <div class="opts-backdrop narrow-only" @click=${() => { this._optionsOpen = false; }}></div>
           <div class="opts-sheet narrow-only">
             <h3>Map options</h3>
-            <div class="chips optgrid">${deepBtn}${switches.map(optBtn)}${spreadBtn}</div>
+            <div class="chips optgrid">${deepBtn}${switches.filter(([k]) => MAIN_LAYERS.includes(k) || layerShown(k)).map(optBtn)}${spreadBtn}</div>
             ${deep ? nothing : gridPicker}
             ${uiButton({ label: "Done", kind: "primary", onClick: () => { this._optionsOpen = false; } })}
           </div>` : nothing}
@@ -1707,17 +1846,16 @@ class SextantLive extends LitElement {
           </div>` : nothing}
       </div>
       <aside class="side">
-        <h3>Things <span class="muted">${rows.length}</span>
-          <span class="narrow-only maptoggle">${uiButton({
-            label: this._mapOpen ? "Hide map" : "Show map",
-            icon: this._mapOpen ? "mdi:map-minus" : "mdi:map-outline",
-            kind: "text",
-            onClick: () => { this._mapOpen = !this._mapOpen; },
-          })}</span>
-        </h3>
+        <h3 class="wide-only">Things <span class="muted">${rows.length}</span></h3>
+        <div class="searchrow">
+          ${rows.length > 8 ? html`<input class="tsearch" type="search" placeholder=${`Find a thing (${rows.length})`} aria-label=${`Find a thing, ${rows.length} listed`} .value=${this._find || ""} @input=${(e) => { this._find = e.target.value; }}>`
+            : html`<span class="grow muted narrow-only">${rows.length} thing${rows.length === 1 ? "" : "s"}</span>`}
+          <button class="iconbtn narrow-only" title=${this._mapOpen ? "Hide the map" : "Show the map"} aria-label=${this._mapOpen ? "Hide the map" : "Show the map"}
+            @click=${() => { this._mapOpen = !this._mapOpen; }}><ha-icon icon=${this._mapOpen ? "mdi:map-minus" : "mdi:map-outline"}></ha-icon></button>
+        </div>
         <ul class="list">
-          ${this._renderGroupedRows(rows)}
-          ${rows.length ? nothing : html`<li class="muted">No positions yet.</li>`}
+          ${this._renderGroupedRows(shown)}
+          ${rows.length ? (shown.length ? nothing : html`<li class="muted">Nothing matches "${this._find}".</li>`) : html`<li class="muted">No positions yet.</li>`}
         </ul>
       </aside>
         ${sel ? html`
@@ -1750,12 +1888,13 @@ class SextantLive extends LitElement {
               <dt>Floor</dt><dd>${sel.floor}</dd>
               ${sel.robot ? html`<dt>Placed from</dt><dd>its own map <span class="muted small">(${this.hass?.states?.[sel.robot]?.state || sel.robot_state || "unknown"}; the map fits this floor to ${fmtLen(sel.rms_m, this.hass)})</span></dd>` : html`<dt>Proxies</dt><dd>${sel.radii?.length ?? 0} in the solve${sel.anchor ? html`<br><span class="pill ok" title=${`one proxy reads ${this._label(sel.ent)} within arm's reach and no other comes close: placed on that proxy`}>anchored to ${proxyName(this.data, sel.anchor)}</span>` : nothing}${sel.radar ? html`<br><span class="pill ok" title=${`an mmWave sensor sees someone where Bluetooth puts ${this._label(sel.ent)}: placed on the radar's target, to a few tens of centimetres`}>placed by ${sel.radar}</span>` : nothing}</dd>`}
               ${this._renderHere(sel)}
-              ${this._battery(sel.ent) === null ? nothing : html`<dt>Battery</dt><dd class=${this._battery(sel.ent) <= BATTERY_CRITICAL ? "crit" : this._battery(sel.ent) <= BATTERY_LOW ? "warn" : ""}>${Math.round(this._battery(sel.ent))}%</dd>`}
+              ${this._renderWorn(sel.ent)}
+              ${this._battery(sel.ent) === null ? nothing : html`<dt>Battery</dt><dd class="battery ${this._batteryTone(sel.ent)}">${this._batteryIcon(sel.ent)}${Math.round(this._battery(sel.ent))}%</dd>`}
               <dt>Updated</dt><dd>${typeof sel.updated === "number" && sel.updated > 0 ? html`${fmtAge(Date.now() / 1000 - sel.updated)} ago` : html`<span class="muted">not heard since the last restart</span>`}${staleness(sel, this._staleAfter()).ghost ? html` <span class="pill warn" title=${`Nothing has heard ${this._label(sel.ent)} since; this is where ${this._pn(sel.ent).subj} ${this._pn(sel.ent).was} last placed`}>not heard</span>` : nothing}</dd>
             </dl>
             ${this._renderTimeline(sel)}
             ${sel.robot ? nothing : this._renderHeardBy(sel)}
-            ${sel.robot ? nothing : html`<details class="telemetry">
+            ${sel.robot || !this.expert ? nothing : html`<details class="telemetry">
               <summary>Confidence <span class="muted small">how sure Sextant is, and why</span></summary>
               <dl>
                 <dt>Floor odds</dt><dd>${sel.floors ? Object.entries(sel.floors).sort((a, b) => b[1] - a[1]).map(([f, p]) => `${f} ${(p * 100).toFixed(0)}%`).join(" · ") : "—"}</dd>
@@ -1772,8 +1911,10 @@ class SextantLive extends LitElement {
             ${sel.robot ? nothing : this._renderLinks(sel.ent)}
           </div>` : nothing}
         ${this._isAdmin() && !this._pin && !sel ? html`
-          <button class="pinfab narrow-only" title="Quick pin: say where a thing really is" @click=${() => this._startPin()}>
-            <ha-icon icon="mdi:map-marker-check"></ha-icon><span>Pin</span></button>` : nothing}
+          <button class="pinfab narrow-only ${this._mapOpen ? "lift" : ""}" title="Quick pin: say where a thing really is" aria-label="Pin where a thing really is" @click=${() => this._startPin()}>
+            <ha-icon icon="mdi:map-marker-check"></ha-icon></button>
+          <button class="pinfab addfab narrow-only ${this._mapOpen ? "lift" : ""}" title="Add a thing" aria-label="Add a thing" @click=${() => this._goto("things")}>
+            <ha-icon icon="mdi:plus"></ha-icon></button>` : nothing}
         ${this._pin?.step === "who" ? this._renderPinWho() : this._pin?.step === "done" ? this._renderPinDone() : nothing}
     `;
   }
@@ -1789,18 +1930,42 @@ class SextantLive extends LitElement {
     return stays;
   }
 
-  /** The thing's battery level (0-100), or null when it has no battery sensor
-   * or the sensor has nothing to say. */
+  /** The thing's battery level (0-100) from its Battery sensor, else from the one
+   * Sextant reads from its adverts; null when neither has anything to say. */
   _battery(ent) {
-    const id = this.data?.layout?.thing_battery_entity?.[ent];
-    const v = id ? parseFloat(this.hass?.states?.[id]?.state) : NaN;
-    return Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : null;
+    for (const id of [this.data?.layout?.thing_battery_entity?.[ent], `sensor.${ent}_sextant_battery`]) {
+      const v = id ? parseFloat(this.hass?.states?.[id]?.state) : NaN;
+      if (Number.isFinite(v)) return Math.max(0, Math.min(100, v));
+    }
+    return null;
   }
 
-  /** A badge only once the battery is low: a full one would put a badge on
-   * every pet and say nothing. Amber from BATTERY_LOW, red from BATTERY_CRITICAL. */
+  /** The Battery row's text colour: amber from BATTERY_LOW, red from BATTERY_CRITICAL.
+   * A pet's text stays plain; its band is the coloured icon (_batteryIcon), as
+   * yellow or orange text would not read on a light card. */
+  _batteryTone(ent) {
+    const level = this._battery(ent);
+    if (PET_CLASSES.includes(this.data?.layout?.thing_classes?.[ent])) return "";
+    return level === null ? "" : level <= BATTERY_CRITICAL ? "crit" : level <= BATTERY_LOW ? "warn" : "";
+  }
+
+  /** A pet's Battery row leads with the list badge's icon and colour (petBattery). */
+  _batteryIcon(ent) {
+    if (!PET_CLASSES.includes(this.data?.layout?.thing_classes?.[ent])) return nothing;
+    const { icon, tone } = petBattery(this._battery(ent));
+    return html`<ha-icon class="batteryicon ${tone}" icon=${icon}></ha-icon>`;
+  }
+
+  /** A pet always has a badge: its battery level as an icon, green, yellow,
+   * orange or red (petBattery), grey with no reading. Anything else gets one only
+   * once its battery is low: amber from BATTERY_LOW, red from BATTERY_CRITICAL. */
   _batteryBadge(ent) {
     const level = this._battery(ent);
+    if (PET_CLASSES.includes(this.data?.layout?.thing_classes?.[ent])) {
+      const { icon, tone } = petBattery(level);
+      return html`<ha-icon class="batterybadge pet ${tone}" icon=${icon}
+        title=${level === null ? "No battery reading" : `Battery ${Math.round(level)}%`}></ha-icon>`;
+    }
     if (level === null || level > BATTERY_LOW) return nothing;
     const crit = level <= BATTERY_CRITICAL;
     return html`<ha-icon class="batterybadge ${crit ? "crit" : ""}" icon=${crit ? "mdi:battery-alert-variant-outline" : "mdi:battery-low"}
@@ -1841,7 +2006,7 @@ class SextantLive extends LitElement {
     const from = stays[0].start, to = stays[stays.length - 1].end;
     const span = Math.max(1, to - from);
     const at = (s) => new Date(s * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-    const place = (s) => s.unheard ? "not heard" : `${s.room || "unknown"}${s.spot ? ` · ${s.spot}` : ""}`;
+    const place = (s) => s.unheard ? "not heard" : `${s.room || "unknown"}${s.spot ? ` · ${spotInRoom(s.spot, s.room)}` : ""}`;
     const colour = (s) => s.unheard ? "transparent" : `hsl(${thingHue(s.room || "?")}, 55%, ${s.spot ? 42 : 58}%)`;
     const newest = stays.slice().reverse();
     const shown = this._timelineAll ? newest : newest.slice(0, 8);
@@ -1850,7 +2015,7 @@ class SextantLive extends LitElement {
       <details class="timeline" open>
         <summary>Timeline <span class="muted small">last ${fmtAge(span)}${stays[0].partial ? " (all that is kept)" : ""}</span></summary>
         <div class="band" role="img" aria-label=${`Where ${this._label(sel.ent)} has been, oldest on the left`}>
-          ${stays.map((s) => html`<span class="seg ${s.unheard ? "unheard" : ""}" style="flex-grow: ${Math.max(0.002, (s.end - s.start) / span)}; background: ${colour(s)}" title="${at(s.start)}–${at(s.end)} · ${place(s)} · ${fmtAge(s.end - s.start)}"></span>`)}
+          ${stays.map((s) => html`<span class="seg ${s.unheard ? "unheard" : ""}" style="left: min(${(100 * (s.start - from)) / span}%, calc(100% - 1px)); width: ${(100 * (s.end - s.start)) / span}%; background: ${colour(s)}" title="${at(s.start)}–${at(s.end)} · ${place(s)} · ${fmtAge(s.end - s.start)}"></span>`)}
         </div>
         <div class="band-ends muted small"><span>${at(from)}</span><span>${to >= now - 5 ? "now" : at(to)}</span></div>
         <ol class="stays">
@@ -1898,8 +2063,11 @@ class SextantLive extends LitElement {
 
   _renderTruth(sel) {
     const ent = sel.ent;
+    const when = (t) => new Date(t * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
     const t = this._truth && this._truth.mark?.entity === ent ? this._truth : null;
-    const rows = (t?.rows || []).slice(0, 6);
+    const rows = (t?.rows || []).filter((r) => !r.cross).slice(0, 6);
+    // The cross-floor fit is a comparison only: nothing places a thing that way.
+    const cross = (t?.rows || []).find((r) => r.cross);
     return html`<div class="truth">
       ${this._marking ? nothing
         : html`<div class="row">
@@ -1910,14 +2078,18 @@ class SextantLive extends LitElement {
           ${rows.map((r) => html`<tr><td>${r.estimator}${r.estimator === "fused" ? ` ${Math.round(r.weight * 100)}%` : ""}</td><td class="num">×${fmtNum(r.gain, 1)}</td><td class="num">${fmtLen(r.mean_m, this.hass)}</td><td class="num">${Math.round(r.room_ok * 100)}%</td>
             <td>${uiButton({ label: "Apply", kind: "text", onClick: () => this._applyRow(ent, r) })}</td></tr>`)}
         </table>
+        ${cross ? html`<p class="small">With the other floors' proxies helping: ${fmtLen(cross.mean_m, this.hass)} from the pin, right room ${Math.round(cross.room_ok * 100)}% (${cross.samples} cycles)${cross.alone_m != null ? html`; this floor's proxies alone over the same cycles: ${fmtLen(cross.alone_m, this.hass)}, ${Math.round(cross.alone_room_ok * 100)}%` : nothing}. <span class="muted">A comparison only, nothing to apply.</span></p>` : nothing}
         <p class="muted small">Error is the mean distance from the pin; Room is how often the fix landed in the pin's room. One pin can overfit: pin ${this._pn(ent).obj} in another room too.</p>` : html`<p class="muted small">Nothing could be re-solved for this mark.</p>`}
         <div class="row">${uiButton({ label: "Close", kind: "text", onClick: () => { this._truth = null; } })}${uiButton({ label: "Forget pin", kind: "text", onClick: () => this._deleteMark(t.mark.id) })}</div>
       </div>` : nothing}
-      ${!t && this._marks.length ? html`<details class="marks"><summary>Pins</summary>
+      ${!t && this._marks.length ? html`<details class="marks" ?open=${this._marks.some((m) => m.stale)}><summary>Pins</summary>
         <ul class="plain pinlist">${this._marks.map((m) => html`<li>
           <span class="pinid">Pin ${m.id} <span class="muted">· ${m.floor}</span></span>
-          <button class="forget" title="Forget pin ${m.id}" aria-label="Forget pin ${m.id}" @click=${() => this._deleteMark(m.id)}><ha-icon icon="mdi:trash-can-outline"></ha-icon></button>
-          <span class="muted small pinwhen">${new Date(m.t * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} · ${m.samples} cycles</span>
+          <span class="pinbtns">
+            <button class="forget ${m.keep ? "on" : ""}" title=${m.keep ? `Stop keeping pin ${m.id} fresh` : `Keep pin ${m.id} fresh: re-take its readings hourly while it sits still there`} aria-label=${`Keep pin ${m.id} fresh`} aria-pressed=${!!m.keep} @click=${() => this._keepMark(m.id, !m.keep)}><ha-icon icon="mdi:pin-outline"></ha-icon></button>
+            <button class="forget" title="Forget pin ${m.id}" aria-label="Forget pin ${m.id}" @click=${() => this._deleteMark(m.id)}><ha-icon icon="mdi:trash-can-outline"></ha-icon></button>
+          </span>
+          <span class="muted small pinwhen">${when(m.t)} · ${m.samples} cycles${m.keep ? html` · kept fresh${m.refreshed ? `, last ${when(m.refreshed)}` : ""}` : nothing}${m.stale ? html` · <span class="warn">readings changed ${when(m.stale)}: moved? Re-pin it</span>` : nothing}</span>
         </li>`)}</ul></details>` : nothing}
     </div>`;
   }
@@ -1947,7 +2119,6 @@ class SextantLive extends LitElement {
        thing's detail floats in the opposite corner, out of the toolbar's way.
        Under 720px both go back to being stacked blocks (see the end). */
     :host { display: grid; grid-template-columns: 1fr; min-height: 0; position: relative; }
-    .quick-actions { display: none; }
     .narrow-only { display: none; }
     .stage { position: relative; min-width: 0; }
     canvas { width: 100%; height: 100%; display: block; --sextant-map-bg: var(--card-background-color, #fff); }
@@ -1965,6 +2136,9 @@ class SextantLive extends LitElement {
     .overlay .chips { display: flex; flex-wrap: wrap; gap: 2px; }
     .overlay .qa.opt { flex-direction: row; min-width: 0; width: 34px; height: 34px; padding: 0; gap: 0; justify-content: center; border: 0; border-radius: 8px; background: transparent; position: relative; }
     .overlay .qa.opt > span { display: none; }
+    .overlay details.menu > summary { width: 34px; height: 34px; color: var(--primary-text-color); }
+    .overlay details.menu .menu-items { left: 0; right: auto; }
+    .overlay:has(details.menu[open]) { z-index: 4; }   /* above the proxy card, which the open menu would otherwise slip under */
     .overlay .qa.opt:hover { background: var(--secondary-background-color, rgba(0,0,0,0.06)); filter: none; }
     .overlay .qa.opt.on { background: var(--primary-color, #03a9f4); color: var(--text-primary-color, #fff); }
     .overlay .qa.opt .unit { position: absolute; right: 2px; bottom: 1px; font-size: 8px; line-height: 1; }
@@ -2007,6 +2181,8 @@ class SextantLive extends LitElement {
     @media (min-width: 721px) and (max-width: 1000px) { .mapcorner.besidecard { display: none; } }
     .detail h4 { display: flex; align-items: center; gap: 6px; }
     .list { list-style: none; margin: 0 0 12px; padding: 0; }
+    .searchrow { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; }
+    .tsearch { flex: 1; min-width: 0; box-sizing: border-box; margin: 0; padding: 6px 8px; font: inherit; color: var(--primary-text-color); background: var(--card-background-color); border: 1px solid var(--divider-color); border-radius: 6px; }
     .list li { display: grid; grid-template-columns: 30px 1fr auto; grid-template-rows: auto auto; column-gap: 10px; align-items: center; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
     .avatar { grid-row: 1 / 3; width: 30px; height: 30px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,0.15); display: flex; align-items: center; justify-content: center; overflow: hidden; color: #fff; }
     .avatar ha-icon { --mdc-icon-size: 18px; }
@@ -2020,9 +2196,20 @@ class SextantLive extends LitElement {
     .list .avslot .viabadge.waitbadge { background: var(--warning-color, #e6a100); color: #23272e; }
     .list .avslot .viabadge.ghostbadge { background: var(--secondary-background-color, #666); color: var(--secondary-text-color); }
     .list .avslot .batterybadge { position: absolute; right: -3px; bottom: -3px; --mdc-icon-size: 12px; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--warning-color, #e6a100); color: #23272e; box-shadow: 0 0 0 2px var(--card-background-color, #fff); }
+    .list .avslot .viabadge.lockbadge { background: var(--primary-text-color, #e1e1e1); color: var(--card-background-color, #1c1c1c); }
     .list .avslot .batterybadge.crit { background: var(--error-color, #db4437); color: #fff; }
+    .list .avslot .batterybadge.pet.ok { background: var(--success-color, #43a047); color: #fff; }
+    .list .avslot .batterybadge.pet.mid { background: #fdd835; color: #23272e; }
+    .list .avslot .batterybadge.pet.low { background: var(--orange-color, #ff9800); color: #23272e; }
+    .list .avslot .batterybadge.pet.none { background: var(--disabled-color, #9e9e9e); color: #fff; }
     dd.warn { color: var(--warning-color, #e6a100); font-weight: 600; }
     dd.crit { color: var(--error-color, #db4437); font-weight: 600; }
+    dd.battery { display: flex; align-items: center; }
+    .batteryicon { --mdc-icon-size: 16px; margin-right: 4px; display: inline-flex; }  /* no taller than the line, so the Battery label stays level */
+    .batteryicon.ok { color: var(--success-color, #43a047); }
+    .batteryicon.mid { color: #fdd835; }
+    .batteryicon.low { color: var(--orange-color, #ff9800); }
+    .batteryicon.crit { color: var(--error-color, #db4437); }
     .list .avslot .viabadge { position: absolute; right: -3px; top: -3px; --mdc-icon-size: 13px; width: 17px; height: 17px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--primary-color, #03a9f4); color: var(--text-primary-color, #fff); box-shadow: 0 0 0 2px var(--card-background-color, #fff); }
     /* A flex row so the icon centres on the text instead of sitting on its baseline. */
     .list .where { grid-column: 3; display: flex; align-items: center; justify-content: flex-end; gap: 4px; text-align: right; font-size: 12px; }
@@ -2038,8 +2225,10 @@ class SextantLive extends LitElement {
     .list li.ghost .avatar { filter: grayscale(0.6); outline: 1px dashed var(--secondary-text-color); outline-offset: 1px; }
     details.timeline { margin: 8px 0; }
     details.timeline summary { cursor: pointer; font-weight: 500; }
-    .band { display: flex; height: 14px; border-radius: 4px; overflow: hidden; margin-top: 8px; background: var(--secondary-background-color); gap: 1px; }
-    .band .seg { min-width: 1px; }
+    /* Placed by time: a flex row with a minimum width per stay ran past the band once there
+       were a couple of hundred stays, giving every stay the same sliver and clipping the newest. */
+    .band { position: relative; height: 14px; border-radius: 4px; overflow: hidden; margin-top: 8px; background: var(--secondary-background-color); }
+    .band .seg { position: absolute; top: 0; bottom: 0; min-width: 1px; }
     .band .seg.unheard { background: repeating-linear-gradient(45deg, transparent 0 3px, var(--divider-color) 3px 5px) !important; }
     .band-ends { display: flex; justify-content: space-between; margin-top: 2px; }
     ol.stays { list-style: none; padding: 0; margin: 6px 0 0; display: grid; gap: 3px; }
@@ -2077,7 +2266,10 @@ class SextantLive extends LitElement {
     .pinlist li:last-child { border-bottom: 0; }
     .pinlist .pinid { grid-column: 1; grid-row: 1; font-size: 13px; }
     .pinlist .pinwhen { grid-column: 1; grid-row: 2; }
-    .pinlist .forget { grid-column: 2; grid-row: 1 / 3; align-self: center; display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border: 1px solid var(--divider-color); border-radius: 8px; background: transparent; color: var(--secondary-text-color); cursor: pointer; }
+    .pinlist .pinbtns { grid-column: 2; grid-row: 1 / 3; display: inline-flex; gap: 6px; }
+    .pinlist .forget.on { color: var(--primary-color); border-color: var(--primary-color); }
+    .pinlist .warn { color: var(--warning-color, #b26a00); }
+    .pinlist .forget { align-self: center; display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border: 1px solid var(--divider-color); border-radius: 8px; background: transparent; color: var(--secondary-text-color); cursor: pointer; }
     .pinlist .forget ha-icon { --mdc-icon-size: 18px; }
     .pinlist .forget:hover { color: var(--error-color, #c62828); border-color: var(--error-color, #c62828); }
     /* Clicked on the map: floats over the plan's top-left, out of the way. */
@@ -2116,14 +2308,16 @@ class SextantLive extends LitElement {
        the page that does the thing, instead of hunting through the mode
        tabs. Calibration and adding a thing are admin actions - offered
        only when this user could reach those pages at all. */
-    .quick-actions button { display: flex; align-items: center; gap: 6px; }
     .side h3 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-    .maptoggle { margin-left: auto; }
     /* Quick pin (phones; see _startPin). The list and done steps are sheets
        over the whole screen; the map step is the stage itself gone
        full-screen, with the chips, the ring and one button laid over it. */
-    .pinfab { position: fixed; right: 16px; bottom: calc(64px + env(safe-area-inset-bottom, 0px)); z-index: 6; height: 52px; padding: 0 20px 0 16px; border: 0; border-radius: 999px; background: var(--primary-color, #03a9f4); color: var(--text-primary-color, #fff); font: inherit; font-weight: 600; font-size: 15px; align-items: center; gap: 6px; box-shadow: 0 6px 20px rgba(0,0,0,0.35); cursor: pointer; }
+    .pinfab { position: absolute; right: 16px; bottom: 66px; z-index: 6; height: 52px; width: 52px; padding: 0; justify-content: center; border: 0; border-radius: 999px; background: var(--primary-color, #03a9f4); color: var(--text-primary-color, #fff); font: inherit; font-weight: 600; font-size: 15px; align-items: center; gap: 6px; box-shadow: 0 6px 20px rgba(0,0,0,0.35); cursor: pointer; }
+    /* With the map open the buttons sit above its view tools. */
+    .pinfab.lift { bottom: 122px; }
+    .pinfab.addfab.lift { bottom: 68px; }
     .pinfab ha-icon { --mdc-icon-size: 22px; }
+    .pinfab.addfab { bottom: 12px; height: 44px; width: 44px; right: 20px; background: var(--card-background-color); color: var(--primary-color, #03a9f4); border: 1px solid var(--divider-color); }
     .pinsheet { position: fixed; inset: 0; z-index: 8; display: flex; flex-direction: column; background: var(--primary-background-color, #fafafa); color: var(--primary-text-color); }
     .pinhead { display: flex; align-items: center; gap: 12px; padding: calc(12px + env(safe-area-inset-top, 0px)) 16px 8px; }
     .pinhead h3, .pinbar h3 { margin: 0; font-size: 18px; font-weight: 600; line-height: 1.2; text-transform: none; letter-spacing: 0; color: var(--primary-text-color); }
@@ -2187,7 +2381,6 @@ class SextantLive extends LitElement {
          about half the screen so it is worth looking at once open - sits
          below it, above the selected thing's own detail card. */
       :host { display: flex; flex-direction: column; }
-      .quick-actions { order: 0; display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px; background: var(--card-background-color); border-bottom: 1px solid var(--divider-color); }
       .side { position: static; order: 1; flex: 1 1 auto; width: auto; min-height: 0; overflow: auto; border-left: 0; border-top: 1px solid var(--divider-color); max-height: none; border-radius: 0; box-shadow: none; padding: 12px; }
       /* The card takes what it needs unless the grip has set a height; then
          it is that tall and scrolls inside, and the list gets the rest. */
@@ -2200,13 +2393,15 @@ class SextantLive extends LitElement {
       .scrub, .zoom, .wifilegend { right: 10px; }
       sextant-stack { --sextant-stack-zoom-right: 10px; }
       .mapcorner.besidecard { left: 10px; }   /* the card sits under the map here */
-      /* Things, and with it Hide map, stays reachable however far the list
+      /* The search row, and with it Hide map, stays reachable however far the list
          is scrolled - it used to scroll away and leave no way to close a map
          taking half the screen. */
-      .side h3 { position: sticky; top: 0; z-index: 2; margin: 0; padding: 8px 0; background: var(--card-background-color); }
+      .searchrow { position: sticky; top: 0; z-index: 2; margin: 0; padding: 8px 0; background: var(--card-background-color); }
       .stage { order: 2; flex: 0 0 48vh; }
       .stage.collapsed { display: none; }
-      .wide-only { display: none; }
+      /* Room to scroll the last rows clear of the Pin button. */
+      .side .list:last-of-type { padding-bottom: 124px; }
+      .wide-only, .side h3.wide-only, .overlay .chips.wide-only { display: none; }
       .narrow-only { display: flex; }
     }
   `];

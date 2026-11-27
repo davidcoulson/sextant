@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="940" height="324" viewBox="0 0 940 324" role="img" aria-label="Example 1: Sam walks into the study and reads for a while">
+<title>Example 1: Sam walks into the study and reads for a while</title>
+<rect x="0.5" y="0.5" width="939" height="323" rx="10" fill="#ffffff" stroke="#d0d7de"/>
+<text x="20" y="30" font-size="16" fill="#1f2328" text-anchor="start" font-weight="bold" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">Example 1: Sam walks into the study and reads for a while</text>
+<line x1="210.0" y1="68" x2="210.0" y2="244" stroke="#eaeef2"/>
+<text x="210.0" y="262" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">0</text>
+<line x1="280.0" y1="68" x2="280.0" y2="244" stroke="#eaeef2"/>
+<text x="280.0" y="262" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">2</text>
+<line x1="350.0" y1="68" x2="350.0" y2="244" stroke="#eaeef2"/>
+<text x="350.0" y="262" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">4</text>
+<line x1="420.0" y1="68" x2="420.0" y2="244" stroke="#eaeef2"/>
+<text x="420.0" y="262" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">6</text>
+<line x1="490.0" y1="68" x2="490.0" y2="244" stroke="#eaeef2"/>
+<text x="490.0" y="262" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">8</text>
+<line x1="560.0" y1="68" x2="560.0" y2="244" stroke="#eaeef2"/>
+<text x="560.0" y="262" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">10</text>
+<line x1="630.0" y1="68" x2="630.0" y2="244" stroke="#eaeef2"/>
+<text x="630.0" y="262" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">12</text>
+<line x1="700.0" y1="68" x2="700.0" y2="244" stroke="#eaeef2"/>
+<text x="700.0" y="262" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">14</text>
+<line x1="770.0" y1="68" x2="770.0" y2="244" stroke="#eaeef2"/>
+<text x="770.0" y="262" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">16</text>
+<line x1="840.0" y1="68" x2="840.0" y2="244" stroke="#eaeef2"/>
+<text x="840.0" y="262" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">18</text>
+<line x1="910.0" y1="68" x2="910.0" y2="244" stroke="#eaeef2"/>
+<text x="910.0" y="262" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">20</text>
+<text x="910" y="278" font-size="11" fill="#59636e" text-anchor="end" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">time (min)</text>
+<line x1="210.0" y1="64" x2="210.0" y2="244" stroke="#1f2328" stroke-dasharray="4 3"/>
+<line x1="315.0" y1="64" x2="315.0" y2="244" stroke="#1f2328" stroke-dasharray="4 3"/>
+<line x1="847.0" y1="64" x2="847.0" y2="244" stroke="#1f2328" stroke-dasharray="4 3"/>
+<text x="20" y="95" font-size="13" fill="#1f2328" text-anchor="start" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">Motion sensor (input)</text>
+<rect x="210.0" y="80" width="52.5" height="22" rx="4" fill="#8250df"/>
+<text x="236.25" y="96" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">on</text>
+<rect x="630.0" y="80" width="21.0" height="22" rx="4" fill="#8250df"/>
+<rect x="836.5" y="80" width="14.0" height="22" rx="4" fill="#8250df"/>
+<text x="20" y="129" font-size="13" fill="#1f2328" text-anchor="start" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">mmWave track (radar)</text>
+<rect x="210.0" y="114" width="105.0" height="22" rx="4" fill="#8250df"/>
+<text x="262.5" y="130" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">live</text>
+<rect x="315.0" y="114" width="5.9" height="22" rx="4" fill="#bf8700"/>
+<text x="20" y="163" font-size="13" fill="#1f2328" text-anchor="start" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">Presence sensor (LD2412)</text>
+<rect x="210.0" y="148" width="637.0" height="22" rx="4" fill="#8250df"/>
+<text x="528.5" y="164" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">on: sees someone sitting still</text>
+<text x="20" y="197" font-size="13" fill="#1f2328" text-anchor="start" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">Sam&#x27;s phone (Bluetooth)</text>
+<rect x="227.5" y="182" width="626.5" height="22" rx="4" fill="#0969da"/>
+<text x="540.75" y="198" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">placed in the Study</text>
+<text x="20" y="231" font-size="13" fill="#1f2328" text-anchor="start" font-weight="bold" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">Study occupancy</text>
+<line x1="210" y1="208" x2="910" y2="208" stroke="#d0d7de"/>
+<rect x="210.0" y="216" width="350.0" height="22" rx="4" fill="#2da44e"/>
+<text x="385.0" y="232" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">occupied</text>
+<rect x="560.0" y="216" width="294.0" height="22" rx="4" fill="#116329"/>
+<text x="707.0" y="232" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">extended</text>
+<rect x="854.0" y="216" width="56.0" height="22" rx="4" fill="#d8dee4"/>
+<text x="882.0" y="232" font-size="11" fill="#1f2328" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">clear</text>
+<rect x="212.0" y="49" width="53.6" height="14" fill="#ffffff"/>
+<text x="214.0" y="60" font-size="11" fill="#1f2328" text-anchor="start" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">walks in</text>
+<rect x="317.0" y="49" width="66.0" height="14" fill="#ffffff"/>
+<text x="319.0" y="60" font-size="11" fill="#1f2328" text-anchor="start" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">sits still</text>
+<rect x="849.0" y="49" width="41.2" height="14" fill="#ffffff"/>
+<text x="851.0" y="60" font-size="11" fill="#1f2328" text-anchor="start" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">leaves</text>
+<text x="20" y="310" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">No hold set (room_hold_secs 0): the room clears once nothing says someone is there, here when the phone is placed in the Hall.</text>
+</svg>

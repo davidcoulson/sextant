@@ -1,7 +1,7 @@
 // What a save would destroy (sextant-shapes.js). Run: node --test tests/frontend
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { lostShapes } from "../../custom_components/sextant/frontend/sextant-shapes.js";
+import { lostShapes, planKey } from "../../custom_components/sextant/frontend/sextant-shapes.js";
 
 const pts = (n) => Array.from({ length: n }, (_, i) => ({ x: i, y: i * 2 }));
 const layout = (spots, rooms = []) => ({
@@ -38,4 +38,24 @@ test("reshaping, deleting and adding are not losses", () => {
 test("junk in does not throw", () => {
   assert.deepEqual(lostShapes(null, undefined), []);
   assert.deepEqual(lostShapes({ floor: [null] }, { floor: [{ name: "F", zones: [null] }] }), []);
+});
+
+test("planKey ignores what the server writes and sees what the editor would overwrite", () => {
+  const a = layout([["Alex Bedside Table", 4]], [["Master Bedroom", 8]]);
+  a.floor[0].receivers = [{ entity_id: "p1", cords: { x: 1, y: 2 } }];
+  const b = JSON.parse(JSON.stringify(a));
+  b.tuning = { history_hours: 3 };
+  b.floor[0].calibration = { at: 1 };
+  b.floor[0].bias_field = { cells: [] };
+  b.floor[0].receivers[0].correction = 0.92;
+  b.floor[0].receivers[0].unmatched = true;
+  assert.equal(planKey(a), planKey(b));
+  b.floor[0].receivers[0].cords.x = 5;   // a proxy moved from the Health page
+  assert.notEqual(planKey(a), planKey(b));
+  // A proxy held out of calibration: its correction is the editor's to overwrite.
+  const c = JSON.parse(JSON.stringify(a)), e = JSON.parse(JSON.stringify(a));
+  Object.assign(c.floor[0].receivers[0], { calibrate: false, correction: 0.8 });
+  Object.assign(e.floor[0].receivers[0], { calibrate: false, correction: 1.2 });
+  assert.notEqual(planKey(c), planKey(e));
+  assert.equal(planKey(undefined), "[]");
 });

@@ -26,6 +26,9 @@ from datetime import datetime, timezone
 # update, a reboot. Past it the elections are stale and only the last sighting
 # is kept.
 DEFAULT_MAX_AGE_SECS = 300.0
+# Room sensor clocks (rooms.sensor_problems) carry over a restart this long at most: past it
+# a sensor may have recovered and failed again unseen, and the old clock would raise a false repair.
+SENSOR_CLOCK_MAX_GAP_S = 3600.0
 
 
 # "There is no value here", as distinct from a value of None. A state dict is
@@ -90,7 +93,7 @@ def _vector(value, size):
     return out if len(out) == size else None
 
 
-def snapshot(now, kf=None, zones=None, spots=None, arrivals=None, rows=None, floors=None, visits=None, wifi=None, asked=None):
+def snapshot(now, kf=None, zones=None, spots=None, arrivals=None, rows=None, floors=None, visits=None, wifi=None, asked=None, sensors=None, sleep=None, charging=None, anchors=None):
     """The state worth keeping, as JSON.
 
     ``rows`` are the published positions (ent, zone, sub_zone, floor, updated,
@@ -118,6 +121,10 @@ def snapshot(now, kf=None, zones=None, spots=None, arrivals=None, rows=None, flo
         slot(entity)["arrived"] = _json(state)
     for entity, state in (floors or {}).items():
         slot(entity)["floor"] = _json(state)
+    for entity, state in (anchors or {}).items():
+        # Only an adopted near-field anchor: a pending one just dwells again.
+        if isinstance(state, dict) and state.get("slug"):
+            slot(entity)["anchor"] = {k: state.get(k) for k in ("floor", "slug", "since", "x", "y")}
     for row in rows or []:
         if not isinstance(row, dict) or not row.get("ent"):
             continue
@@ -138,11 +145,23 @@ def snapshot(now, kf=None, zones=None, spots=None, arrivals=None, rows=None, flo
     # so a restart does not push the same quiet spell twice.
     if asked:
         out["asked"] = {str(p): t for p, t in asked.items() if _epoch(t) is not None}
+    # When each thing last began charging: a full watch on its puck stays out of the running (persons.still_on_charger).
+    if charging:
+        out["charging"] = {str(e): t for e, t in charging.items() if _epoch(t) is not None}
     # What Wi-Fi association has taught (wifi.py): access-point footprints
     # and tracker-to-person scores. Kept whatever the gap: a week's learning
     # is worth more than a fresh start.
     if isinstance(wifi, dict) and (wifi.get("aps") or wifi.get("matches") or wifi.get("clients")):
         out["wifi"] = _json(wifi)
+    # Each person's night so far (persons.sleep_tally): a restart at 3 am keeps the night's count.
+    nights = {str(p): _json(v) for p, v in (sleep or {}).items() if isinstance(v, dict)}
+    if nights:
+        out["sleep"] = nights
+    # Since when each room sensor has been missing or unavailable ("bad") or reading on ("on").
+    clocks = {k: {str(e): t for e, t in (sensors.get(k) or {}).items() if _epoch(t) is not None}
+              for k in ("bad", "on")} if isinstance(sensors, dict) else {}
+    if any(clocks.values()):
+        out["sensors"] = clocks
     return out
 
 
@@ -213,15 +232,27 @@ def restore(data, now, max_age=DEFAULT_MAX_AGE_SECS):
     so the Live page can still say where a thing was and when. A snapshot
     from the future (the clock moved) is treated as a long gap.
     """
-    out = {"kf": {}, "zone": {}, "spot": {}, "arrivals": {}, "floors": {}, "last": {}, "visits": {}, "asked": {}, "wifi": None, "age": None}
+    out = {"kf": {}, "zone": {}, "spot": {}, "arrivals": {}, "floors": {}, "anchors": {}, "last": {}, "visits": {}, "asked": {}, "charging": {}, "wifi": None, "sensors": {"bad": {}, "on": {}}, "sleep": {}, "age": None}
     if not isinstance(data, dict):
         return out
     asked = data.get("asked")
     if isinstance(asked, dict):
         out["asked"] = {p: t for p, t in asked.items() if _epoch(t) is not None}
+    charging = data.get("charging")
+    if isinstance(charging, dict):
+        out["charging"] = {e: t for e, t in charging.items() if _epoch(t) is not None}
     wifi = data.get("wifi")
     if isinstance(wifi, dict) and isinstance(wifi.get("aps"), dict) and isinstance(wifi.get("matches"), dict):
         out["wifi"] = _wifi_clean(wifi)
+    for person, v in (data.get("sleep") or {}).items() if isinstance(data.get("sleep"), dict) else ():
+        try:
+            rooms = {str(k): float(t) for k, t in v["rooms"].items() if 0 <= float(t) <= 86400}
+            places = {str(k): [str(p[0]), str(p[1])] for k, p in v["places"].items() if k in rooms}
+            place = [str(v["place"][0]), str(v["place"][1])] if v.get("place") else None
+            if isinstance(v["night"], str) and set(rooms) <= set(places):
+                out["sleep"][person] = {"night": v["night"], "rooms": rooms, "places": places, "place": place, "at": _epoch(v.get("at"))}
+        except (AttributeError, KeyError, TypeError, ValueError, IndexError, OverflowError):
+            continue   # one person's damaged night, not the restore
     people = data.get("people")
     if isinstance(people, dict):
         for person, v in people.items():
@@ -240,6 +271,11 @@ def restore(data, now, max_age=DEFAULT_MAX_AGE_SECS):
         return out
     age = float(now) - float(saved_at)
     out["age"] = age
+    sensors = data.get("sensors")
+    if isinstance(sensors, dict) and 0 <= age <= SENSOR_CLOCK_MAX_GAP_S:
+        for k in ("bad", "on"):
+            if isinstance(sensors.get(k), dict):
+                out["sensors"][k] = {e: float(t) for e, t in sensors[k].items() if _epoch(t) is not None and t <= now}
     fresh = 0 <= age <= max(0.0, float(max_age))
     for entity, state in things.items():
         if not isinstance(state, dict):
@@ -260,4 +296,9 @@ def restore(data, now, max_age=DEFAULT_MAX_AGE_SECS):
             value = state.get(key)
             if isinstance(value, dict) and value:
                 out[target][entity] = value
+        a = state.get("anchor")
+        if (isinstance(a, dict) and isinstance(a.get("floor"), str) and isinstance(a.get("slug"), str)
+                and _vector([a.get("x"), a.get("y")], 2) is not None):
+            out["anchors"][entity] = {"floor": a["floor"], "slug": a["slug"], "since": _epoch(a.get("since")),
+                                      "pending": None, "away_since": None, "x": float(a["x"]), "y": float(a["y"])}
     return out

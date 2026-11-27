@@ -44,6 +44,7 @@ from __future__ import annotations
 import argparse
 import collections
 import glob
+import gzip
 import json
 import os
 import sys
@@ -59,10 +60,10 @@ DEFAULTS = {
 
 def load_rows(path, hours=None):
     """Every record from a file or a directory of .jsonl files, oldest first."""
-    files = sorted(glob.glob(os.path.join(path, "*.jsonl"))) if os.path.isdir(path) else [path]
+    files = sorted(f for f in glob.glob(os.path.join(path, "*.jsonl*")) if not f.endswith(".tmp")) if os.path.isdir(path) else [path]
     rows = []
     for name in files:
-        with open(name, encoding="utf-8") as fh:
+        with (gzip.open(name, "rt", encoding="utf-8") if name.endswith(".gz") else open(name, encoding="utf-8")) as fh:
             for line in fh:
                 line = line.strip()
                 if line:
@@ -109,13 +110,44 @@ def rescore(cands, weight, formula="gated"):
     return out
 
 
-def replay(seq, tuning, switch=None, margin=None, tenure_bonus=None, weight=None, formula="gated", still_hold=None, still_margin=None):
+def load_habits(path):
+    """habits.py and the table from a copy of .storage/sextant_habits."""
+    import importlib.util  # noqa: PLC0415
+    spec = importlib.util.spec_from_file_location(
+        "sextant_habits", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "custom_components", "sextant", "habits.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    with open(path, encoding="utf-8") as fh:
+        raw = json.load(fh)
+    return mod, mod.clean(raw.get("data", raw) if isinstance(raw, dict) else raw)
+
+
+def with_habit(scores, cands, ent, t, habit):
+    """The scores with the logged habit factor taken out (a logged score has it in) and,
+    when ``habit`` is (module, table, weight, tz), the table's factor for this hour put in."""
+    out = {}
+    for f, v in scores.items():
+        h = (cands.get(f) or {}).get("habit")
+        out[f] = v / h if isinstance(h, (int, float)) and h > 0 else v
+    if habit:
+        mod, table, w, tz = habit
+        for f, k in mod.floor_factors(table, ent, list(out), t, w, tz).items():
+            out[f] *= k
+    return out
+
+
+def replay(seq, tuning, switch=None, margin=None, tenure_bonus=None, weight=None, formula="gated", still_hold=None, still_margin=None,
+           habit=None):
     """The floor that would have been published each cycle.
 
     Seeded from the first logged cycle: the live election had an incumbent
     with tenure when the log began, and a cold start would replay its first
     minutes wrongly. ``still_hold`` / ``still_margin`` are an extra dwell and
-    margin for a thing slower than stationary_speed.
+    margin for a thing slower than stationary_speed. ``habit`` (see
+    with_habit) replays the floor habit prior from a habits table; note the
+    table already holds the nights being replayed, so it flatters a little.
+    shortcut: the replayed prior ignores pauses and charging, and a logged score
+    rounded to 0 cannot be divided back out; read a holiday's replay with that in mind.
     """
     smooth = float(tuning["floor_prob_smoothing"])
     switch = float(tuning["floor_switch_secs"]) if switch is None else switch
@@ -127,6 +159,8 @@ def replay(seq, tuning, switch=None, margin=None, tenure_bonus=None, weight=None
     out = []
     for r in seq:
         scores = rescore(r.get("floor_cands") or {}, weight, formula)
+        if habit is not None:
+            scores = with_habit(scores, r.get("floor_cands") or {}, r["ent"], r["t"], habit)
         if not scores:
             out.append(incumbent)
             continue
@@ -197,6 +231,9 @@ def main(argv=None):
                     help="floor_proximity_blend to replay --weight under (see rescore)")
     ap.add_argument("--margin", type=float, help="floor_switch_margin to replay at")
     ap.add_argument("--switch", type=float, help="floor_switch_secs to replay at")
+    ap.add_argument("--habits", help="a copy of .storage/sextant_habits: replay the floor habit prior from it")
+    ap.add_argument("--habit-weight", type=float, action="append", default=[], help="habit_floor_weight to replay at (repeatable; needs --habits)")
+    ap.add_argument("--tz", help="the house's time zone for the habit hours, e.g. America/New_York (default: this machine's)")
     ap.add_argument("--no-variants", action="store_true", help="only the settings given, not the built-in sweep")
     args = ap.parse_args(argv)
 
@@ -238,6 +275,13 @@ def main(argv=None):
                 variants.append((f"geometric {w}, margin {m}", {"weight": w, "formula": "geometric", "margin": m}))
         variants += [("switch 120 s", {"switch": 120.0}), ("still: hold 300 s", {"still_hold": 300.0}),
                      ("still: margin 0.20", {"still_margin": 0.20})]
+
+    if args.habits:
+        from zoneinfo import ZoneInfo  # noqa: PLC0415
+        mod, table = load_habits(args.habits)
+        tz = ZoneInfo(args.tz) if args.tz else None
+        for w in args.habit_weight or [0.0, 0.25, 0.5]:
+            variants.append((f"habit floor {w}", {"habit": (mod, table, w, tz)}))
 
     pub_ch = sum(changes_and_flips([r["floor"] for r in s])[0] for s in by_ent.values())
     pub_fl = sum(changes_and_flips([r["floor"] for r in s])[1] for s in by_ent.values())

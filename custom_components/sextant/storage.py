@@ -14,6 +14,7 @@ the single owner of that data and imports nothing from the rest of the package
 """
 from .const import DOMAIN
 import asyncio
+import sys
 import copy
 import json
 import logging
@@ -35,12 +36,19 @@ STORAGE_KEY_KPI = "sextant_kpi_baselines"            # -> config/.storage/sextan
 STORAGE_KEY_TRUTH = "sextant_truth"                  # -> config/.storage/sextant_truth (marks + their samples)
 STORAGE_KEY_FP_GAINS = "sextant_fingerprint_gains"   # -> the learned reference gains, so a restart starts warm
 STORAGE_KEY_WIFI_HEAT = "sextant_wifi_heat"          # -> the Wi-Fi signal map's samples (heat.py)
+STORAGE_KEY_HABITS = "sextant_habits"              # -> where each thing usually is by hour (habits.py)
 STORAGE_KEY_RUNTIME = "sextant_runtime"              # -> each thing's elections and filter, to survive a restart
 
 # Serializes read-modify-write sequences on the layout across every writer
 # (panel save + calibration). Lives here so both importers share one lock
 # without an import cycle (was previously defined in calibration.py).
-LAYOUT_LOCK = asyncio.Lock()
+# One lock for the whole Home Assistant run, kept on the parent package:
+# sextant.reload_code imports this module again, while the HTTP save view it
+# cannot replace still holds the first module's lock.
+LAYOUT_LOCK = vars(sys.modules[__name__.partition(".")[0]]).setdefault("_sextant_layout_lock", asyncio.Lock())
+# Held across each load-edit-save of the truth marks and of the KPI baselines.
+TRUTH_LOCK = asyncio.Lock()
+KPI_LOCK = asyncio.Lock()
 
 # The integration was called "bps" before it became Sextant. Its Store keys,
 # history directory and maps directory all carried that name.
@@ -391,6 +399,27 @@ async def load_wifi_heat(hass):
 
 async def save_wifi_heat(hass, data) -> None:
     await _wifi_heat_store(hass).async_save(data)
+
+
+def _habits_store(hass) -> Store:
+    bucket = _bucket(hass)
+    store = bucket.get("_habits_store")
+    if store is None:
+        store = bucket["_habits_store"] = Store(hass, STORAGE_VERSION, STORAGE_KEY_HABITS)
+    return store
+
+
+async def load_habits(hass):
+    """The stored habits table, or None (habits.clean makes it safe)."""
+    try:
+        return await _habits_store(hass).async_load()
+    except Exception as e:
+        _LOGGER.warning("Could not load the room habits; starting empty: %s", e)
+        return None
+
+
+async def save_habits(hass, data) -> None:
+    await _habits_store(hass).async_save(data)
 
 
 # --- Runtime state (see runtime.py) -----------------------------------------

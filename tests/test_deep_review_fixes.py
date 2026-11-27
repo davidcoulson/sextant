@@ -72,3 +72,13 @@ def test_layout_check_accepts_the_single_thing_height_setting():
     assert sextant._thing_height(layout) == 0.7
     # The maps the cycle reads with .get() must still be maps.
     assert layout_check.layout_problem({"floor": [], "thing_owners": "alex"}) is not None
+
+
+def test_two_floors_of_one_name_are_refused():
+    """Adding "Ground" again wrote its map over the first Ground's image and
+    left a floor no lookup by name could reach."""
+    floors = [{"name": "Ground"}, {"name": " ground "}]
+    assert "two floors" in layout_check.layout_problem({"floor": floors})
+    assert layout_check.layout_problem({"floor": [{"name": "Ground"}, {"name": "Basement"}]}) is None
+    assert layout_check.layout_problem({"floor": [{"name": "Ground Floor"}, {"name": "Ground-Floor"}]}), "one map key"
+    assert layout_check.layout_problem({"floor": [{"name": "Ground"}, {"name": "Ground.v2"}]}), "mapUrlFor drops the .v2"

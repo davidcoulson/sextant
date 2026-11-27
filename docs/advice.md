@@ -13,11 +13,32 @@ Which rooms the proxies serve worst, and where one more would help. Press
   third-nearest proxy on the floor is (a fix needs three) and whether the
   three nearest all sit to one side of the point.
 
-The rooms are grouped into one change plan per floor, worst floor first (a
+Each room also shows how much it is used, from the person log (the last 48
+hours unless `person_log_hours` on the [Tuning](tuning.md) page says
+otherwise):
+
+- **Time here**: the room's share of the time people spent in the rooms
+  listed. Pets that are tracked as persons count too. Time away, Outside, or
+  home with no room known, is left out.
+- **Bounces**: how many times someone was put into this room, or out of it,
+  and straight back within two minutes. A person rarely does that; a
+  position that cannot settle between two rooms does. A bounce counts for
+  both rooms, because the log cannot say which of the two the person was in.
+
+A dash means the log never names the room: nobody was placed there, the log
+is off, or it has only just started (the log records a person's room from
+the version that added these columns on, so they fill over the first two
+days). A dash is not a zero.
+
+The rooms are grouped into one change plan per floor. The rooms that need
+something are listed most used first, so poor coverage where people spend
+their day comes before a closet with no proxy; rooms with the same use, or
+none recorded, are worst issue first. The floors follow the same order: the
+floor whose flagged rooms are used most first, then worst floor first (a
 floor ranks by its single worst room, ties broken by how many proxies it
-needs), with each floor's own rooms worst first inside it. Each floor
-heading carries its own tally — how many rooms are flagged and how many
-proxies to add — so a floor is one trip up the stairs with one list.
+needs). Each floor heading carries its own tally — how many rooms are
+flagged and how many proxies to add — so a floor is one trip up the stairs
+with one list.
 
 Each room gets an issue:
 
@@ -42,6 +63,36 @@ top, each with the spot that needs it most.
 
 Like the self-test, the analysis works from the calibration sample window,
 so keep **Auto calibration** on for it to see every floor.
+
+## Location pins
+
+A location pin ("It's actually here…" on the [Live](live.md) page) is the
+best help a place can get: fixes within about 2 m of a pin land much
+closer. A pin in the wrong place does the opposite and pulls everything
+near it the wrong way. **Check pins** looks for both. (A pin only guides a
+thing whose position uses the fingerprint match. **Apply best fit** after
+pinning turns that on when it lands closer.)
+
+**Pins to look at again** lists a pin when:
+
+- the pins it guides land further off with it than without it (half a
+  metre or more on average, and more of them worse than better). One of
+  the two may be in the wrong place, or the two places may look alike to
+  Bluetooth; the row names the neighbour it disagrees with most, so check
+  both;
+- its own readings put the thing 6 m or more from the pin, and at least
+  twice as far as your pins usually read, so the thing was probably not
+  there for the whole time the pin was taken from;
+- it is a copy of another pin, made from exactly the same readings.
+
+**Forget** removes a pin for good. A pin the check lists is worth a look,
+not proof: forget it if you are not sure the thing was there, and pin the
+place again next time.
+
+**Places without a pin** lists where a thing has spent two hours or more of
+the history Sextant keeps with no pin within 2 m. **Show on plan** rings the
+place. The ring is where Sextant put the thing, which is only roughly where
+it was, so pin it at its real spot the next time it is there.
 
 ## Scanners you leave off the plan on purpose
 

@@ -24,6 +24,7 @@ from __future__ import annotations
 import math
 from collections import deque
 
+from .const import INVALID_RANGE_M
 from .layout_check import _finite
 
 # A receiver does not hear itself, but a thing standing at a receiver
@@ -119,7 +120,7 @@ class ReferenceDB:
                 d = reading.get("distance_raw")
                 if d is None:
                     d = reading.get("distance")
-                if not isinstance(d, (int, float)) or isinstance(d, bool) or not d > 0 or not math.isfinite(d):
+                if not isinstance(d, (int, float)) or isinstance(d, bool) or not math.isfinite(d) or d < INVALID_RANGE_M:
                     continue
                 key = (str(tx).lower(), str(rx).lower())
                 dq = self._samples.get(key)
@@ -270,7 +271,7 @@ def thing_vector(layout):
             d = receiver.get("distance")
             if not isinstance(address, str) or not address:
                 continue
-            if not isinstance(d, (int, float)) or isinstance(d, bool) or not d > 0 or not math.isfinite(d):
+            if not isinstance(d, (int, float)) or isinstance(d, bool) or not math.isfinite(d) or d < INVALID_RANGE_M:
                 continue
             vector[address.lower()] = float(d)
     return vector

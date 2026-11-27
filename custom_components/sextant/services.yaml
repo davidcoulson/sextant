@@ -293,3 +293,56 @@ get_map:
       example: Ground
       selector:
         text:
+
+pause_habits:
+  name: Pause habits
+  description: >-
+    Stop using and learning where things usually are by hour (the room and
+    floor routines) until a time, for a holiday or a day off. Give until or
+    hours. Things and classes narrow it; with neither it pauses everything.
+    Pauses are stored with the floor plan and survive restarts.
+  fields:
+    until:
+      name: Until
+      description: When the pause ends. A date alone means its midnight, local time.
+      required: false
+      example: "2026-11-28 06:00:00"
+      selector:
+        datetime:
+    hours:
+      name: Hours
+      description: How long the pause lasts, from now. Instead of until.
+      required: false
+      example: 24
+      selector:
+        number:
+          min: 0.01
+          max: 744
+          step: 0.5
+    things:
+      name: Things
+      description: Thing keys to pause (as on the Things page), e.g. eilee_iphone.
+      required: false
+      example: '["eilee_iphone", "eilee_watch"]'
+      selector:
+        object:
+    classes:
+      name: Classes
+      description: Thing classes to pause, e.g. phone, watch, dog.
+      required: false
+      example: '["phone", "watch"]'
+      selector:
+        object:
+
+resume_habits:
+  name: Resume habits
+  description: End every habit pause now.
+
+reload_code:
+  name: Reload the code
+  description: >-
+    For development. Unloads Sextant, imports its Python files from disk
+    again and sets it up, so a code change takes effect in seconds without
+    restarting Home Assistant. Reload open Sextant pages afterwards. The
+    /api/sextant HTTP endpoints, the config flow and manifest changes
+    (version, requirements) still need a restart.

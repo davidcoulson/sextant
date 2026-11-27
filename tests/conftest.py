@@ -282,7 +282,7 @@ def _install_homeassistant_stubs():
     # attribute off the parent package (like panel_custom above).
     helpers.config_validation = _module(
         "homeassistant.helpers.config_validation",
-        string=str, boolean=bool, positive_int=int, entity_id=str,
+        string=str, boolean=bool, datetime=lambda v: v, date=lambda v: v, positive_int=int, entity_id=str,
         ensure_list=lambda v: v if isinstance(v, list) else [v],
     )
     # Entity and device registries: in-memory fakes, one pair per hass, with
@@ -300,9 +300,11 @@ def _install_homeassistant_stubs():
     # Enough of the sensor platform for sensor.py to import (sensor tests
     # exercise the cache/creation logic, never HA's entity machinery).
     _module("homeassistant.components.sensor", SensorEntity=type("SensorEntity", (), {}),  # a class, so RestoreEntity can follow it in an MRO
-            SensorStateClass=types.SimpleNamespace(MEASUREMENT="measurement"))
-    _module("homeassistant.components.binary_sensor", BinarySensorEntity=object,
+            SensorStateClass=types.SimpleNamespace(MEASUREMENT="measurement"),
+            SensorDeviceClass=types.SimpleNamespace(BATTERY="battery"))
+    _module("homeassistant.components.binary_sensor", BinarySensorEntity=type("BinarySensorEntity", (), {}),
             BinarySensorDeviceClass=types.SimpleNamespace(OCCUPANCY="occupancy"))
+    _module("homeassistant.components.switch", SwitchEntity=type("SwitchEntity", (), {}))
     _module("homeassistant.helpers.entity", DeviceInfo=dict)
 
     class _RestoreEntity:
@@ -348,6 +350,7 @@ def _install_homeassistant_stubs():
             AbortFlow=_AbortFlow, ConfigEntryState=enum.Enum("ConfigEntryState", "LOADED NOT_LOADED SETUP_ERROR"))
     sys.modules["homeassistant.helpers.event"].async_call_later = lambda *a, **k: None
     _module("homeassistant.const", UnitOfLength=types.SimpleNamespace(METERS="m"),
+            PERCENTAGE="%", EntityCategory=types.SimpleNamespace(DIAGNOSTIC="diagnostic"),
             EVENT_HOMEASSISTANT_STOP="homeassistant_stop",
             EVENT_HOMEASSISTANT_FINAL_WRITE="homeassistant_final_write")
     _module("homeassistant.util", slugify=lambda s: s)
@@ -383,6 +386,9 @@ def make_hass(config_dir=None):
     hass._store_saves = []
     hass._store_delay_saves = []
     hass._store_raise_on_load = set()   # store keys whose async_load should raise
+    hass.states = types.SimpleNamespace(get=lambda entity_id: None)
+    hass.events = []                    # (name, data) of everything fired on the bus
+    hass.bus = types.SimpleNamespace(async_fire=lambda name, data=None: hass.events.append((name, data)))
 
     async def _executor(func, *args):
         # Run inline: the tests are single-threaded and only need the awaitable

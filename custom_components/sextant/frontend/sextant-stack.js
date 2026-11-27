@@ -354,7 +354,7 @@ class SextantStack extends LitElement {
       const focused = focus && t.ent === focus;
       const { age, ghost } = staleness(t, this.staleAfter ?? 120);
       ctx.save();
-      if (focus && !focused) ctx.globalAlpha = 0.3;
+      if (focus && !focused) ctx.globalAlpha = 0.16;
       if (ghost) ctx.globalAlpha *= 0.45;
       const color = thingColor(t.ent, custom);
       // The stem and the shadow on the floor say where on the plan it is;
@@ -377,7 +377,7 @@ class SextantStack extends LitElement {
       ctx.restore();
       const name = thingName(this.data, t.ent);
       // Labels off still names the picked thing: it is the one being looked at.
-      if (opt.labels !== false || focused) labels.push([ghost ? `${name} · ${shortAge(age)} ago` : name, sx, sy - r - 9, focused]);
+      if (focused || (!focus && opt.labels !== false)) labels.push([ghost ? `${name} · ${shortAge(age)} ago` : name, sx, sy - r - 9, focused]);
       this._hits.push({ x: sx, y: sy, r: r + 4, ent: t.ent });
     }
     ctx.font = "600 11px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";

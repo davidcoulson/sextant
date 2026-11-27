@@ -226,7 +226,54 @@ def test_elect_hysteresis_and_dwell():
     assert floor == "b" and ch["since"] == 61.0
     # A wider margin (incumbent tenure bonus) can hold off the same lead.
     floor, ch = sextant._elect_floor({"a": 0.56, "b": 0.44}, "b", {"a", "b"}, None, now=0.0, margin=0.15)
-    assert floor == "b" and ch is None
+    assert floor == "b" and "since" not in ch
+
+
+def test_a_still_thing_in_a_locked_room_keeps_its_floor_against_a_small_lead():
+    # Fry on the catwalk: Ground led by 0.01-0.08 and won the floor every few minutes.
+    small, ch = {"a": 0.44, "b": 0.36}, None
+    for t in (0.0, 240.0, 899.0):
+        floor, ch = sextant._elect_floor(small, "b", {"a", "b"}, ch, now=t, switch_secs=60.0, margin=0.10, held=True)
+        assert floor == "b"
+    # Moving (the lock gone), the lead that has lasted all along wins at once.
+    assert sextant._elect_floor(small, "b", {"a", "b"}, ch, now=300.0, switch_secs=60.0, margin=0.10)[0] == "a"
+    # Held, a lead that lasts 15 min still wins: a room locked on the wrong floor is left in the end.
+    assert sextant._elect_floor(small, "b", {"a", "b"}, ch, now=900.0, switch_secs=60.0, margin=0.10, held=True)[0] == "a"
+    # A small lead that has lasted and then grows past the margin wins at once, as before.
+    assert sextant._elect_floor({"a": 0.6, "b": 0.4}, "b", {"a", "b"}, ch, now=300.0, switch_secs=60.0,
+                                margin=0.10, held=True)[0] == "a"
+    # A lead over the margin still wins while held.
+    big, ch = {"a": 0.6, "b": 0.4}, None
+    for t in (0.0, 60.0):
+        floor, ch = sextant._elect_floor(big, "b", {"a", "b"}, ch, now=t, switch_secs=60.0, margin=0.10, held=True)
+    assert floor == "a"
+
+
+def test_a_small_lead_that_lasts_wins_the_floor():
+    probs, ch, seen = {"a": 0.46, "b": 0.40}, None, []
+    for t in (0.0, 100.0, 239.0, 240.0):
+        floor, ch = sextant._elect_floor(probs, "b", {"a", "b"}, ch, now=t, switch_secs=60.0, margin=0.15)
+        seen.append(floor)
+    assert seen == ["b", "b", "b", "a"]   # 4 x switch_secs of unbroken lead
+    # Any lapse restarts the clock.
+    _, ch = sextant._elect_floor(probs, "b", {"a", "b"}, None, now=0.0, switch_secs=60.0, margin=0.15)
+    _, ch = sextant._elect_floor({"a": 0.4, "b": 0.46}, "b", {"a", "b"}, ch, now=200.0, switch_secs=60.0, margin=0.15)
+    floor, ch = sextant._elect_floor(probs, "b", {"a", "b"}, ch, now=250.0, switch_secs=60.0, margin=0.15)
+    assert floor == "b" and ch["led"] == 250.0
+    # A short switch_secs still waits FLOOR_LASTING_LEAD_MIN_S; the scores must agree.
+    _, ch = sextant._elect_floor(probs, "b", {"a", "b"}, None, now=0.0, switch_secs=0.0, margin=0.15)
+    assert sextant._elect_floor(probs, "b", {"a", "b"}, ch, now=60.0, switch_secs=0.0, margin=0.15)[0] == "b"
+    floor, vetoed = sextant._elect_floor(probs, "b", {"a", "b"}, ch, now=120.0, switch_secs=0.0, margin=0.15,
+                                         scores={"a": 0.5, "b": 0.6})
+    assert floor == "b" and "since" not in vetoed   # a vetoed small lead must not hold the room
+    assert sextant._elect_floor(probs, "b", {"a", "b"}, ch, now=120.0, switch_secs=0.0, margin=0.15)[0] == "a"
+    # Two challengers trading first place: the incumbent has still been behind all along.
+    ch, three = None, {"a", "b", "c"}
+    for t, p in ((0.0, {"a": 0.40, "b": 0.34, "c": 0.26}), (100.0, {"a": 0.33, "b": 0.30, "c": 0.37}),
+                 (239.0, {"a": 0.40, "b": 0.34, "c": 0.26})):
+        floor, ch = sextant._elect_floor(p, "b", three, ch, now=t, switch_secs=60.0, margin=0.15)
+        assert floor == "b"
+    assert sextant._elect_floor({"a": 0.40, "b": 0.34, "c": 0.26}, "b", three, ch, now=240.0, switch_secs=60.0, margin=0.15)[0] == "a"
 
 
 # --------------------------------------------------------------------------- #
@@ -280,6 +327,21 @@ def test_selftest_recovers_with_mount_heights():
     res = sextant.run_selftest(_hass_with(recs, _exact_samples(recs)))
     assert res["counts"]["solved"] == 4          # slant correction round-trips
     assert all(r["error_m"] < 0.5 for r in res["receivers"])
+
+
+def test_selftest_names_the_proxy_drawn_in_the_wrong_place():
+    # Seven proxies really here; the plan has r7 drawn 6 m from where it is.
+    real = [("r1", 0, 0), ("r2", 10 * SCALE, 0), ("r3", 0, 10 * SCALE), ("r4", 10 * SCALE, 10 * SCALE),
+            ("r5", 5 * SCALE, 0), ("r6", 0, 5 * SCALE), ("r7", 5 * SCALE, 5 * SCALE)]
+    drawn = real[:6] + [("r7", 5 * SCALE, 11 * SCALE)]
+    res = sextant.run_selftest(_hass_with(drawn, _exact_samples(real)))
+    flagged = [r for r in res["receivers"] if r.get("misplaced")]
+    assert [r["entity"] for r in flagged] == ["r7"]
+    r7 = flagged[0]
+    assert math.hypot(r7["est"][0] - 5 * SCALE, r7["est"][1] - 5 * SCALE) / SCALE < 1.0
+    assert r7["fit_m"] < r7["placed_fit_m"]
+    # Placed right, nothing is flagged.
+    assert not any(r.get("misplaced") for r in sextant.run_selftest(_hass_with(real, _exact_samples(real)))["receivers"])
 
 
 def test_selftest_unsolved_when_too_few_neighbors():
@@ -908,6 +970,13 @@ def test_median_distance_matches_bermudas_path_loss_model():
     assert abs(dist_off - 10 ** ((-55 + 63) / 30)) < 1e-9
 
 
+def test_median_distance_ignores_androids_127_no_rssi():
+    hist = [[127, 100.0], [-65, 99.5], [127, 99.0], [-65, 98.5], [-65, 98.0]]
+    dist, _q = sextant._median_distance(_reading(hist), 15.0, 3)
+    assert abs(dist - 10 ** (10 / 30)) < 1e-9
+    assert sextant._median_distance(_reading([[127, 100.0], [127, 99.0], [-65, 98.0]]), 15.0, 2) is None
+
+
 def test_median_distance_respects_window_and_minimum():
     # age 1 s; samples at 100, 99 are fresh, 80 is 21 s old.
     hist = [[-60, 100.0], [-62, 99.0], [-99, 80.0]]
@@ -1276,6 +1345,38 @@ def test_proximity_weighting_favours_the_floor_with_the_nearest_receiver():
     # A floor with no usable distance is not penalised, only the others are ranked.
     out = sextant._proximity_weighted_scores(scores, {"Ground": 2.0, "Second": None}, 0.5)
     assert out == scores
+
+
+def test_a_floor_heard_only_by_non_voting_proxies_is_scored_on_their_ranges():
+    """David's phone at 04:43, on his bedside table: the master bedroom proxy
+    and three basement ceiling Lumarys (floor_vote off) hearing it through two
+    slabs at 3.3-3.6 m. With no voting basement proxy the basement's near_k_m
+    was inf, so it got full proximity credit and its fit (0.53) beat the
+    bedroom's (0.48). Now the non-voters' slants stand in."""
+    floor = {"name": "Basement", "scale": SCALE, "receivers": [
+        {"entity_id": f"l{i}", "cords": {"x": i * 100.0, "y": 0.0, "r": d * SCALE}, "distance": d, "floor_vote": False}
+        for i, d in enumerate([3.3, 3.4, 3.6])]}
+    (cand,) = sextant.extract_candidate_floors([{"entity": "e", "data": {"floor": [floor], "tuning": {}}}], "e")
+    assert cand["near_k_m"] == cand["nearest_m"] == float("inf")
+    assert abs(cand["near_k_any_m"] - 3.4333) < 1e-3
+    scores = {"Second Floor": 0.4844, "Ground Floor": 0.6024, "Basement": 0.5333}
+    nearest = {"Second Floor": 1.64, "Ground Floor": 2.98, "Basement": cand["near_k_m"]}
+    stand_in = {"Second Floor": 1.64, "Ground Floor": 2.98, "Basement": cand["near_k_any_m"]}
+    for blend in ("geometric", "gated"):
+        out = sextant._proximity_weighted_scores(scores, nearest, 0.5, blend, stand_in)
+        assert max(out, key=out.get) == "Second Floor", blend
+    # A thing really in the basement, heard only by its ceiling lights nearby,
+    # still wins against a floor whose proxies are further away ...
+    out = sextant._proximity_weighted_scores({"Ground": 0.4, "Basement": 0.5}, {"Ground": 3.0, "Basement": math.inf},
+                                             0.5, "geometric", {"Basement": 1.2})
+    assert out["Basement"] > out["Ground"]
+    # ... but a through-slab 1 m stand-in never marks down the floor it is under.
+    out = sextant._proximity_weighted_scores({"Bedroom": 0.6, "Basement": 0.55}, {"Bedroom": 2.0, "Basement": math.inf},
+                                             0.5, "gated", {"Basement": 1.0})
+    assert out == {"Bedroom": 0.6, "Basement": 0.55}
+    # No voting distance anywhere: stand-ins never become the baseline.
+    sc = {"A": 0.5, "B": 0.6}
+    assert sextant._proximity_weighted_scores(sc, {"A": math.inf, "B": math.inf}, 0.5, "gated", {"A": 1.0, "B": 4.0}) == sc
 
 
 def test_geometric_blend_lets_the_nearest_proxies_outweigh_a_poor_fit():
@@ -1696,6 +1797,30 @@ def test_candidates_carry_the_mean_of_the_k_nearest_slants():
     assert abs(cand["near_k_m"] - 4.0) < 1e-9             # more than the floor has: all of them
 
 
+def test_a_receiver_within_floor_proximity_near_m_is_the_floors_proximity_alone():
+    # A phone 0.4 m from a bedside proxy, the room's others 3 m off: the mean of
+    # three read 2.4 m, the same as three ceiling relays on the floor below.
+    def cands(up, down, tuning=None):
+        lay = {"floor": [{"name": name, "scale": 100.0, "zones": [], "subzones": [], "receivers": [
+            {"entity_id": f"{name}{i}", "cords": {"x": i * 100.0, "y": 0.0, "r": d * 100.0}, "distance": d}
+            for i, d in enumerate(dists)
+        ]} for name, dists in (("Up", up), ("Down", down))]}
+        if tuning:
+            lay["tuning"] = tuning
+        return {c["name"]: c for c in sextant.extract_candidate_floors([{"entity": "e", "data": lay}], "e")}
+    c = cands((0.4, 3.1, 3.7), (1.8, 2.2, 3.4))
+    assert c["Up"]["near_k_m"] == 0.4
+    # The stand-in for a floor heard only by position-only proxies keeps the mean:
+    # one through-slab reading under 1 m must not give that floor full credit.
+    assert abs(c["Up"]["near_k_any_m"] - 2.4) < 1e-9
+    assert abs(c["Down"]["near_k_m"] - 7.4 / 3) < 1e-9 and "_first" not in c["Up"]
+    assert abs(cands((1.2, 3.1, 3.7), (3.0, 3.0, 3.4))["Up"]["near_k_m"] - 8.0 / 3) < 1e-9   # not that near: the mean
+    # A light below reading nearly as short through the slab: nobody speaks alone.
+    c = cands((0.4, 3.1, 3.7), (0.7, 2.2, 3.4))
+    assert abs(c["Up"]["near_k_m"] - 2.4) < 1e-9 and abs(c["Down"]["near_k_m"] - 2.1) < 1e-9
+    assert abs(cands((0.4, 3.1, 3.7), (1.8, 2.2, 3.4), {"floor_proximity_near_m": 0})["Up"]["near_k_m"] - 2.4) < 1e-9   # 0 = off
+
+
 def test_floor_bias_reads_the_layout_and_ignores_junk():
     layout = {"floor": [{"name": "Ground", "bias": 1.2}, {"name": "Up", "bias": "hot"}, {"name": "Down", "bias": 0}, {"name": "Attic"}]}
     assert sextant._floor_bias(layout, "Ground") == 1.2
@@ -1739,6 +1864,41 @@ def test_anchor_snaps_a_thing_sitting_on_one_proxy_and_releases_with_hysteresis(
     assert sextant._elect_anchor("w", "F", rx(2.0), layout, now=t + 50)["slug"] == "bedside"
     assert sextant._elect_anchor("w", "F", rx(2.0), layout, now=t + 71) is None
     assert "w" not in sextant._anchor_state
+
+
+def test_anchor_lets_go_when_another_proxy_reads_closer():
+    # The purse case: anchored to a tablet that reads it at 1.0 m, under the
+    # release distance, while the kitchen proxy reads it closer still.
+    layout = {"floor": [{"name": "F", "scale": 100.0, "zones": [], "subzones": [], "receivers": []}], "tuning": {"anchor_secs": 20}}
+    def rx(tablet, kitchen):
+        return [
+            {"entity_id": "tablet", "cords": {"x": 0.0, "y": 0.0}, "distance": tablet},
+            {"entity_id": "kitchen", "cords": {"x": 200.0, "y": 0.0}, "distance": kitchen},
+        ]
+    sextant._anchor_state.pop("w", None)
+    sextant._elect_anchor("w", "F", rx(0.5, 1.5), layout, now=0.0)
+    assert sextant._elect_anchor("w", "F", rx(0.6, 1.5), layout, now=21.0)["slug"] == "tablet"
+    assert sextant._elect_anchor("w", "F", rx(0.60, 0.59), layout, now=25.0)["slug"] == "tablet"  # a near-tie is not beaten
+    assert sextant._anchor_state["w"]["away_since"] is None
+    assert sextant._elect_anchor("w", "F", rx(1.0, 0.9), layout, now=30.0)["slug"] == "tablet"   # beaten, held for the dwell
+    assert sextant._elect_anchor("w", "F", rx(1.0, 1.2), layout, now=35.0)["slug"] == "tablet"   # nearest again: away clock resets
+    assert sextant._elect_anchor("w", "F", rx(1.0, 0.9), layout, now=40.0)["slug"] == "tablet"
+    assert sextant._elect_anchor("w", "F", rx(1.0, 0.9), layout, now=61.0) is None
+    assert "w" not in sextant._anchor_state
+    # The live purse readings: beaten, then jittering near equal (the tablet
+    # even leading by a hair). The near-ties keep the release clock running.
+    sextant._elect_anchor("w", "F", rx(0.5, 1.5), layout, now=100.0)
+    assert sextant._elect_anchor("w", "F", rx(0.5, 1.5), layout, now=121.0)["slug"] == "tablet"
+    for t, (tab, kit) in zip((130, 136, 141, 147), ((1.04, 0.93), (1.03, 1.0), (1.03, 1.11), (1.02, 0.93))):
+        assert sextant._elect_anchor("w", "F", rx(tab, kit), layout, now=float(t))["slug"] == "tablet"
+    assert sextant._elect_anchor("w", "F", rx(1.02, 0.95), layout, now=151.0) is None
+    # A clock the release distance started does not survive a tie once the
+    # reading is back under it.
+    sextant._elect_anchor("w", "F", rx(0.5, 1.5), layout, now=200.0)
+    assert sextant._elect_anchor("w", "F", rx(0.5, 1.5), layout, now=221.0)["slug"] == "tablet"
+    assert sextant._elect_anchor("w", "F", rx(1.60, 1.65), layout, now=225.0)["slug"] == "tablet"  # far: clock starts
+    assert sextant._elect_anchor("w", "F", rx(1.00, 1.04), layout, now=230.0)["slug"] == "tablet"  # back, tied: clock stops
+    assert sextant._elect_anchor("w", "F", rx(1.00, 1.04), layout, now=250.0)["slug"] == "tablet"
 
 
 def test_anchor_needs_a_clear_nearest_and_can_be_disabled():
@@ -2425,8 +2585,11 @@ def test_outside_needs_distance_and_time(monkeypatch):
     s._outside_state.clear()
     assert s._outside_election("a", 5.0, 2.0, 45.0, 0.0) is False
     assert s._outside_election("a", 5.0, 2.0, 45.0, 46.0) is True
+    assert s._outside_state["a"]["outside_at"] == 0.0                   # the spell began when it first read far
     assert s._outside_election("a", 0.5, 2.0, 45.0, 50.0) is True      # back inside, not yet for long
+    assert s._outside_state["a"]["outside_at"] == 0.0
     assert s._outside_election("a", 0.5, 2.0, 45.0, 100.0) is False
+    assert s._outside_state["a"]["outside_at"] is None
     assert s._outside_election("a", 5.0, 0.0, 45.0, 200.0) is False    # margin 0 = off
 
 
@@ -2460,3 +2623,392 @@ def test_a_faint_dog_reads_outside_with_its_fix_in_a_room_and_comes_back_near_a_
     assert s._outside_election("dog", None, 0.0, 45.0, 600.0, "out") is False
     assert s._outside_election("dog", None, 0.0, 45.0, 646.0, "out") is True
     assert s._outside_election("cat", None, 0.0, 45.0, 700.0, None) is False
+
+
+def test_a_habit_tips_a_close_room_switch_but_a_clear_one_needs_nothing():
+    from sextant import habits
+    base = 1_800_000_000.0
+    layout = {"tuning": {"zone_lock_warmup_secs": 0.0, "zone_prob_smoothing": 0.0, "stationary_secs": 600.0,
+                         "zone_switch_margin": 0.6, "zone_switch_secs": 5.0, "habit_margin_gain": 0.3}}
+
+    def run(entity, x_end):
+        sextant._zone_state.clear()
+        zone = None
+        for i in range(30):
+            x = 50.0 if i < 5 else x_end
+            instant = "Kitchen" if x < 100 else "Dining"
+            zone = sextant._elect_zone(entity, "F", instant, Point(x, 50.0), _kf(x, 50.0, sigma_px=10.0), _two_rooms(), 100.0,
+                                       layout, now=base + i * 2.0)[0]
+        return zone
+
+    sextant._habits.clear()
+    assert run("p", 103.0) == "Kitchen"                      # a close call, no routine: the incumbent holds
+    for i in range(80):                                      # this hour is usually spent in the Dining room
+        habits.learn(sextant._habits, "p", sextant._habit_zone("F", "Dining"), base + 30 * (i + 1), base + 30 * i, sextant._local_tz)
+    assert run("p", 103.0) == "Dining"
+    sextant._habits.clear()
+    for i in range(80):
+        habits.learn(sextant._habits, "p", sextant._habit_zone("F", "Kitchen"), base + 30 * (i + 1), base + 30 * i, sextant._local_tz)
+    assert run("p", 140.0) == "Dining"                       # clear evidence beats the routine
+    sextant._habits.clear()
+
+
+def test_a_habit_never_makes_a_unanimous_challenger_unable_to_win():
+    from sextant import habits
+    base = 1_800_000_000.0
+    layout = {"tuning": {"zone_lock_warmup_secs": 0.0, "zone_prob_smoothing": 0.0, "stationary_secs": 600.0,
+                         "zone_switch_margin": 0.8, "zone_switch_secs": 5.0, "habit_margin_gain": 0.3}}
+    sextant._zone_state.clear(); sextant._habits.clear()
+    for i in range(80):
+        habits.learn(sextant._habits, "p", sextant._habit_zone("F", "Kitchen"), base + 30 * (i + 1), base + 30 * i, sextant._local_tz)
+    zone = None
+    for i in range(30):
+        x = 50.0 if i < 5 else 300.0
+        zone = sextant._elect_zone("p", "F", "Kitchen" if x < 100 else "Dining", Point(x, 50.0), _kf(x, 50.0, sigma_px=5.0),
+                                   _two_rooms(), 100.0, layout, now=base + i * 2.0)[0]
+    sextant._habits.clear()
+    assert zone == "Dining"
+
+
+def test_a_stale_smoothed_lead_does_not_win_the_floor_when_this_cycles_scores_disagree():
+    # One cycle scored the incumbent 0, so the smoothed odds still favour the challenger after the scores recover.
+    probs = {"a": 0.64, "b": 0.36}
+    _, ch = sextant._elect_floor(probs, "b", {"a", "b"}, None, now=0.0, switch_secs=15.0, margin=0.15, scores={"a": 0.8, "b": 0.0})
+    assert ch is not None
+    floor, ch = sextant._elect_floor(probs, "b", {"a", "b"}, ch, now=16.0, switch_secs=15.0, margin=0.15, scores={"a": 0.61, "b": 0.75})
+    assert floor == "b" and ch is not None            # dwell is over but this cycle disagrees: held, challenge kept
+    floor, ch = sextant._elect_floor(probs, "b", {"a", "b"}, ch, now=21.0, switch_secs=15.0, margin=0.15, scores={"a": 0.9, "b": 0.1})
+    assert floor == "a"                                # a cycle that agrees completes the switch: a real move is not blocked
+
+
+def test_an_anchor_moves_the_room_at_once_even_through_a_lock():
+    """On a proxy, the room is that proxy's room: no smoothing lag, dwell or lock."""
+    sextant._zone_state.clear()
+    layout = {"tuning": {"zone_lock_warmup_secs": 0.0}}
+
+    def elect(x, t, anchored=False, hold=False, tuning=None, filtered=None):
+        # filtered: where the lagging filter still puts it; the proxy itself is at x.
+        fx = x if filtered is None else filtered
+        instant = "Kitchen" if fx < 100 else "Hall" if fx < 400 else "Office"
+        lay = {"tuning": {**layout["tuning"], **(tuning or {})}}
+        kf = None if anchored else _kf(fx, 50.0, sigma_px=5.0)
+        return sextant._elect_zone("e", "F", instant, Point(fx, 50.0), kf, _three_rooms(), 100.0, lay,
+                                   now=t, hold=hold, anchor_point=Point(x, 50.0) if anchored else None)
+
+    for t in range(0, 60, 5):
+        elect(50, float(t))
+    assert elect(50, 60.0)[:2] == ("Kitchen", True)          # still on the counter: locked
+    assert elect(450, 61.0, anchored=True, hold=True)[0] == "Kitchen"   # floor challenge still holds it
+    assert elect(450, 62.0, anchored=True, tuning={"zone_anchor_inset_m": 0.0})[0] == "Kitchen"  # off: the lock holds
+    assert elect(405, 62.5, anchored=True)[0] == "Kitchen"              # a proxy on the wall: no say
+    assert elect(450, 63.0, anchored=True, filtered=50)[:2] == ("Office", False)  # the proxy's room, though the filter lags in the Kitchen
+    assert elect(450, 64.0)[0] == "Office"                              # anchor gone: the shares carry it
+
+
+def test_a_position_only_proxy_does_not_vote_for_its_floor():
+    """floor_vote: false keeps the proxy in its floor's fix but out of proximity and fit score."""
+    floor = {"name": "Basement", "scale": SCALE, "receivers": []}
+    for i, d in enumerate([0.8, 3.0, 4.0, 5.0]):
+        floor["receivers"].append({"entity_id": f"r{i}", "cords": {"x": i * 100.0, "y": 0.0, "r": d * SCALE},
+                                   "distance": d, **({"floor_vote": False} if i == 0 else {})})
+    layout = {"floor": [floor], "tuning": {"floor_proximity_k": 1}}
+    (cand,) = sextant.extract_candidate_floors([{"entity": "e", "data": layout}], "e")
+    assert len(cand["cords"]) == 4                       # still in the x/y solve
+    assert cand["near_k_m"] == 3.0                       # proximity skips the 0.8 m ceiling light
+    assert cand["no_vote"] == {"r0"} and cand["nearest_m"] == 3.0
+    weighted = [(p[0], p[1], p[2], 1.0, p[3]) for p in cand["cords"]]
+    job = {"weighted": weighted, "bounds": None, "min_wr": 1e-3, "stable_hint": None, "scale": SCALE,
+           "zone_polys": [], "fingerprint": None, "no_vote": cand["no_vote"], "heard": cand["heard"]}
+    voted = sextant._solve_floor_jobs([job])[0]
+    everyone = sextant._solve_floor_jobs([{**job, "no_vote": set()}])[0]
+    assert voted[0] == everyone[0]                       # same fix
+    assert voted[1] < everyone[1]                        # less corroboration for the floor
+    assert voted[2] == everyone[2]                       # rms_m is still the whole solve's
+
+
+def test_cross_floor_shadow_borrows_the_floor_below():
+    """A basement ceiling light becomes a point on the ground floor's plan, its slant shortened by the storey."""
+    frame = {"ok": True, "theta": 0.0, "tx": 0.0, "ty": 0.0, "scale": SCALE}
+    frames = {"Ground": {**frame, "elevation": 0.0}, "Basement": {**frame, "tx": 1.0, "elevation": -3.0}}
+    layout = {"floor": [
+        {"name": "Ground", "receivers": []},
+        {"name": "Basement", "receivers": [{"entity_id": "light", "cords": {"x": 200.0, "y": 0.0}, "height": 2.4},
+                                           {"entity_id": "far", "cords": {"x": 0.0, "y": 0.0}}]},
+    ]}
+    cands = [{"name": "Ground", "heard": [("g", 2.0)]}, {"name": "Basement", "heard": [("light", 2.0), ("far", 9.0)]}]
+    borrowed = sextant._cross_floor_points(layout, frames, cands[:1], cands, 0.4)
+    assert list(borrowed) == ["Ground"]                  # the basement donates without being solved
+    assert sextant._cross_floor_points(layout, frames, [{"name": "Ground", "heard": [("light", 1.0)]}], cands, 0.4) == {}  # placed on both: once
+    points, heard = borrowed["Ground"]                   # "far" is past CROSS_FLOOR_MAX_M
+    (x, y, r, w, slant), = points
+    assert (round(x), round(y)) == (200 + SCALE, 0)      # 1 m east: the basement plan's offset
+    assert math.isclose(r, math.sqrt(2.0 ** 2 - 1.0 ** 2) * SCALE)   # dz = -3 + 2.4 - 0.4 = -1 m
+    assert w == sextant.CROSS_FLOOR_WEIGHT and slant == 2.0 * SCALE and heard == [["light", 1.73]]
+    own = [(0.0, 0.0, 3.0 * SCALE, 1.0, 3.0 * SCALE), (600.0, 0.0, 3.0 * SCALE, 1.0, 3.0 * SCALE),
+           (300.0, 400.0, 4.0 * SCALE, 1.0, 4.0 * SCALE)]
+    job = {"floor": "Ground", "weighted": own, "bounds": None, "min_wr": 1e-3, "stable_hint": None, "scale": SCALE}
+    shadow = sextant._solve_cross_floor([job], [((1.0, 2.0), 1, 1, None)], borrowed)["Ground"]
+    assert shadow["own"] == [1.0, 2.0]                   # no fingerprint: the floor's own fix is the partner
+    fused = sextant._solve_cross_floor([job], [((1.0, 2.0), 1, 1, {"geo": [5.0, 6.0]})], borrowed)["Ground"]
+    assert fused["own"] == [5.0, 6.0]                    # fused floor: the geometric end of the blend
+    assert sextant._solve_cross_floor([job], [((1.0, 2.0), 1, 1, {"geo": None})], borrowed) == {}   # fingerprint-only fix
+    assert shadow["n"] == len(heard) and len(shadow["fix"]) == 2 and shadow["rms_m"] >= 0 and shadow["own_rms_m"] >= 0
+    assert sextant._solve_cross_floor([job], [None], borrowed) == {}   # an unsolved floor gets no shadow
+
+
+def test_a_room_with_its_door_shut_is_never_entered_but_its_occupant_stays():
+    """01:04: Socks read through the wall into Eilee's Room, whose door had been
+    shut since 22:22. A closed room holds what is in it and takes nothing new."""
+    sextant._zone_state.clear()
+    layout = {"tuning": {"zone_lock_warmup_secs": 0.0, "zone_prob_smoothing": 0.0}}
+
+    def elect(entity, x, t, closed):
+        instant = "Kitchen" if x < 100 else "Hall"
+        return sextant._elect_zone(entity, "F", instant, Point(x, 50.0), _kf(x, 50.0, sigma_px=5.0), _three_rooms(), 100.0,
+                                   layout, now=t, closed=closed)[0]
+
+    assert elect("cat", 50, 0.0, set()) == "Kitchen"
+    for t in (1.0, 30.0, 600.0):
+        assert elect("cat", 250, t, {"Hall"}) == "Kitchen"
+    assert elect("cat", 250, 601.0, set()) == "Kitchen"  # the door opens: a fresh dwell starts
+    assert elect("cat", 250, 622.0, set()) == "Hall"
+    assert elect("eilee", 250, 0.0, {"Hall"}) == "Hall"  # no incumbent to keep: the first pick stands
+    assert elect("eilee", 250, 100.0, {"Hall"}) == "Hall"
+
+
+def test_closed_rooms_wait_out_the_entry_grace():
+    """22:09: the door closed and Socks was placed inside 61 s later, for real.
+    Only a door shut past door_entry_grace_secs (180 s) closes its room."""
+    from datetime import datetime, timezone
+    from types import SimpleNamespace as NS
+    shut = datetime.fromtimestamp(1000.0, timezone.utc)
+    states = {"binary_sensor.eilee_door": NS(state="off", last_changed=shut),
+              "binary_sensor.office_door": NS(state="on", last_changed=shut),
+              "binary_sensor.gone": NS(state="unavailable", last_changed=shut)}
+    hass = NS(states=NS(get=states.get))
+    polys = sextant._FloorZones(_three_rooms())
+    polys.doors = {"Hall": "binary_sensor.eilee_door", "Office": "binary_sensor.office_door", "Kitchen": "binary_sensor.gone"}
+    def at(state, changed, now):
+        states["binary_sensor.eilee_door"] = NS(state=state, last_changed=datetime.fromtimestamp(changed, timezone.utc))
+        return "Hall" in sextant._closed_rooms(hass, polys, {}, now)
+    sextant._door_seen.clear()
+    assert at("off", 1000.0, 1061.0)                      # closed when Sextant starts: closed at once
+    sextant._door_seen.clear()
+    assert not at("on", 900.0, 990.0)
+    assert not at("off", 1000.0, 1061.0)                  # seen open, then shut: the grace runs
+    assert not at("off", 1000.0, 1179.0)
+    assert at("off", 1000.0, 1180.0)
+    assert not at("off", 2000.0, 2010.0)                  # opened and shut between cycles: a real close
+    assert at("unavailable", 2100.0, 2100.0) is False
+    assert at("off", 2110.0, 2111.0)                      # back from unavailable: closed at once
+    sextant._door_seen.clear()
+    assert not at("open", 3000.0, 3001.0)
+    assert not at("closing", 3002.0, 3003.0)
+    assert not at("closed", 3010.0, 3011.0)               # a cover seen closing: a real close
+    sextant._door_seen.clear()
+    assert sextant._closed_rooms(hass, _three_rooms(), {}, 99999.0) == set()   # no doors known
+
+
+def test_an_open_room_challenges_when_a_shut_one_has_more_evidence(monkeypatch):
+    """Codex review: 55% in a shut room, 45% in an open one, 0% where the thing was."""
+    sextant._zone_state.clear()
+    layout = {"tuning": {"zone_lock_warmup_secs": 0.0, "zone_prob_smoothing": 0.0}}
+    sextant._elect_zone("c", "F", "Kitchen", Point(50, 50), None, _three_rooms(), 100.0, layout, now=0.0)
+    monkeypatch.setattr(sextant, "_zone_membership", lambda polys, samples: {"Office": 0.55, "Hall": 0.45})
+    got = [sextant._elect_zone("c", "F", "Office", Point(450, 50), None, _three_rooms(), 100.0, layout, now=t,
+                               closed={"Office"})[0] for t in (1.0, 200.0)]
+    assert got == ["Kitchen", "Hall"]
+
+
+def test_after_a_floor_change_a_shut_room_is_not_the_first_pick(monkeypatch):
+    sextant._zone_state.clear()
+    layout = {"tuning": {"zone_lock_warmup_secs": 0.0, "zone_prob_smoothing": 0.0}}
+    sextant._elect_zone("c", "G", "Kitchen", Point(50, 50), None, _three_rooms(), 100.0, layout, now=0.0)
+    monkeypatch.setattr(sextant, "_zone_membership", lambda polys, samples: {"Office": 0.7, "Hall": 0.3})
+    assert sextant._elect_zone("c", "F", "Office", Point(450, 50), None, _three_rooms(), 100.0, layout, now=5.0,
+                               closed={"Office"})[0] == "Hall"
+
+
+def test_the_caller_says_when_the_floor_changed(monkeypatch):
+    """Codex review: the live path drops the old floor's state before electing, so it passes new_floor."""
+    sextant._zone_state.clear()
+    layout = {"tuning": {"zone_lock_warmup_secs": 0.0, "zone_prob_smoothing": 0.0}}
+    monkeypatch.setattr(sextant, "_zone_membership", lambda polys, samples: {"Office": 0.7, "Hall": 0.3})
+    elect = lambda e, **kw: sextant._elect_zone(e, "F", "Office", Point(450, 50), None, _three_rooms(), 100.0, layout,
+                                                now=5.0, closed={"Office"}, **kw)[0]
+    assert elect("stairs", new_floor=True) == "Hall"
+    assert elect("restart") == "Office"
+
+
+def test_after_a_floor_change_only_shut_rooms_leave_the_room_unknown(monkeypatch):
+    sextant._zone_state.clear()
+    layout = {"tuning": {"zone_lock_warmup_secs": 0.0, "zone_prob_smoothing": 0.0}}
+    shares = {"Office": 1.0}
+    monkeypatch.setattr(sextant, "_zone_membership", lambda polys, samples: dict(shares))
+    elect = lambda t, **kw: sextant._elect_zone("c", "F", "Office", Point(450, 50), None, _three_rooms(), 100.0, layout,
+                                                now=t, closed={"Office"}, **kw)[0]
+    assert elect(0.0, new_floor=True) == "unknown"
+    assert elect(5.0) == "unknown"          # still filtered on the next cycle
+    shares.update(Office=0.6, Hall=0.4)
+    assert elect(10.0) == "Hall"
+
+
+def test_the_floor_arrival_guard_outlives_a_cycle_without_evidence(monkeypatch):
+    sextant._zone_state.clear()
+    layout = {"tuning": {"zone_lock_warmup_secs": 0.0, "zone_prob_smoothing": 0.0}}
+    shares = {}
+    monkeypatch.setattr(sextant, "_zone_membership", lambda polys, samples: dict(shares))
+    elect = lambda t, **kw: sextant._elect_zone("c", "F", "unknown", Point(450, 50), None, _three_rooms(), 100.0, layout,
+                                                now=t, closed={"Office"}, **kw)[0]
+    assert elect(0.0, new_floor=True) == "unknown"
+    shares.update(Office=1.0)
+    assert elect(5.0) == "unknown"
+
+
+def _shut_room_walk(monkeypatch, plan, layout=None):
+    """Elect a thing through ``plan``: (time, membership, closed rooms) per cycle; returns the rooms."""
+    sextant._zone_state.clear()
+    sextant._shut_in.clear()
+    layout = layout or {"tuning": {"zone_lock_warmup_secs": 0.0, "zone_prob_smoothing": 0.0, "stationary_secs": 99999.0}}
+    out = []
+    for t, shares, closed in plan:
+        monkeypatch.setattr(sextant, "_zone_membership", lambda polys, samples, s=shares: dict(s))
+        out.append(sextant._elect_zone("meg", "F", None, Point(250, 50), None, _three_rooms(), 100.0, layout,
+                                       now=t, closed=closed)[0])
+    return out
+
+
+def test_a_thing_shut_in_holds_through_a_blip_and_comes_back(monkeypatch):
+    """Meg, 23:07: Eilee's Room shut with him inside, two minutes read on the Catwalk,
+    then half an hour back in the room, all published as the Catwalk."""
+    hall, office = {"Hall": 1.0}, {"Office": 1.0}
+    got = _shut_room_walk(monkeypatch, [(0.0, hall, set()), (10.0, hall, {"Hall"}),
+                                        (20.0, office, {"Hall"}), (150.0, office, {"Hall"}),
+                                        (160.0, hall, {"Hall"}), (300.0, office, {"Hall"}), (600.0, office, {"Hall"})])
+    assert got == ["Hall"] * 7   # a lead of under door_leave_secs moves nothing, and a restart of it starts the clock again
+
+
+def test_a_thing_shut_in_leaves_on_a_long_clear_lead_and_may_come_back(monkeypatch):
+    hall, office = {"Hall": 1.0}, {"Office": 1.0}
+    got = _shut_room_walk(monkeypatch, [(0.0, hall, {"Hall"}), (10.0, office, {"Hall"}), (609.0, office, {"Hall"}),
+                                        (610.0, office, {"Hall"}), (700.0, hall, {"Hall"}), (800.0, hall, {"Hall"})])
+    assert got == ["Hall", "Hall", "Hall", "Office", "Office", "Hall"]
+
+
+def test_a_thing_outside_stays_out_and_the_door_opening_forgets_who_was_in(monkeypatch):
+    hall, office = {"Hall": 1.0}, {"Office": 1.0}
+    assert _shut_room_walk(monkeypatch, [(0.0, office, set()), (10.0, hall, {"Hall"}), (900.0, hall, {"Hall"})]) == ["Office"] * 3
+    got = _shut_room_walk(monkeypatch, [(0.0, hall, {"Hall"}), (10.0, hall, set()), (20.0, office, set()),
+                                        (60.0, office, set()), (70.0, hall, {"Hall"})])
+    assert got == ["Hall", "Hall", "Hall", "Office", "Office"]   # let out while open: kept out once shut
+    assert "meg" not in sextant._shut_in
+
+
+def test_being_shut_in_outlives_a_floor_blip(monkeypatch):
+    hall, office = {"Hall": 1.0}, {"Office": 1.0}
+    _shut_room_walk(monkeypatch, [(0.0, hall, set()), (10.0, hall, {"Hall"})])
+    sextant._zone_state.pop("meg")   # the caller drops the election on a floor change
+    monkeypatch.setattr(sextant, "_zone_membership", lambda polys, samples: {"Office": 0.7, "Hall": 0.3})
+    got = sextant._elect_zone("meg", "F", None, Point(250, 50), None, _three_rooms(), 100.0,
+                              {"tuning": {"zone_lock_warmup_secs": 0.0, "zone_prob_smoothing": 0.0}},
+                              now=50.0, closed={"Hall"}, new_floor=True)[0]
+    assert got == "Hall"
+
+
+def test_being_shut_in_starts_when_the_door_shuts_not_after_the_entry_grace(monkeypatch):
+    """Codex review: a blip in the 3 minutes before the room counts as closed must not let a thing out."""
+    sextant._zone_state.clear()
+    sextant._shut_in.clear()
+    layout = {"tuning": {"zone_lock_warmup_secs": 0.0, "zone_prob_smoothing": 0.0, "stationary_secs": 99999.0}}
+    got = []
+    for t, shares, closed in [(0.0, {"Hall": 1.0}, set()), (10.0, {"Office": 1.0}, set()), (100.0, {"Office": 1.0}, set()),
+                              (190.0, {"Hall": 1.0}, {"Hall"})]:
+        monkeypatch.setattr(sextant, "_zone_membership", lambda polys, samples, s=shares: dict(s))
+        got.append(sextant._elect_zone("meg", "F", None, Point(250, 50), None, _three_rooms(), 100.0, layout,
+                                       now=t, closed=closed, doors_shut={"Hall"} if t else set())[0])
+    assert got == ["Hall"] * 4
+
+
+def test_a_room_shut_unseen_lets_a_thing_in_on_a_long_clear_lead(monkeypatch):
+    """After a restart the door was already shut: if the first pick put Meg outside, ten
+    minutes of clear readings put him back in. A shutting seen live keeps him out."""
+    layout = {"tuning": {"zone_lock_warmup_secs": 0.0, "zone_prob_smoothing": 0.0, "stationary_secs": 99999.0}}
+    for seen, want in ((False, ["Office", "Office", "Office", "Hall"]), (True, ["Office"] * 4)):
+        sextant._zone_state.clear()
+        sextant._shut_in.clear()
+        got = []
+        for t, shares in [(0.0, {"Office": 1.0}), (10.0, {"Hall": 1.0}), (609.0, {"Hall": 1.0}), (610.0, {"Hall": 1.0})]:
+            monkeypatch.setattr(sextant, "_zone_membership", lambda polys, samples, s=shares: dict(s))
+            got.append(sextant._elect_zone("meg", "F", None, Point(250, 50), None, _three_rooms(), 100.0, layout,
+                                           now=t, closed={"Hall"}, doors_shut={"Hall": seen})[0])
+        assert got == want, seen
+    assert sextant._shut_in.get("meg") is None
+
+
+def test_doors_shut_says_whether_the_shutting_was_seen():
+    from datetime import datetime, timezone
+    from types import SimpleNamespace as NS
+    at = datetime.fromtimestamp(1000.0, timezone.utc)
+    states = {"binary_sensor.a": NS(state="off", last_changed=at), "binary_sensor.b": NS(state="on", last_changed=at)}
+    hass = NS(states=NS(get=states.get))
+    polys = sextant._FloorZones(_three_rooms())
+    polys.doors = {"Hall": "binary_sensor.a", "Office": "binary_sensor.b"}
+    sextant._door_seen.clear()
+    sextant._closed_rooms(hass, polys, {}, 1001.0)
+    assert sextant._doors_shut(hass, polys) == {"Hall": False}   # closed at start: unseen
+    states["binary_sensor.a"] = NS(state="on", last_changed=datetime.fromtimestamp(1100.0, timezone.utc))
+    sextant._closed_rooms(hass, polys, {}, 1101.0)
+    states["binary_sensor.a"] = NS(state="off", last_changed=datetime.fromtimestamp(1200.0, timezone.utc))
+    sextant._closed_rooms(hass, polys, {}, 1201.0)
+    assert sextant._doors_shut(hass, polys) == {"Hall": True}
+    sextant._door_seen.clear()
+
+
+def test_arriving_on_a_floor_into_a_room_shut_unseen_waits_out_the_long_lead(monkeypatch):
+    """Codex review: only an unseen-shut room has evidence after a floor change."""
+    sextant._zone_state.clear()
+    sextant._shut_in.clear()
+    layout = {"tuning": {"zone_lock_warmup_secs": 0.0, "zone_prob_smoothing": 0.0}}
+    monkeypatch.setattr(sextant, "_zone_membership", lambda polys, samples: {"Hall": 1.0})
+    got = [sextant._elect_zone("meg", "F", None, Point(250, 50), None, _three_rooms(), 100.0, layout, now=t,
+                               closed={"Hall"}, doors_shut={"Hall": seen}, new_floor=(t == 0.0))[0]
+           for t, seen in ((0.0, False), (300.0, False), (600.0, False), (601.0, True))]
+    assert got == ["unknown", "unknown", "Hall", "Hall"]
+
+
+def test_a_thing_shut_in_keeps_its_floor_against_a_small_lead():
+    """Meg, 02:48: Ground led by about +0.1 for 10 minutes and took him off Eilee's bed."""
+    solved = {"Second": {}, "Ground": {}}
+    probs, scores = {"Second": 0.45, "Ground": 0.55}, {"Second": 0.65, "Ground": 0.82}
+    ch, out = None, []
+    for t in (0.0, 600.0, 3600.0):
+        floor, ch = sextant._elect_floor(probs, "Second", solved, ch, now=t, switch_secs=600.0, margin=0.25,
+                                         scores=scores, shut_in=True)
+        out.append(floor)
+    assert out == ["Second"] * 3
+    probs = {"Second": 0.3, "Ground": 0.7}   # a strong lead, held door_leave_secs, still moves it
+    ch, out = None, []
+    for t in (0.0, 599.0, 600.0):
+        floor, ch = sextant._elect_floor(probs, "Second", solved, ch, now=t, switch_secs=600.0, margin=0.25,
+                                         scores=scores, shut_in=True)
+        out.append(floor)
+    assert out == ["Second", "Second", "Ground"]
+    probs = {"Second": 0.45, "Ground": 0.55}   # not shut in: the lasting lead wins as before
+    ch = None
+    for t in (0.0, 3600.0):
+        floor, ch = sextant._elect_floor(probs, "Second", solved, ch, now=t, switch_secs=30.0, margin=0.25, scores=scores)
+    assert floor == "Ground"
+
+
+def test_the_floor_is_held_only_while_still_in_the_shut_room():
+    """Codex review: one let out into the hall may take the stairs."""
+    sextant._shut_in.clear()
+    sextant._zone_state.clear()
+    sextant._shut_in["meg"] = ("Second", "Eilee")
+    sextant._zone_state["meg"] = {"zone": "Eilee"}
+    assert sextant._floor_held_by_door("meg", "Second")
+    assert not sextant._floor_held_by_door("meg", "Ground")
+    sextant._zone_state["meg"] = {"zone": "Hall"}
+    assert not sextant._floor_held_by_door("meg", "Second")
+    sextant._shut_in.clear()
+    sextant._zone_state.clear()

@@ -48,3 +48,16 @@ test("an owner that is not a person entity does not group", () => {
   assert.deepEqual(groups.map((g) => g.person), ["person.x"]);
   assert.deepEqual(rest.map((p) => p.ent), ["b"]);
 });
+
+test("a pet's battery badge: icon by the nearest ten, tone by band", async () => {
+  const { petBattery } = await import("../../custom_components/sextant/frontend/sextant-groups.js");
+  assert.deepEqual(petBattery(null), { icon: "mdi:battery-unknown", tone: "none" });
+  assert.deepEqual(petBattery(100), { icon: "mdi:battery", tone: "ok" });
+  assert.deepEqual(petBattery(51), { icon: "mdi:battery-50", tone: "ok" });
+  assert.deepEqual(petBattery(50), { icon: "mdi:battery-50", tone: "mid" });
+  assert.deepEqual(petBattery(31), { icon: "mdi:battery-30", tone: "mid" });
+  assert.deepEqual(petBattery(30), { icon: "mdi:battery-30", tone: "low" });
+  assert.deepEqual(petBattery(16), { icon: "mdi:battery-20", tone: "low" });
+  assert.deepEqual(petBattery(15), { icon: "mdi:battery-20", tone: "crit" });
+  assert.deepEqual(petBattery(3), { icon: "mdi:battery-outline", tone: "crit" });
+});

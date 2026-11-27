@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="940" height="290" viewBox="0 0 940 290" role="img" aria-label="Example 2a: Robin leaves the bedroom and shuts the door behind them">
+<title>Example 2a: Robin leaves the bedroom and shuts the door behind them</title>
+<rect x="0.5" y="0.5" width="939" height="289" rx="10" fill="#ffffff" stroke="#d0d7de"/>
+<text x="20" y="30" font-size="16" fill="#1f2328" text-anchor="start" font-weight="bold" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">Example 2a: Robin leaves the bedroom and shuts the door behind them</text>
+<line x1="210.0" y1="68" x2="210.0" y2="210" stroke="#eaeef2"/>
+<text x="210.0" y="228" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">0</text>
+<line x1="326.7" y1="68" x2="326.7" y2="210" stroke="#eaeef2"/>
+<text x="326.6666666666667" y="228" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">1</text>
+<line x1="443.3" y1="68" x2="443.3" y2="210" stroke="#eaeef2"/>
+<text x="443.33333333333337" y="228" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">2</text>
+<line x1="560.0" y1="68" x2="560.0" y2="210" stroke="#eaeef2"/>
+<text x="560.0" y="228" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">3</text>
+<line x1="676.7" y1="68" x2="676.7" y2="210" stroke="#eaeef2"/>
+<text x="676.6666666666667" y="228" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">4</text>
+<line x1="793.3" y1="68" x2="793.3" y2="210" stroke="#eaeef2"/>
+<text x="793.3333333333334" y="228" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">5</text>
+<line x1="910.0" y1="68" x2="910.0" y2="210" stroke="#eaeef2"/>
+<text x="910.0" y="228" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">6</text>
+<text x="910" y="244" font-size="11" fill="#59636e" text-anchor="end" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">time (min)</text>
+<line x1="443.3" y1="64" x2="443.3" y2="210" stroke="#1f2328" stroke-dasharray="4 3"/>
+<line x1="478.3" y1="50" x2="478.3" y2="210" stroke="#1f2328" stroke-dasharray="4 3"/>
+<text x="20" y="95" font-size="13" fill="#1f2328" text-anchor="start" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">Door contact</text>
+<rect x="210.0" y="80" width="233.3" height="22" rx="4" fill="#d8dee4"/>
+<text x="326.6666666666667" y="96" font-size="11" fill="#1f2328" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">open</text>
+<rect x="443.3" y="80" width="466.7" height="22" rx="4" fill="#8250df"/>
+<text x="676.6666666666667" y="96" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">closed</text>
+<text x="20" y="129" font-size="13" fill="#1f2328" text-anchor="start" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">Robin&#x27;s watch (Bluetooth)</text>
+<rect x="210.0" y="114" width="268.3" height="22" rx="4" fill="#0969da"/>
+<text x="344.16666666666663" y="130" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">placed in the Bedroom</text>
+<text x="20" y="163" font-size="13" fill="#1f2328" text-anchor="start" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">Door hold</text>
+<text x="20" y="197" font-size="13" fill="#1f2328" text-anchor="start" font-weight="bold" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">Bedroom occupancy</text>
+<line x1="210" y1="174" x2="910" y2="174" stroke="#d0d7de"/>
+<rect x="210.0" y="182" width="268.3" height="22" rx="4" fill="#2da44e"/>
+<text x="344.16666666666663" y="198" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">occupied</text>
+<rect x="478.3" y="182" width="431.7" height="22" rx="4" fill="#d8dee4"/>
+<text x="694.1666666666666" y="198" font-size="11" fill="#1f2328" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">clear</text>
+<rect x="445.3" y="49" width="72.2" height="14" fill="#ffffff"/>
+<text x="447.33333333333337" y="60" font-size="11" fill="#1f2328" text-anchor="start" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">door closes</text>
+<rect x="480.3" y="35" width="165.2" height="14" fill="#ffffff"/>
+<text x="482.3333333333333" y="46" font-size="11" fill="#1f2328" text-anchor="start" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">watch reads in the Landing</text>
+<text x="20" y="276" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">Evidence stopped 20 s after the door closed, inside the 90 s wait (door_settle_secs): not shut in, no hold.</text>
+</svg>

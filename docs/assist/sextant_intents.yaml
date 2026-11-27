@@ -1,0 +1,31 @@
+# Add to configuration.yaml (or a package) as `intent_script:`; restart or reload intents.
+SextantWhoIsIn:
+  speech:
+    text: >-
+      {% set room = area_entities(area) | select('match', 'binary_sensor\..*_sextant_occupancy') | first | default(none) %}
+      {% if room is none %}I don't track the {{ area }}.
+      {% elif is_state(room, 'off') %}Nobody is in the {{ area }}.
+      {% elif not is_state(room, 'on') %}I can't tell who is in the {{ area }} right now.
+      {% else %}{% set who = (state_attr(room, 'people') or []) + (state_attr(room, 'pets') or []) %}
+      {% if who %}{{ who | join(', ') }} {{ 'is' if who | length == 1 else 'are' }} in the {{ area }}.
+      {% else %}Someone is in the {{ area }}.{% endif %}{% endif %}
+SextantWhereIs:
+  speech:
+    text: >-
+      {% set ns = namespace(p=none) %}
+      {% for p in states.person if p.name | lower == name | lower %}{% set ns.p = p %}{% endfor %}
+      {% set people = ns.p.object_id if ns.p else none %}
+      {% set loc = 'sensor.' ~ people ~ '_sextant_person_location' if people else none %}
+      {% if loc is none or states(loc) in ['unknown', 'unavailable'] %}
+      {% set loc = 'sensor.' ~ people ~ '_sextant_pet_location' if people else none %}{% endif %}
+      {% if loc is none or states(loc) in ['unknown', 'unavailable'] %}I can't tell where {{ name }} is.
+      {% elif state_attr(loc, 'kind') in ['room', 'spot'] and state_attr(loc, 'room') != 'unknown' %}{{ ns.p.name }} is in the {{ state_attr(loc, 'room') }}.
+      {% elif states(loc) == 'home' %}{{ ns.p.name }} is home, but I don't know which room.
+      {% elif states(loc) == 'away' %}{{ ns.p.name }} is away.
+      {% else %}{{ ns.p.name }} is at {{ states(loc) | replace('_', ' ') }}.{% endif %}
+SextantWhoIsHome:
+  speech:
+    text: >-
+      {% set home = state_attr('sensor.sextant_people_home', 'home') or [] %}
+      {% if home | length == 0 %}Nobody is home.
+      {% else %}{{ home | join(', ') }} {{ 'is' if home | length == 1 else 'are' }} home.{% endif %}

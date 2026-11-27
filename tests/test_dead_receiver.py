@@ -100,3 +100,14 @@ def test_the_poller_tells_a_guess_from_a_proxy_bermuda_has_dropped(monkeypatch):
     monkeypatch.setattr(src, "async_get_scanner_directory", lambda h: None)
     asyncio.run(sextant.update_receiver_liveness(hass))
     assert dom["rl_offline_guessed"] == ["attic_proxy", "garage_proxy"]
+
+
+def test_device_availability_ignores_sextants_own_devices(monkeypatch):
+    """A Sextant room device named "Kitchen" must not make the "Kitchen" proxy's slug ambiguous."""
+    D = types.SimpleNamespace
+    devices = [D(id="proxy", name="Kitchen", name_by_user=None, identifiers={("esphome", "aa")}),
+               D(id="room", name="Kitchen", name_by_user=None, identifiers={(sextant.DOMAIN, "room_kitchen")})]
+    monkeypatch.setattr(sextant.dr, "async_get", lambda h: D(devices=devices))
+    monkeypatch.setattr(sextant.er, "async_get", lambda h: D(entities={}))
+    slug_to_device, _ = sextant._build_device_availability(None)
+    assert list(slug_to_device.values()) == ["proxy"]  # the stubbed slugify may not lowercase

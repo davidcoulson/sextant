@@ -277,6 +277,9 @@ def test_auto_takes_its_own_corrections_out_when_none_beats_them(tmp_path, monke
     assert cal["auto_decisions"]["F"]["action"] == "revert" and "F" not in cal["applied"]
     floor = st.get_layout(hass)["floor"][0]
     assert all(r.get("correction") is None for r in floor["receivers"]) and floor["calibration"]["reverted"] is True
+    # The stamp says why and keeps what was taken out.
+    stamp = floor["calibration"]
+    assert "no corrections beat" in stamp["reason"] and stamp["selftest"]["none_m"] < stamp["selftest"]["current_m"] and stamp["removed"]
 
 
 # --- sampling from the fork's scanner-ranging table ---------------------------

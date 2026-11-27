@@ -36,18 +36,23 @@ scale, and the scale matters more than anything else you will enter.
 
 ## 1. Install
 
-HACS → Integrations → ⋮ → **Custom repositories** → add
-`davidcoulson/sextant` as an Integration → install **Sextant** → restart
-Home Assistant. Then **Settings → Devices & Services → Add Integration →
+**Settings → Marketplace → Add from link** → enter
+`davidcoulson/sextant` → install **Sextant** (restart Home Assistant if it
+asks). Adding from a link needs a one-time GitHub sign-in. On Home Assistant
+2026.9 or 2026.10, use HACS → ⋮ → **Custom repositories**, add it as an
+Integration, download it and restart. Then **Settings → Devices & Services → Add Integration →
 Sextant**. **Sextant** appears in the sidebar.
 
 ## 2. Draw the first floor
 
 Open **Sextant → Edit**. Start with the floor you spend the most time on.
 
-1. **Add a floor** at the bottom of the side panel: a name and the plan
-   image. Give it *Level* 0 if it is the ground floor.
-2. **Set the scale.** Pick **Scale** in the toolbar, click the two ends of
+1. **Add a floor** under **Floor setup** in the side panel: a name and the plan
+   image. The name field offers your Home Assistant floors; picking one
+   links the floor and takes its level. Otherwise give it *Level* 0 (under
+   **More options** on the floor's card) if it is the ground floor.
+2. **Set the scale.** Pick **Scale** under **More tools** (the **⋯** button
+   in the toolbar), click the two ends of
    the distance you measured, type it in. Everything Sextant computes is in
    metres through this number, so a scale that is 10 % out makes every
    distance on the floor 10 % out.
@@ -169,7 +174,7 @@ are in [Sensors, card, services and API](automation.md).
 
 | Symptom | Look at |
 |---|---|
-| A thing reads the floor above or below | Its floor odds under **Details** on Live. An open landing or double-height room is the usual cause. **Show floor bias** on Edit shows where each floor's prior leans; raising `floor_proximity_weight` (Tuning) trusts the nearest proxies more, and [bias fields](positioning.md) shape it place by place. |
+| A thing reads the floor above or below | Its floor odds under **Confidence** on Live (switch on **Expert mode** in Setup to see it). An open landing or double-height room is the usual cause. **Show floor bias** under **Floor setup** on Edit (also Expert mode) shows where each floor's prior leans; raising `floor_proximity_weight` (Tuning) trusts the nearest proxies more, and [bias fields](positioning.md) shape it place by place. |
 | A thing sits a metre off the table it is on | A proxy near it may carry a calibration stretch; see [close range](calibration.md#close-range). If the proxy is on the furniture, link it to the spot. |
 | A thing flips between two rooms | It is on the boundary. The room holds against small challenges by design; if it still flips, see [Tuning](tuning.md). A spot drawn over the boundary (a sofa against a wall) often fixes it. |
 | Nothing is placed at all | Fewer than three proxies hear it, or Bermuda is not tracking it. Check the proxy list on Live and the Things page. |

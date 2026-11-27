@@ -36,3 +36,38 @@ export function lostShapes(before, after) {
   }
   return lost;
 }
+
+/** The part of a layout the editor owns, as a string to compare: the floors,
+ * without what the server writes into them (ws.merge_editor_layout keeps
+ * those through a save: calibration, bias_field, each proxy's correction)
+ * and without the editor's display-only marks. Two layouts with the same key
+ * differ in nothing a save from the editor would overwrite. */
+export function planKey(layout) {
+  const floors = JSON.parse(JSON.stringify(layout?.floor || []));
+  for (const f of floors) {
+    delete f.calibration; delete f.bias_field;
+    for (const r of f.receivers || []) {
+      // A proxy held out of calibration keeps the editor's correction through a save.
+      if (r.calibrate !== false) delete r.correction;
+      delete r.unmatched; delete r.label;
+    }
+    for (const q of f.pins || []) { delete q.linked; delete q.miss; delete q.missLabel; }
+  }
+  return JSON.stringify(floors);
+}
+
+const nameKey = (s) => String(s ?? "").trim().toLowerCase();
+
+/** "Room 3": the first "<base> N" no shape in the list is named yet (deleting Room 1 must not make the next one a second Room 2). */
+export function freeName(base, list) {
+  const taken = new Set((list || []).map((s) => nameKey(s.entity_id)));
+  let n = 1;
+  while (taken.has(nameKey(`${base} ${n}`))) n += 1;
+  return `${base} ${n}`;
+}
+
+/** Another room (or no-go area, or spot) in the list has this one's name: rooms are told apart by name. */
+export function sameName(list, item) {
+  const k = nameKey(item?.entity_id);
+  return !!k && (list || []).some((s) => s !== item && !!s.no_go === !!item.no_go && nameKey(s.entity_id) === k);
+}

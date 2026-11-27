@@ -4,8 +4,9 @@ The person's Sextant sensors say where they are in words (a room, a spot, a
 zone). This says it the way HA's person entity, the Map card and every zone
 automation already understand: ``home`` while Sextant hears any of the
 person's things - BLE is far surer of "in the house" than GPS is at the
-property line - and, once it has lost them, the coordinates of the first GPS
-tracker that is neither broken nor stale (persons.tracker_fix).
+property line - and, once it has lost them, the coordinates of the GPS
+tracker that speaks for them: the first that is neither broken nor stale, or
+another whose newer fix shows them gone, or back (persons.choose_gps, tracker_fix).
 """
 import logging
 
@@ -35,7 +36,7 @@ class SextantPersonTracker(TrackerEntity):
         self._fix = {"location_name": "not_home", "source_type": "gps", "source": "none", "presence": "away"}
         self._attr_device_info = DeviceInfo(
             identifiers={("sextant", f"person_{slug}")},
-            name=f"{name} (Sextant)", manufacturer="Sextant", model=device_model(is_pet),
+            name=name, manufacturer="Sextant", model=device_model(is_pet),   # as the person's sensors name it
         )
 
         self._apply(self._fix)

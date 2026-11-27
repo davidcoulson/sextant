@@ -14,7 +14,7 @@ import { PET_CLASSES } from "./sextant-groups.js";
 
 // Mirrors persons.LOCATES_BY_DEFAULT: classes whose place is their owner's place.
 const LOCATES_BY_DEFAULT = new Set(["watch", "phone", "person", "man", "woman", "child", "cat", "dog", "paw"]);
-import { sharedStyles, widgetStyles, fmtAge, fmtNum, toast, callWS, confirmAsync, uiField, uiSelect, uiSwitch, uiButton, thingName, fmtLen, lenUnit, toDisplayLen, fromDisplayLen, THING_CLASSES, classIcon, pronounKey } from "./sextant-ui.js";
+import { sharedStyles, widgetStyles, fmtAge, fmtNum, toast, callWS, confirmAsync, uiField, uiSelect, uiSwitch, uiButton, thingName, lenUnit, toDisplayLen, fromDisplayLen, THING_CLASSES, classIcon, pronounKey } from "./sextant-ui.js";
 
 const KIND_FILTERS = [["all", "Everything"], ["tile", "Tiles"], ["ibeacon", "iBeacons"], ["device", "Other devices"]];
 const RECENT_SECS = 60;
@@ -29,6 +29,7 @@ const FINDMY_GUIDE = "https://github.com/davidcoulson/bermuda/blob/fork-testing/
 
 class SextantDevices extends LitElement {
   static properties = {
+    expert: { type: Boolean },
     hass: { attribute: false },
     data: { attribute: false },
     positions: { attribute: false },
@@ -45,6 +46,8 @@ class SextantDevices extends LitElement {
     _filter: { state: true },
     _kind: { state: true },
     _showAll: { state: true },
+    _heardOpen: { state: true },
+    _findAt: { state: true },
     _busy: { state: true },
     _wizard: { state: true },
     _findmyWizard: { state: true },
@@ -71,6 +74,7 @@ class SextantDevices extends LitElement {
     this._filter = "";
     this._kind = "all";
     this._showAll = false;
+    this._findAt = "";        // find mode: the placed proxy's address the list is sorted by
     this._busy = false;
     this._wizard = null;        // thing dialog state
     this._findmyWizard = null;  // FindMy add-accessory dialog state
@@ -84,7 +88,19 @@ class SextantDevices extends LitElement {
     this._timer = setInterval(() => this._refreshLight(), 15000);
   }
 
-  disconnectedCallback() { super.disconnectedCallback(); clearInterval(this._timer); }
+  disconnectedCallback() { super.disconnectedCallback(); clearInterval(this._timer); this._setFindAt(""); }
+
+  /** Find mode: sort what is heard by its signal at one proxy, refreshed every
+   * 3 s, so a device held against that proxy rises to the top. */
+  _setFindAt(address) {
+    this._findAt = address;
+    if (address) this._heardOpen = true;
+    clearInterval(this._findTimer);
+    this._findTimer = null;
+    if (!address) return;
+    this._refreshLight();
+    this._findTimer = setInterval(() => this._refreshLight(), 3000);
+  }
 
   /** Dialog keyboard handling: focus moves in when one opens and goes back to
    * the control that opened it when it closes. Escape closes (see _dialogKey). */
@@ -174,6 +190,8 @@ class SextantDevices extends LitElement {
     ]);
     this._loadRobots();
     this._tracked = tracked?.tracked ?? null;
+    // The heard list is folded; it opens while nothing is tracked yet (and on Find near or Add a thing).
+    if (this._tracked && !Object.keys(this._tracked).length) this._heardOpen = true;
     this._candidates = candidates?.candidates ?? null;
     this._tiles = tiles?.tiles ?? null;
     this._identities = identities?.identities ?? null;
@@ -446,6 +464,11 @@ class SextantDevices extends LitElement {
       home_entity: w.home || null,
       // Only when the switch was touched, and only for a thing that has a class.
       ...(typeof w.classHome === "boolean" && w.thing_class ? { class_always_home: w.classHome } : {}),
+      // Only for the class it was typed for: changing the thing's class in the dialog must not carry the number over.
+      ...(w.classHabit !== undefined && w.thing_class && w.classHabitFor === w.thing_class
+        ? { class_habit_gain: w.classHabit === "" || !Number.isFinite(Number(w.classHabit)) ? null : Math.min(0.3, Math.max(0, Number(w.classHabit))) } : {}),
+      ...(w.classFloorHabit !== undefined && w.thing_class && w.classFloorHabitFor === w.thing_class
+        ? { class_habit_floor_weight: w.classFloorHabit === "" || !Number.isFinite(Number(w.classFloorHabit)) ? null : Math.min(1, Math.max(0, Number(w.classFloorHabit))) } : {}),
       height: w.height === "" || w.height == null ? null : fromDisplayLen(w.height, this.hass),
       ref_offset_db: w.ref === "" || w.ref == null ? null : Number(w.ref),
       icon: w.icon || null,
@@ -474,23 +497,15 @@ class SextantDevices extends LitElement {
     return html`<div class="modal" @click=${(e) => { if (e.target === e.currentTarget) this._wizard = null; }}>
       <div class="dialog card" role="dialog" aria-modal="true" tabindex="-1" aria-label="Thing settings" @keydown=${(e) => this._dialogKey(e, () => { this._wizard = null; })}>
         <h3>${w.new ? "Track " : ""}${w.placeholder} <span class="muted small">${w.address}</span></h3>
-        ${w.new ? html`<p class="small muted">Nothing is sent to Bermuda until you press Track below; Cancel leaves it untracked.</p>` : nothing}
+        ${w.new ? html`<p class="small muted">Nothing changes until you press Track.</p>` : nothing}
         <div class="row">
           ${uiField({ label: "Name", value: w.name, placeholder: w.placeholder, onChange: (v) => { w.name = v; this.requestUpdate(); }, style: "flex: 1; min-width: 220px" })}
         </div>
-        <p class="small muted">Blank keeps the device name from Bermuda / Home Assistant.</p>
+        <p class="small muted">Leave blank to keep its current name.</p>
         <h4>What is this?</h4>
         <div class="classes">
           ${THING_CLASSES.map(([key, label, icon]) => html`<button class="cls ${w.thing_class === key ? "on" : ""}" title=${label} @click=${() => { w.thing_class = key; this.requestUpdate(); }}>
             ${icon ? html`<ha-icon icon=${icon}></ha-icon>` : html`<span class="initials">Ab</span>`}<span>${label}</span></button>`)}
-        </div>
-        <div class="row">
-          ${uiSelect({ label: "Pronouns", value: w.pronouns || "", options: [
-            { value: "", label: `From its class (${pronounKey({ thing_classes: { [w.slug]: w.thing_class || undefined } }, w.slug)})` },
-            { value: "he", label: "He / him" }, { value: "she", label: "She / her" },
-            { value: "they", label: "They / them" }, { value: "it", label: "It" },
-          ], onChange: (v) => { w.pronouns = v; this.requestUpdate(); }, style: "width: 220px" })}
-          <span class="small muted">How Sextant refers to this thing. A person or pet with no pronouns set is "they".</span>
         </div>
         <div class="row">
           ${uiSelect({ label: "Belongs to", value: w.owner || "", options: [{ value: "", label: "Nobody" },
@@ -498,44 +513,7 @@ class SextantDevices extends LitElement {
               .map((s) => ({ value: s.entity_id, label: s.attributes.friendly_name || s.entity_id }))
               .sort((a, b) => a.label.localeCompare(b.label))],
             onChange: (v) => { w.owner = v; this.requestUpdate(); }, style: "width: 220px" })}
-          <span class="small muted">A Home Assistant person. Their things are grouped together on Live, and the one they are carrying gives them a location sensor of their own.</span>
-        </div>
-        ${w.owner ? html`<div class="row">
-          ${uiSelect({ label: "Gives the owner's location", value: w.locates || "", options: [
-            { value: "", label: `From its class (${LOCATES_BY_DEFAULT.has(w.thing_class) ? "yes" : "no"})` },
-            { value: "yes", label: "Yes" }, { value: "no", label: "No" },
-          ], onChange: (v) => { w.locates = v; this.requestUpdate(); }, style: "width: 220px" })}
-          <span class="small muted">Watches, phones and a pet's own tag say where their owner is. Headphones, keys or a bag go along only some of the time, so by default they don't.</span>
-        </div>
-        <div class="row">
-          ${uiSelect({ label: "On-charger sensor", value: w.charging || "", options: [
-            { value: "", label: "None" },
-            ...this._batterySensors(w.charging).map((e) => ({ value: e, label: `${this.hass?.states?.[e]?.attributes?.friendly_name || e} (${this.hass?.states?.[e]?.state ?? "?"})` })),
-          ], onChange: (v) => { w.charging = v; this.requestUpdate(); }, style: "width: 320px" })}
-          <span class="small muted">While this says Charging (or Charged / Full), ${w.name || w.placeholder || "this thing"} is on a charger and doesn't give its owner's location. Unavailable counts as not charging.</span>
-        </div>` : nothing}
-        <div class="row">
-          ${uiSelect({ label: "Battery sensor", value: w.battery || "", options: [
-            { value: "", label: "None" },
-            ...this._levelSensors(w.battery, w.slug).map((e) => ({ value: e, label: `${this.hass?.states?.[e]?.attributes?.friendly_name || e} (${this.hass?.states?.[e]?.state ?? "?"}%)` })),
-          ], onChange: (v) => { w.battery = v; this.requestUpdate(); }, style: "width: 320px" })}
-          <span class="small muted">Shown on the Live page, with a badge once it drops to 20%. A tag that goes quiet looks exactly like a thing that has left, until the battery says why.</span>
-        </div>
-        <div class="row">
-          ${uiSelect({ label: "Home tracker", value: w.home || "", options: [
-            { value: "", label: "None" },
-            ...this._homeTrackers(w.home, w.slug).map((e) => ({ value: e, label: `${this.hass?.states?.[e]?.attributes?.friendly_name || e} (${this.hass?.states?.[e]?.state ?? "?"})` })),
-          ], onChange: (v) => { w.home = v; this.requestUpdate(); }, style: "width: 320px" })}
-          <span class="small muted">A tracker of the thing's own: a car's or a phone's GPS. When it says home and Sextant cannot hear the thing, Home Assistant gets a repair.</span>
-        </div>
-        <div class="row">
-          ${uiSelect({ label: "Always home", value: w.alwaysHome || "", options: [
-            { value: "", label: `From its class (${this._classHome(w) ? "yes" : "no"})` },
-            { value: "yes", label: "Yes" }, { value: "no", label: "No" },
-          ], onChange: (v) => { w.alwaysHome = v; this.requestUpdate(); }, style: "width: 220px" })}
-          ${w.thing_class ? uiSwitch({ label: `Every ${THING_CLASSES.find((c) => c[0] === w.thing_class)?.[1] || w.thing_class} is always home`, checked: this._classHome(w),
-            onChange: (v) => { w.classHome = v; this.requestUpdate(); } }) : nothing}
-          <span class="small muted">A thing that is always home raises a Home Assistant repair once it has not been heard for a day. A pet's tag is by default; a phone or a bag, away for days, is not. A battery at 10% or less on a thing that has gone quiet raises one either way.</span>
+          <span class="small muted">Their things are grouped on Live, and the one they carry tells Sextant where they are.</span>
         </div>
         <div class="row colour">
           <span class="avatar-preview" style="background: ${thingColor(w.slug, w.color || null)}" title="how this thing will look">${w.preview || w.icon ? html`<img src=${w.preview || w.icon} alt="">` : classIcon(w.thing_class) ? html`<ha-icon icon=${classIcon(w.thing_class)}></ha-icon>` : html`<span class="initials">${(w.name || w.placeholder || "?").slice(0, 2).toUpperCase()}</span>`}</span>
@@ -544,16 +522,6 @@ class SextantDevices extends LitElement {
           <input type="color" title="Any colour" .value=${w.color || "#1e88e5"} @input=${(e) => { w.color = e.target.value; this.requestUpdate(); }}>
           ${w.color ? uiButton({ label: "Auto", kind: "text", onClick: () => { w.color = ""; this.requestUpdate(); }, title: "Back to the automatic colour" }) : nothing}
         </div>
-        <p class="small muted">The colour is used everywhere this thing is drawn: the map, the Live list, the map card.</p>
-        <div class="row">
-          ${uiField({ label: `Height (${unit})`, type: "number", step: 0.05, min: 0, max: unit === "ft" ? 16 : 5, value: w.height, placeholder: String(toDisplayLen(this._defaultHeight(), this.hass)), onChange: (v) => { w.height = v; this.requestUpdate(); }, style: "width: 150px" })}
-          ${uiField({ label: "Ref trim (dB)", type: "number", step: 0.5, min: -20, max: 20, value: w.ref, placeholder: "0", onChange: (v) => { w.ref = v; this.requestUpdate(); }, style: "width: 150px" })}
-        </div>
-        <p class="small muted">Height: how high this is usually carried or placed (a phone in a pocket about 1 m, a dog's collar 0.3 m). Ref trim: a few dB either way if this thing always reads too near or too far.</p>
-        <div class="row">
-          ${uiSelect({ label: "Positioning", value: w.estimator || "default", options: [{ value: "default", label: `Default (${this.data?.layout?.tuning?.position_estimator || "geometric"})` }, { value: "geometric", label: "Geometric only, no fingerprint" }, { value: "fused", label: "Fused" }, { value: "fingerprint", label: "Fingerprint only" }], onChange: (v) => { w.estimator = v === "default" ? "" : v; this.requestUpdate(); }, style: "min-width: 280px" })}
-        </div>
-        <p class="small muted">Positioning: the estimator for this thing alone. If the fingerprint makes placement worse (a Tile or a tag whose radio reads unlike the phones), pick geometric only.</p>
         <h4>Photo or custom icon <span class="muted small">optional, drawn instead of the class icon</span></h4>
         ${w.crop ? html`<div class="cropper">
           <canvas class="cropper" width=${CROP_SIZE} height=${CROP_SIZE}
@@ -571,6 +539,74 @@ class SextantDevices extends LitElement {
           ${uiSelect({ label: "Icon", value: w.preview ? "none" : (w.icon || "none"), options: [{ value: "none", label: w.preview ? "the cropped photo" : "class icon" }, ...(this.data?.icons || []).map((i) => ({ value: i.value, label: i.label }))], onChange: (v) => { w.icon = v === "none" ? "" : v; if (w.icon) { w.file = null; if (w.preview) URL.revokeObjectURL(w.preview); w.preview = null; } this.requestUpdate(); }, style: "min-width: 180px" })}
           ${(w.preview || w.icon) ? uiButton({ label: "Remove", kind: "text", onClick: () => { w.icon = ""; w.file = null; if (w.preview) URL.revokeObjectURL(w.preview); w.preview = null; this.requestUpdate(); } }) : nothing}
         </div>`}
+        <details class="more"><summary>More options: pronouns, charger, battery, home, height, positioning</summary>
+        <div class="row">
+          ${uiSelect({ label: "Pronouns", value: w.pronouns || "", options: [
+            { value: "", label: `From its class (${pronounKey({ thing_classes: { [w.slug]: w.thing_class || undefined } }, w.slug)})` },
+            { value: "he", label: "He / him" }, { value: "she", label: "She / her" },
+            { value: "they", label: "They / them" }, { value: "it", label: "It" },
+          ], onChange: (v) => { w.pronouns = v; this.requestUpdate(); }, style: "width: 220px" })}
+          <span class="small muted">How Sextant talks about it.</span>
+        </div>
+        ${w.owner ? html`<div class="row">
+          ${uiSelect({ label: "Gives the owner's location", value: w.locates || "", options: [
+            { value: "", label: `From its class (${LOCATES_BY_DEFAULT.has(w.thing_class) ? "yes" : "no"})` },
+            { value: "yes", label: "Yes" }, { value: "no", label: "No" },
+          ], onChange: (v) => { w.locates = v; this.requestUpdate(); }, style: "width: 220px" })}
+          <span class="small muted">Phones, watches and pet tags do by default. Keys, bags and headphones get left behind, so they don't.</span>
+        </div>
+        <div class="row">
+          ${uiSelect({ label: "On-charger sensor", value: w.charging || "", options: [
+            { value: "", label: "None" },
+            ...this._batterySensors(w.charging).map((e) => ({ value: e, label: `${this.hass?.states?.[e]?.attributes?.friendly_name || e} (${this.hass?.states?.[e]?.state ?? "?"})` })),
+          ], onChange: (v) => { w.charging = v; this.requestUpdate(); }, style: "width: 320px" })}
+          <span class="small muted">While it says Charging, Charged or Full (or on), ${w.name || w.placeholder || "this thing"} does not place its owner until it moves again.</span>
+        </div>` : nothing}
+        <div class="row">
+          ${uiSelect({ label: "Battery sensor", value: w.battery || "", options: [
+            { value: "", label: "None" },
+            ...this._levelSensors(w.battery, w.slug).map((e) => ({ value: e, label: `${this.hass?.states?.[e]?.attributes?.friendly_name || e} (${this.hass?.states?.[e]?.state ?? "?"}%)` })),
+          ], onChange: (v) => { w.battery = v; this.requestUpdate(); }, style: "width: 320px" })}
+          <span class="small muted">Shown on Live, with a badge at 20%. Tells a flat battery apart from a thing that has left.</span>
+        </div>
+        <div class="row">
+          ${uiSelect({ label: "Home tracker", value: w.home || "", options: [
+            { value: "", label: "None" },
+            ...this._homeTrackers(w.home, w.slug).map((e) => ({ value: e, label: `${this.hass?.states?.[e]?.attributes?.friendly_name || e} (${this.hass?.states?.[e]?.state ?? "?"})` })),
+          ], onChange: (v) => { w.home = v; this.requestUpdate(); }, style: "width: 320px" })}
+          <span class="small muted">Its own GPS, like a car's. If that says home but Sextant can't hear it, you get a repair in Home Assistant.</span>
+        </div>
+        <div class="row">
+          ${uiSelect({ label: "Always home", value: w.alwaysHome || "", options: [
+            { value: "", label: `From its class (${this._classHome(w) ? "yes" : "no"})` },
+            { value: "yes", label: "Yes" }, { value: "no", label: "No" },
+          ], onChange: (v) => { w.alwaysHome = v; this.requestUpdate(); }, style: "width: 220px" })}
+          ${w.thing_class ? uiSwitch({ label: `Every ${THING_CLASSES.find((c) => c[0] === w.thing_class)?.[1] || w.thing_class} is always home`, checked: this._classHome(w),
+            onChange: (v) => { w.classHome = v; this.requestUpdate(); } }) : nothing}
+          <span class="small muted">When on, you get a repair in Home Assistant if it is not heard for a day. Pet tags are always home by default. A quiet thing with a battery at 10% or less gets one either way.</span>
+        </div>
+        ${w.thing_class && this.expert ? html`<div class="row">
+          ${uiField({ label: `Routine pull for every ${THING_CLASSES.find((c) => c[0] === w.thing_class)?.[1] || w.thing_class} (0 to 0.3)`, type: "number", step: 0.01, min: 0, max: 0.3,
+            value: (w.classHabitFor === w.thing_class ? w.classHabit : undefined) ?? this.data?.layout?.class_habit_gain?.[w.thing_class] ?? "", placeholder: PET_CLASSES.includes(w.thing_class) ? "0 (pets)" : String(this.data?.layout?.tuning?.habit_margin_gain ?? 0.1),
+            onChange: (v) => { w.classHabit = v; w.classHabitFor = w.thing_class; this.requestUpdate(); }, style: "width: 260px" })}
+          <span class="small muted">How much its usual room at this hour settles a close call. Blank uses the Tuning value (none for pets); 0 turns it off.</span>
+        </div>
+        <div class="row">
+          ${uiField({ label: `Floor routine for every ${THING_CLASSES.find((c) => c[0] === w.thing_class)?.[1] || w.thing_class} (0 to 1)`, type: "number", step: 0.05, min: 0, max: 1,
+            value: (w.classFloorHabitFor === w.thing_class ? w.classFloorHabit : undefined) ?? this.data?.layout?.class_habit_floor_weight?.[w.thing_class] ?? "", placeholder: String(this.data?.layout?.tuning?.habit_floor_weight ?? 0),
+            onChange: (v) => { w.classFloorHabit = v; w.classFloorHabitFor = w.thing_class; this.requestUpdate(); }, style: "width: 260px" })}
+          <span class="small muted">How much the floor it is usually on at this hour counts in the floor election (0.25 is a good start). Not while it is charging, or for a watch off a wrist. Blank uses the Tuning value; 0 turns it off.</span>
+        </div>` : nothing}
+        <div class="row">
+          ${uiField({ label: `Height (${unit})`, type: "number", step: 0.05, min: 0, max: unit === "ft" ? 16 : 5, value: w.height, placeholder: String(toDisplayLen(this._defaultHeight(), this.hass)), onChange: (v) => { w.height = v; this.requestUpdate(); }, style: "width: 150px" })}
+          ${!this.expert ? nothing : uiField({ label: "Ref trim (dB)", type: "number", step: 0.5, min: -20, max: 20, value: w.ref, placeholder: "0", onChange: (v) => { w.ref = v; this.requestUpdate(); }, style: "width: 150px" })}
+        </div>
+        <p class="small muted">How high it is usually carried: a phone in a pocket is about 1 m, a dog's collar 0.3 m.${this.expert ? " Ref trim: a few dB if it always reads too near or too far." : ""}</p>
+        <div class="row">
+          ${!this.expert ? nothing : uiSelect({ label: "Positioning", value: w.estimator || "default", options: [{ value: "default", label: `Default (${this.data?.layout?.tuning?.position_estimator || "geometric"})` }, { value: "geometric", label: "Geometric only, no fingerprint" }, { value: "fused", label: "Fused" }, { value: "fingerprint", label: "Fingerprint only" }], onChange: (v) => { w.estimator = v === "default" ? "" : v; this.requestUpdate(); }, style: "min-width: 280px" })}
+        </div>
+        <p class="small muted" ?hidden=${!this.expert}>Positioning for this thing only. Pick geometric if the fingerprint places it worse.</p>
+        </details>
         <div class="row end">
           ${uiButton({ label: "Cancel", kind: "text", onClick: () => { this._wizard = null; } })}
           ${uiButton({ label: this._busy ? (w.new ? "Tracking…" : "Saving…") : (w.new ? "Track" : "Save"), kind: "primary", disabled: this._busy, onClick: () => this._saveWizard() })}
@@ -663,10 +699,10 @@ class SextantDevices extends LitElement {
       <div class="dialog card wide" role="dialog" aria-modal="true" tabindex="-1" aria-label="Add a thing" @keydown=${(e) => this._dialogKey(e, close)}>
         <h3>Add a thing</h3>
         ${!w.kind ? html`
-          <p class="small muted">What is it? How a thing is followed depends on whether its Bluetooth address stays put.</p>
+          <p class="small muted">What is it? That decides how Sextant follows it.</p>
           <div class="kinds">
             ${kinds.map(([kind, icon, title, blurb]) => html`
-              <button class="kind" @click=${() => { this._addWizard = { ...w, kind }; }}>
+              <button class="kind" @click=${() => { this._addWizard = { ...w, kind }; if (kind === "plain" || kind === "irk") this._heardOpen = true; }}>
                 <ha-icon icon=${icon}></ha-icon>
                 <span><b>${title}</b><br><span class="muted small">${blurb}</span></span>
               </button>`)}
@@ -678,13 +714,13 @@ class SextantDevices extends LitElement {
             <li><b>Track it</b> from the list below once it appears.</li>
           </ol>
           ${uiField({ label: "Identity Resolving Key", value: w.irk, placeholder: "a1b2c3…  or  irk:a1b2c3…", onChange: (v) => { this._addWizard = { ...w, irk: v }; }, style: "width: 100%" })}
-          <p class="small muted">Home Assistant's own Private BLE Device integration holds the key and resolves the address; Bermuda tracks what it resolves. Sextant just fills in the form.</p>` : nothing}
+          <p class="small muted">Home Assistant's Private BLE Device integration keeps the key. Sextant only fills in its form.</p>` : nothing}
         ${w.kind === "findmy" ? html`
-          <p class="small">An AirTag needs its pairing keys, which only the Mac it was paired from holds. That has its own walkthrough.</p>` : nothing}
+          <p class="small">An AirTag needs its keys from the Mac it was paired with. The next step walks you through it.</p>` : nothing}
         ${w.kind === "tile" ? html`
-          <p class="small">A Tile is bound on the Bermuda page, where the Tiles it hears are listed with the addresses they are using.</p>` : nothing}
+          <p class="small">Tiles are set up on the Bermuda page, which lists the ones it hears.</p>` : nothing}
         ${w.kind === "plain" ? html`
-          <p class="small">Nothing to paste. Bring it near a couple of proxies, then find it in <b>Heard, not tracked</b> below and press <b>Track…</b>. If it is hiding, switch on <b>Show all</b>.</p>` : nothing}
+          <p class="small">Bring it near a couple of proxies, then find it in <b>Heard, not tracked</b> below and press <b>Track…</b>. Not there? Turn on <b>Show all</b>.</p>` : nothing}
         <div class="row end">
           ${w.kind ? uiButton({ label: "Back", kind: "text", onClick: () => { this._addWizard = { ...w, kind: null }; } }) : nothing}
           ${uiButton({ label: "Close", kind: "text", onClick: close })}
@@ -779,7 +815,7 @@ class SextantDevices extends LitElement {
     const layout = this.data?.layout || {};
     const placed = this._placedAddresses();
     const index = this._placedIndex();
-    const heights = layout.thing_heights || {}, offsets = layout.thing_ref_offsets || {}, icons = layout.thing_icons || {}, classes = layout.thing_classes || {}, colors = layout.thing_colors || {};
+    const icons = layout.thing_icons || {}, classes = layout.thing_classes || {}, colors = layout.thing_colors || {};
     const live = new Map((this.positions?.positions || []).map((p) => [p.ent, p]));
     const tracked = Object.entries(this._tracked || {}).sort((a, b) => thingName(this.data, a[1].slug).localeCompare(thingName(this.data, b[1].slug)));
     const filter = this._filter.toLowerCase();
@@ -790,17 +826,22 @@ class SextantDevices extends LitElement {
     // noise here: a neighbour's gadget at the edge of range, a proxy's own radar module. "Show all" lifts this.
     const lonely = new Set(placed.size ? recent.filter((c) => placedHearing(c) < 2) : []);
     const haystack = (c) => { const w = this._heardWhere(c, index); return `${c.name} ${c.address} ${c.manufacturer || ""} ${c.apple_summary || ""} ${c.area_name || ""} ${c.kind} ${w ? `${w.room || ""} ${w.floor || ""} ${w.proxy || ""}` : ""}`.toLowerCase(); };
-    const candidates = (this._showAll ? all : recent.filter((c) => !lonely.has(c)))
+    // heard_by holds the last minute's reading from each proxy that heard it.
+    // A positive RSSI (Bermuda's +127) means no reading, not a loud one.
+    const rssiAt = (c) => { const r = (Array.isArray(c.heard_by) ? c.heard_by : []).find((h) => String(h.address || "").toLowerCase() === this._findAt)?.rssi; return r < 0 ? r : undefined; };
+    const finding = !!this._findAt;
+    const candidates = (finding ? all.filter((c) => rssiAt(c) != null) : this._showAll ? all : recent.filter((c) => !lonely.has(c)))
       .filter((c) => (this._kind === "all" || c.kind === this._kind) && (!filter || haystack(c).includes(filter)))
-      .sort((a, b) => (a.last_seen_age ?? 1e9) - (b.last_seen_age ?? 1e9));
+      .sort(finding ? (a, b) => rssiAt(b) - rssiAt(a) : (a, b) => (a.last_seen_age ?? 1e9) - (b.last_seen_age ?? 1e9));
+    const findName = finding ? index.get(this._findAt)?.name || this._findAt : null;
     return html`
       <section class="card">
         <h3>Tracked <span class="muted">${tracked.length}</span>
           <span class="grow"></span>
           ${uiButton({ label: "Add a thing…", kind: "primary", icon: "mdi:plus", onClick: () => { this._addWizard = { kind: null, irk: "", error: null }; } })}
         </h3>
-        <div class="wrap"><table class="compact">
-          <tr><th>Thing</th><th>Where</th><th class="num">Height</th><th class="num">Ref trim</th><th></th></tr>
+        <div class="wrap"><table class="compact tracked stack act">
+          <tr><th>Thing</th><th>Where</th><th></th></tr>
           ${tracked.map(([address, d]) => {
             const slug = d.slug, p = live.get(slug), name = thingName(this.data, slug), mdi = classIcon(classes[slug]);
             return html`<tr>
@@ -808,36 +849,38 @@ class SextantDevices extends LitElement {
                 <button class="iconpick" title="Change the icon or class of ${name}" @click=${() => this._openWizard(slug, address)}>
                   ${icons[slug] ? html`<img class="icon round" src=${icons[slug]} alt="" style="box-shadow: 0 0 0 2px ${thingColor(slug, colors[slug])}">` : html`<ha-icon class="icon" icon=${mdi || "mdi:tag-outline"} style="color: ${thingColor(slug, colors[slug])}"></ha-icon>`}
                 </button>
-                <div><a href="#" class="name" title="Edit name, class, height, ref trim and icon" @click=${(e) => { e.preventDefault(); this._openWizard(slug, address); }}>${name}</a><br><span class="muted small">${address}${classes[slug] ? ` · ${(THING_CLASSES.find(([k]) => k === classes[slug]) || [])[1] || classes[slug]}` : ""}${layout.thing_estimators?.[slug] ? ` · ${layout.thing_estimators[slug]} only` : ""}</span></div>
+                <div><a href="#" class="name" title="Change ${name}" @click=${(e) => { e.preventDefault(); this._openWizard(slug, address); }}>${name}</a><br><span class="muted small">${classes[slug] ? `${(THING_CLASSES.find(([k]) => k === classes[slug]) || [])[1] || classes[slug]}` : ""}${layout.thing_estimators?.[slug] ? `${classes[slug] ? " · " : ""}${layout.thing_estimators[slug]} only` : ""}</span></div>
               </td>
               <td>${p ? html`${p.zone}${p.sub_zone && p.sub_zone !== "unknown" ? ` · ${p.sub_zone}` : ""}<br><span class="muted small">${p.floor}</span>`
                 : d.last_seen_age != null ? html`<span class="muted">no position</span><br><span class="muted small">seen ${fmtAge(d.last_seen_age)} ago</span>`
                 : html`<span class="muted">not heard yet</span>`}</td>
-              <td class="num">${heights[slug] != null ? fmtLen(heights[slug], this.hass) : html`<span class="muted" title="the default carry height; click the name to give this thing its own">${fmtLen(this._defaultHeight(), this.hass)}</span>`}</td>
-              <td class="num">${offsets[slug] != null && offsets[slug] !== 0 ? `${offsets[slug] > 0 ? "+" : ""}${fmtNum(offsets[slug], 1)} dB` : html`<span class="muted">0</span>`}</td>
               <td class="actions">
                 <button class="iconbtn" title="Edit ${name}" aria-label="Edit ${name}" @click=${() => this._openWizard(slug, address)}><ha-icon icon="mdi:pencil-outline"></ha-icon></button>
-                <button class="iconbtn danger" title="Stop tracking ${name}" aria-label="Stop tracking ${name}" ?disabled=${this._busy} @click=${async () => { if (await confirmAsync(`Stop tracking ${name}?`, { ok: "Stop tracking", danger: true })) this._track([], [address]); }}><ha-icon icon="mdi:trash-can-outline"></ha-icon></button>
+                <button class="iconbtn danger" title="Stop tracking ${name}" aria-label="Stop tracking ${name}" ?disabled=${this._busy} @click=${async () => { if (await confirmAsync(`Stop tracking ${name} (${address})?`, { ok: "Stop tracking", danger: true })) this._track([], [address]); }}><ha-icon icon="mdi:trash-can-outline"></ha-icon></button>
               </td>
             </tr>`;
           })}
-          ${tracked.length ? nothing : html`<tr><td colspan="5" class="muted">Nothing tracked yet.</td></tr>`}
+          ${tracked.length ? nothing : html`<tr><td colspan="3" class="muted">Nothing tracked yet.</td></tr>`}
         </table></div>
-        <p class="small muted">Click a name to set its name, class, height, ref trim or icon.</p>
+        <p class="small muted">Tap a name to change it.</p>
       </section>
 
-      <section class="card">
-        <h3>Heard, not tracked <span class="muted">${candidates.length}${this._showAll ? "" : ` in the last ${RECENT_SECS} s`}</span>${!this._showAll && lonely.size ? html` <span class="muted small" title="One proxy cannot position a device; switch on Show all to see them">· ${lonely.size} heard by a single proxy, hidden</span>` : nothing}</h3>
+      <section class="card"><details class="heard" ?open=${this._heardOpen} @toggle=${(e) => { this._heardOpen = e.target.open; }}>
+        <summary><h3>Heard, not tracked <span class="muted">${candidates.length}${finding ? ` near ${findName}` : ""}</span></h3></summary>
         <div class="row">
           <input class="grow" type="search" placeholder="Filter by name, address, maker, room, floor, proxy or kind" .value=${this._filter} @input=${(e) => { this._filter = e.target.value; }}>
           ${uiSelect({ label: "Kind", value: this._kind, options: KIND_FILTERS.map(([v, l]) => ({ value: v, label: l })), onChange: (v) => { this._kind = v; }, style: "min-width: 150px" })}
-          <span class="chips">${uiSwitch({ label: `Show all (${all.length})`, checked: this._showAll, onChange: (v) => { this._showAll = v; } })}</span>
+          ${uiSelect({ label: "Find near", value: this._findAt, style: "min-width: 200px",
+            options: [{ value: "", label: "Off" }, ...[...index].map(([a, p]) => ({ value: a, label: `${p.name}${p.room ? ` · ${p.room}` : ""}` })).sort((a, b) => a.label.localeCompare(b.label))],
+            onChange: (v) => this._setFindAt(v) })}
+          ${finding ? nothing : html`<span class="chips">${uiSwitch({ label: `Show all (${all.length})`, checked: this._showAll, onChange: (v) => { this._showAll = v; } })}</span>`}
           ${uiButton({ label: "Refresh", kind: "text", icon: "mdi:refresh", onClick: () => this._refreshLight() })}
         </div>
-        <div class="wrap"><table class="compact">
+        ${finding ? html`<p class="small">Hold the device against <b>${findName}</b>. The loudest comes first and the list updates every 3 s. Set Find near to Off when you are done.</p>` : nothing}
+        <div class="wrap"><table class="compact p-2 p-4 p-5 stack act">
           <tr><th>Device</th><th>Maker</th><th>Where</th><th class="num">Proxies</th><th class="num">Signal</th><th>Seen</th><th></th></tr>
-          ${candidates.slice(0, 200).map((c) => { const w = this._heardWhere(c, index); return html`<tr>
-            <td><b>${c.name}</b> ${c.kind === "tile" ? html`<span class="pill">Tile</span>` : c.kind === "ibeacon" ? html`<span class="pill">iBeacon</span>` : nothing}<br><span class="muted small">${c.address}</span></td>
+          ${candidates.slice(0, 200).map((c, i) => { const w = this._heardWhere(c, index); return html`<tr>
+            <td><b>${c.name}</b> ${finding && i === 0 ? html`<span class="pill ok">loudest</span>` : nothing} ${c.kind === "tile" ? html`<span class="pill">Tile</span>` : c.kind === "ibeacon" ? html`<span class="pill">iBeacon</span>` : nothing}<br><span class="muted small">${c.address}</span></td>
             <td>${c.family || c.manufacturer || html`<span class="muted">unknown</span>`}
               ${c.family && c.manufacturer && c.manufacturer !== c.family ? html`<br><span class="small muted">${c.manufacturer}</span>` : nothing}
               ${c.apple_summary ? html`<br><span class="small muted">${c.apple_summary}</span>`
@@ -845,14 +888,14 @@ class SextantDevices extends LitElement {
                 : c.address_type === "bd_addr_random_resolvable" ? html`<br><span class="small muted">rotating address (IRK)</span>` : nothing}</td>
             <td>${w ? html`${w.room || w.floor}${w.room ? html`<br><span class="muted small">${w.floor}</span>` : nothing}<br><span class="muted small">${w.proxy}</span>` : c.area_name ? html`${c.area_name}` : html`<span class="muted">—</span>`}</td>
             <td class="num" title="placed proxies hearing it">${placed.size ? placedHearing(c) : c.scanners}</td>
-            <td class="num" title="strongest reading (RSSI)">${w ? w.rssi : c.best_rssi ?? "—"} dBm</td>
-            <td class="small">${fmtAge(c.last_seen_age)} ago<br><span class="muted">first ${fmtAge(c.first_seen_age)}</span></td>
+            <td class="num" title=${finding ? `reading at ${findName} (RSSI)` : "strongest reading (RSSI)"}>${finding ? rssiAt(c) : w ? w.rssi : c.best_rssi ?? "—"} dBm</td>
+            <td class="small">${fmtAge(c.last_seen_age)} ago<br><span class="muted">first ${fmtAge(c.first_seen_age)}</span><span class="ponly"><br>${finding ? rssiAt(c) : w ? w.rssi : c.best_rssi ?? "—"} dBm</span></td>
             <td>${uiButton({ label: "Track…", kind: "primary", disabled: this._busy, onClick: () => this._startTrack(c), title: "Choose its name, class and height first; Bermuda tracks it when you confirm" })}</td>
           </tr>`; })}
-          ${candidates.length ? nothing : html`<tr><td colspan="7" class="muted">${this._candidates ? (this._showAll ? "No matching devices." : `Nothing heard in the last ${RECENT_SECS} s matches; switch on "Show all" for everything Bermuda remembers.`) : "Loading…"}</td></tr>`}
+          ${candidates.length ? nothing : html`<tr><td colspan="7" class="muted">${this._candidates ? (this._showAll ? "No matching devices." : finding ? `Nothing heard near ${findName}.` : filter || this._kind !== "all" ? "No matching devices." : `Nothing heard in the last ${RECENT_SECS} s. Turn on "Show all" to see everything Bermuda remembers.`) : "Loading…"}</td></tr>`}
         </table></div>
-        <p class="small muted">Only what two or more placed proxies hear is listed: one proxy cannot position a device, and anything heard solely by an unplaced proxy (a kiosk, a test board) is left out; "Show all" lifts both. Apple FindMy tags are not in this list: they need their pairing keys, added on the Bermuda page.</p>
-      </section>
+        <p class="small muted">${finding || this._showAll ? "" : html`Lists devices at least two placed proxies heard in the last ${RECENT_SECS} s${lonely.size ? `; ${lonely.size} heard by one proxy are left out` : ""}. Show all lifts that. `}AirTags are added on the Bermuda page.</p>
+      </details></section>
       ${this._renderPeople()}
       ${this._renderRobots()}`;
   }
@@ -877,7 +920,7 @@ class SextantDevices extends LitElement {
 
       <section class="card">
         <h3>FindMy accessories <span class="muted">${(this._findmy || []).length}</span></h3>
-        <div class="wrap"><table class="compact">
+        <div class="wrap"><table class="compact p-2">
           <tr><th>Accessory</th><th>Model</th><th>Status</th><th></th></tr>
           ${(this._findmy || []).map((a) => html`<tr>
             <td><b>${a.name}</b><br><span class="muted small">${a.address}</span></td>
@@ -926,9 +969,9 @@ class SextantDevices extends LitElement {
     if (!list.length) return nothing;
     const floors = (this.data?.layout?.floor || []).map((f) => f.name);
     return html`<section class="card wide">
-      <h3>Robot vacuums <span class="muted small">placed from their own maps, asked every ${fmtNum(this.data?.layout?.tuning?.robot_poll_secs ?? 30, 0)} s while out and put at the dock otherwise</span></h3>
+      <h3>Robot vacuums <span class="muted small">placed from their own maps</span></h3>
       ${this._robots?.action_available ? nothing : html`<p class="small warn">The Roborock integration here has no <code>get_vacuum_map_rooms</code> action: install the roborock override 2026.9.3.2 or later.</p>`}
-      <p class="small muted">Line up pairs the rooms both maps name - by room name, or by the Home Assistant area a room is linked to - and fits the robot's map onto the floor. Then, on Live, select the robot and use <b>Mark dock</b> (<ha-icon icon="mdi:home-import-outline" style="--mdc-icon-size: 16px"></ha-icon>): the dock is the most trusted point, and the only way to settle a map with just two matching rooms.</p>
+      <p class="small muted">Line up matches rooms with the same name (or linked area) on both maps and lays the robot's map over the floor. Then select the robot on Live and press <b>Mark dock</b> (<ha-icon icon="mdi:home-import-outline" style="--mdc-icon-size: 16px"></ha-icon>), which is needed if only two rooms match.</p>
       ${list.map((r) => {
         const f = r.fit, busy = this._busy === `robot:${r.vacuum}`;
         const floor = this._robotFloor?.[r.vacuum] || r.floor || floors[0];
@@ -938,16 +981,20 @@ class SextantDevices extends LitElement {
             ${uiButton({ label: busy ? "Reading its map…" : f ? "Line up again" : "Line up", kind: "primary", icon: "mdi:vector-link", disabled: busy || !this._robots?.action_available, onClick: () => this._alignRobot(r.vacuum, floor) })}
             ${r.floor ? html`<button class="iconbtn danger" title="Stop placing ${r.name}" aria-label="Stop placing ${r.name}" @click=${() => this._removeRobot(r.vacuum, r.name)}><ha-icon icon="mdi:trash-can-outline"></ha-icon></button>` : nothing}
           </div>
-          ${r.floor && !f ? html`<div class="small warn">Fewer than two of its rooms match a room on ${r.floor} by name. Name them alike (in the Roborock app or here), or link the rooms to Home Assistant areas of the same name, and line up again.</div>` : nothing}
+          ${r.floor && !f ? html`<div class="small warn">Fewer than two of its rooms match a room on ${r.floor}. Give them the same names, then line up again.</div>` : nothing}
           ${f ? html`<div class="small">
-              <b>${f.pairs.length}</b> point${f.pairs.length === 1 ? "" : "s"} agree to <b>${fmtNum(f.rms_m, 2)} m</b> (RMS)${f.transform.reflect ? ", mirrored" : ""}, rotated ${fmtNum(f.transform.theta * 180 / Math.PI, 1)}°${f.scale_ratio ? html` · the rooms imply ${fmtNum(f.scale_ratio, 2)}× the floor's scale` : nothing}
+              <b>${f.pairs.length}</b> point${f.pairs.length === 1 ? "" : "s"} line up, off by <b>${fmtNum(f.rms_m, 1)} m</b> on average
               ${r.dock_marked ? html` · <span class="pill ok">dock marked</span>` : html` · <span class="pill warn" title="On Live, select ${r.name} and use Mark dock">dock not marked</span>`}
-              <div class="muted">${f.pairs.map((p) => html`<span class="pill" title="${fmtNum(p.residual_m, 2)} m apart after the fit">${p.pair} ${fmtNum(p.residual_m, 1)} m</span> `)}</div>
-              ${f.dropped?.length ? html`<div class="muted">Left out, the two maps disagree about them: ${f.dropped.map((d) => `${d.pair} (${fmtNum(d.residual_m, 1)} m)`).join(", ")}</div>` : nothing}
-              ${f.pairs.length <= 2 && !r.dock_marked ? html`<div class="warn">Two points cannot tell a mirrored map from a turned one: mark the dock to settle it.</div>` : nothing}
+              ${f.pairs.length <= 2 && !r.dock_marked ? html`<div class="warn">With two points the map could be mirrored: mark the dock to settle it.</div>` : nothing}
             </div>` : nothing}
-          ${r.floor && r.reads && (r.reads.ok || r.reads.failed) ? html`<div class="small muted" title=${r.reads.last_error ? `Last failure: ${r.reads.last_error}` : ""}>Position reads since Home Assistant started: <b>${r.reads.ok}</b> ok, <b>${r.reads.failed}</b> failed${r.reads.ok + r.reads.failed ? ` (${Math.round(100 * r.reads.failed / (r.reads.ok + r.reads.failed))}%)` : ""}${r.reads.failed ? " · a failed read keeps the last position" : ""}</div>` : nothing}
+          ${f || (r.floor && r.reads && (r.reads.ok || r.reads.failed)) || r.unmatched?.robot?.length || r.unmatched?.plan?.length ? html`<details class="small"><summary class="muted">Details</summary>
+          ${f ? html`<div class="muted">${fmtNum(f.rms_m, 2)} m RMS${f.transform.reflect ? ", mirrored" : ""}, rotated ${fmtNum(f.transform.theta * 180 / Math.PI, 1)}°${f.scale_ratio ? ` · the rooms imply ${fmtNum(f.scale_ratio, 2)}× the floor's scale` : ""}</div>
+              <div class="muted">${f.pairs.map((p) => html`<span class="pill" title="${fmtNum(p.residual_m, 2)} m apart after the fit">${p.pair} ${fmtNum(p.residual_m, 1)} m</span> `)}</div>
+              ${f.dropped?.length ? html`<div class="muted">Left out, the maps disagree: ${f.dropped.map((d) => `${d.pair} (${fmtNum(d.residual_m, 1)} m)`).join(", ")}</div>` : nothing}
+` : nothing}
+          ${r.floor && r.reads && (r.reads.ok || r.reads.failed) ? html`<div class="small muted" title=${r.reads.last_error ? `Last failure: ${r.reads.last_error}` : ""}>Reads since restart: <b>${r.reads.ok}</b> ok, <b>${r.reads.failed}</b> failed${r.reads.ok + r.reads.failed ? ` (${Math.round(100 * r.reads.failed / (r.reads.ok + r.reads.failed))}%)` : ""}${r.reads.failed ? " · a failed read keeps the last position" : ""}</div>` : nothing}
           ${r.unmatched && (r.unmatched.robot?.length || r.unmatched.plan?.length) ? html`<div class="small muted">No match: ${r.unmatched.robot?.length ? html`robot's <i>${r.unmatched.robot.join(", ")}</i>` : nothing}${r.unmatched.robot?.length && r.unmatched.plan?.length ? "; " : ""}${r.unmatched.plan?.length ? html`plan's <i>${r.unmatched.plan.join(", ")}</i>` : nothing}</div>` : nothing}
+          </details>` : nothing}
         </div>`;
       })}
     </section>`;
@@ -955,7 +1002,8 @@ class SextantDevices extends LitElement {
 
   /** Each owner, where they read as being, and their GPS sources in order:
    * their things place them while home; away, the first source that is
-   * neither broken nor stale (persons.judge_source) gives the zone. */
+   * neither broken nor stale (persons.judge_source) gives the zone, or
+   * another whose newer fix shows them gone, or back (persons.choose_gps). */
   _people() {
     return [...new Set(Object.values(this.data?.layout?.thing_owners || {}).filter((p) => typeof p === "string" && p.startsWith("person.")))].sort();
   }
@@ -993,7 +1041,7 @@ class SextantDevices extends LitElement {
     if (!people.length) return nothing;
     const table = this.data?.layout?.person_trackers || {};
     return html`<section class="card wide">
-      <h3>People <span class="muted small">their things place them at home; a phone or watch still on the house's Wi-Fi keeps them home when Sextant loses them; a GPS tracker takes over after that</span></h3>
+      <h3>People <span class="muted small">placed by what they carry, then Wi-Fi, then GPS</span></h3>
       ${people.map((p) => {
         const slug = p.split(".", 1)[1] || p.slice(7);
         const name = this.hass?.states?.[p]?.attributes?.friendly_name || slug;
@@ -1013,16 +1061,16 @@ class SextantDevices extends LitElement {
         const isPet = owned.length > 0 && owned.every((t) => ["cat", "dog", "paw"].includes(classesAll[t]));
         return html`<div class="person" style="padding: 6px 0; border-top: 1px solid var(--divider-color)">
           <div class="row"><b>${name}</b>
-            <span class="muted small">${loc ? html`${loc.state}${a.source ? ` · via ${a.source === "ble" ? "Sextant" : a.source === "held" ? "Sextant (last place, not heard for a bit)" : a.source === "wifi" ? `Wi-Fi (${this.hass?.states?.[a.via]?.attributes?.friendly_name || a.via} on ${a.access_point || "an access point"})` : a.source === "gps" ? (this.hass?.states?.[a.tracker]?.attributes?.friendly_name || a.tracker) : "nothing usable"}` : ""}${a.distance_m != null && a.source === "gps" ? ` · ${a.distance_m >= 1000 ? `${(a.distance_m / 1000).toFixed(1)} km` : `${a.distance_m} m`} from home` : ""}` : "no location yet"}</span>
+            <span class="muted small">${loc ? html`${loc.state}${a.source ? ` · via ${a.source === "ble" ? "Sextant" : a.source === "held" ? "Sextant (last known place)" : a.source === "wifi" ? `Wi-Fi (${this.hass?.states?.[a.via]?.attributes?.friendly_name || a.via} on ${a.access_point || "an access point"})` : a.source === "gps" ? (this.hass?.states?.[a.tracker]?.attributes?.friendly_name || a.tracker) : "nothing usable"}` : ""}${a.distance_m != null && a.source === "gps" ? ` · ${a.distance_m >= 1000 ? `${(a.distance_m / 1000).toFixed(1)} km` : `${a.distance_m} m`} from home` : ""}` : "no location yet"}</span>
             <span class="grow"></span>
-            <span class="muted small">device_tracker.${slug}_sextant</span></div>
-          <div class="row"><span class="muted small">GPS sources, first usable wins</span>
+            <span class="muted small" ?hidden=${!this.expert}>device_tracker.${slug}_sextant</span></div>
+          <div class="row"><span class="muted small">GPS, first that works wins; a newer fix from another can mark a departure or a return</span>
             ${chosen.map((t, i) => html`<span class="pill">${i + 1}. ${this.hass?.states?.[t]?.attributes?.friendly_name || t}
               <button class="iconbtn" title="Remove this source" aria-label="Remove this source" @click=${() => this._setPersonTrackers(p, chosen.filter((x) => x !== t))}><ha-icon icon="mdi:close" style="--mdc-icon-size: 14px"></ha-icon></button></span>`)}
             ${uiSelect({ label: chosen.length ? "Add another" : "Add a source", value: "", options: [{ value: "", label: "…" }, ...this._gpsTrackerOptions(chosen)], onChange: (v) => { if (v) this._setPersonTrackers(p, [...chosen, v]); }, style: "width: 280px" })}
           </div>
-          ${ignored.length ? html`<div class="muted small">Disregarded right now: ${ignored.map((g) => `${this.hass?.states?.[g.entity]?.attributes?.friendly_name || g.entity} (${g.reason})`).join(", ")}</div>` : nothing}
-          ${!isPet && (Object.keys(wcands).length || wifiAssigned.length) ? html`<div class="row"><span class="muted small" title="A Wi-Fi client tracker with an access point (UniFi Network's, for a phone or a watch). Sextant matches them to people by itself from where you are when they are on each access point; pick one here to decide.">Wi-Fi, says home when Sextant loses them</span>
+          ${ignored.length ? html`<div class="muted small">Ignored now: ${ignored.map((g) => `${this.hass?.states?.[g.entity]?.attributes?.friendly_name || g.entity} (${g.reason})`).join(", ")}</div>` : nothing}
+          ${!isPet && (Object.keys(wcands).length || wifiAssigned.length) ? html`<div class="row"><span class="muted small" title="A Wi-Fi client tracker with an access point (UniFi Network's, for a phone or a watch). Sextant matches them to people by itself from where you are when they are on each access point; pick one here to decide.">Wi-Fi keeps them home</span>
             ${wifiAssigned.map((w) => html`<span class="pill" title=${w.how === "manual" ? "Chosen here" : w.how === "name" ? "Matched by its name" : `Matched by where ${name} is when it is on each access point (${Math.round((w.confidence || 0) * 100)} %)`}>${wifiLabel(w.entity)}${w.how === "manual" ? "" : html` <span class="muted">· ${w.how === "name" ? "by name" : "learned"}</span>`}
               ${w.how === "manual"
                 ? html`<button class="iconbtn" title="Remove" aria-label="Remove this Wi-Fi tracker" @click=${() => this._setPersonWifi(p, wifiManual.filter((x) => x !== w.entity))}><ha-icon icon="mdi:close" style="--mdc-icon-size: 14px"></ha-icon></button>`
@@ -1046,7 +1094,7 @@ class SextantDevices extends LitElement {
       .sort((a, b) => a.where.localeCompare(b.where));
     return html`
       <p class="small muted">Click a Tile's name to call it "Kitchen keys"; the map and the Things page use that name. Bermuda follows each Tile across its address rotations by RSSI pattern and remembers where it last was, so it finds it again after a restart; that works while the Tile is not sitting among other Tiles. A Tile marked <span class="pill warn">not heard</span> has rotated away unseen: pick the live address that is where the Tile is and Adopt. On Private ID Tiles the ID readable over Bluetooth rotates too, so it cannot name a tag; probing stays off unless "Tile identity probes" is on above.</p>
-      <div class="wrap"><table class="compact">
+      <div class="wrap"><table class="compact p-4 stack">
         <tr><th>Tile</th><th>Bound address</th><th>This Tile is…</th><th>History</th></tr>
         ${bindings.map(([id, sources]) => { const lost = t.bound_age?.[id] == null || t.bound_age[id] > 300; return html`<tr>
           <td><a href="#" class="name" title="Name this Tile (and set its class, height and icon)" @click=${(e) => { e.preventDefault(); this._openWizard(id, sources[0]); }}>${thingName(this.data, id)}</a>${this.data?.layout?.thing_names?.[id] ? nothing : html`<br><span class="muted small">click to name it</span>`}${t.uids?.[id] ? html`<br><code class="small">${t.uids[id]}</code>` : nothing}</td>
@@ -1090,7 +1138,7 @@ class SextantDevices extends LitElement {
       return { room: p.room ? `${p.room} · ${p.floor}` : p.floor, proxy: `${p.name} (${hit.rssi} dBm)`, unplaced: heard.length - heard.filter((h) => placed.has(String(h.address || "").toLowerCase())).length };
     };
     return html`<h4>Tile IDs heard <span class="muted small">read from the tags; pick which configured Tile each one is. To tell two apart, ring one from the Tile app, carry it to another room for two minutes and watch which ID moves.</span></h4>
-      <div class="wrap"><table class="compact">
+      <div class="wrap"><table class="compact p-4 p-6 stack">
         <tr><th>Tile ID</th><th>Last heard</th><th>Where</th><th>Loudest placed proxy</th><th>Is</th><th></th></tr>
         ${ids.map((row) => { const w = where(row); return html`<tr>
           <td><code>${row.uid}</code></td>
@@ -1123,6 +1171,27 @@ class SextantDevices extends LitElement {
     button.iconpick:hover { border-color: var(--primary-color); }
     a.name { font-weight: 600; color: var(--primary-text-color); text-decoration: none; border-bottom: 1px dotted var(--secondary-text-color); }
     a.name:hover { color: var(--primary-color); border-bottom-color: var(--primary-color); }
+    td.who > div { min-width: 0; }
+    /* The pinned column held a long id on one line and took the whole screen,
+       leaving a letter's width of the next column: here it wraps instead. */
+    @media (max-width: 720px) { .wrap td:first-child { min-width: 150px; max-width: 46vw; overflow-wrap: anywhere; } }
+    /* A phone shows who and where; the id, height and ref trim are in the dialog the name opens. */
+    @media (max-width: 720px) { .wrap .tracked td:first-child { min-width: 0; max-width: none; } }
+    details.heard > summary { cursor: pointer; } details.heard > summary h3 { display: inline-flex; margin: 0; }
+    .ponly { display: none; }
+    /* p-N: column N is left out on a phone (it is in the dialog, or only detail). */
+    @media (max-width: 720px) { .p-2 tr > :nth-child(2):not([colspan]), .p-4 tr > :nth-child(4), .p-5 tr > :nth-child(5), .p-6 tr > :nth-child(6) { display: none; } .dialog h3 { overflow-wrap: anywhere; flex-wrap: wrap; } .dialog h3 span { flex-basis: 100%; } .ponly { display: inline; } }
+    /* stack: on a phone each row is a block, its cells one under another; act puts the last cell (the action) at the right. */
+    @media (max-width: 720px) {
+      .stack, .stack tbody { display: block; } .stack th { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }   /* off screen, still read out */
+      .stack tr:first-child { border: 0; padding: 0; }
+      .stack tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; border-top: 1px solid var(--divider-color); padding: 6px 0; }
+      .stack td { display: block; grid-column: 1; border: 0; }
+      .wrap .stack td:first-child { min-width: 0; max-width: none; position: static; background: none; box-shadow: none; border-right: 0; }
+      .stack td.who { display: flex; }
+      .stack.act td:last-child:not(:first-child) { grid-column: 2; grid-row: 1 / span 3; align-self: center; }
+    }
+    @media (pointer: coarse) { a.name { display: inline-block; padding: 6px 0; } }
     td.actions { white-space: nowrap; }
     button.iconbtn.danger { color: var(--error-color, #b00020); border-color: transparent; }
     button.iconbtn.danger:hover { border-color: var(--error-color, #b00020); }

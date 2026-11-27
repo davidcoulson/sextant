@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="940" height="520" viewBox="0 0 940 520" role="img" aria-label="An invented house with its occupancy sensors">
+<title>An invented house with its occupancy sensors</title>
+<rect x="0.5" y="0.5" width="939" height="519" rx="10" fill="#ffffff" stroke="#d0d7de"/>
+<text x="20" y="30" font-size="16" fill="#1f2328" text-anchor="start" font-weight="bold" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">An invented house: Larkspur Cottage, ground floor</text>
+<rect x="40" y="60" width="300" height="190" fill="#f6f8fa" stroke="#1f2328" stroke-width="2"/>
+<text x="50" y="82" font-size="14" fill="#1f2328" text-anchor="start" font-weight="bold" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">Kitchen</text>
+<rect x="340" y="60" width="330" height="190" fill="#f6f8fa" stroke="#1f2328" stroke-width="2"/>
+<text x="350" y="82" font-size="14" fill="#1f2328" text-anchor="start" font-weight="bold" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">Lounge</text>
+<rect x="670" y="60" width="230" height="190" fill="#f6f8fa" stroke="#1f2328" stroke-width="2"/>
+<text x="680" y="82" font-size="14" fill="#1f2328" text-anchor="start" font-weight="bold" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">Study</text>
+<rect x="40" y="250" width="190" height="150" fill="#f6f8fa" stroke="#1f2328" stroke-width="2"/>
+<text x="50" y="272" font-size="14" fill="#1f2328" text-anchor="start" font-weight="bold" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">Hall</text>
+<rect x="230" y="250" width="300" height="220" fill="#f6f8fa" stroke="#1f2328" stroke-width="2"/>
+<text x="240" y="272" font-size="14" fill="#1f2328" text-anchor="start" font-weight="bold" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">Bedroom</text>
+<rect x="530" y="250" width="140" height="220" fill="#f6f8fa" stroke="#1f2328" stroke-width="2"/>
+<text x="540" y="272" font-size="14" fill="#1f2328" text-anchor="start" font-weight="bold" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">Bathroom</text>
+<rect x="670" y="250" width="230" height="150" fill="#f6f8fa" stroke="#1f2328" stroke-width="2"/>
+<text x="680" y="272" font-size="14" fill="#1f2328" text-anchor="start" font-weight="bold" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">Utility</text>
+<line x1="120" y1="250" x2="170" y2="250" stroke="#f6f8fa" stroke-width="4"/>
+<line x1="420" y1="250" x2="470" y2="250" stroke="#f6f8fa" stroke-width="4"/>
+<line x1="600" y1="250" x2="640" y2="250" stroke="#f6f8fa" stroke-width="4"/>
+<line x1="230" y1="300" x2="230" y2="340" stroke="#f6f8fa" stroke-width="4"/>
+<line x1="735" y1="250" x2="780" y2="250" stroke="#f6f8fa" stroke-width="4"/>
+<path d="M420 250 A50 50 0 0 1 470 300" fill="none" stroke="#59636e" stroke-dasharray="3 3"/>
+<circle cx="60" cy="230" r="7" fill="#0969da"/><circle cx="60" cy="230" r="13" fill="none" stroke="#0969da" stroke-opacity="0.5"/>
+<circle cx="320" cy="230" r="7" fill="#0969da"/><circle cx="320" cy="230" r="13" fill="none" stroke="#0969da" stroke-opacity="0.5"/>
+<circle cx="650" cy="80" r="7" fill="#0969da"/><circle cx="650" cy="80" r="13" fill="none" stroke="#0969da" stroke-opacity="0.5"/>
+<circle cx="880" cy="230" r="7" fill="#0969da"/><circle cx="880" cy="230" r="13" fill="none" stroke="#0969da" stroke-opacity="0.5"/>
+<circle cx="250" cy="450" r="7" fill="#0969da"/><circle cx="250" cy="450" r="13" fill="none" stroke="#0969da" stroke-opacity="0.5"/>
+<circle cx="510" cy="450" r="7" fill="#0969da"/><circle cx="510" cy="450" r="13" fill="none" stroke="#0969da" stroke-opacity="0.5"/>
+<circle cx="880" cy="380" r="7" fill="#0969da"/><circle cx="880" cy="380" r="13" fill="none" stroke="#0969da" stroke-opacity="0.5"/>
+<path d="M291 97 L300 81 L309 97 Z" fill="#8250df"/>
+<path d="M621 237 L630 221 L639 237 Z" fill="#8250df"/>
+<path d="M851 97 L860 81 L869 97 Z" fill="#8250df"/>
+<path d="M491 287 L500 271 L509 287 Z" fill="#8250df"/>
+<g transform="translate(682 155) rotate(0)"><path d="M0 0 L60 -35 A70 70 0 0 1 60 35 Z" fill="#8250df" fill-opacity="0.15" stroke="#8250df" stroke-opacity="0.5"/><rect x="-6" y="-6" width="12" height="12" rx="2" fill="#8250df"/></g>
+<rect x="676" y="185" width="12" height="12" rx="2" fill="none" stroke="#8250df" stroke-width="2"/>
+<rect x="437" y="255" width="16" height="10" rx="2" fill="#bf8700"/>
+<circle cx="780" cy="155" r="7" fill="#cf222e"/><path d="M769 177 Q780 159 791 177 Z" fill="#cf222e"/><text x="780" y="193" font-size="12" fill="#1f2328" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">Sam</text>
+<circle cx="380" cy="350" r="7" fill="#bc4c00"/><path d="M369 372 Q380 354 391 372 Z" fill="#bc4c00"/><text x="380" y="388" font-size="12" fill="#1f2328" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">Robin</text>
+<ellipse cx="500" cy="154" rx="12" ry="8" fill="#59636e"/><circle cx="512" cy="145" r="6" fill="#59636e"/><path d="M508 140 L509 134 L512 139 M513 139 L516 134 L517 140" fill="#59636e"/><text x="500" y="176" font-size="12" fill="#1f2328" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">Pepper</text>
+<rect x="130" y="130" width="70" height="40" rx="4" fill="#ffffff" stroke="#59636e"/>
+<text x="165" y="155" font-size="12" fill="#59636e" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">TV</text>
+<text x="165" y="188" font-size="10" fill="#59636e" text-anchor="middle" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">sensor.tv_power&gt;20</text>
+<circle cx="40" cy="492" r="7" fill="#0969da"/><circle cx="40" cy="492" r="13" fill="none" stroke="#0969da" stroke-opacity="0.5"/>
+<text x="60" y="497" font-size="12" fill="#1f2328" text-anchor="start" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">Bluetooth proxy</text>
+<path d="M191 499 L200 483 L209 499 Z" fill="#8250df"/>
+<text x="220" y="497" font-size="12" fill="#1f2328" text-anchor="start" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">motion sensor</text>
+<rect x="334" y="486" width="12" height="12" rx="2" fill="#8250df"/>
+<text x="360" y="497" font-size="12" fill="#1f2328" text-anchor="start" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">mmWave radar (tracking)</text>
+<rect x="534" y="486" width="12" height="12" rx="2" fill="none" stroke="#8250df" stroke-width="2"/>
+<text x="560" y="497" font-size="12" fill="#1f2328" text-anchor="start" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">presence sensor (LD2412)</text>
+<rect x="742" y="487" width="16" height="10" rx="2" fill="#bf8700"/>
+<text x="770" y="497" font-size="12" fill="#1f2328" text-anchor="start" font-weight="normal" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif">door contact</text>
+</svg>

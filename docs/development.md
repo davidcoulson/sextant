@@ -30,8 +30,8 @@ Assistant is lost on the next save.
 
 Every release runs in the author's house before it ships, which is where most
 of the odd cases in this codebase came from. It is three floors: 21 rooms and
-12 spots over a Ground Floor, a Second Floor and a Basement, with 58 placed
-proxies. They are a mix of bare ESP boards and Shelly hardware, but the
+12 spots over a Ground Floor, a Second Floor and a Basement, with more
+than 100 placed proxies. They are a mix of bare ESP boards and Shelly hardware, but the
 distinction is only in the casing: the Shellys run ESPHome too, so every
 proxy in the house speaks the same firmware.
 
@@ -92,8 +92,11 @@ pytest tests
 - `tools/brand/` builds the logo from the same compass rose the sidebar uses.
 - The panel is plain Lit modules under `custom_components/sextant/frontend/`
   with no build step. The backend registers the panel module with the
-  manifest version in its URL, so a page loaded before an update offers a
-  reload on its own.
+  manifest version in its URL, so a Live or Occupancy page loaded before an
+  update reloads itself the next time it is in view, once per version. Other
+  pages may hold a draft, so they offer a Reload button instead. Both first
+  drop Sextant's files from Home Assistant's service-worker cache, which
+  otherwise serves the old panel once more before refreshing its copy.
 
 Issues and pull requests are welcome on
 [davidcoulson/sextant](https://github.com/davidcoulson/sextant).
