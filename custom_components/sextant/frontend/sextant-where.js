@@ -89,13 +89,16 @@ export function whereRows(states, entries, now) {
     else if (a.kind === "zone" || a.presence === "away") {
       away = true;
       zone = a.zone && a.zone !== "not_home" ? title(a.zone) : null;
-      const act = e.activity ? states?.[e.activity] : null;  // a Companion app activity sensor, or a Life360 tracker
-      moving = act?.attributes?.driving === true ? MOVING.automotive : MOVING[String(act?.state).toLowerCase()] || null;
+      // A Companion app activity sensor, or a Life360 tracker (its driving flag; its state is a zone, not an activity).
+      const act = e.activity ? states?.[e.activity] : null;
+      moving = !act || BLANK.has(act.state) ? null
+        : e.activity.startsWith("device_tracker.") ? (act.attributes?.driving === true ? MOVING.automotive : null)
+        : MOVING[String(act.state).toLowerCase()] || null;
       const gs = e.place ? states?.[e.place] : null;
       const g = gs && !BLANK.has(gs.state) ? gs.attributes || {} : {};  // a dead geocoder keeps its last town
       // A geocoder's town and state; a Life360 tracker's named place, else its street and state.
       const place = [g.Locality ?? g.locality, g["Administrative Area"] ?? g.administrative_area ?? g.admin_area].filter((x) => x && x !== "N/A").join(", ")
-        || g.place || g.address || "";
+        || (gs?.state !== "home" && g.place) || g.address || "";  // Life360 lagging at its home place: not a place to show
       where = zone || (moving ? `${moving.label}${place ? ` near ${place}` : ""}` : place || "Away");
     } else where = room || title(st.state);
     rows.push({

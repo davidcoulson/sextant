@@ -128,4 +128,9 @@ test("Life360: a tracker gives driving and its place or address", () => {
   // The editor: no Companion app sensors on the Life360 device, so the tracker fills both keys.
   assert.deepEqual(withPerson(st, "sensor.j_sextant_person_location", { "device_tracker.j": { device_id: "L" } }),
     { entity: "sensor.j_sextant_person_location", activity: "device_tracker.j", place: "device_tracker.j" });
+  // Life360 still at home while Sextant says away: the street, not the home place; a dead tracker's flag is stale.
+  st["device_tracker.j"] = loc("home", { driving: false, address: "Silver Tree Trail, Ohio", place: "Home (Bauer Coulson)" });
+  assert.equal(whereRows(st, [e], NOW)[0].where, "Silver Tree Trail, Ohio");
+  st["device_tracker.j"] = loc("unavailable", { driving: true, address: "Pearl Road, Ohio" });
+  assert.equal(whereRows(st, [e], NOW)[0].where, "Away");
 });
