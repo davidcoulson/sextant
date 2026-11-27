@@ -8132,6 +8132,24 @@ def _register_calibration_services(hass) -> None:
     async_register_admin_service(hass, DOMAIN, "reload_code", _reload_code, schema=vol.Schema({}))
 
 
+# The version this module's code is, read at import (which runs in the import executor).
+_CODE_VERSION = json.loads((Path(__file__).parent / "manifest.json").read_text())["version"]
+
+
+def _clear_marketplace_restart(hass) -> None:
+    """Drop Marketplace's "restart to finish the update" repair once that version runs.
+
+    Marketplace cannot see reload_code, so the repair would stay until a restart.
+    Called from entry setup, so it is the new code's version even when the old
+    code's reload_code handler did the reload. A repair for any other version
+    (an update downloaded after this code was imported) still waits.
+    """
+    for (domain, issue_id), issue in list(ir.async_get(hass).issues.items()):
+        if (domain == "marketplace" and issue_id.startswith("restart_required_")
+                and issue.issue_domain == DOMAIN and issue_id.endswith(f"/{_CODE_VERSION}")):
+            ir.async_delete_issue(hass, domain, issue_id)
+
+
 def _import_code(package: str) -> None:
     """Import the new code in the import executor, not the event loop.
 
@@ -8476,7 +8494,10 @@ async def async_setup_entry(hass, entry):
         entry.async_on_unload(stop)
 
     """Set up Sextant from a config entry."""
-    return await async_setup(hass, entry)
+    ok = await async_setup(hass, entry)
+    if ok:
+        _clear_marketplace_restart(hass)
+    return ok
 
 
 async def async_update_options(hass, entry):
