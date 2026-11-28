@@ -88,11 +88,14 @@ def test_a_collar_is_heard_from_every_receiver_not_only_the_one_ha_keeps(monkeyp
     monkeypatch.setattr(tb, "SEEN", {})
     leela = "DA:36:EE:88:7B:DA"
     still = bytes.fromhex("0215decafbadfeedfacef00dda36ee887bdaac652a12c5")
-    one = still[:20] + (1).to_bytes(2, "big") + still[22:]
-    infos = {leela: NS(service_data={}, manufacturer_data={65535: one}, time=10.0)}   # the kept, stale advert
-    subs, cancelled = {}, []
+    one, shake = (still[:20] + m.to_bytes(2, "big") + still[22:] for m in (1, 2))
+    raw = lambda frame: bytes([2, 1, 6, 1 + 2 + len(frame), 0xFF, 0xFF, 0xFF]) + frame   # flags, then the frame
+    infos = {leela: NS(service_data={}, manufacturer_data={65535: shake}, time=10.0)}   # the kept advert: an old Shake
+    subs, cancelled, fail = {}, [], [True]
 
     def register(h, cb, address):
+        if fail.pop() if fail else False:
+            raise RuntimeError("not ready")
         subs[address] = cb
         return lambda: cancelled.append(address)
     bluetooth = NS(async_last_service_info=lambda h, a, c: infos.get(a),
@@ -107,22 +110,37 @@ def test_a_collar_is_heard_from_every_receiver_not_only_the_one_ha_keeps(monkeyp
     devices = {leela.lower(): {"slug": "leela"}}
     tb.watch(devices)
     stop = tb.setup_frame_log(hass)
-    # The stale kept advert alone: no fresh frame, so no "seen", and the collar is now heard everywhere.
+    # The stale kept advert alone: no fresh frame, so no "seen". The first subscription fails and is tried again.
     assert "seen" not in tb.beacons_now(hass, devices, now_mono=100.0)["leela"]
+    assert subs == {} and leela not in tb._SUBS
+    tb.beacons_now(hass, devices, now_mono=100.0)
     assert list(subs) == [leela]
-    # A weaker receiver hears her: that newer frame is the one read.
-    subs[leela](NS(address=leela, manufacturer_data={65535: one}, source="weak", rssi=-88, time=99.0))
-    subs[leela](NS(address=leela, manufacturer_data={65535: one}, source="late", rssi=-90, time=98.0))  # older: kept out
+    # A weaker receiver hears her still: that newer frame is the one read, not the kept Shake.
+    adv = lambda data, t, src, packet=None: NS(address=leela, manufacturer_data=data, source=src, rssi=-88, time=t, raw=packet)
+    subs[leela](adv({65535: one}, 99.0, "weak", raw(one)))
+    subs[leela](adv({65535: shake}, 98.0, "late", raw(shake)))    # a real Shake heard late: motion, but not the newest
+    subs[leela](adv({65535: shake}, 99.5, "strong", bytes([2, 1, 6])))   # a scan response: merged Shake, no frame in it
     assert tb.FRESH[leela] == (1, 99.0)
-    assert tb.beacons_now(hass, devices, now_mono=100.0) == {"leela": {"minors": {"65535": 1}, "age": 1.0, "seen": [1]}}
+    infos[leela].time = 99.8   # the kept advert renewed by that scan response still holds the old Shake
+    assert tb.beacons_now(hass, devices, now_mono=100.0) == {"leela": {"minors": {"65535": 1}, "age": 1.0, "seen": [1, 2]}}
     tb.beacons_now(hass, devices, now_mono=101.0)
     assert list(subs) == [leela]   # subscribed once
     stop()
-    assert cancelled == ["change", leela] and tb._SUBS == {} and tb.FRESH == {}
-    assert [r["src"] for r in written[0]] == ["weak"]   # the log heard the weaker receiver too
+    assert cancelled == ["change", leela] and tb._SUBS == {} and tb.FRESH == {} and tb.SEEN == {}
+    assert [r["src"] for r in written[0]] == ["weak", "late"]   # the log heard the weaker receivers too
     # Once the frame log stops, nothing subscribes again.
     tb.beacons_now(hass, devices, now_mono=102.0)
     assert tb._SUBS == {}
+
+
+def test_packet_minor_reads_this_packets_frame_only():
+    still = bytes.fromhex("0215decafbadfeedfacef00dda36ee887bdaac652a12c5")
+    packet = bytes([2, 1, 6, 3, 0x03, 0x0A, 0x18, 26, 0xFF, 0xFF, 0xFF]) + still
+    assert tb.packet_minor(NS(raw=packet, manufacturer_data={})) == 0x2A12
+    assert tb.packet_minor(NS(raw=bytes([2, 1, 6]), manufacturer_data={65535: still})) is None   # scan response
+    assert tb.packet_minor(NS(raw=bytes([26, 0xFF, 0x4C, 0x00]) + still, manufacturer_data={})) is None   # Apple's company
+    assert tb.packet_minor(NS(raw=bytes([30, 0xFF]), manufacturer_data={})) is None   # cut short
+    assert tb.packet_minor(NS(raw=None, manufacturer_data={65535: still})) == 0x2A12  # no raw bytes: the merged frame
 
 
 def test_a_collar_no_longer_tracked_stops_being_heard(monkeypatch):

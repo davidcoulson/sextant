@@ -41,6 +41,22 @@ def ibeacon_minors(manufacturer_data) -> dict:
     return out
 
 
+def packet_minor(info):
+    """The 0xFFFF iBeacon minor this very packet carries. Home Assistant merges a receiver's
+    manufacturer data across packets, so a scan response would repeat an old frame; the raw
+    bytes (AD structures, where the receiver gives them) hold only this packet's."""
+    raw = getattr(info, "raw", None)
+    if not isinstance(raw, (bytes, bytearray)):
+        return ibeacon_minors({_COMPANY: (info.manufacturer_data or {}).get(_COMPANY) or b""}).get(str(_COMPANY))
+    i = 0
+    while i < len(raw) and (n := raw[i]):
+        ad = raw[i + 1:i + 1 + n]
+        if len(ad) >= 3 and ad[0] == 0xFF and int.from_bytes(ad[1:3], "little") == _COMPANY:
+            return ibeacon_minors({_COMPANY: ad[3:]}).get(str(_COMPANY))
+        i += 1 + n
+    return None
+
+
 def _last_infos(hass, devices):
     """(slug, address, last advert) for each tracked device ({address: {"slug"}}) with one.
 
@@ -83,7 +99,9 @@ def beacons_now(hass, devices, now_mono=None) -> dict:
             _hear_every_receiver(hass, address)
         # Home Assistant keeps a strong receiver's advert for up to 15 min after it stops hearing
         # the collar (Leela asleep, 2026-11-28); a weaker receiver's newer frame is the latest.
-        if (newer := FRESH.get(str(address).upper())) and (not isinstance(at, (int, float)) or newer[1] > at):
+        # Heard from every receiver, FRESH has the kept one's frames too, and only real frames.
+        if (newer := FRESH.get(str(address).upper())) and (
+                _SUBS.get(str(address).upper()) or not isinstance(at, (int, float)) or newer[1] > at):
             minors, at = {**minors, str(_COMPANY): newer[0]}, newer[1]
         fresh = not isinstance(at, (int, float)) or now_mono - at <= SEEN_FRESH_S
         if (now := minors.get(str(_COMPANY))) is not None and fresh:
@@ -118,12 +136,14 @@ def _hear_every_receiver(hass, address) -> None:
     address = str(address).upper()
     if _ON_ADVERT[0] is None or address in _SUBS:
         return
+    from homeassistant.components import bluetooth
+    if not hasattr(bluetooth, "async_register_advertisement_callback"):
+        _SUBS[address] = None   # older Home Assistant: the kept advert is all there is
+        return
     try:
-        from homeassistant.components import bluetooth
         _SUBS[address] = bluetooth.async_register_advertisement_callback(hass, _ON_ADVERT[0], address)
-    except Exception as e:  # noqa: BLE001 - older Home Assistant: the kept advert is all there is
-        _LOGGER.debug("Collar %s heard through one receiver only: %s", address, e)
-        _SUBS[address] = None
+    except Exception as e:  # noqa: BLE001 - tried again next cycle
+        _LOGGER.debug("Collar %s heard through one receiver only for now: %s", address, e)
 
 
 def watch(devices) -> None:
@@ -141,11 +161,11 @@ def watch(devices) -> None:
 
 def frame_row(info, last: dict, now: float):
     """The log row for an advert whose iBeacon minor differs from ``last`` (address -> minor),
-    updating it; None for anything else. Home Assistant keeps each proxy's last frame, so a
-    switch to another proxy can log one stale minor (see ``src``)."""
+    updating it; None for anything else. Every receiver's adverts come here, so a receiver a
+    packet behind another can log a minor back and forth (see ``src``)."""
     address = str(info.address).upper()
     slug = COLLARS.get(address)
-    minor = ibeacon_minors({_COMPANY: (info.manufacturer_data or {}).get(_COMPANY) or b""}).get(str(_COMPANY))
+    minor = packet_minor(info)
     if slug is None or minor is None:
         return None
     SEEN.setdefault(address, set()).add(minor)
@@ -205,6 +225,7 @@ def setup_frame_log(hass):
                 cancel()
         _SUBS.clear()
         FRESH.clear()
+        SEEN.clear()
         if timer[0]:
             timer[0].cancel()
         flush()
