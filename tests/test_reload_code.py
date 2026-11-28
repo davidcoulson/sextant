@@ -186,3 +186,35 @@ def test_a_setup_error_puts_the_previous_code_back(tmp_path, monkeypatch):
     assert entry.state is sextant.ConfigEntryState.LOADED
     assert entry.running == 1
     assert sys.modules["reloadme"] is old
+
+
+def test_a_rollback_starts_the_old_code_from_clean_flags(tmp_path, monkeypatch):
+    import pytest
+
+    hass, entry, old, reload, write = _reload_fixture(tmp_path, monkeypatch)
+    seen = []
+    real_setup = hass.config_entries.async_setup
+
+    async def setup(entry_id):
+        seen.append(hass.data.get("sextant_initialized"))
+        ok = await real_setup(entry_id)
+        hass.data["sextant_initialized"] = True  # what the real setup sets before it can fail
+        return ok
+
+    hass.config_entries.async_setup = setup
+    write("__init__.py", "from .sub import VALUE\n\n\ndef setup():\n    if VALUE != 1:\n        raise RuntimeError\n    return VALUE\n")
+    write("sub.py", "VALUE = 2\n")
+    with pytest.raises(Exception, match="previous code"):
+        reload()
+    assert seen == [None, None]  # the new setup, then the old one: neither saw a leftover flag
+    assert entry.state is sextant.ConfigEntryState.LOADED and entry.running == 1
+
+
+def test_a_rollback_with_nothing_loaded_says_there_is_no_previous_code(tmp_path, monkeypatch):
+    import pytest
+
+    hass, entry, old, reload, write = _reload_fixture(tmp_path, monkeypatch)
+    entry.state = sextant.ConfigEntryState.NOT_LOADED
+    write("sub.py", "VALUE = no_such_name\n")
+    with pytest.raises(Exception, match="no previous code"):
+        reload()

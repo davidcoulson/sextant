@@ -8363,6 +8363,28 @@ def _restore_code(hass, dropped: list) -> None:
     _forget_code(hass, __name__, DOMAIN)
     for cache, name, module in dropped:
         cache[name] = module
+    # `from custom_components import sextant` reads the parent's attribute, not sys.modules
+    if (parent := sys.modules.get(__name__.rpartition(".")[0])) is not None and __name__ in sys.modules:
+        setattr(parent, DOMAIN, sys.modules[__name__])
+
+
+async def _reset_runtime_state(hass, forget: bool = False) -> list:
+    """As after a restart, nothing of the old code's may be left to reuse.
+
+    The HTTP views and stop listeners cannot be registered twice, so their
+    flags stay: the views run the old code until a restart. With ``forget``,
+    also drops the loaded modules and returns them.
+    """
+    from .storage import LAYOUT_LOCK  # noqa: PLC0415
+    # Under the layout lock, and with no await inside: a layout save still
+    # in flight finishes first, instead of landing on the new code's state.
+    async with LAYOUT_LOCK:
+        for key in [k for k in hass.data if str(k).startswith("sextant_")
+                    and k not in ("sextant_views_registered", "sextant_stop_listeners", "sextant_reloading",
+                                  "sextant_started_requirements")]:  # installed only at a restart
+            hass.data.pop(key, None)
+        hass.data.pop(DOMAIN, None)
+        return _forget_code(hass, __name__, DOMAIN) if forget else []
 
 
 async def _reload_code_once(hass) -> None:
@@ -8379,26 +8401,22 @@ async def _reload_code_once(hass) -> None:
     for entry in entries:
         if not await hass.config_entries.async_unload(entry.entry_id):
             raise HomeAssistantError("Sextant did not unload; restart Home Assistant instead")
-    # As after a restart, nothing of the old code's may be left to reuse.
-    # The HTTP views and stop listeners cannot be registered twice, so
-    # their flags stay: the views run the old code until a restart.
-    from .storage import LAYOUT_LOCK  # noqa: PLC0415
-    # Under the layout lock, and with no await inside: a layout save still
-    # in flight finishes first, instead of landing on the new code's state.
-    async with LAYOUT_LOCK:
-        for key in [k for k in hass.data if str(k).startswith("sextant_")
-                    and k not in ("sextant_views_registered", "sextant_stop_listeners", "sextant_reloading",
-                                  "sextant_started_requirements")]:  # installed only at a restart
-            hass.data.pop(key, None)
-        hass.data.pop(DOMAIN, None)
-        previous = _forget_code(hass, __name__, DOMAIN)
+    previous = await _reset_runtime_state(hass, forget=True)
 
     async def roll_back() -> None:
         """Put the code that ran before back and set the entries up on it."""
+        if not previous:
+            raise HomeAssistantError("Sextant's new code failed and there was no previous code to go back to; "
+                                     "fix it and call sextant.reload_code again, or restart Home Assistant")
         for entry in entries:  # the repair listener goes with the entry
-            await hass.config_entries.async_unload(entry.entry_id)
+            if not await hass.config_entries.async_unload(entry.entry_id):
+                raise HomeAssistantError("Sextant's new code failed and did not unload; restart Home Assistant")
+        await _reset_runtime_state(hass)  # a setup that failed partway left its flags set
         _restore_code(hass, previous)
-        failed = [entry.title for entry in entries if not await hass.config_entries.async_setup(entry.entry_id)]
+        for entry in entries:
+            await hass.config_entries.async_setup(entry.entry_id)
+        # A retry (the device is offline) is not a failure.
+        failed = [e.title for e in entries if e.state not in (ConfigEntryState.LOADED, ConfigEntryState.SETUP_RETRY)]
         if failed:
             raise HomeAssistantError("Sextant's new code failed, and the previous code did not set up "
                                      f"{failed} again either; restart Home Assistant")
@@ -8416,6 +8434,8 @@ async def _reload_code_once(hass) -> None:
         await roll_back()
         raise HomeAssistantError(f"Sextant's new code did not set up {broken}, so the previous code is running "
                                  "again; see the log")
+    if waiting := [entry.title for entry in entries if entry.state is not ConfigEntryState.LOADED]:
+        raise HomeAssistantError(f"Sextant is not set up yet for {waiting}; see the log")
 
 
 # The version this module's code is, read at import (which runs in the import executor).
