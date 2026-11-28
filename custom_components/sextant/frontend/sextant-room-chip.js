@@ -99,7 +99,7 @@ class SextantRoomChip extends LitElement {
     .chip.off, .chip.warn { padding-left: 12px; color: var(--secondary-text-color); }
     .chip:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
     .chip ha-icon { --mdc-icon-size: 18px; }
-    .muted { color: var(--secondary-text-color); overflow: hidden; text-overflow: ellipsis; }
+    .muted { color: var(--secondary-text-color); overflow: hidden; text-overflow: ellipsis; margin-left: -4px; } /* "· Jack" a space after the age, not the chip's 8px gap */
     .faces { display: flex; }
     .face { width: 28px; height: 28px; border-radius: 50%; margin-left: -8px; border: 2px solid var(--ha-card-background, var(--card-background-color)); object-fit: cover;
       display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; color: #fff; background: var(--primary-color); box-sizing: border-box; }

@@ -66,13 +66,13 @@ class SextantWhereCard extends LitElement {
   // Stays are drawn as "42m": redraw each minute even when no state changes.
   connectedCallback() { super.connectedCallback(); this._timer = setInterval(() => { this._tick = Date.now(); }, 60000); }
   disconnectedCallback() { super.disconnectedCallback(); clearInterval(this._timer); }
-  // Rings: a room line too long for its cell shrinks to fit, down to 9px, before it ends in "…".
+  // Rings: a room line too long for its cell shrinks to fit, down to 10px, before it ends in "…".
   // shortcut: refits on the next render (a state change or the minute tick), not on a resize.
   updated() {
     for (const el of this.renderRoot.querySelectorAll(".cell .room")) {
       if (!el.clientWidth) continue;  // hidden (another tab, a closed popup): the minute tick fits it once shown
       el.style.fontSize = "";
-      for (let px = 11.5; px >= 9 && el.scrollWidth > el.clientWidth; px -= 0.5) el.style.fontSize = `${px}px`;
+      for (let px = 11.5; px >= 10 && el.scrollWidth > el.clientWidth; px -= 0.5) el.style.fontSize = `${px}px`;
     }
   }
 
@@ -113,10 +113,17 @@ class SextantWhereCard extends LitElement {
         ${sub(r) ? html`<span class="sub" title=${sub(r)}>${sub(r)}</span>` : nothing}</span></button>`)}</div>`;
   }
 
+  // Three faces fill the 90px column; with more, two and a "+N" that names the rest.
+  _roomFaces(rows) {
+    if (rows.length <= 3) return rows.map((r) => this._avatar(r, "sm"));
+    const rest = rows.slice(2);
+    return html`${rows.slice(0, 2).map((r) => this._avatar(r, "sm"))}<span class="ring sm more" style="--c:var(--divider-color);--p:0" title=${joinNames(rest.map((r) => r.name))}><span class="av">+${rest.length}</span></span>`;
+  }
+
   _rooms(rows) {
     const rooms = groupRooms(rows, (this._config.rooms || []).map((id) => this.hass.states[id]));
     return html`<div>${rooms.map((g) => html`<div class="rrow">
-      <span class="stack">${g.rows.slice(0, 4).map((r) => this._avatar(r, "sm"))}</span>
+      <span class="stack">${this._roomFaces(g.rows)}</span>
       <span class="rbody"><span class="rtitle">${g.room}<span class="fl">${this._config.show_floor ? g.floor || "" : ""}</span>
         ${g.mode ? html`<span class="fact"><ha-icon icon=${modeIcon(g.mode)}></ha-icon>${g.mode}</span>` : nothing}</span>
       <span class="who">${g.rows.map((r) => html`<button class="link" @click=${() => this._more(r.id)}><b>${r.name}</b>${r.spot ? ` at ${r.spot}` : ""} ${fmtStay(r.stay, true)}</button>`)}</span></span></div>`)}</div>`;
@@ -224,13 +231,13 @@ class SextantWhereCard extends LitElement {
 
     .rrow { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-top: 1px solid var(--divider-color); }
     .rrow:first-child { border-top: 0; padding-top: 0; } .rrow:last-child { padding-bottom: 0; }
-    .rrow .stack { width: 84px; }
+    .rrow .stack { width: 90px; } /* three 36px faces overlapping by 9px */
     .rbody { display: flex; flex-direction: column; min-width: 0; flex: 1; }
     .rtitle { display: flex; gap: 6px; align-items: center; font-weight: 600; }
     .rtitle .fl { font-weight: 400; font-size: 12px; } .rtitle .fact { margin-left: auto; }
     .who { font-size: 12px; color: var(--secondary-text-color); }
     .who b { color: var(--primary-text-color); font-weight: 500; }
-    .who .link + .link::before { content: " · "; }
+    .who .link + .link::before { content: "·"; margin: 0 4px; } /* a leading space in a button's ::before collapses */
 
     .strip { display: flex; flex-wrap: wrap; gap: 6px; }
     .chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px 2px 2px; border-radius: 999px; font-size: 13px; white-space: nowrap;

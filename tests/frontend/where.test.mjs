@@ -196,7 +196,7 @@ test("pets: company is the people in the pet's room, never other pets or anyone 
     "sensor.sherry_wayne_sextant_person_location", "sensor.meg_sextant_pet_location", "sensor.fry_sextant_pet_location", "sensor.leela_sextant_pet_location",
   ], NOW);
   rows.find((r) => r.name === "David").room = "Great Room";
-  // Only a pet placed confidently has company: Leela at 80% is with David; Fry at 30% in the same room is not surely.
+  // Only a pet placed at least Likely has company: Leela at 80% is with David; Fry at 30% in the same room is not surely.
   const c = petCompany(rows);
   assert.deepEqual([...c.keys()], ["sensor.meg_sextant_pet_location", "sensor.fry_sextant_pet_location", "sensor.leela_sextant_pet_location"]);
   assert.deepEqual(c.get("sensor.leela_sextant_pet_location").map((r) => r.name), ["David"]);
@@ -216,6 +216,12 @@ test("pets: company is the people in the pet's room, never other pets or anyone 
   const leela = rows.find((r) => r.id === "sensor.leela_sextant_pet_location");
   assert.deepEqual(petCompany(rows.map((r) => r === leela ? { ...r, source: "held" } : r)).get(leela.id), []);
   assert.deepEqual(petCompany(rows.map((r) => r === leela ? { ...r, floor: "Second Floor" } : r)).get(leela.id), []);
+  // The same bar for the person: Leela is not with a red David, and an amber Leela is with an amber one.
+  const david = rows.find((r) => r.name === "David");
+  const redDavid = { ...david, conf: 0.3, level: confLevel(0.3) };
+  assert.deepEqual(petCompany(rows.map((r) => r === david ? redDavid : r)).get(leela.id), []);
+  assert.deepEqual(petCompany(rows.map((r) => r === leela ? { ...r, conf: 0.5, level: confLevel(0.5) } : r)).get(leela.id).map((r) => r.name), ["David"]);
+  assert.deepEqual(petCompany(rows.map((r) => r === david ? { ...david, source: "held" } : r)).get(leela.id), []);
   // "Outside" is not a room to share: the garden is big.
   const fry = rows.find((r) => r.name === "Fry" || r.id === "sensor.fry_sextant_pet_location");
   Object.assign(fry, { outside: true, room: "Outside" });

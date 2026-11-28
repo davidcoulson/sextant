@@ -174,9 +174,10 @@ export function stripChips(rows, fold = 2) {
 /** People (not pets, not away) in the same room and floor as each pet placed confidently from a live reading
  *  (not held), by pet id: "Fry is with David". */
 export function petCompany(rows) {
-  const people = rows.filter((r) => !r.pet && !r.away && r.room);
-  return new Map(rows.filter((r) => r.pet).map((p) => [p.id, p.away || p.outside || !p.room || p.source === "held" || p.level?.key !== "confident" ? []
-    : people.filter((r) => r.room === p.room && r.floor === p.floor)]));
+  // The same bar for the pet and the person: in a room, a live fix, and at least Likely (amber or green) - a red ring is no proof of either.
+  const placed = (r) => !r.away && !r.outside && r.room && r.source !== "held" && (r.level?.key === "confident" || r.level?.key === "likely");
+  const people = rows.filter((r) => !r.pet && placed(r));
+  return new Map(rows.filter((r) => r.pet).map((p) => [p.id, placed(p) ? people.filter((r) => r.room === p.room && r.floor === p.floor) : []]));
 }
 
 /** "David", "David and Michelle", "David, Michelle +1". */
