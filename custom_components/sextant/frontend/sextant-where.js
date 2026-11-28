@@ -135,6 +135,14 @@ export function preciseWhere(r) {
   return r.away || r.where === "Unavailable" ? r.where : r.spot || r.room || r.floor || "Home";
 }
 
+/** The mode of the room a row is in, from the listed room occupancy sensors: the one for its room,
+ *  on its floor when the sensor names one. Null away, outside, or with no mode on. */
+export function roomMode(r, roomStates = []) {
+  if (r.away || r.outside || !r.room) return null;
+  const s = roomStates.find((x) => x?.attributes?.room === r.room && (!x.attributes.floor || x.attributes.floor === r.floor));
+  return s?.attributes?.mode || null;
+}
+
 /** Occupied rooms in order of first appearance, each with its rows and room mode. Away people are left out: away is not a room. */
 export function groupRooms(rows, roomStates = []) {
   const modes = new Map(roomStates.filter(Boolean).map((s) => [s.attributes?.room, s.attributes?.mode]));

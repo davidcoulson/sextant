@@ -16,7 +16,7 @@
  *     - sensor.meg_sextant_pet_location
  *   # pets: the pets only; each dog gets a card of its own (inside, outside or away). People listed
  *   # are not drawn: a pet in a room with one of them shows their face and "with David".
- *   rooms:                       # optional: room occupancy sensors, for modes (rooms layout)
+ *   rooms:                       # optional: room occupancy sensors, for modes (rooms layout; rings: a badge)
  *     - binary_sensor.great_room_sextant_occupancy
  *
  * Every entity the card reads is named in its config and read from
@@ -27,10 +27,11 @@
  */
 import { LitElement, html, css, nothing } from "./lit.js";
 import { classIcon } from "./sextant-ui.js";
-import { whereRows, groupRooms, stripChips, fmtStay, normEntry, withPerson, preciseWhere, petCompany, joinNames, fmtDistance } from "./sextant-where.js";
+import { whereRows, groupRooms, roomMode, stripChips, fmtStay, normEntry, withPerson, preciseWhere, petCompany, joinNames, fmtDistance } from "./sextant-where.js";
 import { forwardHaContext, loadHaEditors, entityOptions } from "./sextant-ha-editors.js";
 
 const MODE_ICONS = { sleep: "mdi:sleep", tv: "mdi:television", cooking: "mdi:chef-hat", gaming: "mdi:controller" };
+const modeIcon = (mode) => MODE_ICONS[String(mode).toLowerCase()] || "mdi:home-variant-outline";
 const SOURCE_ICONS = { ble: "mdi:bluetooth", wifi: "mdi:wifi", gps: "mdi:map-marker-radius" };
 const LAYOUTS = ["tiles", "rooms", "strip", "rings", "pets"];
 
@@ -66,7 +67,7 @@ class SextantWhereCard extends LitElement {
 
   _more(id) { this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: id }, bubbles: true, composed: true })); }
 
-  _avatar(r, size = "", badge = false) {
+  _avatar(r, size = "", badge = false, mode = null) {
     const fallback = r.pet ? html`<ha-icon icon=${classIcon(r.via) || "mdi:paw"}></ha-icon>` : r.name[0];
     const badgeIcon = typeof badge === "string" ? badge : r.moving?.icon || (r.away ? SOURCE_ICONS[r.source] || "mdi:home-export-outline" : classIcon(r.via));
     // As on the house's Mushroom person cards: green home, blue in a named zone, orange on the move, red away.
@@ -75,7 +76,8 @@ class SextantWhereCard extends LitElement {
     const ring = r.level ? `--c:${r.level.color};--p:${Math.round(r.conf * 100)}` : bc ? "--c:var(--disabled-text-color, #bdbdbd);--p:100" : "--c:var(--divider-color);--p:0";
     return html`<span class="ring ${size}" style=${ring} title=${r.level ? `${r.level.label} ${Math.round(r.conf * 100)}%` : ""}>
       <span class="av">${r.picture ? html`<img src=${r.picture} alt="">` : fallback}</span>
-      ${badge && badgeIcon ? html`<span class="badge" style=${bc ? `background:${bc}` : ""}><ha-icon icon=${badgeIcon}></ha-icon></span>` : nothing}</span>`;
+      ${badge && badgeIcon ? html`<span class="badge" style=${bc ? `background:${bc}` : ""}><ha-icon icon=${badgeIcon}></ha-icon></span>` : nothing}
+      ${mode ? html`<span class="badge mode" title=${mode}><ha-icon icon=${modeIcon(mode)}></ha-icon></span>` : nothing}</span>`;
   }
 
   // The headline: where they are, or with precise only the most precise place. On the move with a
@@ -105,7 +107,7 @@ class SextantWhereCard extends LitElement {
     return html`<div>${rooms.map((g) => html`<div class="rrow">
       <span class="stack">${g.rows.slice(0, 4).map((r) => this._avatar(r, "sm"))}</span>
       <span class="rbody"><span class="rtitle">${g.room}<span class="fl">${this._config.show_floor ? g.floor || "" : ""}</span>
-        ${g.mode ? html`<span class="fact"><ha-icon icon=${MODE_ICONS[String(g.mode).toLowerCase()] || "mdi:home-variant-outline"}></ha-icon>${g.mode}</span>` : nothing}</span>
+        ${g.mode ? html`<span class="fact"><ha-icon icon=${modeIcon(g.mode)}></ha-icon>${g.mode}</span>` : nothing}</span>
       <span class="who">${g.rows.map((r) => html`<button class="link" @click=${() => this._more(r.id)}><b>${r.name}</b>${r.spot ? ` at ${r.spot}` : ""} ${fmtStay(r.stay, true)}</button>`)}</span></span></div>`)}</div>`;
   }
 
@@ -117,8 +119,9 @@ class SextantWhereCard extends LitElement {
 
   _rings(rows) {
     const people = rows.filter((r) => !r.pet), pets = rows.filter((r) => r.pet);
+    const roomStates = (this._config.rooms || []).map((id) => this.hass.states[id]);
     return html`<div><div class="rings" style="--cols:${this._config.columns || 4}">${people.map((r) => html`
-      <button class="cell" @click=${() => this._more(r.id)}>${this._avatar(r, "lg", true)}${r.stay != null ? html`<span class="t">${fmtStay(r.stay, true)}</span>` : nothing}
+      <button class="cell" @click=${() => this._more(r.id)}>${this._avatar(r, "lg", true, roomMode(r, roomStates))}${r.stay != null ? html`<span class="t">${fmtStay(r.stay, true)}</span>` : nothing}
         <span class="n">${r.name}</span><span class="room ${this._sub(r) ? "" : "two"}" title=${this._where(r, false)}>${this._where(r)}</span>
         ${this._sub(r) ? html`<span class="sub">${this._sub(r)}</span>` : nothing}</button>`)}</div>
       ${pets.length ? html`<div class="pets">${pets.map((r) => html`<button class="pet" @click=${() => this._more(r.id)}>${this._avatar(r, "xs")}${r.name} <span class="sub">${this._config.precise ? preciseWhere(r) : r.spot || r.where}</span></button>`)}</div>` : nothing}</div>`;
@@ -179,6 +182,7 @@ class SextantWhereCard extends LitElement {
     .av img { width: 100%; height: 100%; object-fit: cover; }
     .badge { position: absolute; right: -3px; top: -3px; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center;
       background: var(--green-color, #4caf50); color: #fff; border: 2px solid var(--card-background-color, var(--ha-card-background)); --mdc-icon-size: 12px; }
+    .badge.mode { right: auto; left: -3px; background: var(--purple-color, #926bc7); } /* the room's mode, purple as on the rooms layout */
     .badge ha-icon { display: flex; } /* inline ha-icon sits on the text baseline, off centre */
     .stack { display: flex; flex: none; } .stack .ring + .ring { margin-left: -9px; }
     .fact { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px 1px 6px; border-radius: 999px; font-size: 12px; font-weight: 400;
@@ -254,7 +258,7 @@ class SextantWhereCard extends LitElement {
 const WHERE_LABELS = {
   layout: "Layout",
   entities: "People and pets",
-  rooms: "Rooms whose mode to show (rooms layout)",
+  rooms: "Rooms whose mode to show",
   show_floor: "Show the floor",
   precise: "Only the most precise place (spot, room, floor, home)",
 };
@@ -293,7 +297,7 @@ class SextantWhereCardEditor extends LitElement {
       ...(["tiles", "rings", "pets"].includes(layout) ? [{ name: "columns", selector: { number: { min: 1, max: 6, mode: "box" } } }] : []),
       ...(layout === "rooms" || layout === "pets" ? [] : [{ name: "precise", selector: { boolean: {} } }]),
       ...(layout === "strip" || layout === "pets" || (c.precise && layout !== "rooms") ? [] : [{ name: "show_floor", selector: { boolean: {} } }]),
-      ...(layout === "rooms" ? [{ name: "rooms", selector: { select: { multiple: true, mode: "dropdown", options: entityOptions(states, (id) => /^binary_sensor\..+_sextant_occupancy$/.test(id), (id, s) => s.attributes.room || id, c.rooms || []) } } }] : []),
+      ...(layout === "rooms" || layout === "rings" ? [{ name: "rooms", selector: { select: { multiple: true, mode: "dropdown", options: entityOptions(states, (id) => /^binary_sensor\..+_sextant_occupancy$/.test(id), (id, s) => s.attributes.room || id, c.rooms || []) } } }] : []),
     ];
     const data = { layout, entities: ids, columns: c.columns, rooms: c.rooms || [], show_floor: !!c.show_floor, precise: !!c.precise };
     return html`<ha-form .hass=${this.hass} .data=${data} .schema=${schema} .computeLabel=${(s) => s.name === "columns" ? `Columns (blank: ${layout === "rings" ? 4 : 2})` : WHERE_LABELS[s.name] || s.name} @value-changed=${this._changed}></ha-form>
