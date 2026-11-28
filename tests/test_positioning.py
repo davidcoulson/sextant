@@ -2617,8 +2617,14 @@ def test_only_the_ground_floor_has_a_way_outside():
     assert s._ground_floor(layout, "Ground Floor") is True
     assert s._ground_floor(layout, "Second Floor") is False
     assert s._ground_floor(layout, "Basement") is False
-    assert s._ground_floor(layout, "Flat") is True          # no level: a one-floor plan
-    assert s._ground_floor(layout, "Gone") is True          # unknown floor: as before
+    assert s._ground_floor(layout, "Flat") is False         # no level beside a level-0 floor: not the ground
+    assert s._ground_floor({"floor": [{"name": "Flat"}]}, "Flat") is True     # a one-floor plan with no level
+    assert s._ground_floor({"floor": [{"name": "Up", "level": "1"}, {"name": "G", "level": "0"}]}, "Up") is False  # an old layout's text level
+    s._outside_state.clear()
+    assert s._outside_election("a", 5.0, 1.0, 45.0, 0.0) is False
+    assert s._outside_election("a", 5.0, 1.0, 45.0, 46.0) is True
+    assert s._outside_election("a", None, 1.0, 45.0, 60.0) is False          # moved upstairs: the spell ends now
+    assert s._outside_state["a"]["back_at"] == 60.0 and s._outside_state["a"]["outside_at"] is None
 
 
 def test_a_dog_heard_faintly_by_few_is_in_the_garden():

@@ -621,6 +621,8 @@ def _outside_election(entity, dist_m, margin_m, secs, now, faint=None):
     st = _outside_state.setdefault(entity, {"out_since": None, "in_since": None, "outside": False})
     far = dist_m is not None and margin_m > 0 and dist_m > margin_m
     if (dist_m is None or margin_m <= 0) and faint is None:
+        if st["outside"]:
+            st.update(outside_at=None, back_at=now)   # a spell cut short (an upstairs floor, rule off) ends now
         st.update(out_since=None, in_since=None, outside=False)
         return False
     if faint == "between" and st["outside"] and not far:
@@ -645,10 +647,16 @@ def _outside_election(entity, dist_m, margin_m, secs, now, faint=None):
 
 def _ground_floor(layout, floor_name):
     """Whether a floor is the ground floor (level 0), the only one a thing can
-    walk Outside from. A floor with no level counts: a one-floor plan often has none."""
-    floor = next((f for f in (layout or {}).get("floor") or [] if isinstance(f, dict) and f.get("name") == floor_name), None)
-    level = floor.get("level") if floor else None
-    return not isinstance(level, (int, float)) or level == 0
+    walk Outside from. A floor with no level counts only when no floor is level 0
+    (a one-floor plan often has none). An old layout may hold the level as text."""
+    def level(f):
+        try:
+            return None if isinstance(f.get("level"), bool) else float(f.get("level"))
+        except (TypeError, ValueError):
+            return None
+    floors = [f for f in (layout or {}).get("floor") or [] if isinstance(f, dict)]
+    mine = next((level(f) for f in floors if f.get("name") == floor_name), None)
+    return mine == 0 or (mine is None and all(level(f) != 0 for f in floors))
 
 
 def _new_zone_state(floor_name, now):
