@@ -75,10 +75,14 @@ def beacons_now(hass, devices, now_mono=None) -> dict:
     than a cycle can be missed: give the slot 20 s or more."""
     now_mono = time.monotonic() if now_mono is None else now_mono
     out = {}
-    for slug, _address, info in _last_infos(hass, devices):
+    for slug, address, info in _last_infos(hass, devices):
+        seen = SEEN.pop(str(address).upper(), set())
         if minors := ibeacon_minors(getattr(info, "manufacturer_data", None)):
             at = getattr(info, "time", None)
             out[slug] = {"minors": minors, "age": round(now_mono - at, 1) if isinstance(at, (int, float)) else None}
+            if (now := minors.get(str(_COMPANY))) is not None:
+                # Every 0xFFFF minor since the last cycle (frame log callback), so a burst between cycles shows.
+                out[slug]["seen"] = sorted(seen | {now})
     return out
 
 
@@ -87,6 +91,7 @@ def beacons_now(hass, devices, now_mono=None) -> dict:
 # is still seen. The cycle fills COLLARS with Bermuda's devices.
 # shortcut: no switch; remove it once the motion slots are understood.
 COLLARS: dict = {}   # address (upper case) -> slug
+SEEN: dict = {}      # address (upper case) -> minors heard since beacons_now last read it
 LOG_DIRNAME = "sextant_collar_log"
 LOG_HOURS = 48.0
 _COMPANY = 0xFFFF   # Holy-IoT sends its iBeacon frames under 0xFFFF
@@ -105,7 +110,10 @@ def frame_row(info, last: dict, now: float):
     address = str(info.address).upper()
     slug = COLLARS.get(address)
     minor = ibeacon_minors({_COMPANY: (info.manufacturer_data or {}).get(_COMPANY) or b""}).get(str(_COMPANY))
-    if slug is None or minor is None or last.get(address) == minor:
+    if slug is None or minor is None:
+        return None
+    SEEN.setdefault(address, set()).add(minor)
+    if last.get(address) == minor:
         return None
     row = {"t": round(now, 2), "e": slug, "minor": minor, "was": last.get(address), "src": info.source, "rssi": info.rssi}
     last[address] = minor
