@@ -387,8 +387,8 @@ hide_time: true        # optional, rings: no time under each face (with mode_in_
   distance from home, and a badge for how she was placed (Bluetooth, Wi-Fi,
   GPS). The other pets
   are tiles, two across, with their spot or room and the time there. People listed are not
-  drawn; a pet placed confidently (a green ring) in the same room as one
-  shows their face on its photo (up to two, overlapping, the right-hand one in
+  drawn; a pet in the same room as one, both placed at least Likely (an amber
+  or green ring, a live fix), shows their face on its photo (up to two, overlapping, the right-hand one in
   front) and "with David and Michelle" under it.
 
 The card reads only the entities its config names, so it works on
