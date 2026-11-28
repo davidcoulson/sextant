@@ -1,5 +1,6 @@
 import aiofiles
 import aiofiles.os
+import contextlib
 import importlib
 import importlib.util
 import sys
@@ -8409,6 +8410,11 @@ async def _reload_code_once(hass) -> None:
             raise HomeAssistantError("Sextant's new code failed and there was no previous code to go back to; "
                                      "fix it and call sextant.reload_code again, or restart Home Assistant")
         for entry in entries:  # the repair listener goes with the entry
+            if entry.state is ConfigEntryState.SETUP_ERROR:
+                # Home Assistant never unloads a failed setup, but it may have forwarded platforms already.
+                for platform in _PLATFORMS:
+                    with contextlib.suppress(ValueError):  # that platform never got set up
+                        await hass.config_entries.async_forward_entry_unload(entry, platform)
             if not await hass.config_entries.async_unload(entry.entry_id):
                 raise HomeAssistantError("Sextant's new code failed and did not unload; restart Home Assistant")
         await _reset_runtime_state(hass)  # a setup that failed partway left its flags set

@@ -87,12 +87,16 @@ class _Entries:
 
     def __init__(self, entries):
         self.entries = entries
+        self.forwarded = []
 
     def async_entries(self, domain, **_kw):
         return self.entries
 
     def async_loaded_entries(self, domain):
         return [e for e in self.entries if e.state is sextant.ConfigEntryState.LOADED]
+
+    async def async_forward_entry_unload(self, entry, platform):
+        self.forwarded.append(platform)
 
     async def async_unload(self, entry_id):
         for e in self.entries:
@@ -169,6 +173,7 @@ def test_an_import_error_puts_the_previous_code_back(tmp_path, monkeypatch):
     assert entry.state is sextant.ConfigEntryState.LOADED
     assert entry.running == 1
     assert sys.modules["reloadme"] is old
+    assert hass.config_entries.forwarded == []  # an import error left no entry in SETUP_ERROR
 
     write("sub.py", "VALUE = 3\n")  # the action still works once the code is fixed
     reload()
@@ -218,3 +223,14 @@ def test_a_rollback_with_nothing_loaded_says_there_is_no_previous_code(tmp_path,
     write("sub.py", "VALUE = no_such_name\n")
     with pytest.raises(Exception, match="no previous code"):
         reload()
+
+
+def test_a_rollback_unloads_the_platforms_of_an_entry_whose_setup_failed(tmp_path, monkeypatch):
+    import pytest
+
+    hass, entry, old, reload, write = _reload_fixture(tmp_path, monkeypatch)
+    write("__init__.py", "from .sub import VALUE\n\n\ndef setup():\n    if VALUE != 1:\n        raise RuntimeError\n    return VALUE\n")
+    write("sub.py", "VALUE = 2\n")
+    with pytest.raises(Exception, match="previous code"):
+        reload()
+    assert hass.config_entries.forwarded == list(sextant._PLATFORMS)
