@@ -78,6 +78,60 @@ def test_the_frame_log_writes_a_line_each_time_a_collars_minor_changes():
     tb.watch({})   # no longer tracked: its pending minors go
     assert tb.SEEN == {}
 
+
+def test_a_collar_is_heard_from_every_receiver_not_only_the_one_ha_keeps(monkeypatch):
+    """Leela asleep, 2026-11-28 10:23-10:40: HA kept a strong receiver's advert that was 15 min old
+    while weaker ones heard her every second, so she had no motion reading and the hold was off."""
+    import homeassistant.components as comps
+    monkeypatch.setattr(tb, "FRESH", {})
+    monkeypatch.setattr(tb, "_SUBS", {})
+    monkeypatch.setattr(tb, "SEEN", {})
+    leela = "DA:36:EE:88:7B:DA"
+    still = bytes.fromhex("0215decafbadfeedfacef00dda36ee887bdaac652a12c5")
+    one = still[:20] + (1).to_bytes(2, "big") + still[22:]
+    infos = {leela: NS(service_data={}, manufacturer_data={65535: one}, time=10.0)}   # the kept, stale advert
+    subs, cancelled = {}, []
+
+    def register(h, cb, address):
+        subs[address] = cb
+        return lambda: cancelled.append(address)
+    bluetooth = NS(async_last_service_info=lambda h, a, c: infos.get(a),
+                   async_register_advertisement_callback=register,
+                   async_register_callback=lambda *a: (lambda: cancelled.append("change")),
+                   BluetoothCallbackMatcher=lambda **k: k, BluetoothScanningMode=NS(PASSIVE="passive"))
+    monkeypatch.setitem(sys.modules, "homeassistant.components.bluetooth", bluetooth)
+    monkeypatch.setattr(comps, "bluetooth", bluetooth, raising=False)
+    written = []
+    hass = NS(loop=NS(call_later=lambda *a: None), config=NS(path=lambda d: d),
+              async_add_executor_job=lambda f, *a: written.append(a[1]))
+    devices = {leela.lower(): {"slug": "leela"}}
+    tb.watch(devices)
+    stop = tb.setup_frame_log(hass)
+    # The stale kept advert alone: no fresh frame, so no "seen", and the collar is now heard everywhere.
+    assert "seen" not in tb.beacons_now(hass, devices, now_mono=100.0)["leela"]
+    assert list(subs) == [leela]
+    # A weaker receiver hears her: that newer frame is the one read.
+    subs[leela](NS(address=leela, manufacturer_data={65535: one}, source="weak", rssi=-88, time=99.0))
+    subs[leela](NS(address=leela, manufacturer_data={65535: one}, source="late", rssi=-90, time=98.0))  # older: kept out
+    assert tb.FRESH[leela] == (1, 99.0)
+    assert tb.beacons_now(hass, devices, now_mono=100.0) == {"leela": {"minors": {"65535": 1}, "age": 1.0, "seen": [1]}}
+    tb.beacons_now(hass, devices, now_mono=101.0)
+    assert list(subs) == [leela]   # subscribed once
+    stop()
+    assert cancelled == ["change", leela] and tb._SUBS == {} and tb.FRESH == {}
+    assert [r["src"] for r in written[0]] == ["weak"]   # the log heard the weaker receiver too
+    # Once the frame log stops, nothing subscribes again.
+    tb.beacons_now(hass, devices, now_mono=102.0)
+    assert tb._SUBS == {}
+
+
+def test_a_collar_no_longer_tracked_stops_being_heard(monkeypatch):
+    monkeypatch.setattr(tb, "FRESH", {"DA:36:EE:88:7B:DA": (1, 5.0)})
+    cancelled = []
+    monkeypatch.setattr(tb, "_SUBS", {"DA:36:EE:88:7B:DA": lambda: cancelled.append(1), "AA:BB:CC:DD:EE:FF": None})
+    tb.watch({})
+    assert tb.FRESH == {} and tb._SUBS == {} and cancelled == [1]
+
 def test_the_sensor_is_made_once_then_updated(monkeypatch):
     added, written = [], []
     hass = NS(data={"sextant_sensors": {}, "sextant_add_entities": added.extend})
