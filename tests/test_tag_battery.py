@@ -52,6 +52,21 @@ def test_beacons_now_reads_each_collars_ibeacon_minor(monkeypatch):
     assert tb.beacons_now(None, devices, now_mono=100.0) == {"leela": {"minors": {"65535": 2}, "age": 2.0}}
 
 
+
+def test_the_frame_log_writes_a_line_each_time_a_collars_minor_changes():
+    still = bytes.fromhex("0215decafbadfeedfacef00dda36ee887bdaac652a12c5")
+    shake = still[:20] + (2).to_bytes(2, "big") + still[22:]
+    tb.watch({"da:36:ee:88:7b:da": {"slug": "leela"}, "x": {}})
+    assert tb.COLLARS == {"DA:36:EE:88:7B:DA": "leela"}
+    last = {}
+    adv = lambda data, addr="da:36:ee:88:7b:da": NS(address=addr, manufacturer_data=data, source="p1", rssi=-70)
+    assert tb.frame_row(adv({65535: still}), last, 1.0) == {"t": 1.0, "e": "leela", "minor": 0x2A12, "was": None, "src": "p1", "rssi": -70}
+    assert tb.frame_row(adv({65535: still, 76: b"\x10\x05"}), last, 2.0) is None    # same minor
+    assert tb.frame_row(adv({65535: shake}), last, 3.0)["was"] == 0x2A12
+    assert tb.frame_row(adv({}), last, 4.0) is None                                  # no frame
+    assert tb.frame_row(adv({65535: still}, "AA:BB:CC:DD:EE:FF"), last, 5.0) is None # not a collar
+    assert last == {"DA:36:EE:88:7B:DA": 2}
+
 def test_the_sensor_is_made_once_then_updated(monkeypatch):
     added, written = [], []
     hass = NS(data={"sextant_sensors": {}, "sextant_add_entities": added.extend})

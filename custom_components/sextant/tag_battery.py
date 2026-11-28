@@ -8,6 +8,10 @@ level; at least one proxy has to scan actively to get it. A standard tag sends
 it as byte 0 of 0x180F (Battery Service).
 """
 
+import logging
+import time
+
+_LOGGER = logging.getLogger(__name__)
 HOLY_IOT = "0000180a-0000-1000-8000-00805f9b34fb"
 BATTERY_SERVICE = "0000180f-0000-1000-8000-00805f9b34fb"
 
@@ -69,7 +73,6 @@ def beacons_now(hass, devices, now_mono=None) -> dict:
     minor is the collar's latest; age is that of its latest packet of any kind (a scan response,
     which carries no frame, renews it too). Read once a cycle, so a Shake or Fall burst shorter
     than a cycle can be missed: give the slot 20 s or more."""
-    import time  # noqa: PLC0415
     now_mono = time.monotonic() if now_mono is None else now_mono
     out = {}
     for slug, _address, info in _last_infos(hass, devices):
@@ -77,3 +80,74 @@ def beacons_now(hass, devices, now_mono=None) -> dict:
             at = getattr(info, "time", None)
             out[slug] = {"minors": minors, "age": round(now_mono - at, 1) if isinstance(at, (int, float)) else None}
     return out
+
+
+# Diagnostic: a line in config/sextant_collar_log (hourly files, kept 48 h) each time a collar's
+# iBeacon minor changes, from a Bluetooth callback, so a Shake or Fall burst shorter than a cycle
+# is still seen. The cycle fills COLLARS with Bermuda's devices.
+# shortcut: no switch; remove it once the motion slots are understood.
+COLLARS: dict = {}   # address (upper case) -> slug
+LOG_DIRNAME = "sextant_collar_log"
+LOG_HOURS = 48.0
+_COMPANY = 0xFFFF   # Holy-IoT sends its iBeacon frames under 0xFFFF
+
+
+def watch(devices) -> None:
+    """Point the frame log at Bermuda's tracked devices ({address: {"slug"}})."""
+    COLLARS.clear()
+    COLLARS.update({str(a).upper(): d["slug"] for a, d in (devices or {}).items() if (d or {}).get("slug")})
+
+
+def frame_row(info, last: dict, now: float):
+    """The log row for an advert whose iBeacon minor differs from ``last`` (address -> minor),
+    updating it; None for anything else. Home Assistant keeps each proxy's last frame, so a
+    switch to another proxy can log one stale minor (see ``src``)."""
+    address = str(info.address).upper()
+    slug = COLLARS.get(address)
+    minor = ibeacon_minors({_COMPANY: (info.manufacturer_data or {}).get(_COMPANY) or b""}).get(str(_COMPANY))
+    if slug is None or minor is None or last.get(address) == minor:
+        return None
+    row = {"t": round(now, 2), "e": slug, "minor": minor, "was": last.get(address), "src": info.source, "rssi": info.rssi}
+    last[address] = minor
+    return row
+
+
+def setup_frame_log(hass):
+    """Start the collar frame log; returns the callable that stops it, or None without bluetooth.
+    Home Assistant calls back only when an address's data changes, which is when the minor can."""
+    try:
+        from homeassistant.components import bluetooth
+    except ImportError:
+        return None
+    from . import person_log as person_log_mod  # noqa: PLC0415
+    last: dict = {}
+    pending: list = []
+    timer = [None]
+
+    def flush(*_):
+        # One write at a time: rows stay in order and two writers never prune the same file.
+        timer[0] = None
+        if pending:
+            rows, pending[:] = list(pending), []
+            hass.async_add_executor_job(person_log_mod.append, hass.config.path(LOG_DIRNAME), rows, LOG_HOURS)
+
+    def seen(info, _change):
+        if (row := frame_row(info, last, time.time())) is not None:
+            pending.append(row)
+            if timer[0] is None:
+                timer[0] = hass.loop.call_later(10, flush)
+
+    try:
+        unsub = bluetooth.async_register_callback(
+            hass, seen, bluetooth.BluetoothCallbackMatcher(manufacturer_id=_COMPANY, connectable=False),
+            bluetooth.BluetoothScanningMode.PASSIVE)
+    except Exception as e:  # noqa: BLE001
+        _LOGGER.warning("Collar frame log not started: %s", e)
+        return None
+
+    def stop():
+        unsub()
+        if timer[0]:
+            timer[0].cancel()
+        flush()
+    return stop
