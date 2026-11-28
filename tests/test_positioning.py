@@ -2605,6 +2605,7 @@ def test_outside_needs_distance_and_time(monkeypatch):
     assert s._outside_state["a"]["outside_at"] == 0.0
     assert s._outside_election("a", 0.5, 2.0, 45.0, 100.0) is False
     assert s._outside_state["a"]["outside_at"] is None
+    assert s._outside_state["a"]["back_at"] == 50.0                      # back in since 50: the room's time starts there
     assert s._outside_election("a", 5.0, 0.0, 45.0, 200.0) is False    # margin 0 = off
 
 

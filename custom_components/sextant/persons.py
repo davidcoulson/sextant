@@ -849,18 +849,24 @@ def fuse(best, why, presence, held, gps, ignored, home=None, wifi=None, dog=Fals
     }
 
 
-def keep_since(prev, attrs, arrived=None):
+def keep_since(prev, attrs, arrived=None, now=None):
     """A person's room and spot times are theirs, not the tracking thing's: when the
     phone takes over from the watch in the same room, ``since`` stays when they came
     in, not when the phone did. ``prev`` is the location sensor's last attributes;
-    a time from before ``arrived`` (this home visit) is an earlier visit's, held over."""
+    a time from before ``arrived`` (this home visit) is an earlier visit's, held over.
+    A move from a known room to another (or to another spot) starts at ``now``: the
+    newly picked phone's 30 minutes in the Office are not the person's."""
     prev = prev or {}
     if attrs.get("room") in (None, "unknown") or attrs.get("kind") == "outside":
         return attrs
     for key, same in (("since", ("floor", "room")), ("spot_since", ("floor", "room", "spot"))):
+        if key == "spot_since" and not attrs.get("spot"):
+            continue
         old = prev.get(key)
-        if (isinstance(old, (int, float)) and not (isinstance(arrived, (int, float)) and old < arrived) and all(prev.get(k) == attrs.get(k) for k in same)
-                and (key == "since" or attrs.get("spot"))):
+        if not all(prev.get(k) == attrs.get(k) for k in same):
+            if now is not None and prev.get("room") not in (None, "unknown"):
+                attrs[key] = now
+        elif isinstance(old, (int, float)) and not (isinstance(arrived, (int, float)) and old < arrived):
             attrs[key] = old
     return attrs
 
