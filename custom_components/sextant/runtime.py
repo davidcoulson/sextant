@@ -93,7 +93,7 @@ def _vector(value, size):
     return out if len(out) == size else None
 
 
-def snapshot(now, kf=None, zones=None, spots=None, arrivals=None, rows=None, floors=None, visits=None, wifi=None, asked=None, sensors=None, sleep=None, charging=None, anchors=None):
+def snapshot(now, kf=None, zones=None, spots=None, arrivals=None, rows=None, floors=None, visits=None, wifi=None, asked=None, sensors=None, sleep=None, charging=None, anchors=None, collars=None):
     """The state worth keeping, as JSON.
 
     ``rows`` are the published positions (ent, zone, sub_zone, floor, updated,
@@ -162,6 +162,11 @@ def snapshot(now, kf=None, zones=None, spots=None, arrivals=None, rows=None, flo
               for k in ("bad", "on")} if isinstance(sensors, dict) else {}
     if any(clocks.values()):
         out["sensors"] = clocks
+    # How often each motion-slot minor was heard per collar: the most heard is its resting one, so a
+    # restart or code reload still tells still from moving (Leela's read blank after 2026.11.28.6).
+    counts = {str(e): {str(m): int(n) for m, n in c.items()} for e, c in (collars or {}).items() if c}
+    if counts:
+        out["collars"] = counts
     return out
 
 
@@ -232,9 +237,17 @@ def restore(data, now, max_age=DEFAULT_MAX_AGE_SECS):
     so the Live page can still say where a thing was and when. A snapshot
     from the future (the clock moved) is treated as a long gap.
     """
-    out = {"kf": {}, "zone": {}, "spot": {}, "arrivals": {}, "floors": {}, "anchors": {}, "last": {}, "visits": {}, "asked": {}, "charging": {}, "wifi": None, "sensors": {"bad": {}, "on": {}}, "sleep": {}, "age": None}
+    out = {"kf": {}, "zone": {}, "spot": {}, "arrivals": {}, "floors": {}, "anchors": {}, "last": {}, "visits": {}, "asked": {}, "charging": {}, "wifi": None, "sensors": {"bad": {}, "on": {}}, "sleep": {}, "collars": {}, "age": None}
     if not isinstance(data, dict):
         return out
+    # Kept whatever the gap, like the Wi-Fi learning: a collar's slots do not change while HA is down.
+    for ent, counts in (data.get("collars") or {}).items() if isinstance(data.get("collars"), dict) else ():
+        try:
+            kept = {int(m): int(n) for m, n in counts.items() if int(n) > 0}
+        except (AttributeError, TypeError, ValueError, OverflowError):
+            continue
+        if kept:
+            out["collars"][str(ent)] = kept
     asked = data.get("asked")
     if isinstance(asked, dict):
         out["asked"] = {p: t for p, t in asked.items() if _epoch(t) is not None}

@@ -3120,6 +3120,19 @@ def test_activity_needs_a_second_minor_and_reads_the_resting_one():
     assert sextant._activity("c", {"seen": [3]}) == "moving"
 
 
+def test_a_collar_given_new_slots_learns_its_new_resting_minor():
+    """The counts are kept through restarts, so they halve past a cap: old minors fade out."""
+    import collections
+    sextant._minor_counts.clear()
+    sextant._minor_counts["c"] = collections.Counter({1: sextant.MINOR_COUNTS_CAP, 2: 1})
+    assert sextant._activity("c", {"seen": [1]}) is None   # halved: the lone 2 is gone, so one minor says nothing
+    assert sextant._minor_counts["c"] == {1: (sextant.MINOR_COUNTS_CAP + 1) // 2}
+    for _ in range(sextant.MINOR_COUNTS_CAP * 2):   # the collar now rests on minor 7
+        sextant._activity("c", {"seen": [7]})
+    assert sextant._activity("c", {"seen": [1, 7]}) == "moving"
+    assert sextant._activity("c", {"seen": [7]}) == "still"
+
+
 def test_the_still_hold_waits_for_the_walk_to_settle():
     """Leela walked from the pantry to the Morning Room and was still 26 s
     before the election had followed her: holding then kept her in the pantry."""
