@@ -589,6 +589,7 @@ HABIT_CONFIDENT_SHARE = 0.8         # an election counts toward the habits only 
 _subzone_state = {}
 # thing -> {"out_since", "in_since", "outside"}: the outside-the-house election.
 _outside_state = {}
+_tag_beacons: dict = {}  # slug -> its latest advert's iBeacon minors (tag_battery.beacons_now), for the election log
 
 
 def _faint_signal(n_prox, nearest_m, max_prox, far_m, near_m):
@@ -1909,6 +1910,8 @@ async def update_tracked_entities(hass):
                 # Before the guards below: a tag's battery needs no fix, only an advert.
                 from .sensor import publish_tag_batteries  # noqa: PLC0415 - sensor.py imports this package
                 publish_tag_batteries(hass, tag_battery.levels_now(hass, devices))
+                _tag_beacons.clear()
+                _tag_beacons.update(tag_battery.beacons_now(hass, devices))
                 # A device Bermuda renamed under a new slug: its settings
                 # follow it there, matched by the stable unique_id thing_ids
                 # remembers - before the sweep below could delete them.
@@ -3413,7 +3416,9 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
         await update_apitricords(hass, apitricords)
         # Opt-in: keep this cycle's election for replay (election_log.py).
         if _tuning(layout, "election_log_hours") > 0:
-            election_log.get(hass).add(row, row["updated"])
+            # With what the thing's latest iBeacon frame said: a collar's Shake or Fall slot sends its own minor.
+            beacon = _tag_beacons.get(entity)
+            election_log.get(hass).add({**row, "beacon": beacon} if beacon else row, row["updated"])
         # Feed the position history. Stored in METRES in this floor's frame, so
         # a later map re-export (which changes every pixel) cannot move the
         # past; the pixel projection happens at render time. A floor with no

@@ -35,6 +35,7 @@ LOG_DIRNAME = "sextant_election_log"
 KEEP = (
     "ent", "floor", "floors", "floor_cands", "speed", "zone", "zone_raw", "zone_locked", "closed",
     "nearest_zone", "sub_zone", "anchor", "conf", "cords", "raw", "rms_m", "estimator", "updated",
+    "beacon",
 )
 # One writer, compressor or clear at a time: a clear must not race a gzip in flight.
 _FILES = threading.Lock()
