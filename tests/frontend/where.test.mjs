@@ -1,7 +1,7 @@
 // The "where is everyone" card's model, on the shapes Sextant's sensors really have.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { confLevel, fmtStay, whereRows, groupRooms, stripChips, withPerson, preciseWhere, petCompany, joinNames, fmtDistance } from "../../custom_components/sextant/frontend/sextant-where.js";
+import { confLevel, fmtStay, whereRows, groupRooms, roomMode, stripChips, withPerson, preciseWhere, petCompany, joinNames, fmtDistance } from "../../custom_components/sextant/frontend/sextant-where.js";
 import { entityOptions } from "../../custom_components/sextant/frontend/sextant-ha-editors.js";
 
 const NOW = 1795775000;
@@ -224,4 +224,13 @@ test("pets: company is the people in the pet's room, never other pets or anyone 
   assert.equal(rows.find((r) => r.id === "sensor.meg_sextant_pet_location").roams, false);
   assert.deepEqual([joinNames(["David"]), joinNames(["David", "Michelle"]), joinNames(["David", "Michelle", "Eilee", "Jack"])], ["David", "David and Michelle", "David, Michelle +2"]);
   assert.deepEqual([fmtDistance(800), fmtDistance(3240), fmtDistance(41200)], ["800 m", "3.2 km", "41 km"]);
+});
+
+test("a ring shows the mode of the room its person is in, on that floor", () => {
+  const rows = whereRows(states, ["sensor.fry_sextant_pet_location", "sensor.david_coulson_sextant_person_location", "sensor.sherry_wayne_sextant_person_location"], NOW);
+  const kitchen = (floor) => loc("on", { room: "Kitchen", floor, mode: "Cooking" });
+  const rooms = [states["binary_sensor.great_room_sextant_occupancy"], kitchen("Ground Floor"), undefined];
+  assert.deepEqual(rows.map((r) => roomMode(r, rooms)), ["TV", "Cooking", null]);
+  assert.equal(roomMode(rows[1], [kitchen("Basement")]), null);   // the same name on another floor
+  assert.equal(roomMode(rows[1]), null);
 });
