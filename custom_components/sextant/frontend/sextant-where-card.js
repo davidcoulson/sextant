@@ -19,6 +19,7 @@
  *   rooms:                       # optional: room occupancy sensors, for modes (rooms layout; rings: a badge)
  *     - binary_sensor.great_room_sextant_occupancy
  *   mode_in_pill: true           # optional (rings): the mode icon in the time pill, not a badge
+ *   hide_time: true              # optional (rings): no time pill under the face
  *
  * Every entity the card reads is named in its config and read from
  * hass.states only (no websocket calls, no registries), so it works behind
@@ -120,9 +121,9 @@ class SextantWhereCard extends LitElement {
 
   // A person's face with the time there; the room's mode is a badge under the device badge, or in the pill.
   _ring(r, mode) {
-    const pill = mode && this._config.mode_in_pill;
-    return html`${this._avatar(r, "lg", true, pill ? null : mode)}${r.stay != null || pill ? html`<span class="t">${pill
-      ? html`<ha-icon title=${mode} icon=${modeIcon(mode)}></ha-icon>` : nothing}${r.stay != null ? fmtStay(r.stay, true) : ""}</span>` : nothing}`;
+    const pill = mode && this._config.mode_in_pill, stay = this._config.hide_time ? null : r.stay;
+    return html`${this._avatar(r, "lg", true, pill ? null : mode)}${stay != null || pill ? html`<span class="t">${pill
+      ? html`<ha-icon title=${mode} icon=${modeIcon(mode)}></ha-icon>` : nothing}${stay != null ? fmtStay(stay, true) : ""}</span>` : nothing}`;
   }
 
   _rings(rows) {
@@ -142,8 +143,9 @@ class SextantWhereCard extends LitElement {
     const dogs = pets.filter((r) => r.roams), rest = pets.filter((r) => !r.roams);
     const face = (r, size, badge) => {
       const w = company.get(r.id) || [];
-      return html`<span class="pface">${this._avatar(r, size, badge)}${w[0] ? html`<span class="with-face" title=${w[0].name}>
-        ${w[0].picture ? html`<img src=${w[0].picture} alt="">` : w[0].name[0]}</span>` : nothing}</span>`;
+      // Up to two faces, overlapping, at the photo's lower right.
+      return html`<span class="pface">${this._avatar(r, size, badge)}${w.slice(0, 2).map((p, i) => html`<span class="with-face ${i ? "two" : ""}" title=${p.name}>
+        ${p.picture ? html`<img src=${p.picture} alt="">` : p.name[0]}</span>`)}</span>`;
     };
     const withChip = (r) => {
       const w = company.get(r.id) || [];
@@ -154,8 +156,8 @@ class SextantWhereCard extends LitElement {
       const state = r.where === "Unavailable" ? null : r.away ? "away" : r.outside ? "outside" : "inside";
       // The badge says how she was placed (Bluetooth, Wi-Fi, GPS); away it is the usual away badge.
       return html`<button class="dog" @click=${() => this._more(r.id)}>${face(r, "xl", r.away || r.moving ? true : SOURCE_ICONS[r.source] || false)}
-        <span class="txt"><span class="n">${r.name}</span>
-          <span class="states">${["inside", "outside", "away"].map((s) => html`<span class="st ${s === state ? `on ${s}` : ""}">${s[0].toUpperCase() + s.slice(1)}</span>`)}</span>
+        <span class="txt"><span class="head"><span class="n">${r.name}</span>
+          <span class="states">${["inside", "outside", "away"].map((s) => html`<span class="st ${s === state ? `on ${s}` : ""}">${s[0].toUpperCase() + s.slice(1)}</span>`)}</span></span>
           <span class="room ${r.away ? "two" : ""}" title=${this._where(r, false)}>${where(r)}${r.stay != null ? html` <span class="stay">· ${fmtStay(r.stay, true)}</span>` : nothing}${r.distance != null ? html` <span class="stay">· ${fmtDistance(r.distance)}</span>` : nothing}</span>
           ${withChip(r)}</span></button>`;
     };
@@ -238,7 +240,7 @@ class SextantWhereCard extends LitElement {
     .pface { position: relative; flex: none; display: inline-grid; }
     .with-face { position: absolute; right: -5px; bottom: -5px; width: 22px; height: 22px; border-radius: 50%; overflow: hidden; display: grid; place-items: center;
       font-size: 11px; font-weight: 600; background: var(--secondary-background-color); border: 2px solid var(--card-background-color, var(--ha-card-background)); }
-    .ring.xl + .with-face { width: 28px; height: 28px; }
+    .with-face.two { right: 12px; } .ring.xl ~ .with-face { width: 28px; height: 28px; } .ring.xl ~ .with-face.two { right: 15px; }
     .with-face img { width: 100%; height: 100%; object-fit: cover; }
     .with { align-self: flex-start; margin-top: 3px; padding: 1px 8px; border-radius: 999px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
       color: color-mix(in srgb, var(--blue-color, #2196f3) 45%, var(--primary-text-color)); background: color-mix(in srgb, var(--blue-color, #2196f3) 15%, transparent); }
@@ -246,6 +248,7 @@ class SextantWhereCard extends LitElement {
     .dog + .dog { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--divider-color); }
     .dog .txt, .ptile .txt { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.25; }
     .dog .n { font-weight: 600; font-size: 17px; }
+    .dog .head { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; margin-bottom: 2px; } .dog .head .states { margin: 0; } .dog .head .n { min-width: 0; overflow-wrap: anywhere; }
     .dog .room { font-size: 15px; }
     .ring.xl .badge { width: 22px; height: 22px; }
     .states { display: flex; gap: 4px; margin: 4px 0; }
@@ -271,6 +274,7 @@ const WHERE_LABELS = {
   show_floor: "Show the floor",
   precise: "Only the most precise place (spot, room, floor, home)",
   mode_in_pill: "Mode icon in the time pill (off: a badge under the device badge)",
+  hide_time: "Hide the time in the room",
 };
 
 class SextantWhereCardEditor extends LitElement {
@@ -291,7 +295,7 @@ class SextantWhereCardEditor extends LitElement {
     for (const x of this._config.entities || []) { const id = normEntry(x).entity; had.set(id, [...(had.get(id) || []), x]); }
     const entities = (v.entities || []).flatMap((id) => had.get(id)?.splice(0) ?? [withPerson(this.hass.states, id, this.hass.entities)]);
     const config = { ...this._config, layout: v.layout || "tiles", entities };
-    for (const k of ["columns", "rooms", "show_floor", "precise", "mode_in_pill"]) { if (v[k] == null || v[k] === false || (Array.isArray(v[k]) && !v[k].length)) delete config[k]; else config[k] = v[k]; }
+    for (const k of ["columns", "rooms", "show_floor", "precise", "mode_in_pill", "hide_time"]) { if (v[k] == null || v[k] === false || (Array.isArray(v[k]) && !v[k].length)) delete config[k]; else config[k] = v[k]; }
     this._config = config;
     this.dispatchEvent(new CustomEvent("config-changed", { detail: { config }, bubbles: true, composed: true }));
   }
@@ -308,9 +312,9 @@ class SextantWhereCardEditor extends LitElement {
       ...(layout === "rooms" || layout === "pets" ? [] : [{ name: "precise", selector: { boolean: {} } }]),
       ...(layout === "strip" || layout === "pets" || (c.precise && layout !== "rooms") ? [] : [{ name: "show_floor", selector: { boolean: {} } }]),
       ...(layout === "rooms" || layout === "rings" ? [{ name: "rooms", selector: { select: { multiple: true, mode: "dropdown", options: entityOptions(states, (id) => /^binary_sensor\..+_sextant_occupancy$/.test(id), (id, s) => [s.attributes.room || id, s.attributes.floor].filter(Boolean).join(" · "), c.rooms || []) } } }] : []),
-      ...(layout === "rings" ? [{ name: "mode_in_pill", selector: { boolean: {} } }] : []),
+      ...(layout === "rings" ? [{ name: "mode_in_pill", selector: { boolean: {} } }, { name: "hide_time", selector: { boolean: {} } }] : []),
     ];
-    const data = { layout, entities: ids, columns: c.columns, rooms: c.rooms || [], show_floor: !!c.show_floor, precise: !!c.precise, mode_in_pill: !!c.mode_in_pill };
+    const data = { layout, entities: ids, columns: c.columns, rooms: c.rooms || [], show_floor: !!c.show_floor, precise: !!c.precise, mode_in_pill: !!c.mode_in_pill, hide_time: !!c.hide_time };
     return html`<ha-form .hass=${this.hass} .data=${data} .schema=${schema} .computeLabel=${(s) => s.name === "columns" ? `Columns (blank: ${layout === "rings" ? 4 : 2})` : WHERE_LABELS[s.name] || s.name} @value-changed=${this._changed}></ha-form>
       ${layout === "pets" ? html`<p class="hint">Pets layout: people listed here are not drawn; a pet placed confidently (green ring) in the same room as one shows "with" them.</p>` : nothing}
       <p class="hint">Names and photos come from each person; set <code>name</code> or <code>person</code> on an entry in YAML to change them.</p>`;
