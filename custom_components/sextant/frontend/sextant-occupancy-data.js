@@ -41,6 +41,10 @@ export function occupancyByFloor(states, planFloors) {
 }
 
 export const WHERE_SOURCE = { ble: "Bluetooth", wifi: "Wi-Fi", gps: "GPS", held: "Bluetooth (held)", none: "None" };
+// A motion collar's activity (the `activity` attribute on a pet's sensors), as the cards mark it.
+export const ACTIVITY = { still: { key: "still", label: "Resting", icon: "mdi:weather-night" }, moving: { key: "moving", label: "Moving", icon: "mdi:run" } };
+/** The activity mark for a sensor's attributes, or null: none, or a held fix (the collar unheard, its activity stale). */
+export const activityOf = (a) => (a?.source === "held" ? null : ACTIVITY[a?.activity] || null);
 export const WHERE_ICON = { ble: "mdi:bluetooth", wifi: "mdi:wifi", gps: "mdi:map-marker-radius", held: "mdi:bluetooth-off", none: "mdi:help-circle-outline" };
 
 /** People and pets whose Sextant location is Outside (beyond every room, still at home). */
@@ -292,9 +296,11 @@ export function roomChip(states, entity) {
   const s = states?.[entity];
   if (!s) return null;
   const a = s.attributes || {};
-  const pic = (name) => states[`person.${String(name).normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "")}`]?.attributes?.entity_picture || null;
+  const slug = (name) => String(name).normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+  const pic = (name) => states[`person.${slug(name)}`]?.attributes?.entity_picture || null;
   const faces = [...(a.people || []).map((name) => ({ name, pet: false })), ...(a.pets || []).map((name) => ({ name, pet: true }))]
-    .map((f) => ({ ...f, picture: pic(f.name) }));
+    .map((f) => ({ ...f, picture: pic(f.name), ...(f.pet && { sensor: `sensor.${slug(f.name)}_sextant_pet_location` }) }))
+    .map((f) => ({ ...f, activity: f.sensor ? activityOf(states[f.sensor]?.attributes) : null }));
   return { room: a.room ?? entity, on: s.state === "on", faces, since: Date.parse(a.since) / 1000 || null, mode: a.mode || null };
 }
 

@@ -595,6 +595,19 @@ _minor_counts: dict = {}  # slug -> Counter of the cycles each motion-slot minor
 MINOR_COUNTS_CAP = 2000   # about three hours of cycles; past it every count halves
 _last_moving: dict = {}   # slug -> when its collar last said it was moving
 _shown_activity: dict = {}  # slug -> the activity its sensors last showed, kept through a cycle that heard no frame
+_activity_at: dict = {}     # slug -> when its collar last gave an activity
+ACTIVITY_KEEP_S = 120.0     # how long the last activity stays shown with no frame; then the collar is not being heard
+
+
+def _shown(entity, activity, now):
+    """The activity to show: this cycle's, else the last one for ACTIVITY_KEEP_S, so a cycle with no frame
+    neither drops it nor, once the collar has gone quiet, keeps a stale one."""
+    if activity:
+        _activity_at[entity] = now
+    elif now - _activity_at.get(entity, float("-inf")) > ACTIVITY_KEEP_S:
+        _shown_activity.pop(entity, None)
+    shown = _shown_activity[entity] = activity or _shown_activity.get(entity)
+    return shown
 
 
 def _activity(entity, beacon):
@@ -3491,8 +3504,7 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
             zone = "Outside"
         loc_attrs = {**loc_attrs, **{k: row.get(k) for k in persons_mod.FIT_KEYS if row.get(k) is not None}}
         u_floor, u_room, u_spot = _usual_attrs(layout, entity, now)
-        # A cycle with no frame keeps the last answer on the sensors, rather than dropping and re-adding it.
-        shown = _shown_activity[entity] = activity or _shown_activity.get(entity)
+        shown = _shown(entity, activity, now)
         moving = {"activity": shown} if shown else {}
         update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_room", zone,
                                     {"area_id": room_area(layout, lowest_floor_name, zone)[0], **here, **u_room, **moving})
@@ -3883,7 +3895,7 @@ async def forget_thing_settings(hass, ents):
     """
     had = [t.pop(ent, None) for ent in ents for t in (_fingerprint_db.thing_gain, _range_scale)]
     for ent in ents:   # a new tag under the same name must not inherit a collar's motion slots
-        for t in (_minor_counts, _last_moving, _shown_activity):
+        for t in (_minor_counts, _last_moving, _shown_activity, _activity_at):
             t.pop(ent, None)
     if any(v is not None for v in had):
         # Saved now, not at the next periodic save: a reload before then would
@@ -5853,7 +5865,7 @@ def _update_person_sensors(hass):
                 "arrived": arrived,
                 "zone": row.get("zone"), "zone_raw": row.get("zone_raw"), "sub_zone": row.get("sub_zone"), "floor": row.get("floor"),
                 "outside": bool(row.get("outside")), **{k: row.get(k) for k in persons_mod.FIT_KEYS},
-                "activity": _shown_activity.get(ent),
+                "activity": _shown(ent, None, now),   # past ACTIVITY_KEEP_S with no frame: none
                 "area": room_area(layout, row.get("floor"), row.get("zone")),
                 "on_charger": charging,
                 "worn": watch_adverts.worn_now(hass, ent, stale) if classes.get(ent) == "watch" else None,

@@ -390,6 +390,10 @@ hide_time: true        # optional, rings: no time under each face (with mode_in_
   drawn; a pet in the same room as one, both placed at least Likely (an amber
   or green ring, a live fix), shows their face on its photo (up to two, overlapping, the right-hand one in
   front) and "with David and Michelle" under it.
+- A pet whose collar has motion slots (its sensor's `activity`) gets an icon
+  after its name in every layout: a moon while resting, a runner while
+  moving; hover for the word. None while away, or while the collar is not
+  heard.
 
 The card reads only the entities its config names, so it works on
 dashboards served through Strimmer without an override rule.
@@ -402,7 +406,8 @@ change every `binary_sensor.kitchen_sextant_occupancy` in it (the chips name
 it three times) to the room's own.
 
 The chip: faces of who is in the room, how long it has been on, and the
-mode's icon. An empty room shows how long it has been empty and who was in
+mode's icon. A pet whose collar has motion slots gets a small moon or
+runner on its face, read from its `*_sextant_pet_location` sensor. An empty room shows how long it has been empty and who was in
 it last (from the recorder). Add the resource `/sextant/sextant-room-chip.js`
 (JavaScript module) once. The chip has a visual editor.
 

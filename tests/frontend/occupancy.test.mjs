@@ -287,12 +287,24 @@ test("roomChip lists people before pets with their person pictures; lastOccupant
     "person.michelle_bauer": { state: "home", attributes: { entity_picture: "/api/image/m" } },
   };
   const r = roomChip(states, "binary_sensor.kitchen_sextant_occupancy");
-  assert.deepEqual(r.faces, [{ name: "Michelle Bauer", pet: false, picture: "/api/image/m" }, { name: "Socks", pet: true, picture: null }]);
+  assert.deepEqual(r.faces, [{ name: "Michelle Bauer", pet: false, picture: "/api/image/m", activity: null }, { name: "Socks", pet: true, picture: null, sensor: "sensor.socks_sextant_pet_location", activity: null }]);
   assert.equal(r.on, true); assert.equal(r.mode, "Cooking"); assert.equal(r.since, Date.parse("2026-11-27T10:00:00Z") / 1000);
   assert.equal(roomChip(states, "binary_sensor.nope"), null);
   assert.deepEqual([fmtFor(59), fmtFor(720), fmtFor(5280), fmtFor(3 * 86400)], ["0m", "12m", "1h 28m", "3d"]);
   assert.deepEqual(lastOccupants([{ a: { people: ["Jack"] } }, { a: { people: ["Michelle"], pets: ["Meg"] } }, { a: { people: [], pets: [] } }]), ["Michelle", "Meg"]);
   assert.deepEqual(lastOccupants(undefined), []);
+});
+
+test("the room chip marks a pet whose motion collar says resting or moving, from its pet sensor", async () => {
+  const { roomChip } = await import("../../custom_components/sextant/frontend/sextant-occupancy-data.js");
+  const states = {
+    "binary_sensor.foyer_sextant_occupancy": { state: "on", attributes: { room: "Foyer", people: ["Michelle"], pets: ["Leela", "Socks", "Meg"] } },
+    "sensor.leela_sextant_pet_location": { state: "Foyer", attributes: { activity: "still", source: "ble" } },
+    "sensor.socks_sextant_pet_location": { state: "Foyer", attributes: { activity: "moving" } },
+    "sensor.meg_sextant_pet_location": { state: "Foyer", attributes: { activity: "still", source: "held" } },  // unheard: stale
+  };
+  const faces = roomChip(states, "binary_sensor.foyer_sextant_occupancy").faces;
+  assert.deepEqual(faces.map((f) => f.activity?.label ?? null), [null, "Resting", "Moving", null]);
 });
 
 test("the room chip asks Strimmer for the person entities it finds at runtime", async () => {
