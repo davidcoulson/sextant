@@ -144,12 +144,12 @@ class SextantWhereCard extends LitElement {
     const face = (r, size, badge) => {
       const w = company.get(r.id) || [];
       // Up to two faces at the photo's lower right, the second overlapping to the right of the first.
-      return html`<span class="pface ${w.length > 1 ? "two" : ""}">${this._avatar(r, size, badge)}${w.slice(0, 2).map((p, i) => html`<span class="with-face ${i ? "two" : ""}" title=${p.name}>
+      return html`<span class="pface">${this._avatar(r, size, badge)}${w.slice(0, 2).map((p, i) => html`<span class="with-face ${i ? "two" : ""}" title=${p.name}>
         ${p.picture ? html`<img src=${p.picture} alt="">` : p.name[0]}</span>`)}</span>`;
     };
     const withChip = (r) => {
       const w = company.get(r.id) || [];
-      return w.length ? html`<span class="with">with ${joinNames(w.map((x) => x.name))}</span>` : nothing;
+      return w.length ? html`<span class="with ${w.length > 1 ? "two" : ""}">with ${joinNames(w.map((x) => x.name))}</span>` : nothing;
     };
     const where = (r) => r.away ? this._where(r) : r.spot || r.where;
     const dog = (r) => {
@@ -241,7 +241,7 @@ class SextantWhereCard extends LitElement {
     .with-face { position: absolute; right: -5px; bottom: -5px; width: 22px; height: 22px; border-radius: 50%; overflow: hidden; display: grid; place-items: center;
       font-size: 11px; font-weight: 600; background: var(--secondary-background-color); border: 2px solid var(--card-background-color, var(--ha-card-background)); }
     .with-face.two { right: -21px; } .ring.xl ~ .with-face { width: 28px; height: 28px; } .ring.xl ~ .with-face.two { right: -26px; }
-    .pface.two { margin-right: 18px; } /* room for the second face */
+    .with.two { margin-left: 14px; } /* clear of the second face, which reaches past the photo */
     .with-face img { width: 100%; height: 100%; object-fit: cover; }
     .with { align-self: flex-start; margin-top: 3px; padding: 1px 8px; border-radius: 999px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
       color: color-mix(in srgb, var(--blue-color, #2196f3) 45%, var(--primary-text-color)); background: color-mix(in srgb, var(--blue-color, #2196f3) 15%, transparent); }
