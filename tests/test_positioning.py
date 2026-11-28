@@ -3091,9 +3091,11 @@ def test_the_floor_is_held_only_while_still_in_the_shut_room():
     sextant._zone_state.clear()
 
 
-def test_a_still_collar_keeps_its_room_and_drops_the_challenge():
+def test_a_still_collar_keeps_its_room_until_another_leads_for_motion_hold_secs():
     """Leela sat at the Morning Room window while the fix drifted into the
-    Kitchen for a minute; her collar's resting minor said she never moved."""
+    Kitchen for a minute; her collar's resting minor said she never moved. But
+    the collar says still whenever it is not shaken hard, so she also walked to
+    the Great Room 'still' and was held in the Sun Room for 20 min (2026-11-28)."""
     sextant._zone_state.clear()
     layout = {"tuning": {"zone_lock_warmup_secs": 0.0, "zone_prob_smoothing": 0.0}}
 
@@ -3103,10 +3105,11 @@ def test_a_still_collar_keeps_its_room_and_drops_the_challenge():
                                    layout, now=t, still=still)[0]
 
     assert elect(50, 0.0, False) == "Kitchen"
-    for t in (1.0, 21.0, 60.0):            # dwell long passed, but still: held
+    for t in (1.0, 21.0, 60.0, 180.0):     # dwell long passed, but still: held
         assert elect(250, t, True) == "Kitchen"
-    assert elect(250, 61.0, False) == "Kitchen"  # moving: the challenge starts now, not at 1 s
-    assert elect(250, 82.0, False) == "Hall"
+    assert elect(250, 181.0, True) == "Hall"     # Hall has led for motion_hold_secs: still or not, she moved
+    assert elect(50, 182.0, True) == "Hall"
+    assert elect(50, 203.0, False) == "Kitchen"  # moving: the ordinary dwell, from when Kitchen first led
 
 
 def test_activity_needs_a_second_minor_and_reads_the_resting_one():
