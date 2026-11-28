@@ -182,7 +182,7 @@ class SextantWhereCard extends LitElement {
     .av img { width: 100%; height: 100%; object-fit: cover; }
     .badge { position: absolute; right: -3px; top: -3px; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center;
       background: var(--green-color, #4caf50); color: #fff; border: 2px solid var(--card-background-color, var(--ha-card-background)); --mdc-icon-size: 12px; }
-    .badge.mode { top: 19px; right: -7px; background: var(--purple-color, #926bc7); } /* the room's mode, under the device badge, purple as on the rooms layout */
+    .badge.mode { top: 21px; right: -7px; background: var(--purple-color, #926bc7); } /* the room's mode, under the device badge, purple as on the rooms layout */
     .badge ha-icon { display: flex; } /* inline ha-icon sits on the text baseline, off centre */
     .stack { display: flex; flex: none; } .stack .ring + .ring { margin-left: -9px; }
     .fact { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px 1px 6px; border-radius: 999px; font-size: 12px; font-weight: 400;
