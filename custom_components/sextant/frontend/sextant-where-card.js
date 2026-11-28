@@ -17,8 +17,8 @@
  *   # pets: the pets only; each dog gets a card of its own (inside, outside or away). People listed
  *   # are not drawn: a pet in a room with one of them shows their face and "with David".
  *   rooms:                       # optional: room occupancy sensors, for modes (rooms layout; rings: a badge)
- *   mode_in_pill: true           # optional (rings): the mode icon in the time pill, not a badge
  *     - binary_sensor.great_room_sextant_occupancy
+ *   mode_in_pill: true           # optional (rings): the mode icon in the time pill, not a badge
  *
  * Every entity the card reads is named in its config and read from
  * hass.states only (no websocket calls, no registries), so it works behind
