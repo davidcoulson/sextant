@@ -376,8 +376,8 @@ hide_time: true        # optional, rings: no time under each face (with mode_in_
 - `strip`: one wrapping row of chips; pets of one kind on one floor fold
   into one chip ("3 cats · Ground Floor").
 - `rings`: people's faces four across with the time there; pets on one line.
-  Someone away gets two lines for their place, as on tiles; the badge shows
-  driving or walking. With `rooms:` listed, a purple badge under the device badge
+  Someone away gets their town without the state, on one line that shrinks
+  to fit (hover for the full place); the badge shows driving or walking. With `rooms:` listed, a purple badge under the device badge
   shows the mode of the room they are in (a chef's hat for Cooking, a
   controller for Gaming). `mode_in_pill: true` puts the icon in the time
   pill instead.
@@ -388,8 +388,8 @@ hide_time: true        # optional, rings: no time under each face (with mode_in_
   GPS). The other pets
   are tiles, two across, with their spot or room. People listed are not
   drawn; a pet placed confidently (a green ring) in the same room as one
-  shows their face on its photo (up to two, side by side and overlapping) and "with David
-  and Michelle" under it.
+  shows their face on its photo (up to two, side by side and overlapping; hover
+  one for every name).
 
 The card reads only the entities its config names, so it works on
 dashboards served through Strimmer without an override rule.
