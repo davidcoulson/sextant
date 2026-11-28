@@ -52,6 +52,9 @@ def test_beacons_now_reads_each_collars_ibeacon_minor(monkeypatch):
     tb.SEEN["DA:36:EE:88:7B:DA"] = {1, 3}   # heard between cycles
     assert tb.beacons_now(None, devices, now_mono=100.0) == {"leela": {"minors": {"65535": 2}, "age": 2.0, "seen": [1, 2, 3]}}
     assert tb.beacons_now(None, devices, now_mono=100.0)["leela"]["seen"] == [2]   # read once
+    infos["DA:36:EE:88:7B:DA"] = NS(service_data={}, manufacturer_data={}, time=99.0)   # a scan response replaced it
+    tb.SEEN["DA:36:EE:88:7B:DA"] = {3}
+    assert tb.beacons_now(None, devices, now_mono=100.0) == {"leela": {"minors": {}, "age": 1.0, "seen": [3]}}
 
 
 
@@ -68,7 +71,9 @@ def test_the_frame_log_writes_a_line_each_time_a_collars_minor_changes():
     assert tb.frame_row(adv({}), last, 4.0) is None                                  # no frame
     assert tb.frame_row(adv({65535: still}, "AA:BB:CC:DD:EE:FF"), last, 5.0) is None # not a collar
     assert last == {"DA:36:EE:88:7B:DA": 2}
-    assert tb.SEEN.pop("DA:36:EE:88:7B:DA") == {0x2A12, 2}
+    assert tb.SEEN["DA:36:EE:88:7B:DA"] == {0x2A12, 2}
+    tb.watch({})   # no longer tracked: its pending minors go
+    assert tb.SEEN == {}
 
 def test_the_sensor_is_made_once_then_updated(monkeypatch):
     added, written = [], []

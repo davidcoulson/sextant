@@ -77,12 +77,16 @@ def beacons_now(hass, devices, now_mono=None) -> dict:
     out = {}
     for slug, address, info in _last_infos(hass, devices):
         seen = SEEN.pop(str(address).upper(), set())
-        if minors := ibeacon_minors(getattr(info, "manufacturer_data", None)):
+        minors = ibeacon_minors(getattr(info, "manufacturer_data", None))
+        if (now := minors.get(str(_COMPANY))) is not None:
+            seen = seen | {now}
+        if minors or seen:
             at = getattr(info, "time", None)
             out[slug] = {"minors": minors, "age": round(now_mono - at, 1) if isinstance(at, (int, float)) else None}
-            if (now := minors.get(str(_COMPANY))) is not None:
-                # Every 0xFFFF minor since the last cycle (frame log callback), so a burst between cycles shows.
-                out[slug]["seen"] = sorted(seen | {now})
+            if seen:
+                # The 0xFFFF minors the frame log heard change to since the last cycle, and the cached
+                # one, so a burst between cycles shows (the cached one may be older than the cycle).
+                out[slug]["seen"] = sorted(seen)
     return out
 
 
@@ -101,6 +105,8 @@ def watch(devices) -> None:
     """Point the frame log at Bermuda's tracked devices ({address: {"slug"}})."""
     COLLARS.clear()
     COLLARS.update({str(a).upper(): d["slug"] for a, d in (devices or {}).items() if (d or {}).get("slug")})
+    for gone in SEEN.keys() - COLLARS.keys():
+        del SEEN[gone]
 
 
 def frame_row(info, last: dict, now: float):
