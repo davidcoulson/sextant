@@ -161,8 +161,9 @@ class SextantWhereCard extends LitElement {
     const dogs = pets.filter((r) => r.roams), rest = pets.filter((r) => !r.roams);
     const face = (r, size, badge) => {
       const w = company.get(r.id) || [];
-      // Up to two faces at the photo's lower right, the second tucked behind to the left of the first.
-      return html`<span class="pface">${this._avatar(r, size, badge)}${w.slice(0, 2).map((p, i) => html`<span class="with-face ${i ? "two" : ""}" title=${p.name}>
+      // Up to two faces at the photo's lower right, left to right in the order "with" names them: the first tucked behind the second.
+      const two = w.slice(0, 2);
+      return html`<span class="pface">${this._avatar(r, size, badge)}${two.map((p, i) => html`<span class="with-face ${i < two.length - 1 ? "two" : ""}" title=${p.name}>
         ${p.picture ? html`<img src=${p.picture} alt="">` : p.name[0]}</span>`)}</span>`;
     };
     const withChip = (r) => {
