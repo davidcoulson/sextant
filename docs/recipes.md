@@ -361,7 +361,7 @@ entities:
 rooms:                 # optional, rooms and rings layouts: shows each room's mode
   - binary_sensor.great_room_sextant_occupancy
 mode_in_pill: true     # optional, rings: the mode icon in the time pill, not a badge
-hide_time: true        # optional, rings: no time pill under each face
+hide_time: true        # optional, rings: no time under each face (with mode_in_pill, the pill keeps the icon)
 ```
 
 - `tiles`: a grid of tiles, room as the headline and the spot under it.
