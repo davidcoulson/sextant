@@ -287,7 +287,7 @@ test("roomChip lists people before pets with their person pictures; lastOccupant
     "person.michelle_bauer": { state: "home", attributes: { entity_picture: "/api/image/m" } },
   };
   const r = roomChip(states, "binary_sensor.kitchen_sextant_occupancy");
-  assert.deepEqual(r.faces, [{ name: "Michelle Bauer", pet: false, picture: "/api/image/m", activity: null }, { name: "Socks", pet: true, picture: null, activity: null }]);
+  assert.deepEqual(r.faces, [{ name: "Michelle Bauer", pet: false, picture: "/api/image/m", activity: null }, { name: "Socks", pet: true, picture: null, sensor: "sensor.socks_sextant_pet_location", activity: null }]);
   assert.equal(r.on, true); assert.equal(r.mode, "Cooking"); assert.equal(r.since, Date.parse("2026-11-27T10:00:00Z") / 1000);
   assert.equal(roomChip(states, "binary_sensor.nope"), null);
   assert.deepEqual([fmtFor(59), fmtFor(720), fmtFor(5280), fmtFor(3 * 86400)], ["0m", "12m", "1h 28m", "3d"]);

@@ -36,10 +36,13 @@ class SextantRoomChip extends LitElement {
   connectedCallback() { super.connectedCallback(); this._tick = setInterval(() => this.requestUpdate(), 30000); }
   disconnectedCallback() { super.disconnectedCallback(); clearInterval(this._tick); }
 
-  // hass changes many times a second; only the room's own state is drawn (faces' pictures barely change).
+  // hass changes many times a second; only the room's own state and its pets' sensors (a collar's resting /
+  // moving mark) are drawn (faces' pictures barely change).
   shouldUpdate(changed) {
     if (!changed.has("hass") || changed.size > 1) return true;
-    return changed.get("hass")?.states?.[this._config?.entity] !== this.hass?.states?.[this._config?.entity];
+    const was = changed.get("hass")?.states, now = this.hass?.states, room = this._config?.entity;
+    if (was?.[room] !== now?.[room]) return true;
+    return (roomChip(now, room)?.faces || []).some((f) => f.sensor && was?.[f.sensor] !== now?.[f.sensor]);
   }
 
   updated(changed) {
@@ -106,8 +109,9 @@ class SextantRoomChip extends LitElement {
     .faces { display: flex; }
     .face { width: 28px; height: 28px; border-radius: 50%; margin-left: -8px; border: 2px solid var(--ha-card-background, var(--card-background-color)); object-fit: cover;
       display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; color: #fff; background: var(--primary-color); box-sizing: border-box; }
-    .face:first-child, .fw:first-child > .face { margin-left: 0; }
-    .fw { position: relative; display: inline-flex; }
+    .face:first-child { margin-left: 0; }
+    .fw { position: relative; display: inline-flex; margin-left: -8px; } .fw:first-child { margin-left: 0; }
+    .fw > .face { margin-left: 0; } /* the wrapper overlaps, as a bare face does */
     .fw .act { position: absolute; right: -3px; bottom: -2px; width: 13px; height: 13px; border-radius: 50%; display: grid; place-items: center; color: #fff;
       --mdc-icon-size: 9px; border: 1.5px solid var(--ha-card-background, var(--card-background-color)); background: var(--indigo-color, #3f51b5); }
     .fw .act.moving { background: var(--teal-color, #009688); }

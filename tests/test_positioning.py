@@ -3120,6 +3120,16 @@ def test_activity_needs_a_second_minor_and_reads_the_resting_one():
     assert sextant._activity("c", {"seen": [3]}) == "moving"
 
 
+def test_the_shown_activity_outlasts_a_quiet_cycle_but_not_a_quiet_collar():
+    sextant._shown_activity.clear()
+    sextant._activity_at.clear()
+    assert sextant._shown("c", None, 0.0) is None
+    assert sextant._shown("c", "still", 10.0) == "still"
+    assert sextant._shown("c", None, 10.0 + sextant.ACTIVITY_KEEP_S) == "still"   # a cycle with no frame
+    assert sextant._shown("c", None, 11.0 + sextant.ACTIVITY_KEEP_S) is None      # gone quiet: not shown
+    assert sextant._shown("c", "moving", 500.0) == "moving"
+
+
 def test_a_collar_given_new_slots_learns_its_new_resting_minor():
     """The counts are kept through restarts, so they halve past a cap: old minors fade out."""
     import collections
