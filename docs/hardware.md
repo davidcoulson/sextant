@@ -95,11 +95,13 @@ it is one.
 The point of the surgery is that the result is uniform. Whatever the casing,
 each node includes the same BLE package, which sets:
 
-- **A forked `bluetooth_proxy`** that filters on the device rather than
-  forwarding every advertisement it hears, with allowlists that keep iBeacon,
-  HomeKit, Find My and Tile traffic flowing. Find My covers AirPods too
-  from v1.5.1: near their owner they send the pairing advert (Apple subtype
-  `0x07`) rather than the Find My one, from the same rotating address.
+- **ESPHome's own `bluetooth_proxy`, 2026.11 or later.** The house used to
+  run a fork of it, and that work was merged into ESPHome 2026.11, so no
+  fork is needed now. It filters on the device rather than forwarding every
+  advertisement it hears, with allowlists that keep iBeacon, HomeKit,
+  Find My and Tile traffic flowing. Find My covers AirPods too: near their
+  owner they send the pairing advert (Apple subtype `0x07`) rather than the
+  Find My one, from the same rotating address.
 - **A scan duty cycle of 120 ms listening in every 320 ms interval**, passive.
   That window is airtime taken from WiFi, and it is the knob to turn down
   first if a node becomes unstable.
