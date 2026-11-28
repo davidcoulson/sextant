@@ -1818,23 +1818,55 @@ async def ws_scanner_ignore(hass, connection, msg):
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_advice(hass, connection, msg):
-    """Which rooms the proxies serve worst and where a proxy would help (sextant.advice)."""
-    from . import person_log  # noqa: PLC0415
+    """Which rooms the proxies serve worst and where a proxy would help (sextant.advice),
+    and per floor the predicted-error map with its measured bad squares (sextant.error_map)."""
+    from . import error_map, person_log  # noqa: PLC0415
     from .advice import advise, room_usage  # noqa: PLC0415
-    from .calibration import get_calibration_state  # noqa: PLC0415
+    from .calibration import _build_receiver_map, _true_distance_m, get_calibration_state, solve_snapshot  # noqa: PLC0415
 
     core = _core()
     layout = get_layout(hass)
     if not isinstance(layout, dict) or not layout.get("floor"):
         return _error(connection, msg, "No floor plan yet: add a floor and place proxies first")
-    samples = {k: list(v) for k, v in get_calibration_state(hass).get("samples", {}).items()}
-    selftest = await hass.async_add_executor_job(core.run_selftest, hass, samples)
+    snap = solve_snapshot(get_calibration_state(hass))
+    selftest = await hass.async_add_executor_job(core.run_selftest, hass, snap["samples"])
     unplaced = _unplaced_scanners(hass, layout)
     # shortcut: every request reads the person log's whole window, in the executor with the rest: about 30,000 lines
     # (12 MB) a person for 48 hours at a six-second cycle, some 3 s for twelve; keep a sum per hour file if that gets slow.
     since = time.time() - core._tuning(layout, "person_log_hours") * 3600.0
-    out = await hass.async_add_executor_job(
-        lambda: advise(layout, selftest, unplaced, room_usage(person_log.rows(hass.config.path(person_log.LOG_DIRNAME), since))))
+    # Pins re-solved at the geometric fit alone, one cheap solve each, as truth/health does.
+    pins = []
+    for mark in list((await load_truth(hass)).get("marks", [])):
+        rows = await _evaluate_mark(hass, core, mark, weights=(0.0,), gains=(1.0,))
+        if rows and rows[0].get("mean_m") is not None:
+            pins.append({"entity": mark["entity"], "floor": mark["floor"], "x": mark["x"], "y": mark["y"], "error_m": rows[0]["mean_m"]})
+    hist, now = core.get_position_history(hass), time.time()
+    wins = {ent: win[0] for ent in core._truth_buffer.entities() if (win := hist.window(ent, 0.0, now))}
+    tracks = {ent: history_mod._PointView(w, 0, len(w.t)) for ent, w in wins.items()}
+
+    def build():
+        out = advise(layout, selftest, unplaced, room_usage(person_log.rows(hass.config.path(person_log.LOG_DIRNAME), since)))
+        placed = {str(r.get("entity_id")): (f.get("name"), r) for f in layout["floor"] for r in f.get("receivers") or []
+                  if isinstance(r.get("cords"), dict) and r["cords"].get("x") is not None and r["cords"].get("y") is not None}
+        errs = {r.get("entity"): r.get("error_m") for r in selftest.get("receivers", [])}
+        weak = [{"entity": s, "floor": placed[s][0], "x": float(placed[s][1]["cords"]["x"]), "y": float(placed[s][1]["cords"]["y"]), "error_m": errs.get(s)}
+                for row in out["rooms"] for s in row.get("weak") or [] if s in placed]
+        # The solver scales a proxy's distances by its correction, so the noise is judged on corrected ones.
+        # True distances from the plan: a calibration run's own receiver map is
+        # empty after a restart with Auto off, and one floor after a manual run.
+        fade, truth = core._close_fade_params(layout), {"receivers": _build_receiver_map(layout)}
+        pairs = []
+        for key, vals in snap["samples"].items():
+            tx, _, rx = key.partition("|")
+            true_m = _true_distance_m(truth, tx, rx)
+            if true_m:
+                corr = placed.get(rx, (None, {}))[1].get("correction")
+                k = float(corr) if isinstance(corr, (int, float)) and corr > 0 else 1.0
+                pairs.append((tx, rx, true_m, [v * core._close_range_correction(k, v, layout, fade) for v in vals]))
+        out.update(error_map.floor_maps(layout, pairs, tracks, pins, weak))
+        return out
+
+    out = await hass.async_add_executor_job(build)
     out["ignored"] = _ignored_scanner_rows(hass, layout)
     connection.send_result(msg["id"], out)
 

@@ -607,6 +607,45 @@ function hslRgb(h, sat, l) {
   return [f(0), f(8), f(4)];
 }
 
+/** Predicted position error (m) to [r, g, b]: green at 0.5 m and under, red at 4 m and over. */
+export function errorRgb(m) {
+  const s = Math.max(0, Math.min(1, (m - 0.5) / 3.5));
+  return hslRgb(120 * (1 - s), 0.62, 0.48);
+}
+
+/** Bilinear value of grid v (w x h) at grid point gx, gy, which must lie on the grid. */
+function bilinear(v, w, h, gx, gy) {
+  const ix = Math.max(0, Math.min(Math.floor(gx), w - 2)), iy = Math.max(0, Math.min(Math.floor(gy), h - 2));
+  const fx = w < 2 ? 0 : gx - ix, fy = h < 2 ? 0 : gy - iy, o = iy * w + ix;
+  const dx = w < 2 ? 0 : 1, dy = h < 2 ? 0 : w;
+  return (v[o] * (1 - fx) + v[o + dx] * fx) * (1 - fy) + (v[o + dy] * (1 - fx) + v[o + dy + dx] * fx) * fy;
+}
+
+/** The error map's e.err (or e.err_after) at plan point x, y; null off the grid.
+ * The grid's x0, y0 is the first cell's centre. Exported for the tests. */
+export function errorAt(e, after, x, y) {
+  const g = e.grid, gx = (x - g.x0) / g.step, gy = (y - g.y0) / g.step;
+  if (gx < 0 || gy < 0 || gx > g.w - 1 || gy > g.h - 1) return null;
+  return bilinear(after ? e.err_after : e.err, g.w, g.h, gx, gy);
+}
+
+/** The error map rendered once into a canvas, WIFI_SUB pixels a grid step. */
+function buildErrorRaster(e, after) {
+  const g = e.grid, v = after ? e.err_after : e.err, t = g.step / WIFI_SUB;
+  const W = (g.w - 1) * WIFI_SUB + 1, H = (g.h - 1) * WIFI_SUB + 1;
+  const canvas = typeof OffscreenCanvas !== "undefined" ? new OffscreenCanvas(W, H) : Object.assign(document.createElement("canvas"), { width: W, height: H });
+  const cx2 = canvas.getContext("2d");
+  if (cx2) {
+    const img = cx2.createImageData(W, H), px = img.data, a = Math.round(255 * 0.55);
+    for (let j = 0, p = 0; j < H; j++) for (let i = 0; i < W; i++, p++) {
+      const rgb = errorRgb(bilinear(v, g.w, g.h, i / WIFI_SUB, j / WIFI_SUB));
+      px[4 * p] = rgb[0]; px[4 * p + 1] = rgb[1]; px[4 * p + 2] = rgb[2]; px[4 * p + 3] = a;
+    }
+    cx2.putImageData(img, 0, 0);
+  }
+  return { canvas, x0: g.x0, y0: g.y0, t, W, H, after };
+}
+
 /** The hue an access point is drawn in, from the host's colour for it. */
 function apHue(css) { const m = /hsla?\((\d+(?:\.\d+)?)/.exec(css || ""); return m ? Number(m[1]) : 0; }
 
@@ -735,6 +774,7 @@ export class SextantMap {
     this.radarCalib = null;  // lining a radar up: {from: [x, y] the sensor, frozen: [x, y], at: [x, y] | null}
     this.apInfo = null;      // mac -> {name, clients, online}: the UniFi access points, null until known
     this.focusWifi = null;   // the focused thing's Wi-Fi link: {ent, x, y, name}, or null
+    this.errorMap = null;    // the Advice page's predicted-error map: {grid, err, err_after, bad, stars, after}
     this.wifiHeat = null;    // the Wi-Fi signal map: {cells, mode: "signal"|"ap", names: {mac: name}, colours: {mac: css}}
     this._wifiAt = null;     // the signal map's readout point: {x, y, idx} under the pointer (or the last tap)
     this.hover = null;
@@ -995,7 +1035,9 @@ export class SextantMap {
       this.selection = null;
       if (this.host.onSelect) this.host.onSelect(null);
     }
-    this._drag = { kind: "pan", start: p, view: { ...this.view }, moved: false, slop: e.pointerType === "touch" ? 10 : 3 };
+    const onThing = hit && (hit.kind === "thing" || hit.kind === "receiver" || hit.kind === "ap");
+    const planClick = e.button === 0 && this.mode !== "edit" && !onThing ? this.toMap(p) : null;
+    this._drag = { kind: "pan", start: p, view: { ...this.view }, moved: false, slop: e.pointerType === "touch" ? 10 : 3, planClick };
   }
 
   /** A second finger landed: undo what the first one started, then pinch. */
@@ -1216,6 +1258,7 @@ export class SextantMap {
     this._drag = null;
     const placed = d?.kind === "pan" && d.place && !d.moved && e.type === "pointerup" && this.host.onMapClick;
     if (placed) this.host.onMapClick(d.place);
+    if (d?.kind === "pan" && d.planClick && !d.moved && e.type === "pointerup" && this.host.onPlanClick) this.host.onPlanClick(d.planClick);
     this._snap = null;
     this._pinSnap = null;
     // A placement handled on pointer-up also consumes the browser click.
@@ -1394,6 +1437,7 @@ export class SextantMap {
     if (this.biasMap) this._drawBiasMap(ctx);
     if (this.heat && this.mode !== "edit") this._drawHeat(ctx);
     if (this.wifiHeat && this.mode !== "edit") this._drawWifiHeat(ctx);
+    if (this.errorMap && this.mode !== "edit") this._drawErrorMap(ctx);
     this._drawDraft(ctx);
     this._drawDragOrigin(ctx);
     if (this._snap) this._drawSnap(ctx);
@@ -1770,6 +1814,58 @@ export class SextantMap {
   setRadarTargets(list) { this.radarTargets = list || []; this.invalidate(); }
   setRadarLive(live) { this.radarLive = live || null; this.invalidate(); }
   setRadarCalib(calib) { this.radarCalib = calib || null; this.invalidate(); }
+  /** The Advice page's error map for this floor, or null: {grid: {x0, y0
+   * (first cell centre), step, w, h}, err, err_after (metres, row-major),
+   * bad: [{x, y, size}], stars: [{x, y}], after (draw err_after)}. */
+  setErrorMap(e) {
+    this.errorMap = e && e.grid && Array.isArray(e.err) ? e : null;
+    this._errorRaster = null;
+    this.invalidate();
+  }
+
+  /** Clip to the floor's rooms (no-go zones left out); a floor without any clips nothing. */
+  _clipRooms(ctx) {
+    const rooms = (this.floor?.zones || []).filter((z) => !z.no_go && (z.cords || []).length >= 3);
+    if (!rooms.length) return;
+    const clip = new Path2D();
+    for (const z of rooms) { z.cords.forEach((c, i) => (i ? clip.lineTo(c.x, c.y) : clip.moveTo(c.x, c.y))); clip.closePath(); }
+    ctx.clip(clip);
+  }
+
+  /** The predicted error as a picture inside the rooms, purple squares where
+   * it measured bad, and numbered amber stars where a proxy would help most;
+   * with "after" on, the field with those proxies and the stars as proxy dots. */
+  _drawErrorMap(ctx) {
+    const e = this.errorMap, k = this.view.k, after = !!e.after;
+    if (!this._errorRaster || this._errorRaster.after !== after) this._errorRaster = buildErrorRaster(e, after);
+    const r = this._errorRaster;
+    ctx.save();
+    this._clipRooms(ctx);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(r.canvas, r.x0 - r.t / 2, r.y0 - r.t / 2, r.W * r.t, r.H * r.t);
+    ctx.fillStyle = "rgba(127, 119, 221, 0.7)";
+    for (const b of e.bad || []) ctx.fillRect(b.x, b.y, b.size, b.size);
+    ctx.restore();
+    (e.stars || []).forEach((s, i) => {
+      ctx.save();
+      ctx.fillStyle = "#EF9F27"; ctx.strokeStyle = "#633806"; ctx.lineWidth = 1.5 / k;
+      ctx.beginPath();
+      if (after) ctx.arc(s.x, s.y, 7 / k, 0, Math.PI * 2);
+      else for (let n = 0; n < 10; n++) {
+        const rad = (n % 2 ? 5.5 : 13) / k, a = -Math.PI / 2 + (n * Math.PI) / 5;
+        ctx[n ? "lineTo" : "moveTo"](s.x + rad * Math.cos(a), s.y + rad * Math.sin(a));
+      }
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+      if (!after) {
+        ctx.font = `700 ${8 / k}px system-ui, sans-serif`;
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillStyle = "#633806"; ctx.fillText(String(i + 1), s.x, s.y + 1 / k);
+      }
+      ctx.restore();
+    });
+  }
+
   /** The Wi-Fi signal map to draw, or null to draw none: {cells (heat.py's
    * measured squares), field (field.py's grid, or null), mode: "estimated" |
    * "measured" | "ap", names: {mac: name}, colours: {mac: css}}. */
@@ -1819,12 +1915,7 @@ export class SextantMap {
     const r = this._wifiRasterGet(), k = this.view.k;
     if (!r) return;
     ctx.save();
-    const rooms = (this.floor?.zones || []).filter((z) => !z.no_go && (z.cords || []).length >= 3);
-    if (rooms.length) {
-      const clip = new Path2D();
-      for (const z of rooms) { z.cords.forEach((c, i) => (i ? clip.lineTo(c.x, c.y) : clip.moveTo(c.x, c.y))); clip.closePath(); }
-      ctx.clip(clip);
-    }
+    this._clipRooms(ctx);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
     ctx.drawImage(r.canvas, r.x0 - r.t / 2, r.y0 - r.t / 2, r.W * r.t, r.H * r.t);

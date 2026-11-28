@@ -64,6 +64,55 @@ top, each with the spot that needs it most.
 Like the self-test, the analysis works from the calibration sample window,
 so keep **Auto calibration** on for it to see every floor.
 
+## Error map
+
+![The Advice page's error map for a basement: green near the proxies, red across the far end of the big room, three purple squares where things measured bad, and two numbered stars on the walls where a proxy would help most](../img/screenshots/sextant-advice-map.png)
+
+Above the tables, each floor is drawn as a picture of how far off a position
+is likely to be at each point: green where the proxies surround the spot and
+range well, red where they do not. It is predicted from where the proxies
+are placed and how well they range against each other (once eight pairs of
+proxies have heard each other; until then a default), so read the colours
+as a ranking of places on the floor. The metres in the legend are rough.
+Anywhere with fewer than three proxies within 15 m is red: Sextant will not
+place from two.
+
+**Purple squares** are where it measured bad, whatever the prediction says.
+Each is a 1 m square, and it turns purple for any of:
+
+- a location pin that the current settings place 3 m or more from where it
+  was pinned;
+- a proxy the table calls **weak proxy**;
+- a **floor flip**: something was put on another floor and was back on this
+  one within three minutes, within 3 m of where it left;
+- a **jump**: something was put 4 m or more away and was back within 1.5 m
+  of where it started inside a minute.
+
+Flips and jumps count only when one square has three of them, spread over at
+least two different hours, so one bad moment does not paint a square. People
+and pets count the same, and pets find the problems sooner: they move around
+more. Flips and jumps come from the position history, so a longer
+`history_hours` on the [Tuning](tuning.md) page finds more.
+
+**Stars** are where one more proxy would shrink the error most, at most two
+a floor and at least 2 m apart, numbered in the order to add them. Like the table's spots they sit
+on a wall, and they favour the rooms where people and pets spend their time
+(every room counts for at least ten minutes, so an unused room is not
+ignored). A star that would improve the floor by less than 3% is left out,
+so a floor that is already fine gets none. A floor with one proxy or none,
+where one more still would not make three, says so instead.
+
+**With the suggested proxies** redraws the floor as if the starred proxies
+were already placed, with the stars drawn as proxies, so you can see what
+the drill would buy before you pick it up. Click a room to see its row from
+the table (its issue, median, third-nearest proxy, time here, bounces, what
+to do and, for admins, **Show on plan**), or click a purple square to see
+what went wrong there, how often, and for which things.
+
+The map is drawn from the plan as it was when you pressed **Analyse the
+house**. Move a proxy, a room or the scale afterwards and the map says so
+until you press **Refresh**.
+
 ## Location pins
 
 A location pin ("It's actually here…" on the [Live](live.md) page) is the
