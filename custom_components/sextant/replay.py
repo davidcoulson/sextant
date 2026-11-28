@@ -31,7 +31,7 @@ BOUNCE_WINDOW_S = 120.0
 ROOM_KEYS = (
     "zone_prob_smoothing", "zone_switch_margin", "zone_switch_secs", "stationary_speed", "stationary_secs",
     "zone_lock_warmup_secs", "zone_unlock_margin", "zone_unlock_secs", "far_move_margin", "far_move_secs",
-    "zone_anchor_inset_m", "habit_margin_gain",
+    "zone_anchor_inset_m", "habit_margin_gain", "motion_settle_secs",
 )
 
 
@@ -41,7 +41,7 @@ def load_rows(dirpath: str, hours: float, now: float | None = None) -> list:
     rows = []
     for r in election_log.iter_rows(dirpath, since):
         if r.get("cords") and r.get("floor") and r.get("zone_raw"):
-            rows.append({k: r.get(k) for k in ("t", "ent", "floor", "cords", "zone_raw", "zone", "anchor", "rms_m", "speed")})
+            rows.append({k: r.get(k) for k in ("t", "ent", "floor", "cords", "zone_raw", "zone", "anchor", "rms_m", "speed", "activity")})
     rows.sort(key=lambda r: r["t"])
     return rows
 
@@ -81,6 +81,14 @@ def run(core, layout, rows, tuning=None, habits=None) -> dict:
     floors, proxies = _floors(core, lay)
     elect = _elector(core, core._habits if habits is None else habits)
     out = {}
+    moved = {}   # the replay's own _last_moving
+
+    def still_hold(ent, activity, t, lay):
+        if activity == "moving":
+            moved[ent] = t
+        return (activity == "still" and bool(core._tuning(lay, "motion_hold"))
+                and t - moved.get(ent, t) >= core._tuning(lay, "motion_settle_secs"))
+
     for r in rows:
         if r["floor"] not in floors:
             continue
@@ -95,7 +103,8 @@ def run(core, layout, rows, tuning=None, habits=None) -> dict:
             kf = {"floor": r["floor"], "P": np.diag([sig * sig, sig * sig, 1.0, 1.0]),
                   "x": np.array([x, y, (r.get("speed") or 0.0) * scale, 0.0])}
         zone, _locked, _speed = elect(r["ent"], r["floor"], r["zone_raw"], Point(x, y), kf, polys, scale, lay, now=r["t"], anchor_point=anchor,
-                                     closed=set(r.get("closed") or ()))
+                                     closed=set(r.get("closed") or ()),
+                                     still=still_hold(r["ent"], r.get("activity"), r["t"], lay))
         out.setdefault(r["ent"], []).append((r["t"], r["floor"], zone))
     return out
 

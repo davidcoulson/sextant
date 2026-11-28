@@ -1,5 +1,6 @@
 import aiofiles
 import aiofiles.os
+import collections
 import contextlib
 import importlib
 import importlib.util
@@ -590,6 +591,44 @@ _subzone_state = {}
 # thing -> {"out_since", "in_since", "outside"}: the outside-the-house election.
 _outside_state = {}
 _tag_beacons: dict = {}  # slug -> its latest advert's iBeacon minors (tag_battery.beacons_now), for the election log
+_minor_counts: dict = {}  # slug -> Counter of the cycles each motion-slot minor was heard in
+_last_moving: dict = {}   # slug -> when its collar last said it was moving
+_shown_activity: dict = {}  # slug -> the activity its sensors last showed, kept through a cycle that heard no frame
+
+
+def _activity(entity, beacon):
+    """"still" or "moving" for a tag with motion slots, from this cycle's beacon; else None.
+
+    A collar with motion slots (Holy-IoT: Shake, Fall) sends its own minor
+    while one is triggered, and its resting slot's minor otherwise. A tag
+    that has been heard sending more than one minor has motion slots; the
+    minor it sends most is its resting one. A cycle that heard only that
+    one is still; one that heard any other is moving. A tag with a single
+    minor, or a cycle with no frame, says nothing.
+    shortcut: the counts start again at a restart, so a collar says nothing until it next moves; persist them if that wait matters.
+    """
+    seen = (beacon or {}).get("seen")
+    if not seen:
+        return None
+    counts = _minor_counts.setdefault(entity, collections.Counter())
+    counts.update(seen)
+    if len(counts) < 2:
+        return None
+    still = counts.most_common(1)[0][0]
+    return "still" if set(seen) == {still} else "moving"
+
+
+def _still_hold(entity, activity, now, layout):
+    """Whether the room election should hold: the collar has said still for motion_settle_secs.
+
+    Not from the first still cycle: a walk into the next room ends before the
+    election has followed it there (Leela, pantry to Morning Room: still 26 s
+    before the switch), and holding then would keep her in the room she left.
+    """
+    if activity == "moving":
+        _last_moving[entity] = now
+    return (activity == "still" and bool(_tuning(layout, "motion_hold"))
+            and now - _last_moving.get(entity, now) >= _tuning(layout, "motion_settle_secs"))
 
 
 def _faint_signal(n_prox, nearest_m, max_prox, far_m, near_m):
@@ -721,6 +760,8 @@ TUNING_SPEC = {
     "solver_near_always": (3.0, float, 0.0, 50.0),
     # Zone election (see _elect_zone). Off = publish the instantaneous zone.
     "zone_hysteresis": (True, bool),
+    "motion_hold": (True, bool),   # a motion collar that says it is still keeps its room...
+    "motion_settle_secs": (60.0, float, 0.0, 600.0),   # ...once it has been still this long
     "zone_prob_smoothing": (0.6, float, 0.0, 0.95),     # EMA weight on the previous probability
     "zone_switch_margin": (0.15, float, 0.0, 1.0),      # lead a challenger needs
     "zone_switch_secs": (20.0, float, 0.0, 600.0),      # ...held this long, wall clock
@@ -3325,6 +3366,7 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
         if closed:
             closed -= _companion_rooms(hass, layout, entity, lowest_floor_name, now)
         doors_shut = _doors_shut(hass, zone_polys)
+        activity = _activity(entity, _tag_beacons.get(entity))
         zone, zone_locked, zone_speed = _elect_zone(
             entity, lowest_floor_name, instant_zone, test_point,
             kf_for_election, zone_polys, scale, layout, now=now,
@@ -3332,6 +3374,7 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
             anchor_point=Point(anchor["x"], anchor["y"]) if anchor is not None else None,
             closed=closed, doors_shut=doors_shut,
             new_floor=came_from is not None and came_from != lowest_floor_name,
+            still=_still_hold(entity, activity, now, layout),
         )
         # Sub-zone: only the elected zone's own sub-zones are eligible, with
         # membership smoothing, exit hysteresis, dwell and the zone lock (see
@@ -3369,6 +3412,8 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
                 "outside_m": None if outside_m is None else round(outside_m, 2),
                 "outside_raw_m": None if outside_raw_m is None else round(outside_raw_m, 2),
                 "zone_locked": zone_locked,
+                # A motion collar's "still" / "moving" this cycle (_activity), else None.
+                "activity": activity,
                 # When this room and this spot were entered: kept across a
                 # restart, where the sensors' own timestamps are not.
                 # Outside: when the spell outside began (not kept over a restart: the election starts again).
@@ -3440,12 +3485,15 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
             zone = "Outside"
         loc_attrs = {**loc_attrs, **{k: row.get(k) for k in persons_mod.FIT_KEYS if row.get(k) is not None}}
         u_floor, u_room, u_spot = _usual_attrs(layout, entity, now)
+        # A cycle with no frame keeps the last answer on the sensors, rather than dropping and re-adding it.
+        shown = _shown_activity[entity] = activity or _shown_activity.get(entity)
+        moving = {"activity": shown} if shown else {}
         update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_room", zone,
-                                    {"area_id": room_area(layout, lowest_floor_name, zone)[0], **here, **u_room})
+                                    {"area_id": room_area(layout, lowest_floor_name, zone)[0], **here, **u_room, **moving})
         update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_nearest_room", nearest_zone, dict(here))
         update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_floor", lowest_floor_name, {**here, **u_floor})
         update_sextant_sensor_state(hass, f"sensor.{entity}_sextant_spot", sub_zone, {"room": parent_zone, **here, **u_spot})
-        loc_attrs = {**loc_attrs, **here}
+        loc_attrs = {**loc_attrs, **here, **moving}
         if (settled := rooms_mod.settled_conf_of(loc_attrs, row["updated"])) is not None:
             loc_attrs["settled_conf"] = settled
         else:
@@ -5794,6 +5842,7 @@ def _update_person_sensors(hass):
                 "arrived": arrived,
                 "zone": row.get("zone"), "zone_raw": row.get("zone_raw"), "sub_zone": row.get("sub_zone"), "floor": row.get("floor"),
                 "outside": bool(row.get("outside")), **{k: row.get(k) for k in persons_mod.FIT_KEYS},
+                "activity": _shown_activity.get(ent),
                 "area": room_area(layout, row.get("floor"), row.get("zone")),
                 "on_charger": charging,
                 "worn": watch_adverts.worn_now(hass, ent, stale) if classes.get(ent) == "watch" else None,
@@ -6841,7 +6890,7 @@ def _doors_shut(hass, zone_polys):
             if (st := hass.states.get(door)) is not None and rooms_mod.door_closed(st.state)}
 
 
-def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, scale, layout, now=None, hold=False, anchor_point=None, closed=(), new_floor=False, doors_shut=None):
+def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, scale, layout, now=None, hold=False, anchor_point=None, closed=(), new_floor=False, doors_shut=None, still=False):
     """The zone to PUBLISH for a thing this cycle. Returns
     (zone, locked, speed_m_s).
 
@@ -6963,6 +7012,13 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
                 best = lead
         st.update(zone=best, since=now, challenge=None, locked=False, away_since=None, entering=False)
         return best, False, speed
+    # The tag's own accelerometer says it has not moved (_activity): it is in
+    # the room it was in, whatever the fix says. The challenge is dropped, not
+    # held, so the first step after a long sit does not switch on a lead the
+    # noise built up while it sat.
+    if still:
+        st["challenge"] = None
+        return incumbent, bool(st.get("locked")), speed
     # Anchored: the thing sits on a proxy (one reads it within anchor_max_m,
     # every other at least anchor_ratio farther, for anchor_secs), so its room
     # is that proxy's room - no smoothing lag, dwell or lock to wait out. Only
