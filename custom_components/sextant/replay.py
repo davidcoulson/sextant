@@ -31,7 +31,7 @@ BOUNCE_WINDOW_S = 120.0
 ROOM_KEYS = (
     "zone_prob_smoothing", "zone_switch_margin", "zone_switch_secs", "stationary_speed", "stationary_secs",
     "zone_lock_warmup_secs", "zone_unlock_margin", "zone_unlock_secs", "far_move_margin", "far_move_secs",
-    "zone_anchor_inset_m", "habit_margin_gain", "motion_settle_secs",
+    "zone_anchor_inset_m", "habit_margin_gain", "motion_settle_secs", "motion_hold_secs",
 )
 
 

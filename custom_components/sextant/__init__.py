@@ -781,6 +781,7 @@ TUNING_SPEC = {
     "zone_hysteresis": (True, bool),
     "motion_hold": (True, bool),   # a motion collar that says it is still keeps its room...
     "motion_settle_secs": (60.0, float, 0.0, 600.0),   # ...once it has been still this long
+    "motion_hold_secs": (180.0, float, 0.0, 3600.0),   # ...unless another room leads for this long
     "zone_prob_smoothing": (0.6, float, 0.0, 0.95),     # EMA weight on the previous probability
     "zone_switch_margin": (0.15, float, 0.0, 1.0),      # lead a challenger needs
     "zone_switch_secs": (20.0, float, 0.0, 600.0),      # ...held this long, wall clock
@@ -7057,13 +7058,12 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
         habits_mod.learn(_habits, entity, _habit_zone(floor_name, incumbent), now, _habits_last.get(entity), _local_tz)
         _habits_step[entity] = (now, _habits_last.get(entity), _habit_zone(floor_name, incumbent))
     _habits_last[entity] = now
-    # The tag's own accelerometer says it has not moved (_still_hold): it is in
-    # the room it was in, whatever the fix says. The challenge and the lock's
-    # unlock clocks are dropped, not held, so the first step after a long sit
-    # does not switch on a lead the noise built up while it sat.
+    # The tag's own accelerometer says it has not moved (_still_hold): it keeps
+    # its room unless another leads for motion_hold_secs, since a collar that
+    # only reports a hard shake says still through a gentle walk. The lock's
+    # unlock clocks are dropped, so a long sit's noise does not unlock it.
     if still:
-        st.update(challenge=None, away_since=None, outvoted_since=None)
-        return incumbent, bool(st.get("locked")), speed
+        st.update(away_since=None, outvoted_since=None)
 
     # 3b. Lock and unlock.
     stationary_secs = _tuning(layout, "stationary_secs")
@@ -7079,7 +7079,9 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
         st["away_since"] = None
         st["outvoted_since"] = None
     challenge_since = None
-    if st["locked"]:
+    # A lead held while still (motion_hold_secs) goes on to its dwell when the collar next says moving,
+    # rather than waiting on the lock's unlock clocks, which the still hold kept at zero.
+    if st["locked"] and not still and not (st.get("challenge") or {}).get("still"):
         incumbent_poly = next((p for zid, p, _b, _n in zone_polys if zid == incumbent), None)
         margin_px = _tuning(layout, "zone_unlock_margin") * (scale if isinstance(scale, (int, float)) and scale > 0 else 1.0)
         pt = point if isinstance(point, Point) else Point(center)
@@ -7125,6 +7127,8 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
     unseen = {z for z, seen in (doors_shut.items() if isinstance(doors_shut, dict) else ()) if not seen}
     best = max((z for z in probs if z == incumbent or z not in closed or z in unseen), key=probs.get, default=incumbent)
     margin, dwell = _tuning(layout, "zone_switch_margin"), _tuning(layout, "zone_switch_secs")
+    if still:
+        dwell = max(dwell, _tuning(layout, "motion_hold_secs"))
     if best != incumbent and _far_move(zone_polys, incumbent, best, scale):
         margin = max(margin, _tuning(layout, "far_move_margin"))
         dwell = max(dwell, _tuning(layout, "far_move_secs"))
@@ -7140,21 +7144,21 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
             margin = min(shifted, max(margin, 0.9))   # a habit never makes a unanimous challenger unable to win
     if best == incumbent or probs[best] - probs.get(incumbent, 0.0) < margin:
         st["challenge"] = None
-        return incumbent, False, speed
+        return incumbent, bool(st["locked"]), speed   # locked only while still: the subzone guard keeps its spot
     ch = st["challenge"]
     if ch and ch.get("zone") == best:
         since = ch["since"]
     else:
         since = challenge_since if challenge_since is not None else now
     if now - since >= dwell and not hold:
-        st.update(zone=best, since=now, challenge=None)
+        st.update(zone=best, since=now, challenge=None, locked=False)
         return best, False, speed
     # hold: a floor challenge is running, so a switch here can only name a
     # room on a floor the thing is about to lose (the 16 s of "Catwalk" seen
     # on the way from the bedroom to the office below). The challenge keeps
     # its clock, so a challenge that lapses costs the room switch nothing.
-    st["challenge"] = {"zone": best, "since": since}
-    return incumbent, False, speed
+    st["challenge"] = {"zone": best, "since": since, **({"still": True} if still else {})}
+    return incumbent, bool(st["locked"]), speed
 
 
 def _inset_m(zone_polys, zone, point, scale):
