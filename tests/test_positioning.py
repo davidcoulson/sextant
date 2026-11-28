@@ -3166,3 +3166,21 @@ def test_the_still_hold_drops_the_locks_unlock_clocks():
     sextant._elect_zone("e", "F", "Hall", Point(250, 50.0), _kf(250, 50.0, sigma_px=5.0), _three_rooms(), 100.0, layout,
                         now=2.0, still=True)
     assert sextant._zone_state["e"]["away_since"] is None and sextant._zone_state["e"]["outvoted_since"] is None
+
+
+def test_a_still_locked_room_stays_locked_and_its_still_lead_survives_the_next_motion():
+    """The subzone guard needs the lock while still; and a lead held while still goes on when the
+    collar says moving, not back to the unlock clocks the still hold kept at zero."""
+    sextant._zone_state.clear()
+    layout = {"tuning": {"zone_lock_warmup_secs": 0.0, "zone_prob_smoothing": 0.0}}
+
+    def elect(x, t, still):
+        return sextant._elect_zone("e", "F", "Kitchen" if x < 100 else "Hall", Point(x, 50.0), _kf(x, 50.0, sigma_px=5.0),
+                                   _three_rooms(), 100.0, layout, now=t, still=still)[:2]
+
+    elect(50, 0.0, False)
+    sextant._zone_state["e"]["locked"] = True
+    assert elect(60, 1.0, True) == ("Kitchen", True)
+    for t in (2.0, 100.0, 170.0):          # in the Hall, inside the unlock margin, held by the still hold
+        assert elect(150, t, True) == ("Kitchen", True)
+    assert elect(150, 171.0, False) == ("Hall", False)

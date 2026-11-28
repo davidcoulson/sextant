@@ -7079,7 +7079,9 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
         st["away_since"] = None
         st["outvoted_since"] = None
     challenge_since = None
-    if st["locked"] and not still:
+    # A lead held while still (motion_hold_secs) goes on to its dwell when the collar next says moving,
+    # rather than waiting on the lock's unlock clocks, which the still hold kept at zero.
+    if st["locked"] and not still and not (st.get("challenge") or {}).get("still"):
         incumbent_poly = next((p for zid, p, _b, _n in zone_polys if zid == incumbent), None)
         margin_px = _tuning(layout, "zone_unlock_margin") * (scale if isinstance(scale, (int, float)) and scale > 0 else 1.0)
         pt = point if isinstance(point, Point) else Point(center)
@@ -7142,7 +7144,7 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
             margin = min(shifted, max(margin, 0.9))   # a habit never makes a unanimous challenger unable to win
     if best == incumbent or probs[best] - probs.get(incumbent, 0.0) < margin:
         st["challenge"] = None
-        return incumbent, False, speed
+        return incumbent, bool(st["locked"]), speed   # locked only while still: the subzone guard keeps its spot
     ch = st["challenge"]
     if ch and ch.get("zone") == best:
         since = ch["since"]
@@ -7155,8 +7157,8 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
     # room on a floor the thing is about to lose (the 16 s of "Catwalk" seen
     # on the way from the bedroom to the office below). The challenge keeps
     # its clock, so a challenge that lapses costs the room switch nothing.
-    st["challenge"] = {"zone": best, "since": since}
-    return incumbent, False, speed
+    st["challenge"] = {"zone": best, "since": since, **({"still": True} if still else {})}
+    return incumbent, bool(st["locked"]), speed
 
 
 def _inset_m(zone_polys, zone, point, scale):
