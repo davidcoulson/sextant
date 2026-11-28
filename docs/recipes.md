@@ -382,13 +382,14 @@ hide_time: true        # optional, rings: no time under each face (with mode_in_
   controller for Gaming). `mode_in_pill: true` puts the icon in the time
   pill instead.
 - `pets`: the pets only. Each dog gets a card of its own: Inside, Outside
-  or Away, the spot or room and the time there, the collar's address when
+  or Away beside the name, the spot or room and the time there, the collar's address when
   away (pick its `*_current_place_address` sensor as `place`) with the
   distance from home, and a badge for how she was placed (Bluetooth, Wi-Fi,
   GPS). The other pets
   are tiles, two across, with their spot or room. People listed are not
   drawn; a pet placed confidently (a green ring) in the same room as one
-  shows their face on its photo and "with David" under it.
+  shows their face on its photo (up to two, overlapping) and "with David
+  and Michelle" under it.
 
 The card reads only the entities its config names, so it works on
 dashboards served through Strimmer without an override rule.

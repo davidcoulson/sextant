@@ -143,8 +143,9 @@ class SextantWhereCard extends LitElement {
     const dogs = pets.filter((r) => r.roams), rest = pets.filter((r) => !r.roams);
     const face = (r, size, badge) => {
       const w = company.get(r.id) || [];
-      return html`<span class="pface">${this._avatar(r, size, badge)}${w[0] ? html`<span class="with-face" title=${w[0].name}>
-        ${w[0].picture ? html`<img src=${w[0].picture} alt="">` : w[0].name[0]}</span>` : nothing}</span>`;
+      // Up to two faces, overlapping, at the photo's lower right.
+      return html`<span class="pface">${this._avatar(r, size, badge)}${w.slice(0, 2).map((p, i) => html`<span class="with-face ${i ? "two" : ""}" title=${p.name}>
+        ${p.picture ? html`<img src=${p.picture} alt="">` : p.name[0]}</span>`)}</span>`;
     };
     const withChip = (r) => {
       const w = company.get(r.id) || [];
@@ -155,8 +156,8 @@ class SextantWhereCard extends LitElement {
       const state = r.where === "Unavailable" ? null : r.away ? "away" : r.outside ? "outside" : "inside";
       // The badge says how she was placed (Bluetooth, Wi-Fi, GPS); away it is the usual away badge.
       return html`<button class="dog" @click=${() => this._more(r.id)}>${face(r, "xl", r.away || r.moving ? true : SOURCE_ICONS[r.source] || false)}
-        <span class="txt"><span class="n">${r.name}</span>
-          <span class="states">${["inside", "outside", "away"].map((s) => html`<span class="st ${s === state ? `on ${s}` : ""}">${s[0].toUpperCase() + s.slice(1)}</span>`)}</span>
+        <span class="txt"><span class="head"><span class="n">${r.name}</span>
+          <span class="states">${["inside", "outside", "away"].map((s) => html`<span class="st ${s === state ? `on ${s}` : ""}">${s[0].toUpperCase() + s.slice(1)}</span>`)}</span></span>
           <span class="room ${r.away ? "two" : ""}" title=${this._where(r, false)}>${where(r)}${r.stay != null ? html` <span class="stay">· ${fmtStay(r.stay, true)}</span>` : nothing}${r.distance != null ? html` <span class="stay">· ${fmtDistance(r.distance)}</span>` : nothing}</span>
           ${withChip(r)}</span></button>`;
     };
@@ -239,7 +240,7 @@ class SextantWhereCard extends LitElement {
     .pface { position: relative; flex: none; display: inline-grid; }
     .with-face { position: absolute; right: -5px; bottom: -5px; width: 22px; height: 22px; border-radius: 50%; overflow: hidden; display: grid; place-items: center;
       font-size: 11px; font-weight: 600; background: var(--secondary-background-color); border: 2px solid var(--card-background-color, var(--ha-card-background)); }
-    .ring.xl + .with-face { width: 28px; height: 28px; }
+    .with-face.two { right: 12px; } .ring.xl ~ .with-face { width: 28px; height: 28px; } .ring.xl ~ .with-face.two { right: 15px; }
     .with-face img { width: 100%; height: 100%; object-fit: cover; }
     .with { align-self: flex-start; margin-top: 3px; padding: 1px 8px; border-radius: 999px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
       color: color-mix(in srgb, var(--blue-color, #2196f3) 45%, var(--primary-text-color)); background: color-mix(in srgb, var(--blue-color, #2196f3) 15%, transparent); }
@@ -247,6 +248,7 @@ class SextantWhereCard extends LitElement {
     .dog + .dog { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--divider-color); }
     .dog .txt, .ptile .txt { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.25; }
     .dog .n { font-weight: 600; font-size: 17px; }
+    .dog .head { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; margin-bottom: 2px; } .dog .head .states { margin: 0; }
     .dog .room { font-size: 15px; }
     .ring.xl .badge { width: 22px; height: 22px; }
     .states { display: flex; gap: 4px; margin: 4px 0; }
