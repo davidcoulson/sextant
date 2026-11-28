@@ -592,6 +592,7 @@ _subzone_state = {}
 _outside_state = {}
 _tag_beacons: dict = {}  # slug -> its latest advert's iBeacon minors (tag_battery.beacons_now), for the election log
 _minor_counts: dict = {}  # slug -> Counter of the cycles each motion-slot minor was heard in
+MINOR_COUNTS_CAP = 2000   # about three hours of cycles; past it every count halves
 _last_moving: dict = {}   # slug -> when its collar last said it was moving
 _shown_activity: dict = {}  # slug -> the activity its sensors last showed, kept through a cycle that heard no frame
 
@@ -605,13 +606,18 @@ def _activity(entity, beacon):
     minor it sends most is its resting one. A cycle that heard only that
     one is still; one that heard any other is moving. A tag with a single
     minor, or a cycle with no frame, says nothing.
-    shortcut: the counts start again at a restart, so a collar says nothing until it next moves; persist them if that wait matters.
+    The counts are kept in the runtime snapshot, and halve past MINOR_COUNTS_CAP so a collar given
+    new slots learns its new resting minor within hours.
     """
     seen = (beacon or {}).get("seen")
     if not seen:
         return None
     counts = _minor_counts.setdefault(entity, collections.Counter())
     counts.update(seen)
+    if sum(counts.values()) > MINOR_COUNTS_CAP:
+        halved = {minor: c // 2 for minor, c in counts.items() if c > 1}
+        counts.clear()
+        counts.update(halved)
     if len(counts) < 2:
         return None
     still = counts.most_common(1)[0][0]
@@ -3835,7 +3841,7 @@ async def carry_renamed_thing_settings(hass, tracked, ids):
             if seen is not None:
                 _last_seen[receiver] = dict(seen)
             for donor in donors:
-                for runtime in (_fingerprint_db.thing_gain, _range_scale):
+                for runtime in (_fingerprint_db.thing_gain, _range_scale, _minor_counts):
                     if donor in runtime and receiver not in runtime:
                         runtime[receiver] = runtime.pop(donor)
                 _forget_thing_state(donor)
@@ -5017,7 +5023,7 @@ async def _restore_runtime(hass):
     _gps_asked.update(back.get("asked") or {})
     _last_charging.update(back.get("charging") or {})
     for ent, counts in (back.get("collars") or {}).items():
-        _minor_counts.setdefault(ent, collections.Counter()).update(counts)
+        _minor_counts[ent] = collections.Counter(counts)   # the saved counts are the whole truth: a second restore must not add them again
     if back.get("wifi"):
         _wifi_store.update(back["wifi"])
     # The floor election, and with it the fact that this thing's floor is not
