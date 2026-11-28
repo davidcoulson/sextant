@@ -2874,6 +2874,13 @@ def test_a_phone_may_follow_its_owners_watch_into_a_closed_room(monkeypatch):
     worn["watch"] = False
     assert rooms() == set()                              # so was one off a wrist
     worn["watch"] = None
+    layout["thing_charging_entity"]["phone"] = "sensor.phone_battery_state"
+    states["sensor.phone_battery_state"] = NS(state="charging")
+    assert rooms() == set()                              # nor a phone on its own charger
+    states.clear()
+    sextant._outside_state["watch"] = {"outside": True}
+    assert rooms() == set()                              # a watch out in the garden vouches for no room
+    sextant._outside_state.pop("watch")
     sextant._zone_state["watch"]["entering"] = True
     assert rooms() == set()                              # a watch just up the stairs has no room yet
     sextant._zone_state.clear()

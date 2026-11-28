@@ -3317,7 +3317,9 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
         # elect its room and spot from the point, not the filter's old
         # uncertainty ellipse, which would keep a small spot from ever winning.
         kf_for_election = None if anchor is not None else _kf_position_state.get(entity)
-        closed = _closed_rooms(hass, zone_polys, layout, now) - _companion_rooms(hass, layout, entity, lowest_floor_name, now)
+        closed = _closed_rooms(hass, zone_polys, layout, now)
+        if closed:
+            closed -= _companion_rooms(hass, layout, entity, lowest_floor_name, now)
         doors_shut = _doors_shut(hass, zone_polys)
         zone, zone_locked, zone_speed = _elect_zone(
             entity, lowest_floor_name, instant_zone, test_point,
@@ -6799,7 +6801,7 @@ def _closed_rooms(hass, zone_polys, layout, now):
 
 def _companion_rooms(hass, layout, entity, floor_name, now):
     """The rooms on this floor where another thing of this thing's person is placed now, each
-    one that locates them and is carried (not charging, a watch worn). A closed door does not
+    one that locates them, is carried (not charging, a watch worn) and is not Outside. A closed door does not
     keep a phone out of the room its owner's watch already made it into: a phone placed late,
     after the door's entry grace, was held outside the bedroom its owner was in. People only:
     a cat is read through walls."""
@@ -6807,7 +6809,7 @@ def _companion_rooms(hass, layout, entity, floor_name, now):
     classes = layout.get("thing_classes") or {}
     person = owners.get(entity)
     if (not isinstance(person, str) or classes.get(entity) in rooms_mod.PET_CLASSES
-            or not persons_mod.locates_owner(layout, entity, classes.get(entity))):
+            or not persons_mod.locates_owner(layout, entity, classes.get(entity)) or not _carried(hass, layout, entity)):
         return set()
     fresh = _tuning(layout, "stale_after_secs")
     out = set()
@@ -6815,6 +6817,7 @@ def _companion_rooms(hass, layout, entity, floor_name, now):
         st = _zone_state.get(other)
         if (other != entity and owner == person and st is not None and st["floor"] == floor_name
                 and st["zone"] is not None and not st.get("entering")
+                and not (_outside_state.get(other) or {}).get("outside")
                 and now - (st.get("probs_at") or 0) <= fresh
                 and classes.get(other) not in rooms_mod.PET_CLASSES
                 and persons_mod.locates_owner(layout, other, classes.get(other))
