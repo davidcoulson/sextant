@@ -48,13 +48,12 @@ def settled_confidence(conf, dwell_s, presence="here"):
 def settled_conf_of(attrs, now, floor=None):
     """``settled_confidence`` for a location sensor's attributes, rounded for
     publishing; None when they carry no conf or stay, or the thing is outside
-    (no room call to settle). The stay is the spot's when it is on one, as the
-    popup's "Here for" is. ``floor`` is the earliest time a stay may count
-    from (a person's arrival this visit: a tracker's earlier tenure is not theirs).
-    A time that is not a plain number is no stay."""
-    since = attrs.get("spot_since") if attrs.get("spot") else None
-    if since is None:
-        since = attrs.get("since")
+    (no room call to settle). The stay is the room's, as the popup's "Here for"
+    is: moving from the couch to the rug is no reason to doubt the room.
+    ``floor`` is the earliest time a stay may count from (a person's arrival
+    this visit: a tracker's earlier tenure is not theirs). A time that is not a
+    plain number is no stay."""
+    since = attrs.get("since")
     if isinstance(since, bool) or not isinstance(since, (int, float)) or not math.isfinite(since):
         return None
     if isinstance(floor, (int, float)) and not isinstance(floor, bool):
