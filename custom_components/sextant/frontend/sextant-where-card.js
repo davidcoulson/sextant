@@ -248,7 +248,7 @@ class SextantWhereCard extends LitElement {
     .dog + .dog { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--divider-color); }
     .dog .txt, .ptile .txt { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.25; }
     .dog .n { font-weight: 600; font-size: 17px; }
-    .dog .head { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; margin-bottom: 2px; } .dog .head .states { margin: 0; }
+    .dog .head { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; margin-bottom: 2px; } .dog .head .states { margin: 0; } .dog .head .n { min-width: 0; overflow-wrap: anywhere; }
     .dog .room { font-size: 15px; }
     .ring.xl .badge { width: 22px; height: 22px; }
     .states { display: flex; gap: 4px; margin: 4px 0; }
