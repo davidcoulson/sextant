@@ -241,9 +241,9 @@ class SextantWhereCard extends LitElement {
     .with-face { position: absolute; right: -5px; bottom: -5px; width: 22px; height: 22px; border-radius: 50%; overflow: hidden; display: grid; place-items: center;
       font-size: 11px; font-weight: 600; background: var(--secondary-background-color); border: 2px solid var(--card-background-color, var(--ha-card-background)); }
     .with-face.two { right: -21px; } .ring.xl ~ .with-face { width: 28px; height: 28px; } .ring.xl ~ .with-face.two { right: -26px; }
-    .with.two { margin-left: 14px; } /* clear of the second face, which reaches past the photo */
+    .with.two { margin-left: 14px; max-width: calc(100% - 14px); } /* clear of the second face, which reaches past the photo */
     .with-face img { width: 100%; height: 100%; object-fit: cover; }
-    .with { align-self: flex-start; margin-top: 3px; padding: 1px 8px; border-radius: 999px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+    .with { box-sizing: border-box; align-self: flex-start; margin-top: 3px; padding: 1px 8px; border-radius: 999px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
       color: color-mix(in srgb, var(--blue-color, #2196f3) 45%, var(--primary-text-color)); background: color-mix(in srgb, var(--blue-color, #2196f3) 15%, transparent); }
     .dog { display: flex; gap: 14px; align-items: center; width: 100%; min-width: 0; }
     .dog + .dog { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--divider-color); }
