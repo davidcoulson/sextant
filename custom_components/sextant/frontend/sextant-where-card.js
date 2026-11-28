@@ -19,6 +19,7 @@
  *   rooms:                       # optional: room occupancy sensors, for modes (rooms layout; rings: a badge)
  *     - binary_sensor.great_room_sextant_occupancy
  *   mode_in_pill: true           # optional (rings): the mode icon in the time pill, not a badge
+ *   hide_time: true              # optional (rings): no time pill under the face
  *
  * Every entity the card reads is named in its config and read from
  * hass.states only (no websocket calls, no registries), so it works behind
@@ -120,9 +121,9 @@ class SextantWhereCard extends LitElement {
 
   // A person's face with the time there; the room's mode is a badge under the device badge, or in the pill.
   _ring(r, mode) {
-    const pill = mode && this._config.mode_in_pill;
-    return html`${this._avatar(r, "lg", true, pill ? null : mode)}${r.stay != null || pill ? html`<span class="t">${pill
-      ? html`<ha-icon title=${mode} icon=${modeIcon(mode)}></ha-icon>` : nothing}${r.stay != null ? fmtStay(r.stay, true) : ""}</span>` : nothing}`;
+    const pill = mode && this._config.mode_in_pill, stay = this._config.hide_time ? null : r.stay;
+    return html`${this._avatar(r, "lg", true, pill ? null : mode)}${stay != null || pill ? html`<span class="t">${pill
+      ? html`<ha-icon title=${mode} icon=${modeIcon(mode)}></ha-icon>` : nothing}${stay != null ? fmtStay(stay, true) : ""}</span>` : nothing}`;
   }
 
   _rings(rows) {
@@ -271,6 +272,7 @@ const WHERE_LABELS = {
   show_floor: "Show the floor",
   precise: "Only the most precise place (spot, room, floor, home)",
   mode_in_pill: "Mode icon in the time pill (off: a badge under the device badge)",
+  hide_time: "Hide the time in the room",
 };
 
 class SextantWhereCardEditor extends LitElement {
@@ -291,7 +293,7 @@ class SextantWhereCardEditor extends LitElement {
     for (const x of this._config.entities || []) { const id = normEntry(x).entity; had.set(id, [...(had.get(id) || []), x]); }
     const entities = (v.entities || []).flatMap((id) => had.get(id)?.splice(0) ?? [withPerson(this.hass.states, id, this.hass.entities)]);
     const config = { ...this._config, layout: v.layout || "tiles", entities };
-    for (const k of ["columns", "rooms", "show_floor", "precise", "mode_in_pill"]) { if (v[k] == null || v[k] === false || (Array.isArray(v[k]) && !v[k].length)) delete config[k]; else config[k] = v[k]; }
+    for (const k of ["columns", "rooms", "show_floor", "precise", "mode_in_pill", "hide_time"]) { if (v[k] == null || v[k] === false || (Array.isArray(v[k]) && !v[k].length)) delete config[k]; else config[k] = v[k]; }
     this._config = config;
     this.dispatchEvent(new CustomEvent("config-changed", { detail: { config }, bubbles: true, composed: true }));
   }
@@ -308,9 +310,9 @@ class SextantWhereCardEditor extends LitElement {
       ...(layout === "rooms" || layout === "pets" ? [] : [{ name: "precise", selector: { boolean: {} } }]),
       ...(layout === "strip" || layout === "pets" || (c.precise && layout !== "rooms") ? [] : [{ name: "show_floor", selector: { boolean: {} } }]),
       ...(layout === "rooms" || layout === "rings" ? [{ name: "rooms", selector: { select: { multiple: true, mode: "dropdown", options: entityOptions(states, (id) => /^binary_sensor\..+_sextant_occupancy$/.test(id), (id, s) => [s.attributes.room || id, s.attributes.floor].filter(Boolean).join(" · "), c.rooms || []) } } }] : []),
-      ...(layout === "rings" ? [{ name: "mode_in_pill", selector: { boolean: {} } }] : []),
+      ...(layout === "rings" ? [{ name: "mode_in_pill", selector: { boolean: {} } }, { name: "hide_time", selector: { boolean: {} } }] : []),
     ];
-    const data = { layout, entities: ids, columns: c.columns, rooms: c.rooms || [], show_floor: !!c.show_floor, precise: !!c.precise, mode_in_pill: !!c.mode_in_pill };
+    const data = { layout, entities: ids, columns: c.columns, rooms: c.rooms || [], show_floor: !!c.show_floor, precise: !!c.precise, mode_in_pill: !!c.mode_in_pill, hide_time: !!c.hide_time };
     return html`<ha-form .hass=${this.hass} .data=${data} .schema=${schema} .computeLabel=${(s) => s.name === "columns" ? `Columns (blank: ${layout === "rings" ? 4 : 2})` : WHERE_LABELS[s.name] || s.name} @value-changed=${this._changed}></ha-form>
       ${layout === "pets" ? html`<p class="hint">Pets layout: people listed here are not drawn; a pet placed confidently (green ring) in the same room as one shows "with" them.</p>` : nothing}
       <p class="hint">Names and photos come from each person; set <code>name</code> or <code>person</code> on an entry in YAML to change them.</p>`;
