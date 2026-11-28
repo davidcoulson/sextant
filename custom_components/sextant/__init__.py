@@ -1912,6 +1912,7 @@ async def update_tracked_entities(hass):
                 from .sensor import publish_tag_batteries  # noqa: PLC0415 - sensor.py imports this package
                 publish_tag_batteries(hass, tag_battery.levels_now(hass, devices))
                 _tag_beacons.update(tag_battery.beacons_now(hass, devices))
+                tag_battery.watch(devices)
                 # A device Bermuda renamed under a new slug: its settings
                 # follow it there, matched by the stable unique_id thing_ids
                 # remembers - before the sweep below could delete them.
@@ -8867,6 +8868,8 @@ async def async_setup_entry(hass, entry):
     entry.async_on_unload(entry.add_update_listener(async_update_options))
     from . import watch_adverts
     if (stop := watch_adverts.setup(hass)) is not None:
+        entry.async_on_unload(stop)
+    if (stop := tag_battery.setup_frame_log(hass)) is not None:
         entry.async_on_unload(stop)
 
     """Set up Sextant from a config entry."""
