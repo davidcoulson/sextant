@@ -113,7 +113,7 @@ class SextantWhereCard extends LitElement {
         ${sub(r) ? html`<span class="sub" title=${sub(r)}>${sub(r)}</span>` : nothing}</span></button>`)}</div>`;
   }
 
-  // Three faces fill the 84px column; with more, two and a "+N" that names the rest.
+  // Three faces fill the 90px column; with more, two and a "+N" that names the rest.
   _roomFaces(rows) {
     if (rows.length <= 3) return rows.map((r) => this._avatar(r, "sm"));
     const rest = rows.slice(2);
@@ -231,7 +231,7 @@ class SextantWhereCard extends LitElement {
 
     .rrow { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-top: 1px solid var(--divider-color); }
     .rrow:first-child { border-top: 0; padding-top: 0; } .rrow:last-child { padding-bottom: 0; }
-    .rrow .stack { width: 84px; }
+    .rrow .stack { width: 90px; } /* three 36px faces overlapping by 9px */
     .rbody { display: flex; flex-direction: column; min-width: 0; flex: 1; }
     .rtitle { display: flex; gap: 6px; align-items: center; font-weight: 600; }
     .rtitle .fl { font-weight: 400; font-size: 12px; } .rtitle .fact { margin-left: auto; }
