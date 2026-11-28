@@ -643,6 +643,14 @@ def _outside_election(entity, dist_m, margin_m, secs, now, faint=None):
     return st["outside"]
 
 
+def _ground_floor(layout, floor_name):
+    """Whether a floor is the ground floor (level 0), the only one a thing can
+    walk Outside from. A floor with no level counts: a one-floor plan often has none."""
+    floor = next((f for f in (layout or {}).get("floor") or [] if isinstance(f, dict) and f.get("name") == floor_name), None)
+    level = floor.get("level") if floor else None
+    return not isinstance(level, (int, float)) or level == 0
+
+
 def _new_zone_state(floor_name, now):
     """A thing's room election, before it has any evidence.
 
@@ -3259,7 +3267,9 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
         outside_m = None
         valid = zone_polys.snap[0] if isinstance(zone_polys, _FloorZones) else None
         # Cats stay in: a cat's fix is only ever snapped into the nearest room.
-        if valid is not None and thing_class(layout, entity) != "cat" and isinstance(scale, (int, float)) and scale > 0:
+        # Only the ground floor has a way out: a fix past an upstairs wall is BLE noise, not a balcony.
+        walk_out = _ground_floor(layout, lowest_floor_name)
+        if walk_out and valid is not None and thing_class(layout, entity) != "cat" and isinstance(scale, (int, float)) and scale > 0:
             outside_m = float(valid.distance(test_point)) / scale
         # The unsmoothed fix's distance too: the filter clips to the floor's
         # bounds, which can hide how far out a thing really is.
@@ -3270,7 +3280,7 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
         nearest_m = (round(min(pt[2] for pt in weighted) / scale, 2) if weighted and scale else None)
         # A dog in the garden is heard faintly, by few: its second way out.
         faint = None
-        if thing_class(layout, entity) == "dog" and _tuning(layout, "outside_faint_prox") > 0:
+        if walk_out and thing_class(layout, entity) == "dog" and _tuning(layout, "outside_faint_prox") > 0:
             faint = _faint_signal(n_prox, nearest_m, _tuning(layout, "outside_faint_prox"),
                                   _tuning(layout, "outside_faint_m"), _tuning(layout, "outside_near_m"))
         is_outside = _outside_election(entity, outside_m, _tuning(layout, "outside_margin_m"),

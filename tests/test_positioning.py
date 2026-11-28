@@ -2609,6 +2609,18 @@ def test_outside_needs_distance_and_time(monkeypatch):
     assert s._outside_election("a", 5.0, 0.0, 45.0, 200.0) is False    # margin 0 = off
 
 
+def test_only_the_ground_floor_has_a_way_outside():
+    """Jack, 2026-11-27: a phone fix 1.06 m past his Second Floor bedroom wall read Outside."""
+    import sextant as s
+    layout = {"floor": [{"name": "Ground Floor", "level": 0}, {"name": "Second Floor", "level": 1},
+                        {"name": "Basement", "level": -1}, {"name": "Flat"}]}
+    assert s._ground_floor(layout, "Ground Floor") is True
+    assert s._ground_floor(layout, "Second Floor") is False
+    assert s._ground_floor(layout, "Basement") is False
+    assert s._ground_floor(layout, "Flat") is True          # no level: a one-floor plan
+    assert s._ground_floor(layout, "Gone") is True          # unknown floor: as before
+
+
 def test_a_dog_heard_faintly_by_few_is_in_the_garden():
     """Primrose, 2026-10-21: inside 8-19 proxies hear her, the nearest within
     1.5 m; in the garden 1-6 do, the nearest 2.3-10 m away, while her fix

@@ -80,7 +80,7 @@ distances in metres.
 | `far_move_secs` | 45 | held that long before a far move; 0 = no longer than any move |
 | `stationary_speed` | 0.3 | m/s; slower is "still" |
 | `stationary_secs` | 20 | still this long locks the room |
-| `outside_margin_m` | 1.0 | metres beyond every room before a fix reads **Outside** (never for a cat); 0 turns it off |
+| `outside_margin_m` | 1.0 | metres beyond every room before a fix reads **Outside** (never for a cat, and only on the ground floor); 0 turns it off |
 | `outside_secs` | 45 | seconds it must hold, either way |
 | `outside_faint_prox` | 6 | a dog heard by no more than this many proxies, with the nearest `outside_faint_m` or more away, for `outside_secs`, reads **Outside** even when its fix lands in a room (there is no proxy in the garden to pull it out); 0 turns it off |
 | `outside_faint_m` | 3.0 | the nearest proxy this far or farther, with few hearing the dog, means the garden |

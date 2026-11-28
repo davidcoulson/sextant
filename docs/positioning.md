@@ -22,7 +22,8 @@ layout), run in the executor. Spiky readings are down-weighted rather
 than dropped. A fix that lands outside every room is snapped to the
 nearest room, unless it stays more than `outside_margin_m` beyond every room for
 `outside_secs`, when the thing reads **Outside** instead (`kind: outside`, and
-`outside_m` in its fix). A dog has a second way out, since a garden fix lands
+`outside_m` in its fix). Only the ground floor (level 0, or a floor with no
+level) has a way out: on any other floor the fix is always snapped into a room. A dog has a second way out, since a garden fix lands
 in a room all the same (no proxy out there pulls it out): heard by no more
 than `outside_faint_prox` proxies with the nearest `outside_faint_m` or more
 away, for `outside_secs`, it reads **Outside** too, and comes back in once a
