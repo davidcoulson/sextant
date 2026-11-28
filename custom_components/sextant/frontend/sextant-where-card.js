@@ -154,11 +154,13 @@ class SextantWhereCard extends LitElement {
     const dogs = pets.filter((r) => r.roams), rest = pets.filter((r) => !r.roams);
     const face = (r, size, badge) => {
       const w = company.get(r.id) || [];
-      // Up to two faces at the photo's lower right, the second overlapping to the right of the first; they
-      // are the whole "with": hover either for every name.
-      const all = w.length ? `with ${joinNames(w.map((x) => x.name))}` : "";
-      return html`<span class="pface ${w.length > 1 ? "two" : ""}">${this._avatar(r, size, badge)}${w.slice(0, 2).map((p, i) => html`<span class="with-face ${i ? "two" : ""}" title=${all}>
+      // Up to two faces at the photo's lower right, the second tucked behind to the left of the first.
+      return html`<span class="pface">${this._avatar(r, size, badge)}${w.slice(0, 2).map((p, i) => html`<span class="with-face ${i ? "two" : ""}" title=${p.name}>
         ${p.picture ? html`<img src=${p.picture} alt="">` : p.name[0]}</span>`)}</span>`;
+    };
+    const withChip = (r) => {
+      const w = company.get(r.id) || [];
+      return w.length ? html`<span class="with">with ${joinNames(w.map((x) => x.name))}</span>` : nothing;
     };
     const where = (r) => r.away ? this._where(r) : r.spot || r.where;
     const dog = (r) => {
@@ -167,12 +169,13 @@ class SextantWhereCard extends LitElement {
       return html`<button class="dog" @click=${() => this._more(r.id)}>${face(r, "xl", r.away || r.moving ? true : SOURCE_ICONS[r.source] || false)}
         <span class="txt"><span class="head"><span class="n">${r.name}</span>
           ${state ? html`<span class="st on ${state}">${state[0].toUpperCase() + state.slice(1)}</span>` : nothing}</span>
-          <span class="room ${r.away ? "two" : ""}" title=${this._where(r, false)}>${where(r)}${r.stay != null ? html` <span class="stay">· ${fmtStay(r.stay, true)}</span>` : nothing}${r.distance != null ? html` <span class="stay">· ${fmtDistance(r.distance)}</span>` : nothing}</span></span></button>`;
+          <span class="room ${r.away ? "two" : ""}" title=${this._where(r, false)}>${where(r)}${r.stay != null ? html` <span class="stay">· ${fmtStay(r.stay, true)}</span>` : nothing}${r.distance != null ? html` <span class="stay">· ${fmtDistance(r.distance)}</span>` : nothing}</span>
+          ${withChip(r)}</span></button>`;
     };
     return html`${dogs.map(dog)}${rest.length ? html`<div class="ptiles ${dogs.length ? "below" : ""}" style="--cols:${this._config.columns || 2}">${rest.map((r) => html`
       <button class="ptile" @click=${() => this._more(r.id)}>${face(r, "")}
         <span class="txt"><span class="n"><span class="nm">${r.name}</span><span class="stay">${fmtStay(r.stay, true)}</span></span>
-          <span class="room ${r.away ? "two" : ""}" title=${this._where(r, false)}>${where(r)}</span></span></button>`)}</div>` : nothing}`;
+          <span class="room ${r.away ? "two" : ""}" title=${this._where(r, false)}>${where(r)}</span>${withChip(r)}</span></button>`)}</div>` : nothing}`;
   }
 
   render() {
@@ -248,9 +251,11 @@ class SextantWhereCard extends LitElement {
     .pface { position: relative; flex: none; display: inline-grid; }
     .with-face { position: absolute; right: -5px; bottom: -5px; width: 22px; height: 22px; border-radius: 50%; overflow: hidden; display: grid; place-items: center;
       font-size: 11px; font-weight: 600; background: var(--secondary-background-color); border: 2px solid var(--card-background-color, var(--ha-card-background)); }
-    .with-face.two { right: -21px; } .ring.xl ~ .with-face { width: 28px; height: 28px; } .ring.xl ~ .with-face.two { right: -26px; }
-    .pface.two { margin-right: 18px; } /* the text clear of the second face, which reaches past the photo */
+    .with-face { z-index: 1; } .with-face.two { z-index: 0; right: 11px; } /* the right-hand face in front */
+    .ring.xl ~ .with-face { width: 28px; height: 28px; } .ring.xl ~ .with-face.two { right: 16px; }
     .with-face img { width: 100%; height: 100%; object-fit: cover; }
+    .with { box-sizing: border-box; align-self: flex-start; margin-top: 3px; padding: 1px 8px; border-radius: 999px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+      color: color-mix(in srgb, var(--blue-color, #2196f3) 45%, var(--primary-text-color)); background: color-mix(in srgb, var(--blue-color, #2196f3) 15%, transparent); }
     .dog { display: flex; gap: 14px; align-items: center; width: 100%; min-width: 0; }
     .dog + .dog { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--divider-color); }
     .dog .txt, .ptile .txt { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.25; }
@@ -269,7 +274,7 @@ class SextantWhereCard extends LitElement {
     .ptile .stay { margin-left: auto; flex: none; font-weight: 400; font-size: 11px; }
 
     /* No color-mix (Safari before 16.4): plain rings and chips. */
-    @supports not (color: color-mix(in srgb, red, blue)) { .ring { background: var(--c); } .fact { background: var(--secondary-background-color); color: var(--primary-text-color); } }
+    @supports not (color: color-mix(in srgb, red, blue)) { .ring { background: var(--c); } .with { background: var(--secondary-background-color); color: var(--primary-text-color); } .fact { background: var(--secondary-background-color); color: var(--primary-text-color); } }
   `;
 }
 
