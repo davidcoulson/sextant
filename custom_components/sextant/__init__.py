@@ -23,6 +23,7 @@ import numpy as np
 from .solver_numpy import fit_point
 import voluptuous as vol
 from homeassistant.core import ServiceCall, ServiceResponse, SupportsResponse
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 import logging
@@ -8339,47 +8340,82 @@ def _register_calibration_services(hass) -> None:
             raise HomeAssistantError("Sextant is already reloading its code")
         hass.data["sextant_reloading"] = True
         try:
-            await _reload_code_once()
+            await _reload_code_once(hass)
         finally:
             hass.data.pop("sextant_reloading", None)
 
-    async def _reload_code_once() -> None:
-        # Disabled and ignored entries are never set up, so they are not ours to reload.
-        entries = hass.config_entries.async_entries(DOMAIN, include_ignore=False, include_disabled=False)
-        if not hass.config_entries.async_loaded_entries(DOMAIN):
-            # Nothing is running, so an earlier reload failed: Home Assistant
-            # imports the package to unload it, and a half-imported module
-            # left in the caches would fail that again after the file is fixed.
-            _forget_code(hass, __name__, DOMAIN)
-        for entry in entries:
-            if not await hass.config_entries.async_unload(entry.entry_id):
-                raise HomeAssistantError("Sextant did not unload; restart Home Assistant instead")
-        # As after a restart, nothing of the old code's may be left to reuse.
-        # The HTTP views and stop listeners cannot be registered twice, so
-        # their flags stay: the views run the old code until a restart.
-        from .storage import LAYOUT_LOCK  # noqa: PLC0415
-        # Under the layout lock, and with no await inside: a layout save still
-        # in flight finishes first, instead of landing on the new code's state.
-        async with LAYOUT_LOCK:
-            for key in [k for k in hass.data if str(k).startswith("sextant_")
-                        and k not in ("sextant_views_registered", "sextant_stop_listeners", "sextant_reloading",
-                                      "sextant_started_requirements")]:  # installed only at a restart
-                hass.data.pop(key, None)
-            hass.data.pop(DOMAIN, None)
-            _forget_code(hass, __name__, DOMAIN)
+    async_register_admin_service(hass, DOMAIN, "reload_code", _reload_code, schema=vol.Schema({}))
+
+
+def _syntax_error() -> str | None:
+    """The first .py file of the package that does not compile, as "file line N: message" (blocking)."""
+    root = Path(__file__).parent
+    for path in sorted(p for p in root.rglob("*.py") if "__pycache__" not in p.parts):
         try:
-            await hass.async_add_import_executor_job(_import_code, __name__)
-        except Exception as err:
-            # This handler stays registered, so the action works again once the code is fixed.
-            raise HomeAssistantError(f"Sextant is unloaded: the new code did not load ({err}). "
-                                     "Fix it and call sextant.reload_code again, or restart Home Assistant") from err
+            compile(path.read_bytes(), str(path), "exec")
+        except (SyntaxError, ValueError) as err:
+            return f"{path.relative_to(root)} line {getattr(err, 'lineno', None)}: {getattr(err, 'msg', err)}"
+    return None
+
+
+def _restore_code(hass, dropped: list) -> None:
+    """Swap the new modules out and the ones _forget_code dropped back in."""
+    _forget_code(hass, __name__, DOMAIN)
+    for cache, name, module in dropped:
+        cache[name] = module
+
+
+async def _reload_code_once(hass) -> None:
+    # Checked before anything is unloaded, so a typo costs nothing.
+    if problem := await hass.async_add_executor_job(_syntax_error):
+        raise HomeAssistantError(f"Sextant was not reloaded: {problem}. The running code is unchanged")
+    # Disabled and ignored entries are never set up, so they are not ours to reload.
+    entries = hass.config_entries.async_entries(DOMAIN, include_ignore=False, include_disabled=False)
+    if not hass.config_entries.async_loaded_entries(DOMAIN):
+        # Nothing is running, so an earlier reload failed: Home Assistant
+        # imports the package to unload it, and a half-imported module
+        # left in the caches would fail that again after the file is fixed.
+        _forget_code(hass, __name__, DOMAIN)
+    for entry in entries:
+        if not await hass.config_entries.async_unload(entry.entry_id):
+            raise HomeAssistantError("Sextant did not unload; restart Home Assistant instead")
+    # As after a restart, nothing of the old code's may be left to reuse.
+    # The HTTP views and stop listeners cannot be registered twice, so
+    # their flags stay: the views run the old code until a restart.
+    from .storage import LAYOUT_LOCK  # noqa: PLC0415
+    # Under the layout lock, and with no await inside: a layout save still
+    # in flight finishes first, instead of landing on the new code's state.
+    async with LAYOUT_LOCK:
+        for key in [k for k in hass.data if str(k).startswith("sextant_")
+                    and k not in ("sextant_views_registered", "sextant_stop_listeners", "sextant_reloading",
+                                  "sextant_started_requirements")]:  # installed only at a restart
+            hass.data.pop(key, None)
+        hass.data.pop(DOMAIN, None)
+        previous = _forget_code(hass, __name__, DOMAIN)
+
+    async def roll_back() -> None:
+        """Put the code that ran before back and set the entries up on it."""
+        for entry in entries:  # the repair listener goes with the entry
+            await hass.config_entries.async_unload(entry.entry_id)
+        _restore_code(hass, previous)
         failed = [entry.title for entry in entries if not await hass.config_entries.async_setup(entry.entry_id)]
         if failed:
-            # This handler stays registered, so the action works again once the code is fixed.
-            raise HomeAssistantError("Sextant is unloaded: the new code did not set up (see the log). "
-                                     "Fix it and call sextant.reload_code again, or restart Home Assistant")
+            raise HomeAssistantError("Sextant's new code failed, and the previous code did not set up "
+                                     f"{failed} again either; restart Home Assistant")
 
-    async_register_admin_service(hass, DOMAIN, "reload_code", _reload_code, schema=vol.Schema({}))
+    try:
+        await hass.async_add_import_executor_job(_import_code, __name__)
+    except Exception as err:
+        await roll_back()
+        raise HomeAssistantError(f"Sextant's new code did not load ({err}), so the previous code is running "
+                                 "again. Fix it and call sextant.reload_code again") from err
+    for entry in entries:
+        await hass.config_entries.async_setup(entry.entry_id)
+    # A setup error is the new code's fault; a retry (the device is offline) is not.
+    if broken := [entry.title for entry in entries if entry.state is ConfigEntryState.SETUP_ERROR]:
+        await roll_back()
+        raise HomeAssistantError(f"Sextant's new code did not set up {broken}, so the previous code is running "
+                                 "again; see the log")
 
 
 # The version this module's code is, read at import (which runs in the import executor).
@@ -8427,18 +8463,21 @@ def _import_code(package: str) -> None:
 
 _PLATFORMS = ("sensor", "binary_sensor", "switch", "device_tracker")
 
-def _forget_code(hass, package: str, domain: str) -> None:
+def _forget_code(hass, package: str, domain: str) -> list:
     """Drop a package's modules so the next setup imports them from disk again.
 
     Home Assistant keeps its own copy of each imported integration module
     (loader.py: hass.data["components"], keyed "<domain>" and
     "<domain>.<platform>") next to Python's sys.modules; both have to go.
+    Returns what was dropped as (cache, name, module), for _restore_code.
     """
+    dropped = []
     for cache, root in ((sys.modules, package), (hass.data.get("components", {}), domain),
                         (hass.data.get("missing_platforms", {}), domain)):
         for name in [n for n in cache if n == root or n.startswith(root + ".")]:
-            del cache[name]
+            dropped.append((cache, name, cache.pop(name)))
     importlib.invalidate_caches()  # or a file added since the last import may not be found
+    return dropped
 
 
 async def async_setup(hass, config):

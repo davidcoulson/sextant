@@ -80,3 +80,109 @@ def test_code_version_is_the_manifests():
     from pathlib import Path
     manifest = Path(sextant.__file__).parent / "manifest.json"
     assert sextant._CODE_VERSION == json.loads(manifest.read_text())["version"]
+
+
+class _Entries:
+    """Config entries that "set up" by importing the fake integration and calling its setup()."""
+
+    def __init__(self, entries):
+        self.entries = entries
+
+    def async_entries(self, domain, **_kw):
+        return self.entries
+
+    def async_loaded_entries(self, domain):
+        return [e for e in self.entries if e.state is sextant.ConfigEntryState.LOADED]
+
+    async def async_unload(self, entry_id):
+        for e in self.entries:
+            e.state = sextant.ConfigEntryState.NOT_LOADED
+        return True
+
+    async def async_setup(self, entry_id):
+        for e in self.entries:
+            try:
+                e.running = importlib.import_module("reloadme").setup()
+                e.state = sextant.ConfigEntryState.LOADED
+            except Exception:  # noqa: BLE001
+                e.state = sextant.ConfigEntryState.SETUP_ERROR
+        return all(e.state is sextant.ConfigEntryState.LOADED for e in self.entries)
+
+
+def _reload_fixture(tmp_path, monkeypatch):
+    """A fake integration "reloadme" that stands in for sextant, so the real files are never edited."""
+    import asyncio
+
+    pkg = tmp_path / "reloadme"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("from .sub import VALUE\n\n\ndef setup():\n    return VALUE\n")
+    (pkg / "sub.py").write_text("VALUE = 1\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.setattr(sys, "dont_write_bytecode", True)
+    monkeypatch.setattr(sextant, "__name__", "reloadme")
+    monkeypatch.setattr(sextant, "__file__", str(pkg / "__init__.py"))
+    monkeypatch.setattr(sextant, "DOMAIN", "reloadme")
+    monkeypatch.setattr(sextant, "_import_code", lambda package: importlib.import_module(package))
+    monkeypatch.setattr(sextant.ir, "async_get", lambda hass: types.SimpleNamespace(issues={}), raising=False)
+    monkeypatch.delitem(sys.modules, "reloadme", raising=False)
+    monkeypatch.delitem(sys.modules, "reloadme.sub", raising=False)
+    entry = types.SimpleNamespace(entry_id="x", title="Sextant", state=sextant.ConfigEntryState.NOT_LOADED, running=None)
+
+    async def run(fn, *args):
+        return fn(*args)
+
+    hass = types.SimpleNamespace(data={"components": {}, "missing_platforms": {}}, config_entries=_Entries([entry]),
+                                 async_add_executor_job=run, async_add_import_executor_job=run)
+    asyncio.run(hass.config_entries.async_setup("x"))
+    assert entry.running == 1
+    old = sys.modules["reloadme"]
+
+    def reload():
+        asyncio.run(sextant._reload_code_once(hass))
+        importlib.invalidate_caches()
+
+    def write(name, text):
+        (pkg / name).write_text(text)
+        importlib.invalidate_caches()
+
+    return hass, entry, old, reload, write
+
+
+def test_a_syntax_error_unloads_nothing(tmp_path, monkeypatch):
+    import pytest
+
+    hass, entry, old, reload, write = _reload_fixture(tmp_path, monkeypatch)
+    write("sub.py", "VALUE = (\n")
+    with pytest.raises(Exception, match=r"sub\.py line 1.*unchanged"):
+        reload()
+    assert entry.state is sextant.ConfigEntryState.LOADED
+    assert sys.modules["reloadme"] is old
+
+
+def test_an_import_error_puts_the_previous_code_back(tmp_path, monkeypatch):
+    import pytest
+
+    hass, entry, old, reload, write = _reload_fixture(tmp_path, monkeypatch)
+    write("sub.py", "VALUE = no_such_name\n")
+    with pytest.raises(Exception, match="previous code is running again"):
+        reload()
+    assert entry.state is sextant.ConfigEntryState.LOADED
+    assert entry.running == 1
+    assert sys.modules["reloadme"] is old
+
+    write("sub.py", "VALUE = 3\n")  # the action still works once the code is fixed
+    reload()
+    assert entry.state is sextant.ConfigEntryState.LOADED and entry.running == 3
+
+
+def test_a_setup_error_puts_the_previous_code_back(tmp_path, monkeypatch):
+    import pytest
+
+    hass, entry, old, reload, write = _reload_fixture(tmp_path, monkeypatch)
+    write("__init__.py", "from .sub import VALUE\n\n\ndef setup():\n    if VALUE != 1:\n        raise RuntimeError\n    return VALUE\n")
+    write("sub.py", "VALUE = 2\n")
+    with pytest.raises(Exception, match="did not set up.*previous code"):
+        reload()
+    assert entry.state is sextant.ConfigEntryState.LOADED
+    assert entry.running == 1
+    assert sys.modules["reloadme"] is old
