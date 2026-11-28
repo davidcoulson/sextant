@@ -3317,7 +3317,7 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
         # elect its room and spot from the point, not the filter's old
         # uncertainty ellipse, which would keep a small spot from ever winning.
         kf_for_election = None if anchor is not None else _kf_position_state.get(entity)
-        closed = _closed_rooms(hass, zone_polys, layout, now)
+        closed = _closed_rooms(hass, zone_polys, layout, now) - _companion_rooms(hass, layout, entity, lowest_floor_name, now)
         doors_shut = _doors_shut(hass, zone_polys)
         zone, zone_locked, zone_speed = _elect_zone(
             entity, lowest_floor_name, instant_zone, test_point,
@@ -5566,6 +5566,20 @@ def _wifi_for(person, view, skip=()):
     return None
 
 
+def _carried(hass, layout, entity):
+    """Whether a thing may be on its owner now: not charging, and not a watch off a wrist
+    (either sits where it was put)."""
+    charger = (layout.get("thing_charging_entity") or {}).get(entity)
+    st = hass.states.get(charger) if isinstance(charger, str) else None
+    if st is not None and persons_mod.charging_now(st.state):
+        return False
+    if (layout.get("thing_classes") or {}).get(entity) == "watch":
+        from . import watch_adverts  # noqa: PLC0415
+        if watch_adverts.worn_now(hass, entity, _tuning(layout, "stale_after_secs")) is False:
+            return False
+    return True
+
+
 def _habit_floor_factors(hass, layout, entity, floors):
     """{floor: multiplier} from where this thing usually is at this hour (habits.floor_factors),
     or {} when off for its class or unlearned, and when the habit is not where the thing
@@ -5573,16 +5587,8 @@ def _habit_floor_factors(hass, layout, entity, floors):
     weight = habits_mod.gain_for(layout, entity, _tuning(layout, "habit_floor_weight"),
                                  table_key="class_habit_floor_weight", top=1.0, pets_off=False)
     now = time.time()
-    if weight <= 0 or habits_mod.paused(layout, entity, now):
+    if weight <= 0 or habits_mod.paused(layout, entity, now) or not _carried(hass, layout, entity):
         return {}
-    charger = (layout.get("thing_charging_entity") or {}).get(entity)
-    st = hass.states.get(charger) if isinstance(charger, str) else None
-    if st is not None and persons_mod.charging_now(st.state):
-        return {}
-    if (layout.get("thing_classes") or {}).get(entity) == "watch":
-        from . import watch_adverts  # noqa: PLC0415
-        if watch_adverts.worn_now(hass, entity, _tuning(layout, "stale_after_secs")) is False:
-            return {}
     return habits_mod.floor_factors(_habits, entity, floors, now, weight, _local_tz,
                                     min_share=_tuning(layout, "habit_floor_min_share"))
 
@@ -6788,6 +6794,32 @@ def _closed_rooms(hass, zone_polys, layout, now):
         _door_seen[door] = (st.state, changed, earns)
         if closed and (not earns or now - changed >= grace):
             out.add(zid)
+    return out
+
+
+def _companion_rooms(hass, layout, entity, floor_name, now):
+    """The rooms on this floor where another thing of this thing's person is placed now, each
+    one that locates them and is carried (not charging, a watch worn). A closed door does not
+    keep a phone out of the room its owner's watch already made it into: a phone placed late,
+    after the door's entry grace, was held outside the bedroom its owner was in. People only:
+    a cat is read through walls."""
+    owners = layout.get("thing_owners") or {}
+    classes = layout.get("thing_classes") or {}
+    person = owners.get(entity)
+    if (not isinstance(person, str) or classes.get(entity) in rooms_mod.PET_CLASSES
+            or not persons_mod.locates_owner(layout, entity, classes.get(entity))):
+        return set()
+    fresh = _tuning(layout, "stale_after_secs")
+    out = set()
+    for other, owner in owners.items():
+        st = _zone_state.get(other)
+        if (other != entity and owner == person and st is not None and st["floor"] == floor_name
+                and st["zone"] is not None and not st.get("entering")
+                and now - (st.get("probs_at") or 0) <= fresh
+                and classes.get(other) not in rooms_mod.PET_CLASSES
+                and persons_mod.locates_owner(layout, other, classes.get(other))
+                and _carried(hass, layout, other)):
+            out.add(st["zone"])
     return out
 
 
