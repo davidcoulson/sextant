@@ -99,14 +99,16 @@ def watch(devices) -> None:
 
 
 def frame_row(info, last: dict, now: float):
-    """The log row for an advert whose iBeacon minor differs from ``last`` (slug -> minor),
-    updating it; None for anything else."""
-    slug = COLLARS.get(str(info.address).upper())
+    """The log row for an advert whose iBeacon minor differs from ``last`` (address -> minor),
+    updating it; None for anything else. Home Assistant keeps each proxy's last frame, so a
+    switch to another proxy can log one stale minor (see ``src``)."""
+    address = str(info.address).upper()
+    slug = COLLARS.get(address)
     minor = ibeacon_minors({_COMPANY: (info.manufacturer_data or {}).get(_COMPANY) or b""}).get(str(_COMPANY))
-    if slug is None or minor is None or last.get(slug) == minor:
+    if slug is None or minor is None or last.get(address) == minor:
         return None
-    row = {"t": round(now, 2), "e": slug, "minor": minor, "was": last.get(slug), "src": info.source, "rssi": info.rssi}
-    last[slug] = minor
+    row = {"t": round(now, 2), "e": slug, "minor": minor, "was": last.get(address), "src": info.source, "rssi": info.rssi}
+    last[address] = minor
     return row
 
 
@@ -119,15 +121,33 @@ def setup_frame_log(hass):
         return None
     from . import person_log as person_log_mod  # noqa: PLC0415
     last: dict = {}
+    pending: list = []
+    timer = [None]
+
+    def flush(*_):
+        # One write at a time: rows stay in order and two writers never prune the same file.
+        timer[0] = None
+        if pending:
+            rows, pending[:] = list(pending), []
+            hass.async_add_executor_job(person_log_mod.append, hass.config.path(LOG_DIRNAME), rows, LOG_HOURS)
 
     def seen(info, _change):
         if (row := frame_row(info, last, time.time())) is not None:
-            hass.async_add_executor_job(person_log_mod.append, hass.config.path(LOG_DIRNAME), [row], LOG_HOURS)
+            pending.append(row)
+            if timer[0] is None:
+                timer[0] = hass.loop.call_later(10, flush)
 
     try:
-        return bluetooth.async_register_callback(
+        unsub = bluetooth.async_register_callback(
             hass, seen, bluetooth.BluetoothCallbackMatcher(manufacturer_id=_COMPANY, connectable=False),
             bluetooth.BluetoothScanningMode.PASSIVE)
     except Exception as e:  # noqa: BLE001
         _LOGGER.warning("Collar frame log not started: %s", e)
         return None
+
+    def stop():
+        unsub()
+        if timer[0]:
+            timer[0].cancel()
+        flush()
+    return stop

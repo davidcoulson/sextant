@@ -65,7 +65,7 @@ def test_the_frame_log_writes_a_line_each_time_a_collars_minor_changes():
     assert tb.frame_row(adv({65535: shake}), last, 3.0)["was"] == 0x2A12
     assert tb.frame_row(adv({}), last, 4.0) is None                                  # no frame
     assert tb.frame_row(adv({65535: still}, "AA:BB:CC:DD:EE:FF"), last, 5.0) is None # not a collar
-    assert last == {"leela": 2}
+    assert last == {"DA:36:EE:88:7B:DA": 2}
 
 def test_the_sensor_is_made_once_then_updated(monkeypatch):
     added, written = [], []
