@@ -639,6 +639,7 @@ def _outside_election(entity, dist_m, margin_m, secs, now, faint=None):
         if st["outside"] and now - st["in_since"] >= secs:
             st["outside"] = False
             st["outside_at"] = None
+            st["back_at"] = st["in_since"]   # the room it comes back to may have stayed elected all along
     return st["outside"]
 
 
@@ -3322,6 +3323,11 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
         # After the election: its stillness clock now includes this cycle.
         if not is_outside:
             _keep_pins_fresh(hass, entity, lowest_floor_name, now)
+        # Back from outside: the room and spot times start then, not when the election last moved.
+        back_at = (_outside_state.get(entity) or {}).get("back_at")
+        room_since, spot_since = ((_zone_state.get(entity) or {}).get("since"), (_subzone_state.get(entity) or {}).get("since"))
+        if back_at is not None:
+            room_since, spot_since = (None if t is None else max(t, back_at) for t in (room_since, spot_since))
         row = {
                 "ent": entity,
                 "cords": [avg_x, avg_y],
@@ -3340,8 +3346,8 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
                 # When this room and this spot were entered: kept across a
                 # restart, where the sensors' own timestamps are not.
                 # Outside: when the spell outside began (not kept over a restart: the election starts again).
-                "since": (_outside_state.get(entity) or {}).get("outside_at") if is_outside else (_zone_state.get(entity) or {}).get("since"),
-                "spot_since": (_subzone_state.get(entity) or {}).get("since"),
+                "since": (_outside_state.get(entity) or {}).get("outside_at") if is_outside else room_since,
+                "spot_since": spot_since,
                 "sub_zone": sub_zone,
                 # Smoothed sub-zone membership shares (name -> share, plus
                 # "unknown"), the sub-zone counterpart of "floors" below.
@@ -5891,7 +5897,7 @@ def _update_person_sensors(hass):
                 # Away last cycle (a visit with no arrival): nothing from before carries over.
                 visit = _person_visits.get(person)
                 arrived = (visit.get("arrived") or now) if visit else None
-                persons_mod.keep_since(prev.attributes if prev else None, attrs, arrived)
+                persons_mod.keep_since(prev.attributes if prev else None, attrs, arrived, now)
                 if (settled := rooms_mod.settled_conf_of(attrs, now, arrived)) is not None:
                     attrs["settled_conf"] = settled
             update_sextant_sensor_state(hass, sensor_id, state, attrs)

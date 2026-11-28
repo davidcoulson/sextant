@@ -295,6 +295,14 @@ def test_keep_since_holds_the_persons_time_across_a_device_handover():
     # Away and back to the same room: the held fix's times are from before this visit home.
     d = keep_since(prev, {"floor": "Up", "room": "Office", "spot": "Desk", "since": 900.0, "spot_since": 950.0}, arrived=800.0)
     assert (d["since"], d["spot_since"]) == (900.0, 950.0)
+    # Into a new room, picked up by a phone that has lain there since 300: the move is now.
+    e = keep_since(prev, {"floor": "Up", "room": "Hall", "spot": "Rug", "since": 300.0, "spot_since": 300.0}, now=1000.0)
+    assert (e["since"], e["spot_since"]) == (1000.0, 1000.0)
+    # Onto another spot in the same room: the room time stays, the spot time is now.
+    f = keep_since(prev, {"floor": "Up", "room": "Office", "spot": "Sofa", "since": 300.0, "spot_since": 300.0}, now=1000.0)
+    assert (f["since"], f["spot_since"]) == (100.0, 1000.0)
+    # Arriving home (no room last cycle): the tracker's own times.
+    assert keep_since({"room": "unknown"}, {"room": "Hall", "since": 900.0}, now=1000.0)["since"] == 900.0
 
 
 def test_has_exit_finds_the_rooms_outside_door():
