@@ -314,3 +314,16 @@ def test_an_adopted_anchor_survives_a_short_restart_only():
     back = runtime.restore(json.loads(json.dumps(data)), 1030.0)
     assert back["anchors"] == {"watch": {"floor": "First", "slug": "bedside", "since": 900.0, "pending": None, "away_since": None, "x": 1.5, "y": 2.0}}
     assert runtime.restore(data, 1000.0 + 86400)["anchors"] == {}
+
+
+def test_a_collars_minor_counts_come_back_whatever_the_gap():
+    """Leela's activity read blank after the 2026.11.28.6 reload until she moved again: the counts
+    that say minor 1 is her resting one were gone."""
+    import collections
+    snap = runtime.snapshot(1000.0, collars={"leela": collections.Counter({1: 407, 2: 20, 3: 2}), "willow": collections.Counter()})
+    assert snap["collars"] == {"leela": {"1": 407, "2": 20, "3": 2}}
+    back = runtime.restore(json.loads(json.dumps(snap)), 1000.0 + 30 * 86400)
+    assert back["collars"] == {"leela": {1: 407, 2: 20, 3: 2}}
+    damaged = {**snap, "collars": {"leela": {"1": "lots"}, "fry": [1, 2], "lilibet": {"2": 5, "3": 0}}}
+    assert runtime.restore(damaged, 1000.0)["collars"] == {"lilibet": {2: 5}}
+    assert "collars" not in runtime.snapshot(1000.0)

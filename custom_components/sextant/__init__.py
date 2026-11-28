@@ -5016,6 +5016,8 @@ async def _restore_runtime(hass):
     _person_sleep.update(back.get("sleep") or {})
     _gps_asked.update(back.get("asked") or {})
     _last_charging.update(back.get("charging") or {})
+    for ent, counts in (back.get("collars") or {}).items():
+        _minor_counts.setdefault(ent, collections.Counter()).update(counts)
     if back.get("wifi"):
         _wifi_store.update(back["wifi"])
     # The floor election, and with it the fact that this thing's floor is not
@@ -5159,7 +5161,7 @@ async def _save_runtime(hass, final=False):
         # a dying tag, was gone entirely after the 15:34 restart.
         rows = _rows_with_last_seen(rows, _last_seen)
         data = runtime_mod.snapshot(time.time(), kf=_kf_position_state, zones=_zone_state,
-                                    spots=_subzone_state, arrivals=_arrivals, rows=rows, visits=_person_visits, sleep=_person_sleep, asked=_gps_asked, wifi=_wifi_store, charging=_last_charging, anchors=_anchor_state,
+                                    spots=_subzone_state, arrivals=_arrivals, rows=rows, visits=_person_visits, sleep=_person_sleep, asked=_gps_asked, wifi=_wifi_store, charging=_last_charging, anchors=_anchor_state, collars=_minor_counts,
                                     floors=_floor_elections(), sensors={"bad": _sensor_bad_since, "on": {e: v[0] for e, v in _sensor_on_since.items()}})
         await save_runtime(hass, data)
     except Exception as e:  # noqa: BLE001
