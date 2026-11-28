@@ -621,6 +621,8 @@ def _outside_election(entity, dist_m, margin_m, secs, now, faint=None):
     st = _outside_state.setdefault(entity, {"out_since": None, "in_since": None, "outside": False})
     far = dist_m is not None and margin_m > 0 and dist_m > margin_m
     if (dist_m is None or margin_m <= 0) and faint is None:
+        if st["outside"]:
+            st.update(outside_at=None, back_at=now)   # a spell cut short (an upstairs floor, rule off) ends now
         st.update(out_since=None, in_since=None, outside=False)
         return False
     if faint == "between" and st["outside"] and not far:
@@ -641,6 +643,20 @@ def _outside_election(entity, dist_m, margin_m, secs, now, faint=None):
             st["outside_at"] = None
             st["back_at"] = st["in_since"]   # the room it comes back to may have stayed elected all along
     return st["outside"]
+
+
+def _ground_floor(layout, floor_name):
+    """Whether a floor is the ground floor (level 0), the only one a thing can
+    walk Outside from. A floor with no level counts only when no floor is level 0
+    (a one-floor plan often has none). An old layout may hold the level as text."""
+    def level(f):
+        try:
+            return None if isinstance(f.get("level"), bool) else float(f.get("level"))
+        except (TypeError, ValueError):
+            return None
+    floors = [f for f in (layout or {}).get("floor") or [] if isinstance(f, dict)]
+    mine = next((level(f) for f in floors if f.get("name") == floor_name), None)
+    return mine == 0 or (mine is None and all(level(f) != 0 for f in floors))
 
 
 def _new_zone_state(floor_name, now):
@@ -3259,7 +3275,9 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
         outside_m = None
         valid = zone_polys.snap[0] if isinstance(zone_polys, _FloorZones) else None
         # Cats stay in: a cat's fix is only ever snapped into the nearest room.
-        if valid is not None and thing_class(layout, entity) != "cat" and isinstance(scale, (int, float)) and scale > 0:
+        # Only the ground floor has a way out: a fix past an upstairs wall is BLE noise, not a balcony.
+        walk_out = _ground_floor(layout, lowest_floor_name)
+        if walk_out and valid is not None and thing_class(layout, entity) != "cat" and isinstance(scale, (int, float)) and scale > 0:
             outside_m = float(valid.distance(test_point)) / scale
         # The unsmoothed fix's distance too: the filter clips to the floor's
         # bounds, which can hide how far out a thing really is.
@@ -3270,7 +3288,7 @@ async def update_trilateration_and_zone(hass, new_global_data, entity):
         nearest_m = (round(min(pt[2] for pt in weighted) / scale, 2) if weighted and scale else None)
         # A dog in the garden is heard faintly, by few: its second way out.
         faint = None
-        if thing_class(layout, entity) == "dog" and _tuning(layout, "outside_faint_prox") > 0:
+        if walk_out and thing_class(layout, entity) == "dog" and _tuning(layout, "outside_faint_prox") > 0:
             faint = _faint_signal(n_prox, nearest_m, _tuning(layout, "outside_faint_prox"),
                                   _tuning(layout, "outside_faint_m"), _tuning(layout, "outside_near_m"))
         is_outside = _outside_election(entity, outside_m, _tuning(layout, "outside_margin_m"),

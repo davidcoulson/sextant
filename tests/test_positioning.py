@@ -2609,6 +2609,24 @@ def test_outside_needs_distance_and_time(monkeypatch):
     assert s._outside_election("a", 5.0, 0.0, 45.0, 200.0) is False    # margin 0 = off
 
 
+def test_only_the_ground_floor_has_a_way_outside():
+    """Jack, 2026-11-27: a phone fix 1.06 m past his Second Floor bedroom wall read Outside."""
+    import sextant as s
+    layout = {"floor": [{"name": "Ground Floor", "level": 0}, {"name": "Second Floor", "level": 1},
+                        {"name": "Basement", "level": -1}, {"name": "Flat"}]}
+    assert s._ground_floor(layout, "Ground Floor") is True
+    assert s._ground_floor(layout, "Second Floor") is False
+    assert s._ground_floor(layout, "Basement") is False
+    assert s._ground_floor(layout, "Flat") is False         # no level beside a level-0 floor: not the ground
+    assert s._ground_floor({"floor": [{"name": "Flat"}]}, "Flat") is True     # a one-floor plan with no level
+    assert s._ground_floor({"floor": [{"name": "Up", "level": "1"}, {"name": "G", "level": "0"}]}, "Up") is False  # an old layout's text level
+    s._outside_state.clear()
+    assert s._outside_election("a", 5.0, 1.0, 45.0, 0.0) is False
+    assert s._outside_election("a", 5.0, 1.0, 45.0, 46.0) is True
+    assert s._outside_election("a", None, 1.0, 45.0, 60.0) is False          # moved upstairs: the spell ends now
+    assert s._outside_state["a"]["back_at"] == 60.0 and s._outside_state["a"]["outside_at"] is None
+
+
 def test_a_dog_heard_faintly_by_few_is_in_the_garden():
     """Primrose, 2026-10-21: inside 8-19 proxies hear her, the nearest within
     1.5 m; in the garden 1-6 do, the nearest 2.3-10 m away, while her fix
