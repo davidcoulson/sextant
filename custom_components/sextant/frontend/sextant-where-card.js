@@ -252,8 +252,8 @@ class SextantWhereCard extends LitElement {
     .pface { position: relative; flex: none; display: inline-grid; }
     .with-face { position: absolute; right: -5px; bottom: -5px; width: 22px; height: 22px; border-radius: 50%; overflow: hidden; display: grid; place-items: center;
       font-size: 11px; font-weight: 600; background: var(--secondary-background-color); border: 2px solid var(--card-background-color, var(--ha-card-background)); }
-    .with-face { z-index: 1; } .with-face.two { z-index: 0; right: 10px; bottom: -12px; } /* the right-hand face in front; both centred on the ring */
-    .ring.xl ~ .with-face { width: 28px; height: 28px; } .ring.xl ~ .with-face.two { right: 14px; bottom: -15px; }
+    .with-face { z-index: 1; } .with-face.two { z-index: 0; right: 11px; } /* the right-hand face in front */
+    .ring.xl ~ .with-face { width: 28px; height: 28px; } .ring.xl ~ .with-face.two { right: 16px; }
     .with-face img { width: 100%; height: 100%; object-fit: cover; }
     .with { box-sizing: border-box; align-self: flex-start; margin-top: 3px; padding: 1px 8px; border-radius: 999px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
       color: color-mix(in srgb, var(--blue-color, #2196f3) 45%, var(--primary-text-color)); background: color-mix(in srgb, var(--blue-color, #2196f3) 15%, transparent); }
