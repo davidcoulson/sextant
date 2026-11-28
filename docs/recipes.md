@@ -360,6 +360,7 @@ entities:
     person: person.socks
 rooms:                 # optional, rooms and rings layouts: shows each room's mode
   - binary_sensor.great_room_sextant_occupancy
+mode_in_pill: true     # optional, rings: the mode icon in the time pill, not a badge
 ```
 
 - `tiles`: a grid of tiles, room as the headline and the spot under it.
@@ -375,9 +376,10 @@ rooms:                 # optional, rooms and rings layouts: shows each room's mo
   into one chip ("3 cats · Ground Floor").
 - `rings`: people's faces four across with the time there; pets on one line.
   Someone away gets two lines for their place, as on tiles; the badge shows
-  driving or walking. With `rooms:` listed, a purple badge at the top left
+  driving or walking. With `rooms:` listed, a purple badge under the device badge
   shows the mode of the room they are in (a chef's hat for Cooking, a
-  controller for Gaming).
+  controller for Gaming). `mode_in_pill: true` puts the icon in the time
+  pill instead.
 - `pets`: the pets only. Each dog gets a card of its own: Inside, Outside
   or Away, the spot or room and the time there, the collar's address when
   away (pick its `*_current_place_address` sensor as `place`) with the
