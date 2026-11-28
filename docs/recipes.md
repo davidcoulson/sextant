@@ -375,7 +375,7 @@ rooms:                 # optional, rooms and rings layouts: shows each room's mo
   into one chip ("3 cats · Ground Floor").
 - `rings`: people's faces four across with the time there; pets on one line.
   Someone away gets two lines for their place, as on tiles; the badge shows
-  driving or walking. With `rooms:` listed, a purple badge at the top left
+  driving or walking. With `rooms:` listed, a purple badge under the device badge
   shows the mode of the room they are in (a chef's hat for Cooking, a
   controller for Gaming).
 - `pets`: the pets only. Each dog gets a card of its own: Inside, Outside
