@@ -5952,6 +5952,12 @@ def _update_person_sensors(hass):
         _event_places, _place_pending, moves = persons_mod.room_changes(_event_places, _place_pending, _person_places, pets)
         for event, data in moves:
             hass.bus.async_fire(event, data)
+    else:
+        # Settling after a start: BLE and GPS arrivals fire now (the garage), the rest when it ends.
+        early = persons_mod.early_arrivals(_event_visits, _person_visits, _events_from - EVENTS_SETTLE_S)
+        for event, data in persons_mod.visit_events(_event_visits, early, pets):
+            hass.bus.async_fire(event, data)
+        _event_visits = early
     try:
         _wifi_heat_cycle(hass, layout, view, by_person, rows, classes, now)
     except Exception as e:  # noqa: BLE001 - the signal map is a picture, never a stop

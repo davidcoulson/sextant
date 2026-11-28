@@ -679,3 +679,19 @@ def test_gps_from_home_m_for_the_person_log():
     assert 150 < persons.gps_from_home_m({"latitude": HOME[0] - 0.00145, "longitude": HOME[1]}, HOME) < 170
     assert persons.gps_from_home_m({"zone": "not_home"}, HOME) is None
     assert persons.gps_from_home_m(None, HOME) is None
+
+
+def test_while_settling_only_ble_and_gps_arrivals_go_early():
+    """A reload mid-drive must not hold the garage: BLE and GPS arrivals fire at once; a
+    Wi-Fi arrival (a router's stale home) and every departure wait for the settle to end."""
+    gone = {"arrived": None, "departed": NOW - 60}
+    back = {"arrived": NOW, "departed": None, "via": "gps"}
+    wifi = {"arrived": NOW, "departed": None, "via": "wifi"}
+    before = {D: OUT, M: OUT, J: IN, CAT: OUT}
+    early = persons.early_arrivals(before, {D: back, M: wifi, J: gone, CAT: {**back, "via": "ble"}, "person.new": back}, NOW - 10)
+    assert early == {D: back, M: OUT, J: IN, CAT: {**back, "via": "ble"}}
+    # A BLE visit dated by a sighting from before the start (restored, quiet) waits.
+    assert persons.early_arrivals({D: OUT}, {D: {"arrived": NOW - 120, "departed": None, "via": "ble"}}, NOW - 10) == {D: OUT}
+    assert _types(persons.visit_events(before, early, {CAT})) == ["sextant_person_arrived"]
+    # Once fired it is the baseline, so the end of the settle does not fire it again; the rest fire then.
+    assert _types(persons.visit_events(early, {D: back, M: wifi, J: gone, CAT: OUT}, {CAT})) == ["sextant_person_arrived", "sextant_person_left"]
