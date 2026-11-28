@@ -3130,3 +3130,13 @@ def test_the_still_hold_waits_for_the_walk_to_settle():
     assert sextant._still_hold("c", "still", 60.0, layout)
     assert not sextant._still_hold("c", None, 90.0, layout)        # no frame this cycle: no evidence
     assert not sextant._still_hold("c", "still", 90.0, {"tuning": {"motion_hold": False}})
+
+
+def test_the_still_hold_drops_the_locks_unlock_clocks():
+    sextant._zone_state.clear()
+    layout = {"tuning": {"zone_lock_warmup_secs": 0.0, "zone_prob_smoothing": 0.0}}
+    sextant._elect_zone("e", "F", "Kitchen", Point(50, 50.0), _kf(50, 50.0, sigma_px=5.0), _three_rooms(), 100.0, layout, now=0.0)
+    sextant._zone_state["e"].update(away_since=1.0, outvoted_since=1.0)
+    sextant._elect_zone("e", "F", "Hall", Point(250, 50.0), _kf(250, 50.0, sigma_px=5.0), _three_rooms(), 100.0, layout,
+                        now=2.0, still=True)
+    assert sextant._zone_state["e"]["away_since"] is None and sextant._zone_state["e"]["outvoted_since"] is None

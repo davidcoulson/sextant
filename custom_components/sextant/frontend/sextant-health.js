@@ -40,7 +40,7 @@ function tuningHelpLine(key, help, def, imperial) {
 /** Plain labels for the tuning keys, with a one-line meaning; the key itself is shown under the field. */
 // The settings the room election reads (replay.ROOM_KEYS): the ones a replay can try.
 const REPLAY_KEYS = ["zone_switch_secs", "zone_switch_margin", "zone_prob_smoothing", "stationary_speed", "stationary_secs", "zone_lock_warmup_secs",
-  "zone_unlock_margin", "zone_unlock_secs", "far_move_margin", "far_move_secs", "zone_anchor_inset_m", "habit_margin_gain"];
+  "zone_unlock_margin", "zone_unlock_secs", "far_move_margin", "far_move_secs", "zone_anchor_inset_m", "habit_margin_gain", "motion_settle_secs"];
 const TUNING_LABELS = {
   position_estimator: ["Position estimator", "geometric = trilateration alone; fingerprint = proxy references alone; fused = a blend of both"],
   fingerprint_weight: ["Fingerprint share of the fix", "0 is the trilateration alone, 1 the fingerprint alone"],

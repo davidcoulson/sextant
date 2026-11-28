@@ -3876,6 +3876,9 @@ async def forget_thing_settings(hass, ents):
     the orphan sweep alike. Returns the thing_* tables an entry was dropped from.
     """
     had = [t.pop(ent, None) for ent in ents for t in (_fingerprint_db.thing_gain, _range_scale)]
+    for ent in ents:   # a new tag under the same name must not inherit a collar's motion slots
+        for t in (_minor_counts, _last_moving, _shown_activity):
+            t.pop(ent, None)
     if any(v is not None for v in had):
         # Saved now, not at the next periodic save: a reload before then would
         # read the old values back, and a thing re-added under the same name
@@ -7012,13 +7015,6 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
                 best = lead
         st.update(zone=best, since=now, challenge=None, locked=False, away_since=None, entering=False)
         return best, False, speed
-    # The tag's own accelerometer says it has not moved (_activity): it is in
-    # the room it was in, whatever the fix says. The challenge is dropped, not
-    # held, so the first step after a long sit does not switch on a lead the
-    # noise built up while it sat.
-    if still:
-        st["challenge"] = None
-        return incumbent, bool(st.get("locked")), speed
     # Anchored: the thing sits on a proxy (one reads it within anchor_max_m,
     # every other at least anchor_ratio farther, for anchor_secs), so its room
     # is that proxy's room - no smoothing lag, dwell or lock to wait out. Only
@@ -7029,7 +7025,7 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
     # The proxy's own position, not the filtered point: the filter lags it and
     # a snap can move it. Before habit learning, so the room left gains nothing.
     inset = _tuning(layout, "zone_anchor_inset_m")
-    if anchor_point is not None and inset > 0 and not hold and incumbent != home and not _point_in_no_go(anchor_point, zone_polys):
+    if anchor_point is not None and inset > 0 and not hold and not still and incumbent != home and not _point_in_no_go(anchor_point, zone_polys):
         az = next((zid for zid, p, _b, no_go in zone_polys if not no_go and p.covers(anchor_point)), None)
         if az is not None and az != incumbent and az not in closed and _inset_m(zone_polys, az, anchor_point, scale) >= inset:
             st["probs"] = {az: 1.0}
@@ -7041,6 +7037,13 @@ def _elect_zone(entity, floor_name, instant_zone, point, kf_state, zone_polys, s
         habits_mod.learn(_habits, entity, _habit_zone(floor_name, incumbent), now, _habits_last.get(entity), _local_tz)
         _habits_step[entity] = (now, _habits_last.get(entity), _habit_zone(floor_name, incumbent))
     _habits_last[entity] = now
+    # The tag's own accelerometer says it has not moved (_still_hold): it is in
+    # the room it was in, whatever the fix says. The challenge and the lock's
+    # unlock clocks are dropped, not held, so the first step after a long sit
+    # does not switch on a lead the noise built up while it sat.
+    if still:
+        st.update(challenge=None, away_since=None, outvoted_since=None)
+        return incumbent, bool(st.get("locked")), speed
 
     # 3b. Lock and unlock.
     stationary_secs = _tuning(layout, "stationary_secs")

@@ -41,7 +41,7 @@ def load_rows(dirpath: str, hours: float, now: float | None = None) -> list:
     rows = []
     for r in election_log.iter_rows(dirpath, since):
         if r.get("cords") and r.get("floor") and r.get("zone_raw"):
-            rows.append({k: r.get(k) for k in ("t", "ent", "floor", "cords", "zone_raw", "zone", "anchor", "rms_m", "speed", "activity")})
+            rows.append({k: r.get(k) for k in ("t", "ent", "floor", "cords", "zone_raw", "zone", "anchor", "rms_m", "speed", "activity", "closed")})
     rows.sort(key=lambda r: r["t"])
     return rows
 
