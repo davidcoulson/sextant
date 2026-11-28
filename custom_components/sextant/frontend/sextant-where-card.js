@@ -297,7 +297,7 @@ class SextantWhereCardEditor extends LitElement {
       ...(["tiles", "rings", "pets"].includes(layout) ? [{ name: "columns", selector: { number: { min: 1, max: 6, mode: "box" } } }] : []),
       ...(layout === "rooms" || layout === "pets" ? [] : [{ name: "precise", selector: { boolean: {} } }]),
       ...(layout === "strip" || layout === "pets" || (c.precise && layout !== "rooms") ? [] : [{ name: "show_floor", selector: { boolean: {} } }]),
-      ...(layout === "rooms" || layout === "rings" ? [{ name: "rooms", selector: { select: { multiple: true, mode: "dropdown", options: entityOptions(states, (id) => /^binary_sensor\..+_sextant_occupancy$/.test(id), (id, s) => s.attributes.room || id, c.rooms || []) } } }] : []),
+      ...(layout === "rooms" || layout === "rings" ? [{ name: "rooms", selector: { select: { multiple: true, mode: "dropdown", options: entityOptions(states, (id) => /^binary_sensor\..+_sextant_occupancy$/.test(id), (id, s) => [s.attributes.room || id, s.attributes.floor].filter(Boolean).join(" · "), c.rooms || []) } } }] : []),
     ];
     const data = { layout, entities: ids, columns: c.columns, rooms: c.rooms || [], show_floor: !!c.show_floor, precise: !!c.precise };
     return html`<ha-form .hass=${this.hass} .data=${data} .schema=${schema} .computeLabel=${(s) => s.name === "columns" ? `Columns (blank: ${layout === "rings" ? 4 : 2})` : WHERE_LABELS[s.name] || s.name} @value-changed=${this._changed}></ha-form>
