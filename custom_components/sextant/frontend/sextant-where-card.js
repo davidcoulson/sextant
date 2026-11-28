@@ -175,8 +175,8 @@ class SextantWhereCard extends LitElement {
     };
     return html`${dogs.map(dog)}${rest.length ? html`<div class="ptiles ${dogs.length ? "below" : ""}" style="--cols:${this._config.columns || 2}">${rest.map((r) => html`
       <button class="ptile" @click=${() => this._more(r.id)}>${face(r, "")}
-        <span class="txt"><span class="n"><span class="nm">${r.name}</span><span class="stay">${fmtStay(r.stay, true)}</span></span>
-          <span class="room ${r.away ? "two" : ""}" title=${this._where(r, false)}>${where(r)}</span>${withChip(r)}</span></button>`)}</div>` : nothing}`;
+        <span class="txt"><span class="n"><span class="nm">${r.name}</span></span>
+          <span class="rline"><span class="room ${r.away ? "two" : ""}" title=${this._where(r, false)}>${where(r)}</span>${r.stay != null ? html`<span class="stay">· ${fmtStay(r.stay, true)}</span>` : nothing}</span>${withChip(r)}</span></button>`)}</div>` : nothing}`;
   }
 
   render() {
@@ -272,7 +272,7 @@ class SextantWhereCard extends LitElement {
     .ptile { display: flex; gap: 10px; align-items: center; min-width: 0; }
     .ptile .n { font-weight: 600; display: flex; gap: 6px; align-items: baseline; }
     .ptile .nm { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .ptile .stay { margin-left: auto; flex: none; font-weight: 400; font-size: 11px; }
+    .ptile .rline { display: flex; gap: 4px; min-width: 0; } .ptile .rline .stay { flex: none; } /* as the dog's "Room · 1h"; the room gives way, the time stays */
 
     /* No color-mix (Safari before 16.4): plain rings and chips. */
     @supports not (color: color-mix(in srgb, red, blue)) { .ring { background: var(--c); } .with { background: var(--secondary-background-color); color: var(--primary-text-color); } .fact { background: var(--secondary-background-color); color: var(--primary-text-color); } }
