@@ -29,7 +29,7 @@
  */
 import { LitElement, html, css, nothing } from "./lit.js";
 import { classIcon } from "./sextant-ui.js";
-import { whereRows, groupRooms, roomMode, stripChips, fmtStay, normEntry, withPerson, preciseWhere, petCompany, joinNames, fmtDistance } from "./sextant-where.js";
+import { whereRows, groupRooms, roomMode, stripChips, fmtStay, normEntry, withPerson, preciseWhere, petCompany, joinNames, dropState, fmtDistance } from "./sextant-where.js";
 import { forwardHaContext, loadHaEditors, entityOptions } from "./sextant-ha-editors.js";
 
 const MODE_ICONS = { sleep: "mdi:sleep", tv: "mdi:television", cooking: "mdi:chef-hat", gaming: "mdi:controller" };
@@ -70,6 +70,7 @@ class SextantWhereCard extends LitElement {
   // shortcut: refits on the next render (a state change or the minute tick), not on a resize.
   updated() {
     for (const el of this.renderRoot.querySelectorAll(".cell .room")) {
+      if (!el.clientWidth) continue;  // hidden (another tab, a closed popup): the minute tick fits it once shown
       el.style.fontSize = "";
       for (let px = 11.5; px >= 9 && el.scrollWidth > el.clientWidth; px -= 0.5) el.style.fontSize = `${px}px`;
     }
@@ -141,7 +142,7 @@ class SextantWhereCard extends LitElement {
     const roomStates = (this._config.rooms || []).map((id) => this.hass.states[id]);
     return html`<div><div class="rings" style="--cols:${this._config.columns || 4}">${people.map((r) => html`
       <button class="cell" @click=${() => this._more(r.id)}>${this._ring(r, roomMode(r, roomStates))}
-        <span class="n">${r.name}</span><span class="room" title=${this._where(r, false)}>${r.away && r.place ? r.place.replace(/, [^,]+$/, "") : this._where(r)}</span>
+        <span class="n">${r.name}</span><span class="room" title=${this._where(r, false)}>${r.away && r.place ? dropState(r.place) : this._where(r)}</span>
         ${this._sub(r) ? html`<span class="sub">${this._sub(r)}</span>` : nothing}</button>`)}</div>
       ${pets.length ? html`<div class="pets">${pets.map((r) => html`<button class="pet" @click=${() => this._more(r.id)}>${this._avatar(r, "xs")}${r.name} <span class="sub">${this._config.precise ? preciseWhere(r) : r.spot || r.where}</span></button>`)}</div>` : nothing}</div>`;
   }

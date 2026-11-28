@@ -181,7 +181,15 @@ export function petCompany(rows) {
 
 /** "David", "David and Michelle", "David, Michelle +1". */
 export function joinNames(names) {
-  return names.length < 3 ? names.join(" and ") : `${names[0]}, ${names[1]} +${names.length - 2}`;
+  return names.length < 3 ? names.join(" and ") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+}
+
+// US states, as a geocoder ("OH") or a tracker's address ("Ohio") ends a place.
+const US_STATE = new RegExp(`, (${["AL","AK","AZ","AR","CA","CO","CT","DE","DC","FL","GA","HI","ID","IL","IN","IA","KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT","VA","WA","WV","WI","WY",
+  "Alabama","Alaska","Arizona","Arkansas","California","Colorado","Connecticut","Delaware","Florida","Georgia","Hawaii","Idaho","Illinois","Indiana","Iowa","Kansas","Kentucky","Louisiana","Maine","Maryland","Massachusetts","Michigan","Minnesota","Mississippi","Missouri","Montana","Nebraska","Nevada","New Hampshire","New Jersey","New Mexico","New York","North Carolina","North Dakota","Ohio","Oklahoma","Oregon","Pennsylvania","Rhode Island","South Carolina","South Dakota","Tennessee","Texas","Utah","Vermont","Virginia","Washington","West Virginia","Wisconsin","Wyoming"].join("|")})$`);
+/** A place without its trailing US state: "Valley Parkway Connector, Ohio" → "Valley Parkway Connector"; anything else as it is. */
+export function dropState(place) {
+  return place.replace(US_STATE, "");
 }
 
 /** Distance from home, short: "800 m", "3.2 km", "41 km". */

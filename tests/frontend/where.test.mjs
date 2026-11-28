@@ -1,7 +1,7 @@
 // The "where is everyone" card's model, on the shapes Sextant's sensors really have.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { confLevel, fmtStay, whereRows, groupRooms, roomMode, stripChips, withPerson, preciseWhere, petCompany, joinNames, fmtDistance } from "../../custom_components/sextant/frontend/sextant-where.js";
+import { confLevel, fmtStay, whereRows, groupRooms, roomMode, stripChips, withPerson, preciseWhere, petCompany, joinNames, dropState, fmtDistance } from "../../custom_components/sextant/frontend/sextant-where.js";
 import { entityOptions } from "../../custom_components/sextant/frontend/sextant-ha-editors.js";
 
 const NOW = 1795775000;
@@ -222,7 +222,10 @@ test("pets: company is the people in the pet's room, never other pets or anyone 
   rows.find((r) => r.name === "David").room = "Outside";
   assert.deepEqual(petCompany(rows).get("sensor.fry_sextant_pet_location"), []);
   assert.equal(rows.find((r) => r.id === "sensor.meg_sextant_pet_location").roams, false);
-  assert.deepEqual([joinNames(["David"]), joinNames(["David", "Michelle"]), joinNames(["David", "Michelle", "Eilee", "Jack"])], ["David", "David and Michelle", "David, Michelle +2"]);
+  assert.deepEqual([joinNames(["David"]), joinNames(["David", "Michelle"]), joinNames(["David", "Michelle", "Eilee", "Jack"])], ["David", "David and Michelle", "David, Michelle, Eilee and Jack"]);
+  // Only a trailing US state goes: a town after a street, or a named place's own comma, stays.
+  assert.deepEqual(["Valley Parkway Connector, Ohio", "North Royalton, OH", "12 Elm St, Strongsville", "Library, West Wing", "Away", "Tysons, West Virginia"].map(dropState),
+    ["Valley Parkway Connector", "North Royalton", "12 Elm St, Strongsville", "Library, West Wing", "Away", "Tysons"]);
   assert.deepEqual([fmtDistance(800), fmtDistance(3240), fmtDistance(41200)], ["800 m", "3.2 km", "41 km"]);
 });
 
