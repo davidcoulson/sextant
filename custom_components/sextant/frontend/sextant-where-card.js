@@ -66,13 +66,13 @@ class SextantWhereCard extends LitElement {
   // Stays are drawn as "42m": redraw each minute even when no state changes.
   connectedCallback() { super.connectedCallback(); this._timer = setInterval(() => { this._tick = Date.now(); }, 60000); }
   disconnectedCallback() { super.disconnectedCallback(); clearInterval(this._timer); }
-  // Rings: a room line too long for its cell shrinks to fit, down to 9px, before it ends in "…".
+  // Rings: a room line too long for its cell shrinks to fit, down to 10px, before it ends in "…".
   // shortcut: refits on the next render (a state change or the minute tick), not on a resize.
   updated() {
     for (const el of this.renderRoot.querySelectorAll(".cell .room")) {
       if (!el.clientWidth) continue;  // hidden (another tab, a closed popup): the minute tick fits it once shown
       el.style.fontSize = "";
-      for (let px = 11.5; px >= 9 && el.scrollWidth > el.clientWidth; px -= 0.5) el.style.fontSize = `${px}px`;
+      for (let px = 11.5; px >= 10 && el.scrollWidth > el.clientWidth; px -= 0.5) el.style.fontSize = `${px}px`;
     }
   }
 
@@ -237,7 +237,7 @@ class SextantWhereCard extends LitElement {
     .rtitle .fl { font-weight: 400; font-size: 12px; } .rtitle .fact { margin-left: auto; }
     .who { font-size: 12px; color: var(--secondary-text-color); }
     .who b { color: var(--primary-text-color); font-weight: 500; }
-    .who .link + .link::before { content: " · "; }
+    .who .link + .link::before { content: "·"; margin: 0 4px; } /* a leading space in a button's ::before collapses */
 
     .strip { display: flex; flex-wrap: wrap; gap: 6px; }
     .chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px 2px 2px; border-radius: 999px; font-size: 13px; white-space: nowrap;
