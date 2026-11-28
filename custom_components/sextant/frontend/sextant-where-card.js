@@ -29,7 +29,7 @@
  */
 import { LitElement, html, css, nothing } from "./lit.js";
 import { classIcon } from "./sextant-ui.js";
-import { whereRows, groupRooms, roomMode, stripChips, fmtStay, normEntry, withPerson, preciseWhere, petCompany, joinNames, fmtDistance } from "./sextant-where.js";
+import { whereRows, groupRooms, roomMode, stripChips, fmtStay, normEntry, withPerson, preciseWhere, petCompany, joinNames, dropState, fmtDistance } from "./sextant-where.js";
 import { forwardHaContext, loadHaEditors, entityOptions } from "./sextant-ha-editors.js";
 
 const MODE_ICONS = { sleep: "mdi:sleep", tv: "mdi:television", cooking: "mdi:chef-hat", gaming: "mdi:controller" };
@@ -66,6 +66,15 @@ class SextantWhereCard extends LitElement {
   // Stays are drawn as "42m": redraw each minute even when no state changes.
   connectedCallback() { super.connectedCallback(); this._timer = setInterval(() => { this._tick = Date.now(); }, 60000); }
   disconnectedCallback() { super.disconnectedCallback(); clearInterval(this._timer); }
+  // Rings: a room line too long for its cell shrinks to fit, down to 9px, before it ends in "…".
+  // shortcut: refits on the next render (a state change or the minute tick), not on a resize.
+  updated() {
+    for (const el of this.renderRoot.querySelectorAll(".cell .room")) {
+      if (!el.clientWidth) continue;  // hidden (another tab, a closed popup): the minute tick fits it once shown
+      el.style.fontSize = "";
+      for (let px = 11.5; px >= 9 && el.scrollWidth > el.clientWidth; px -= 0.5) el.style.fontSize = `${px}px`;
+    }
+  }
 
   _more(id) { this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: id }, bubbles: true, composed: true })); }
 
@@ -126,12 +135,14 @@ class SextantWhereCard extends LitElement {
       ? html`<ha-icon title=${mode} icon=${modeIcon(mode)}></ha-icon>` : nothing}${stay != null ? fmtStay(stay, true) : ""}</span>` : nothing}`;
   }
 
+  // One line for the room, so a long away place doesn't make the whole row taller: the town without its state,
+  // shrunk to fit (updated), the full place in the tooltip.
   _rings(rows) {
     const people = rows.filter((r) => !r.pet), pets = rows.filter((r) => r.pet);
     const roomStates = (this._config.rooms || []).map((id) => this.hass.states[id]);
     return html`<div><div class="rings" style="--cols:${this._config.columns || 4}">${people.map((r) => html`
       <button class="cell" @click=${() => this._more(r.id)}>${this._ring(r, roomMode(r, roomStates))}
-        <span class="n">${r.name}</span><span class="room ${this._sub(r) ? "" : "two"}" title=${this._where(r, false)}>${this._where(r)}</span>
+        <span class="n">${r.name}</span><span class="room" title=${this._where(r, false)}>${r.away && r.place ? dropState(r.place) : this._where(r)}</span>
         ${this._sub(r) ? html`<span class="sub">${this._sub(r)}</span>` : nothing}</button>`)}</div>
       ${pets.length ? html`<div class="pets">${pets.map((r) => html`<button class="pet" @click=${() => this._more(r.id)}>${this._avatar(r, "xs")}${r.name} <span class="sub">${this._config.precise ? preciseWhere(r) : r.spot || r.where}</span></button>`)}</div>` : nothing}</div>`;
   }
@@ -143,13 +154,11 @@ class SextantWhereCard extends LitElement {
     const dogs = pets.filter((r) => r.roams), rest = pets.filter((r) => !r.roams);
     const face = (r, size, badge) => {
       const w = company.get(r.id) || [];
-      // Up to two faces at the photo's lower right, the second overlapping to the right of the first.
-      return html`<span class="pface">${this._avatar(r, size, badge)}${w.slice(0, 2).map((p, i) => html`<span class="with-face ${i ? "two" : ""}" title=${p.name}>
+      // Up to two faces at the photo's lower right, the second overlapping to the right of the first; they
+      // are the whole "with": hover either for every name.
+      const all = w.length ? `with ${joinNames(w.map((x) => x.name))}` : "";
+      return html`<span class="pface ${w.length > 1 ? "two" : ""}">${this._avatar(r, size, badge)}${w.slice(0, 2).map((p, i) => html`<span class="with-face ${i ? "two" : ""}" title=${all}>
         ${p.picture ? html`<img src=${p.picture} alt="">` : p.name[0]}</span>`)}</span>`;
-    };
-    const withChip = (r) => {
-      const w = company.get(r.id) || [];
-      return w.length ? html`<span class="with ${w.length > 1 ? "two" : ""}">with ${joinNames(w.map((x) => x.name))}</span>` : nothing;
     };
     const where = (r) => r.away ? this._where(r) : r.spot || r.where;
     const dog = (r) => {
@@ -158,13 +167,12 @@ class SextantWhereCard extends LitElement {
       return html`<button class="dog" @click=${() => this._more(r.id)}>${face(r, "xl", r.away || r.moving ? true : SOURCE_ICONS[r.source] || false)}
         <span class="txt"><span class="head"><span class="n">${r.name}</span>
           ${state ? html`<span class="st on ${state}">${state[0].toUpperCase() + state.slice(1)}</span>` : nothing}</span>
-          <span class="room ${r.away ? "two" : ""}" title=${this._where(r, false)}>${where(r)}${r.stay != null ? html` <span class="stay">· ${fmtStay(r.stay, true)}</span>` : nothing}${r.distance != null ? html` <span class="stay">· ${fmtDistance(r.distance)}</span>` : nothing}</span>
-          ${withChip(r)}</span></button>`;
+          <span class="room ${r.away ? "two" : ""}" title=${this._where(r, false)}>${where(r)}${r.stay != null ? html` <span class="stay">· ${fmtStay(r.stay, true)}</span>` : nothing}${r.distance != null ? html` <span class="stay">· ${fmtDistance(r.distance)}</span>` : nothing}</span></span></button>`;
     };
     return html`${dogs.map(dog)}${rest.length ? html`<div class="ptiles ${dogs.length ? "below" : ""}" style="--cols:${this._config.columns || 2}">${rest.map((r) => html`
       <button class="ptile" @click=${() => this._more(r.id)}>${face(r, "")}
         <span class="txt"><span class="n"><span class="nm">${r.name}</span><span class="stay">${fmtStay(r.stay, true)}</span></span>
-          <span class="room ${r.away ? "two" : ""}" title=${this._where(r, false)}>${where(r)}</span>${withChip(r)}</span></button>`)}</div>` : nothing}`;
+          <span class="room ${r.away ? "two" : ""}" title=${this._where(r, false)}>${where(r)}</span></span></button>`)}</div>` : nothing}`;
   }
 
   render() {
@@ -241,10 +249,8 @@ class SextantWhereCard extends LitElement {
     .with-face { position: absolute; right: -5px; bottom: -5px; width: 22px; height: 22px; border-radius: 50%; overflow: hidden; display: grid; place-items: center;
       font-size: 11px; font-weight: 600; background: var(--secondary-background-color); border: 2px solid var(--card-background-color, var(--ha-card-background)); }
     .with-face.two { right: -21px; } .ring.xl ~ .with-face { width: 28px; height: 28px; } .ring.xl ~ .with-face.two { right: -26px; }
-    .with.two { margin-left: 14px; max-width: calc(100% - 14px); } /* clear of the second face, which reaches past the photo */
+    .pface.two { margin-right: 18px; } /* the text clear of the second face, which reaches past the photo */
     .with-face img { width: 100%; height: 100%; object-fit: cover; }
-    .with { box-sizing: border-box; align-self: flex-start; margin-top: 3px; padding: 1px 8px; border-radius: 999px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
-      color: color-mix(in srgb, var(--blue-color, #2196f3) 45%, var(--primary-text-color)); background: color-mix(in srgb, var(--blue-color, #2196f3) 15%, transparent); }
     .dog { display: flex; gap: 14px; align-items: center; width: 100%; min-width: 0; }
     .dog + .dog { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--divider-color); }
     .dog .txt, .ptile .txt { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.25; }
@@ -263,7 +269,7 @@ class SextantWhereCard extends LitElement {
     .ptile .stay { margin-left: auto; flex: none; font-weight: 400; font-size: 11px; }
 
     /* No color-mix (Safari before 16.4): plain rings and chips. */
-    @supports not (color: color-mix(in srgb, red, blue)) { .ring { background: var(--c); } .with { background: var(--secondary-background-color); color: var(--primary-text-color); } .fact { background: var(--secondary-background-color); color: var(--primary-text-color); } }
+    @supports not (color: color-mix(in srgb, red, blue)) { .ring { background: var(--c); } .fact { background: var(--secondary-background-color); color: var(--primary-text-color); } }
   `;
 }
 
