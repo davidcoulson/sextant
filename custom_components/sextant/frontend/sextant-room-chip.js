@@ -9,8 +9,9 @@
  * Resource: /sextant/sextant-room-chip.js (module).
  *
  * Reads the room sensor named in `entity` (and its recorder history, for who was last there) and each
- * occupant's person.<slug> for the picture. Behind Strimmer the person entities are not in the card's
- * config, so the card asks for them; or list them in Strimmer's always_forward.
+ * occupant's person.<slug> for the picture, and each pet's sensor.<slug>_sextant_pet_location for a motion
+ * collar's resting / moving mark. Behind Strimmer those entities are not in the card's config, so the card
+ * asks for them; or list them in Strimmer's always_forward.
  */
 import { LitElement, html, css, nothing } from "./lit.js";
 import { roomChip, fmtFor, lastOccupants, modeIcon, firstName, askStrimmer } from "./sextant-occupancy-data.js";
@@ -67,8 +68,10 @@ class SextantRoomChip extends LitElement {
     const tip = f.name;
     let src = null;
     try { src = f.picture && this.hass.hassUrl(f.picture); } catch (e) { /* a malformed picture URL: initials instead */ }
-    return src ? html`<img class="face" src=${src} alt=${tip} title=${tip}>`
+    const face = src ? html`<img class="face" src=${src} alt=${tip} title=${tip}>`
       : html`<span class="face ${f.pet ? "pet" : ""}" title=${tip}>${f.name.slice(0, 1).toUpperCase()}</span>`;
+    // A pet's motion collar: a small mark at the face's lower right.
+    return f.activity ? html`<span class="fw">${face}<ha-icon class="act ${f.activity.key}" icon=${f.activity.icon} title="${f.name}: ${f.activity.label}"></ha-icon></span>` : face;
   }
 
   _key(e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); this._open(); } }
@@ -103,7 +106,11 @@ class SextantRoomChip extends LitElement {
     .faces { display: flex; }
     .face { width: 28px; height: 28px; border-radius: 50%; margin-left: -8px; border: 2px solid var(--ha-card-background, var(--card-background-color)); object-fit: cover;
       display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; color: #fff; background: var(--primary-color); box-sizing: border-box; }
-    .face:first-child { margin-left: 0; }
+    .face:first-child, .fw:first-child > .face { margin-left: 0; }
+    .fw { position: relative; display: inline-flex; }
+    .fw .act { position: absolute; right: -3px; bottom: -2px; width: 13px; height: 13px; border-radius: 50%; display: grid; place-items: center; color: #fff;
+      --mdc-icon-size: 9px; border: 1.5px solid var(--ha-card-background, var(--card-background-color)); background: var(--indigo-color, #3f51b5); }
+    .fw .act.moving { background: var(--teal-color, #009688); }
     .face.pet { background: var(--amber-color, #ffc107); color: #000; }
     .face.more { background: var(--secondary-background-color); color: var(--secondary-text-color); font-size: 11px; }
     .mode { color: var(--amber-color, #ffc107); }

@@ -8,6 +8,7 @@
  * what lets the card work behind Strimmer, which forwards a dashboard just the
  * entity ids written in its config.
  */
+import { activityOf } from "./sextant-occupancy-data.js";
 
 // Confidence bands, as on the Occupancy page.
 export function confLevel(conf) {
@@ -125,6 +126,8 @@ export function whereRows(states, entries, now) {
       // A GPS collar: the dog's card even when no tag is heard (via_class comes from the tag, so it is null then).
       roams: pet && (a.via_class === "dog" || !!a.tracker),
       distance: away && typeof a.distance_m === "number" ? a.distance_m : null,
+      // A motion collar's resting / moving ({label, icon}); none away, where the collar is not heard.
+      activity: away || !st || st.state === "unavailable" ? null : activityOf(a),
     });
   }
   return rows;

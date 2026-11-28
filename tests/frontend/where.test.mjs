@@ -44,6 +44,19 @@ test("rows: room first, spot apart, name and picture from the person", () => {
   assert.deepEqual([m.name, m.pet, m.room, m.spot], ["Meg", true, "Catwalk", "Meg's Cafe"]);
 });
 
+test("a motion collar's activity: resting or moving at home, none away or from a held fix", () => {
+  const st = (attrs, state = "Foyer") => ({ state, attributes: { kind: "room", room: "Foyer", ...attrs } });
+  const rows = whereRows({
+    "sensor.a_sextant_pet_location": st({ activity: "still", source: "ble" }),
+    "sensor.b_sextant_pet_location": st({ activity: "moving", kind: "outside" }),
+    "sensor.c_sextant_pet_location": st({ activity: "moving", kind: "zone", presence: "away" }, "not_home"),
+    "sensor.d_sextant_pet_location": st({ activity: "still", source: "held" }),
+    "sensor.e_sextant_pet_location": st({}),
+  }, ["a", "b", "c", "d", "e"].map((x) => `sensor.${x}_sextant_pet_location`), NOW);
+  assert.deepEqual(rows.map((r) => r.activity?.key ?? null), ["still", "moving", null, null, null]);
+  assert.equal(rows[0].activity.label, "Resting");
+});
+
 test("a missing entity shows as unavailable rather than vanishing", () => {
   const [r] = whereRows({}, ["sensor.gone_sextant_person_location"], NOW);
   assert.equal(r.where, "Unavailable");

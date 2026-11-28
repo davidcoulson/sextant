@@ -78,6 +78,9 @@ class SextantWhereCard extends LitElement {
 
   _more(id) { this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: id }, bubbles: true, composed: true })); }
 
+  // A motion collar's activity: one icon after the name, the word in its tooltip.
+  _act(r) { return r.activity ? html`<ha-icon class="act ${r.activity.key}" icon=${r.activity.icon} title=${r.activity.label}></ha-icon>` : nothing; }
+
   _avatar(r, size = "", badge = false, mode = null) {
     const fallback = r.pet ? html`<ha-icon icon=${classIcon(r.via) || "mdi:paw"}></ha-icon>` : r.name[0];
     const badgeIcon = typeof badge === "string" ? badge : r.moving?.icon || (r.away ? SOURCE_ICONS[r.source] || "mdi:home-export-outline" : classIcon(r.via));
@@ -108,7 +111,7 @@ class SextantWhereCard extends LitElement {
     const sub = (r) => this._sub(r);
     return html`<div class="tiles" style="--cols:${this._config.columns || 2}">${rows.map((r) => html`
       <button class="tile" @click=${() => this._more(r.id)}>${this._avatar(r, "", true)}
-        <span class="txt"><span class="n"><span class="nm">${r.name}</span><span class="stay">${fmtStay(r.stay, true)}</span></span>
+        <span class="txt"><span class="n"><span class="nm">${r.name}</span>${this._act(r)}<span class="stay">${fmtStay(r.stay, true)}</span></span>
         <span class="room ${sub(r) ? "" : "two"}" title=${this._where(r, false)}>${this._where(r)}</span>
         ${sub(r) ? html`<span class="sub" title=${sub(r)}>${sub(r)}</span>` : nothing}</span></button>`)}</div>`;
   }
@@ -126,12 +129,12 @@ class SextantWhereCard extends LitElement {
       <span class="stack">${this._roomFaces(g.rows)}</span>
       <span class="rbody"><span class="rtitle">${g.room}<span class="fl">${this._config.show_floor ? g.floor || "" : ""}</span>
         ${g.mode ? html`<span class="fact"><ha-icon icon=${modeIcon(g.mode)}></ha-icon>${g.mode}</span>` : nothing}</span>
-      <span class="who">${g.rows.map((r) => html`<button class="link" @click=${() => this._more(r.id)}><b>${r.name}</b>${r.spot ? ` at ${r.spot}` : ""} ${fmtStay(r.stay, true)}</button>`)}</span></span></div>`)}</div>`;
+      <span class="who">${g.rows.map((r) => html`<button class="link" @click=${() => this._more(r.id)}><b>${r.name}</b>${this._act(r)}${r.spot ? ` at ${r.spot}` : ""} ${fmtStay(r.stay, true)}</button>`)}</span></span></div>`)}</div>`;
   }
 
   _strip(rows) {
     return html`<div class="strip">${stripChips(rows).map((c) => c.kind === "one"
-      ? html`<button class="chip" @click=${() => this._more(c.row.id)}>${this._avatar(c.row, "xs")}${c.row.name} · ${this._where(c.row, false)}<span class="stay">${fmtStay(c.row.stay, true)}</span></button>`
+      ? html`<button class="chip" @click=${() => this._more(c.row.id)}>${this._avatar(c.row, "xs")}${c.row.name}${this._act(c.row)} · ${this._where(c.row, false)}<span class="stay">${fmtStay(c.row.stay, true)}</span></button>`
       : html`<span class="chip" title=${c.rows.map((r) => `${r.name}: ${r.spot || r.where}`).join("\n")}><span class="stack">${c.rows.map((r) => this._avatar(r, "xs"))}</span>${c.rows.length} ${c.cls}s · ${c.floor || "?"}</span>`)}</div>`;
   }
 
@@ -151,7 +154,7 @@ class SextantWhereCard extends LitElement {
       <button class="cell" @click=${() => this._more(r.id)}>${this._ring(r, roomMode(r, roomStates))}
         <span class="n">${r.name}</span><span class="room" title=${this._where(r, false)}>${r.away && r.place ? dropState(r.place) : this._where(r)}</span>
         ${this._sub(r) ? html`<span class="sub">${this._sub(r)}</span>` : nothing}</button>`)}</div>
-      ${pets.length ? html`<div class="pets">${pets.map((r) => html`<button class="pet" @click=${() => this._more(r.id)}>${this._avatar(r, "xs")}${r.name} <span class="sub">${this._config.precise ? preciseWhere(r) : r.spot || r.where}</span></button>`)}</div>` : nothing}</div>`;
+      ${pets.length ? html`<div class="pets">${pets.map((r) => html`<button class="pet" @click=${() => this._more(r.id)}>${this._avatar(r, "xs")}${r.name}${this._act(r)} <span class="sub">${this._config.precise ? preciseWhere(r) : r.spot || r.where}</span></button>`)}</div>` : nothing}</div>`;
   }
 
   // Pets: each dog a card (inside, outside or away; where; trackers), the rest as tiles. A person in the same
@@ -176,14 +179,14 @@ class SextantWhereCard extends LitElement {
       const state = r.where === "Unavailable" ? null : r.away ? "away" : r.outside ? "outside" : "inside";
       // The badge says how she was placed (Bluetooth, Wi-Fi, GPS); away it is the usual away badge.
       return html`<button class="dog" @click=${() => this._more(r.id)}>${face(r, "xl", r.away || r.moving ? true : SOURCE_ICONS[r.source] || false)}
-        <span class="txt"><span class="head"><span class="n">${r.name}</span>
+        <span class="txt"><span class="head"><span class="n">${r.name}${this._act(r)}</span>
           ${state ? html`<span class="st on ${state}">${state[0].toUpperCase() + state.slice(1)}</span>` : nothing}</span>
           <span class="room ${r.away ? "two" : ""}" title=${this._where(r, false)}>${where(r)}${fmtStay(r.stay, true) ? html` <span class="stay">· ${fmtStay(r.stay, true)}</span>` : nothing}${r.distance != null ? html` <span class="stay">· ${fmtDistance(r.distance)}</span>` : nothing}</span>
           ${withChip(r)}</span></button>`;
     };
     return html`${dogs.map(dog)}${rest.length ? html`<div class="ptiles ${dogs.length ? "below" : ""}" style="--cols:${this._config.columns || 2}">${rest.map((r) => html`
       <button class="ptile" @click=${() => this._more(r.id)}>${face(r, "")}
-        <span class="txt"><span class="n"><span class="nm">${r.name}</span></span>
+        <span class="txt"><span class="n"><span class="nm">${r.name}</span>${this._act(r)}</span>
           <span class="rline"><span class="room ${r.away ? "two" : ""}" title=${this._where(r, false)}>${where(r)}</span>${fmtStay(r.stay, true) ? html`<span class="stay">· ${fmtStay(r.stay, true)}</span>` : nothing}</span>${withChip(r)}</span></button>`)}</div>` : nothing}`;
   }
 
@@ -281,6 +284,11 @@ class SextantWhereCard extends LitElement {
     .ptile .n { font-weight: 600; display: flex; gap: 6px; align-items: baseline; }
     .ptile .nm { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .ptile .rline { display: flex; gap: 4px; min-width: 0; overflow: hidden; } .ptile .rline .stay { flex: none; } /* as the dog's "Room · 1h"; the room gives way, the time stays */
+
+    .act { display: inline-flex; flex: none; align-self: center; margin-left: 3px; --mdc-icon-size: 14px; }
+    .act.still { color: var(--indigo-color, #3f51b5); } .act.moving { color: var(--teal-color, #009688); }
+    .dog .act { --mdc-icon-size: 17px; vertical-align: -2px; }
+    .tile .act, .ptile .act, .chip .act { margin-left: 0; } /* the row's gap already spaces it */
 
     /* No color-mix (Safari before 16.4): plain rings and chips. */
     @supports not (color: color-mix(in srgb, red, blue)) { .ring { background: var(--c); } .with { background: var(--secondary-background-color); color: var(--primary-text-color); } .fact { background: var(--secondary-background-color); color: var(--primary-text-color); } }
