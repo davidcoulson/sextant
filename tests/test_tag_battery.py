@@ -41,6 +41,8 @@ def test_beacons_now_reads_each_collars_ibeacon_minor(monkeypatch):
     assert tb.ibeacon_minors({65535: still}) == {"65535": 0x2A12}
     assert tb.ibeacon_minors({65535: shake, 76: b"\x10\x05"}) == {"65535": 2}   # Apple Nearby is no iBeacon
     assert tb.ibeacon_minors({65535: still[:-1]}) == {} and tb.ibeacon_minors(None) == {}
+    fall = still[:20] + (3).to_bytes(2, "big") + still[22:]
+    assert tb.ibeacon_minors({"65535": fall}) == {"65535": 3}
     infos = {"DA:36:EE:88:7B:DA": NS(service_data={}, manufacturer_data={65535: shake}, time=98.0),
              "AA:BB:CC:DD:EE:FF": NS(service_data={}, manufacturer_data={76: b"\x10\x05"}, time=99.0)}
     bluetooth = NS(async_last_service_info=lambda h, a, c: infos.get(a))

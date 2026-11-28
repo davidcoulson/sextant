@@ -1895,6 +1895,7 @@ async def update_tracked_entities(hass):
             # it is actually tracking instead: it creates those entities only
             # for devices with create_sensor set, so the two agree - except the
             # API answer still works when the entities are disabled.
+            _tag_beacons.clear()   # refilled below with Bermuda's devices; without them a row logs none, not last cycle's
             tracked_prefixes = bermuda_source.async_get_tracked_device_prefixes(hass)
             if tracked_prefixes is not None:
                 # Bermuda's tracked set is authoritative: anything Sextant still
@@ -1910,7 +1911,6 @@ async def update_tracked_entities(hass):
                 # Before the guards below: a tag's battery needs no fix, only an advert.
                 from .sensor import publish_tag_batteries  # noqa: PLC0415 - sensor.py imports this package
                 publish_tag_batteries(hass, tag_battery.levels_now(hass, devices))
-                _tag_beacons.clear()
                 _tag_beacons.update(tag_battery.beacons_now(hass, devices))
                 # A device Bermuda renamed under a new slug: its settings
                 # follow it there, matched by the stable unique_id thing_ids

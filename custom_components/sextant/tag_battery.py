@@ -65,7 +65,10 @@ def levels_now(hass, devices) -> dict:
 
 def beacons_now(hass, devices, now_mono=None) -> dict:
     """{slug: {"minors": {company: minor}, "age": s}} for each tracked device whose latest advert
-    holds an iBeacon frame; age is how long ago that advert came, when Home Assistant says."""
+    holds an iBeacon frame. Home Assistant replaces a company's frame with each new advert, so the
+    minor is the collar's latest; age is that of its latest packet of any kind (a scan response,
+    which carries no frame, renews it too). Read once a cycle, so a Shake or Fall burst shorter
+    than a cycle can be missed: give the slot 20 s or more."""
     import time  # noqa: PLC0415
     now_mono = time.monotonic() if now_mono is None else now_mono
     out = {}
