@@ -369,7 +369,7 @@ hide_time: true        # optional, rings: no time under each face (with mode_in_
   driving or walking, the ring is a full grey one (Sextant has no confidence
   to show for someone away: GPS placed them, or nothing did), and the time is how
   long since they left.
-- `rooms`: one line per occupied room, avatars stacked, with its mode.
+- `rooms`: one line per occupied room, avatars stacked (three at most: with more, two and a "+2" that names the rest when hovered), with its mode.
   Anyone away is left out.
 - `precise: true` (tiles, rings, strip) shows one line instead: the spot,
   else the room, else the floor, else Home. Someone away keeps their away line.

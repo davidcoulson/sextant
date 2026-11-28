@@ -113,10 +113,17 @@ class SextantWhereCard extends LitElement {
         ${sub(r) ? html`<span class="sub" title=${sub(r)}>${sub(r)}</span>` : nothing}</span></button>`)}</div>`;
   }
 
+  // Three faces fill the 84px column; with more, two and a "+N" that names the rest.
+  _roomFaces(rows) {
+    if (rows.length <= 3) return rows.map((r) => this._avatar(r, "sm"));
+    const rest = rows.slice(2);
+    return html`${rows.slice(0, 2).map((r) => this._avatar(r, "sm"))}<span class="ring sm more" style="--c:var(--divider-color);--p:0" title=${joinNames(rest.map((r) => r.name))}><span class="av">+${rest.length}</span></span>`;
+  }
+
   _rooms(rows) {
     const rooms = groupRooms(rows, (this._config.rooms || []).map((id) => this.hass.states[id]));
     return html`<div>${rooms.map((g) => html`<div class="rrow">
-      <span class="stack">${g.rows.slice(0, 4).map((r) => this._avatar(r, "sm"))}</span>
+      <span class="stack">${this._roomFaces(g.rows)}</span>
       <span class="rbody"><span class="rtitle">${g.room}<span class="fl">${this._config.show_floor ? g.floor || "" : ""}</span>
         ${g.mode ? html`<span class="fact"><ha-icon icon=${modeIcon(g.mode)}></ha-icon>${g.mode}</span>` : nothing}</span>
       <span class="who">${g.rows.map((r) => html`<button class="link" @click=${() => this._more(r.id)}><b>${r.name}</b>${r.spot ? ` at ${r.spot}` : ""} ${fmtStay(r.stay, true)}</button>`)}</span></span></div>`)}</div>`;
