@@ -3089,3 +3089,54 @@ def test_the_floor_is_held_only_while_still_in_the_shut_room():
     assert not sextant._floor_held_by_door("meg", "Second")
     sextant._shut_in.clear()
     sextant._zone_state.clear()
+
+
+def test_a_still_collar_keeps_its_room_and_drops_the_challenge():
+    """Leela sat at the Morning Room window while the fix drifted into the
+    Kitchen for a minute; her collar's resting minor said she never moved."""
+    sextant._zone_state.clear()
+    layout = {"tuning": {"zone_lock_warmup_secs": 0.0, "zone_prob_smoothing": 0.0}}
+
+    def elect(x, t, still):
+        instant = "Kitchen" if x < 100 else "Hall"
+        return sextant._elect_zone("e", "F", instant, Point(x, 50.0), _kf(x, 50.0, sigma_px=5.0), _three_rooms(), 100.0,
+                                   layout, now=t, still=still)[0]
+
+    assert elect(50, 0.0, False) == "Kitchen"
+    for t in (1.0, 21.0, 60.0):            # dwell long passed, but still: held
+        assert elect(250, t, True) == "Kitchen"
+    assert elect(250, 61.0, False) == "Kitchen"  # moving: the challenge starts now, not at 1 s
+    assert elect(250, 82.0, False) == "Hall"
+
+
+def test_activity_needs_a_second_minor_and_reads_the_resting_one():
+    sextant._minor_counts.clear()
+    assert sextant._activity("c", None) is None
+    assert sextant._activity("c", {"minors": {}, "seen": []}) is None
+    for _ in range(5):                     # one minor only: an ordinary beacon says nothing
+        assert sextant._activity("c", {"seen": [1]}) is None
+    assert sextant._activity("c", {"seen": [1, 2]}) == "moving"
+    assert sextant._activity("c", {"seen": [1]}) == "still"
+    assert sextant._activity("c", {"seen": [3]}) == "moving"
+
+
+def test_the_still_hold_waits_for_the_walk_to_settle():
+    """Leela walked from the pantry to the Morning Room and was still 26 s
+    before the election had followed her: holding then kept her in the pantry."""
+    sextant._last_moving.clear()
+    layout = {"tuning": {}}
+    assert not sextant._still_hold("c", "moving", 0.0, layout)
+    assert not sextant._still_hold("c", "still", 30.0, layout)     # settling
+    assert sextant._still_hold("c", "still", 60.0, layout)
+    assert not sextant._still_hold("c", None, 90.0, layout)        # no frame this cycle: no evidence
+    assert not sextant._still_hold("c", "still", 90.0, {"tuning": {"motion_hold": False}})
+
+
+def test_the_still_hold_drops_the_locks_unlock_clocks():
+    sextant._zone_state.clear()
+    layout = {"tuning": {"zone_lock_warmup_secs": 0.0, "zone_prob_smoothing": 0.0}}
+    sextant._elect_zone("e", "F", "Kitchen", Point(50, 50.0), _kf(50, 50.0, sigma_px=5.0), _three_rooms(), 100.0, layout, now=0.0)
+    sextant._zone_state["e"].update(away_since=1.0, outvoted_since=1.0)
+    sextant._elect_zone("e", "F", "Hall", Point(250, 50.0), _kf(250, 50.0, sigma_px=5.0), _three_rooms(), 100.0, layout,
+                        now=2.0, still=True)
+    assert sextant._zone_state["e"]["away_since"] is None and sextant._zone_state["e"]["outvoted_since"] is None

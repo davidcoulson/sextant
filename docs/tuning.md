@@ -73,6 +73,8 @@ distances in metres.
 | `zone_prob_smoothing` | 0.6 | weight kept on the previous room shares per 15 s (a faster refresh compounds it, so the smoothing is the same in seconds) |
 | `zone_switch_margin` | 0.15 | lead a challenger room needs |
 | `zone_switch_secs` | 20 | held that long before switching |
+| `motion_hold` | true | a thing whose collar has motion slots keeps its room while the collar says it is still, however the fix drifts (see `activity` in [automation](automation.md)) |
+| `motion_settle_secs` | 60 | how long the collar must have said still before that hold starts, so a walk into the next room is followed first |
 | `far_move_margin` | 0.3 | the lead a room that is not next door needs (the larger of this and `zone_switch_margin`) |
 | `habit_margin_gain` | 0.1 | how far a thing's usual room at this hour (weekday or weekend, learned over weeks) eases the lead a challenger room needs: at most this much, and only for a close call. 0 turns it off |
 | `sensor_gone_secs` | 21600 | raise a repair for a room's input or door sensor that has been unavailable this long |

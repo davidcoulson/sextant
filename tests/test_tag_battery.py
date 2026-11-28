@@ -55,6 +55,9 @@ def test_beacons_now_reads_each_collars_ibeacon_minor(monkeypatch):
     infos["DA:36:EE:88:7B:DA"] = NS(service_data={}, manufacturer_data={}, time=99.0)   # a scan response replaced it
     tb.SEEN["DA:36:EE:88:7B:DA"] = {3}
     assert tb.beacons_now(None, devices, now_mono=100.0) == {"leela": {"minors": {}, "age": 1.0, "seen": [3]}}
+    # Out of hearing: the cached Shake frame is not heard again every cycle, so it cannot say "moving" for ever.
+    infos["DA:36:EE:88:7B:DA"] = NS(service_data={}, manufacturer_data={65535: shake}, time=10.0)
+    assert "seen" not in tb.beacons_now(None, devices, now_mono=100.0)["leela"]
 
 
 

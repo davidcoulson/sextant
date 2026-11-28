@@ -360,6 +360,8 @@ def states(best, why=None):
     area_id, floor_id = best.get("area") or (None, None)
     via = {"via": best["ent"]}
     dist = {k: best[k] for k in FIT_KEYS if best.get(k) is not None}
+    if best.get("activity"):   # a motion collar's still / moving
+        via = {**via, "activity": best["activity"]}
     if best.get("outside"):
         # Beyond every room: not the nearest room it was snapped into.
         return {

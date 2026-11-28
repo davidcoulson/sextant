@@ -78,10 +78,11 @@ def beacons_now(hass, devices, now_mono=None) -> dict:
     for slug, address, info in _last_infos(hass, devices):
         seen = SEEN.pop(str(address).upper(), set())
         minors = ibeacon_minors(getattr(info, "manufacturer_data", None))
-        if (now := minors.get(str(_COMPANY))) is not None:
+        at = getattr(info, "time", None)
+        fresh = not isinstance(at, (int, float)) or now_mono - at <= SEEN_FRESH_S
+        if (now := minors.get(str(_COMPANY))) is not None and fresh:
             seen = seen | {now}
         if minors or seen:
-            at = getattr(info, "time", None)
             out[slug] = {"minors": minors, "age": round(now_mono - at, 1) if isinstance(at, (int, float)) else None}
             if seen:
                 # The 0xFFFF minors the frame log heard change to since the last cycle, and the cached
@@ -99,6 +100,7 @@ SEEN: dict = {}      # address (upper case) -> minors heard since beacons_now la
 LOG_DIRNAME = "sextant_collar_log"
 LOG_HOURS = 48.0
 _COMPANY = 0xFFFF   # Holy-IoT sends its iBeacon frames under 0xFFFF
+SEEN_FRESH_S = 30.0  # the cached frame counts as heard this cycle only while its advert is this recent
 
 
 def watch(devices) -> None:

@@ -40,7 +40,7 @@ function tuningHelpLine(key, help, def, imperial) {
 /** Plain labels for the tuning keys, with a one-line meaning; the key itself is shown under the field. */
 // The settings the room election reads (replay.ROOM_KEYS): the ones a replay can try.
 const REPLAY_KEYS = ["zone_switch_secs", "zone_switch_margin", "zone_prob_smoothing", "stationary_speed", "stationary_secs", "zone_lock_warmup_secs",
-  "zone_unlock_margin", "zone_unlock_secs", "far_move_margin", "far_move_secs", "zone_anchor_inset_m", "habit_margin_gain"];
+  "zone_unlock_margin", "zone_unlock_secs", "far_move_margin", "far_move_secs", "zone_anchor_inset_m", "habit_margin_gain", "motion_settle_secs"];
 const TUNING_LABELS = {
   position_estimator: ["Position estimator", "geometric = trilateration alone; fingerprint = proxy references alone; fused = a blend of both"],
   fingerprint_weight: ["Fingerprint share of the fix", "0 is the trilateration alone, 1 the fingerprint alone"],
@@ -62,6 +62,8 @@ const TUNING_LABELS = {
   zone_prob_smoothing: ["Room share smoothing", "weight on the previous cycle's room shares"],
   zone_switch_margin: ["Room switch margin", "the lead a challenger room needs"],
   zone_switch_secs: ["Room switch dwell (s)", "held that long before the room changes"],
+  motion_hold: ["Hold a still collar's room", "a collar with motion slots that says still keeps its room"],
+  motion_settle_secs: ["Still before holding (s)", "how long the collar must say still first, so a walk is followed"],
   far_move_margin: ["Far move margin", "the lead a room that is not next door needs (the larger of this and the switch margin)"],
   far_move_secs: ["Far move dwell (s)", "held that long before jumping to a room that is not next door; 0 = no longer than any move"],
   stationary_speed: ["Stationary below (m/s)", "slower than this counts as still"],
@@ -870,7 +872,7 @@ class SextantHealth extends LitElement {
     const groups = [
       ["Estimator", ["position_estimator", "fingerprint_weight", "fingerprint_floor_weight", "fingerprint_k", "fingerprint_missing_m", "fingerprint_ref_gain", "fingerprint_auto_gain", "fingerprint_marks", "fingerprint_marks_scope", "distance_estimator", "median_window_secs", "median_min_samples", "stale_interval_factor", "range_auto_scale"]],
       ["Solver", ["solver_max_receivers", "solver_max_range", "solver_near_always"]],
-      ["Rooms", ["zone_hysteresis", "zone_prob_smoothing", "zone_switch_margin", "zone_switch_secs", "far_move_margin", "far_move_secs", "stationary_speed", "stationary_secs", "zone_unlock_margin", "zone_unlock_secs", "zone_lock_warmup_secs", "outside_margin_m", "outside_secs", "outside_faint_prox", "outside_faint_m", "outside_near_m"]],
+      ["Rooms", ["zone_hysteresis", "zone_prob_smoothing", "zone_switch_margin", "zone_switch_secs", "motion_hold", "motion_settle_secs", "far_move_margin", "far_move_secs", "stationary_speed", "stationary_secs", "zone_unlock_margin", "zone_unlock_secs", "zone_lock_warmup_secs", "outside_margin_m", "outside_secs", "outside_faint_prox", "outside_faint_m", "outside_near_m"]],
       ["Spots", ["subzone_switch_secs", "subzone_enter_prob", "subzone_unlock_margin", "subzone_lock_release_m", "spot_proxy_near_m", "spot_proxy_far_m", "spot_proxy_ratio"]],
       ["Near-field anchor", ["anchor_max_m", "anchor_ratio", "anchor_secs", "anchor_release_m", "zone_anchor_inset_m"]],
       ["Floors", ["floor_switch_secs", "floor_switch_margin", "floor_tenure_bonus", "floor_tenure_full_secs", "floor_proximity_weight", "floor_proximity_blend", "floor_proximity_k", "floor_proximity_near_m", "wifi_floor_weight", "habit_floor_weight", "habit_floor_min_share"]],
