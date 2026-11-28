@@ -41,6 +41,22 @@ def ibeacon_minors(manufacturer_data) -> dict:
     return out
 
 
+def packet_minor(info):
+    """The 0xFFFF iBeacon minor this very packet carries. Home Assistant merges a receiver's
+    manufacturer data across packets, so a scan response would repeat an old frame; the raw
+    bytes (AD structures, where the receiver gives them) hold only this packet's."""
+    raw = getattr(info, "raw", None)
+    if not isinstance(raw, (bytes, bytearray)):
+        return ibeacon_minors({_COMPANY: (info.manufacturer_data or {}).get(_COMPANY) or b""}).get(str(_COMPANY))
+    i = 0
+    while i < len(raw) and (n := raw[i]):
+        ad = raw[i + 1:i + 1 + n]
+        if len(ad) >= 3 and ad[0] == 0xFF and int.from_bytes(ad[1:3], "little") == _COMPANY:
+            return ibeacon_minors({_COMPANY: ad[3:]}).get(str(_COMPANY))
+        i += 1 + n
+    return None
+
+
 def _last_infos(hass, devices):
     """(slug, address, last advert) for each tracked device ({address: {"slug"}}) with one.
 
@@ -79,6 +95,14 @@ def beacons_now(hass, devices, now_mono=None) -> dict:
         seen = SEEN.pop(str(address).upper(), set())
         minors = ibeacon_minors(getattr(info, "manufacturer_data", None))
         at = getattr(info, "time", None)
+        if str(_COMPANY) in minors:
+            _hear_every_receiver(hass, address)
+        # Home Assistant keeps a strong receiver's advert for up to 15 min after it stops hearing
+        # the collar (Leela asleep, 2026-11-28); a weaker receiver's newer frame is the latest.
+        # Heard from every receiver, FRESH has the kept one's frames too, and only real frames.
+        if (newer := FRESH.get(str(address).upper())) and (
+                _SUBS.get(str(address).upper()) or not isinstance(at, (int, float)) or newer[1] > at):
+            minors, at = {**minors, str(_COMPANY): newer[0]}, newer[1]
         fresh = not isinstance(at, (int, float)) or now_mono - at <= SEEN_FRESH_S
         if (now := minors.get(str(_COMPANY))) is not None and fresh:
             seen = seen | {now}
@@ -101,6 +125,25 @@ LOG_DIRNAME = "sextant_collar_log"
 LOG_HOURS = 48.0
 _COMPANY = 0xFFFF   # Holy-IoT sends its iBeacon frames under 0xFFFF
 SEEN_FRESH_S = 30.0  # the cached frame counts as heard this cycle only while its advert is this recent
+FRESH: dict = {}     # address (upper case) -> (minor, monotonic time) of its newest frame from any receiver
+_SUBS: dict = {}     # address (upper case) -> cancel, for the per-address callbacks below
+_ON_ADVERT = [None]  # the frame log's callback for every receiver's adverts, while it runs
+
+
+def _hear_every_receiver(hass, address) -> None:
+    """Have the frame log hear a collar from every receiver, not only the one Home Assistant
+    keeps (its change callbacks skip the others' adverts)."""
+    address = str(address).upper()
+    if _ON_ADVERT[0] is None or address in _SUBS:
+        return
+    from homeassistant.components import bluetooth
+    if not hasattr(bluetooth, "async_register_advertisement_callback"):
+        _SUBS[address] = None   # older Home Assistant: the kept advert is all there is
+        return
+    try:
+        _SUBS[address] = bluetooth.async_register_advertisement_callback(hass, _ON_ADVERT[0], address)
+    except Exception as e:  # noqa: BLE001 - tried again next cycle
+        _LOGGER.debug("Collar %s heard through one receiver only for now: %s", address, e)
 
 
 def watch(devices) -> None:
@@ -109,18 +152,25 @@ def watch(devices) -> None:
     COLLARS.update({str(a).upper(): d["slug"] for a, d in (devices or {}).items() if (d or {}).get("slug")})
     for gone in SEEN.keys() - COLLARS.keys():
         del SEEN[gone]
+    for gone in FRESH.keys() - COLLARS.keys():
+        del FRESH[gone]
+    for gone in _SUBS.keys() - COLLARS.keys():
+        if cancel := _SUBS.pop(gone):
+            cancel()
 
 
 def frame_row(info, last: dict, now: float):
     """The log row for an advert whose iBeacon minor differs from ``last`` (address -> minor),
-    updating it; None for anything else. Home Assistant keeps each proxy's last frame, so a
-    switch to another proxy can log one stale minor (see ``src``)."""
+    updating it; None for anything else. Every receiver's adverts come here, so a receiver a
+    packet behind another can log a minor back and forth (see ``src``)."""
     address = str(info.address).upper()
     slug = COLLARS.get(address)
-    minor = ibeacon_minors({_COMPANY: (info.manufacturer_data or {}).get(_COMPANY) or b""}).get(str(_COMPANY))
+    minor = packet_minor(info)
     if slug is None or minor is None:
         return None
     SEEN.setdefault(address, set()).add(minor)
+    if isinstance(at := getattr(info, "time", None), (int, float)) and at >= FRESH.get(address, (None, at))[1]:
+        FRESH[address] = (minor, at)
     if last.get(address) == minor:
         return None
     row = {"t": round(now, 2), "e": slug, "minor": minor, "was": last.get(address), "src": info.source, "rssi": info.rssi}
@@ -130,7 +180,8 @@ def frame_row(info, last: dict, now: float):
 
 def setup_frame_log(hass):
     """Start the collar frame log; returns the callable that stops it, or None without bluetooth.
-    Home Assistant calls back only when an address's data changes, which is when the minor can."""
+    The change callback finds collars; once beacons_now has seen one, every receiver's adverts of it
+    come through heard() instead, since the change callback skips the receivers HA doesn't keep."""
     try:
         from homeassistant.components import bluetooth
     except ImportError:
@@ -147,11 +198,15 @@ def setup_frame_log(hass):
             rows, pending[:] = list(pending), []
             hass.async_add_executor_job(person_log_mod.append, hass.config.path(LOG_DIRNAME), rows, LOG_HOURS)
 
-    def seen(info, _change):
+    def heard(info):
         if (row := frame_row(info, last, time.time())) is not None:
             pending.append(row)
             if timer[0] is None:
                 timer[0] = hass.loop.call_later(10, flush)
+
+    def seen(info, _change):
+        if not _SUBS.get(str(info.address).upper()):   # heard() already has every advert of those
+            heard(info)
 
     try:
         unsub = bluetooth.async_register_callback(
@@ -160,9 +215,17 @@ def setup_frame_log(hass):
     except Exception as e:  # noqa: BLE001
         _LOGGER.warning("Collar frame log not started: %s", e)
         return None
+    _ON_ADVERT[0] = heard
 
     def stop():
         unsub()
+        _ON_ADVERT[0] = None
+        for cancel in _SUBS.values():
+            if cancel:
+                cancel()
+        _SUBS.clear()
+        FRESH.clear()
+        SEEN.clear()
         if timer[0]:
             timer[0].cancel()
         flush()
