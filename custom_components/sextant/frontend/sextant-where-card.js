@@ -160,7 +160,8 @@ class SextantWhereCard extends LitElement {
     };
     const withChip = (r) => {
       const w = company.get(r.id) || [];
-      return w.length ? html`<span class="with">with ${joinNames(w.map((x) => x.name))}</span>` : nothing;
+      const text = `with ${joinNames(w.map((x) => x.name))}`;
+      return w.length ? html`<span class="with" title=${text}>${text}</span>` : nothing;  // the title when it ends in "…"
     };
     const where = (r) => r.away ? this._where(r) : r.spot || r.where;
     const dog = (r) => {
