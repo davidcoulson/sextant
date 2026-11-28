@@ -51,8 +51,8 @@ date, so Bermuda searches up from Apple's last sighting a month of schedule
 per rebuild, and the first find can take a few. *Not heard yet* means there
 is no sighting to start from. AirPods near their owner send a different
 advert from the Find My one; an ESPHome proxy that blocks Apple's
-manufacturer ID needs `allow_findmy` from the filtering proxy component's
-v1.5.1 to pass it ([Hardware](hardware.md#what-every-proxy-runs)).
+manufacturer ID needs the `ble_advert_filter` component's `allow_findmy` to pass
+it ([Hardware](hardware.md#what-every-proxy-runs)).
 
 **Apple phones and watches** come in through Home Assistant's Private BLE
 Device integration (their IRK) and appear in Bermuda automatically. The

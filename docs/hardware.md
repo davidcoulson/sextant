@@ -31,7 +31,7 @@ GPIO reaches which part of the board, and write that pin map down once.
 After that every unit of that family flashes the same package.
 
 The house runs 36 outlets, 11 in-wall outlets and a set of light switches
-this way, alongside six Shellys that needed no surgery.
+this way, alongside six Shellys and ten Athom bulbs that needed no surgery.
 
 ## ELEGRP RRN00 outlets
 
@@ -83,6 +83,14 @@ Light switches, ESP32-C3, status LED on GPIO5 inverted. These ship
 ESP-based and unlocked, so there is no module swap - they are here because
 they run the same proxy package as everything else.
 
+## Athom bulbs
+
+The [Athom 12W colour bulb](https://www.athom.tech/blank-1/12w-color-bulb-for-esphome),
+ESP32-C3, ships with ESPHome, so there is no module swap. Ten indoor bulbs
+run the same proxy package as everything else, with the more aggressive
+scan profiles turned off: a bulb has no button to get it out of a radio too
+busy for an update. The outdoor bulbs leave Bluetooth off.
+
 ## Shelly
 
 Six, unmodified hardware running ESPHome rather than the vendor firmware, so
@@ -95,10 +103,15 @@ it is one.
 The point of the surgery is that the result is uniform. Whatever the casing,
 each node includes the same BLE package, which sets:
 
-- **A forked `bluetooth_proxy`** that filters on the device rather than
-  forwarding every advertisement it hears, with allowlists that keep iBeacon,
-  HomeKit, Find My and Tile traffic flowing. Find My covers AirPods too
-  from v1.5.1: near their owner they send the pairing advert (Apple subtype
+- **ESPHome's `bluetooth_proxy` with the
+  [`ble_advert_filter`](https://github.com/davidcoulson/esphome-ble-advert-filter)
+  external component.** Stock `bluetooth_proxy` forwards every advertisement
+  it hears. ESPHome 2026.10 added a hook for a filter, and
+  `ble_advert_filter` plugs into it, so the old fork of `bluetooth_proxy` is
+  no longer needed. The component filters on the device by RSSI and by IRK
+  (dropping other people's phones), with allowlists that keep iBeacon,
+  HomeKit, Find My and Tile traffic flowing. Its `allow_findmy` also covers
+  AirPods: near their owner they send the pairing advert (Apple subtype
   `0x07`) rather than the Find My one, from the same rotating address.
 - **A scan duty cycle of 120 ms listening in every 320 ms interval**, passive.
   That window is airtime taken from WiFi, and it is the knob to turn down
