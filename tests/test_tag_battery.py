@@ -33,6 +33,25 @@ def test_levels_now_reads_each_tracked_address(monkeypatch):
     assert tb.levels_now(None, None) == {}
 
 
+def test_beacons_now_reads_each_collars_ibeacon_minor(monkeypatch):
+    """Leela's collar, 2026-11-28: Slot 1 every 1.1 s, Shake as minor 2, Fall as minor 3."""
+    import homeassistant.components as comps
+    still = bytes.fromhex("0215decafbadfeedfacef00dda36ee887bdaac652a12c5")
+    shake = still[:20] + (2).to_bytes(2, "big") + still[22:]
+    assert tb.ibeacon_minors({65535: still}) == {"65535": 0x2A12}
+    assert tb.ibeacon_minors({65535: shake, 76: b"\x10\x05"}) == {"65535": 2}   # Apple Nearby is no iBeacon
+    assert tb.ibeacon_minors({65535: still[:-1]}) == {} and tb.ibeacon_minors(None) == {}
+    fall = still[:20] + (3).to_bytes(2, "big") + still[22:]
+    assert tb.ibeacon_minors({"65535": fall}) == {"65535": 3}
+    infos = {"DA:36:EE:88:7B:DA": NS(service_data={}, manufacturer_data={65535: shake}, time=98.0),
+             "AA:BB:CC:DD:EE:FF": NS(service_data={}, manufacturer_data={76: b"\x10\x05"}, time=99.0)}
+    bluetooth = NS(async_last_service_info=lambda h, a, c: infos.get(a))
+    monkeypatch.setitem(sys.modules, "homeassistant.components.bluetooth", bluetooth)
+    monkeypatch.setattr(comps, "bluetooth", bluetooth, raising=False)
+    devices = {"da:36:ee:88:7b:da": {"slug": "leela"}, "aa:bb:cc:dd:ee:ff": {"slug": "phone"}}
+    assert tb.beacons_now(None, devices, now_mono=100.0) == {"leela": {"minors": {"65535": 2}, "age": 2.0}}
+
+
 def test_the_sensor_is_made_once_then_updated(monkeypatch):
     added, written = [], []
     hass = NS(data={"sextant_sensors": {}, "sextant_add_entities": added.extend})

@@ -25,15 +25,26 @@ def level(service_data, address: str) -> int | None:
     return None
 
 
-def levels_now(hass, devices) -> dict:
-    """{slug: level} for each tracked device ({address: {"slug"}}) whose latest advert says one.
+def ibeacon_minors(manufacturer_data) -> dict:
+    """{company id (text): minor} for each iBeacon-layout frame in an advert's manufacturer data:
+    0x02 0x15, a 16-byte UUID, major, minor, measured power. A Holy-IoT collar sends one per
+    slot, all under 0xFFFF; a slot set to Shake or Fall sends its own minor while it fires."""
+    out = {}
+    for company, data in (manufacturer_data or {}).items():
+        data = bytes(data)
+        if len(data) == 23 and data[:2] == b"\x02\x15":
+            out[str(company)] = int.from_bytes(data[20:22], "big")
+    return out
+
+
+def _last_infos(hass, devices):
+    """(slug, address, last advert) for each tracked device ({address: {"slug"}}) with one.
 
     An address that is not a MAC (an IRK, a FindMy key) simply has no advert."""
     try:
         from homeassistant.components import bluetooth
     except ImportError:
-        return {}
-    out = {}
+        return
     for address, dev in (devices or {}).items():
         slug = (dev or {}).get("slug")
         if not slug:
@@ -41,7 +52,28 @@ def levels_now(hass, devices) -> dict:
         try:
             info = bluetooth.async_last_service_info(hass, str(address).upper(), False)
         except Exception:  # noqa: BLE001 - bluetooth not set up: nothing to read
-            return out
-        if info is not None and (pct := level(info.service_data, address)) is not None:
-            out[slug] = pct
+            return
+        if info is not None:
+            yield slug, address, info
+
+
+def levels_now(hass, devices) -> dict:
+    """{slug: level} for each tracked device whose latest advert says one."""
+    return {slug: pct for slug, address, info in _last_infos(hass, devices)
+            if (pct := level(info.service_data, address)) is not None}
+
+
+def beacons_now(hass, devices, now_mono=None) -> dict:
+    """{slug: {"minors": {company: minor}, "age": s}} for each tracked device whose latest advert
+    holds an iBeacon frame. Home Assistant replaces a company's frame with each new advert, so the
+    minor is the collar's latest; age is that of its latest packet of any kind (a scan response,
+    which carries no frame, renews it too). Read once a cycle, so a Shake or Fall burst shorter
+    than a cycle can be missed: give the slot 20 s or more."""
+    import time  # noqa: PLC0415
+    now_mono = time.monotonic() if now_mono is None else now_mono
+    out = {}
+    for slug, _address, info in _last_infos(hass, devices):
+        if minors := ibeacon_minors(getattr(info, "manufacturer_data", None)):
+            at = getattr(info, "time", None)
+            out[slug] = {"minors": minors, "age": round(now_mono - at, 1) if isinstance(at, (int, float)) else None}
     return out
