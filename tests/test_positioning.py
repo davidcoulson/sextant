@@ -2843,6 +2843,49 @@ def test_closed_rooms_wait_out_the_entry_grace():
     assert sextant._closed_rooms(hass, _three_rooms(), {}, 99999.0) == set()   # no doors known
 
 
+def test_a_phone_may_follow_its_owners_watch_into_a_closed_room(monkeypatch):
+    """23:08: Michelle's watch made it into the Master Bedroom 134 s after the door shut; her
+    phone, placed 185 s after, was held on the Catwalk until the door next opened."""
+    from types import SimpleNamespace as NS
+    from sextant import watch_adverts
+    worn = {"watch": None}
+    monkeypatch.setattr(watch_adverts, "worn_now", lambda hass, ent, stale: worn["watch"])
+    states = {}
+    hass = NS(states=NS(get=states.get))
+    layout = {"thing_owners": {"phone": "person.m", "watch": "person.m", "bag": "person.m", "cat_tag": "person.c",
+                               "cat_tag2": "person.c", "other": "person.d"},
+              "thing_classes": {"phone": "phone", "watch": "watch", "bag": "tag", "cat_tag": "cat", "cat_tag2": "cat",
+                                "other": "phone"},
+              "thing_charging_entity": {"watch": "sensor.watch_battery_state"}}
+    sextant._zone_state.clear()
+    for ent, zone in (("watch", "Bedroom"), ("bag", "Closet"), ("cat_tag2", "Bedroom"), ("other", "Office")):
+        sextant._zone_state[ent] = {**sextant._new_zone_state("2F", 0.0), "zone": zone, "probs_at": 100.0}
+
+    def rooms(ent="phone", floor="2F", now=110.0):
+        return sextant._companion_rooms(hass, layout, ent, floor, now)
+    assert rooms() == {"Bedroom"}                        # the watch's room, not the bag's or another person's
+    assert rooms(floor="1F") == set()                    # another floor
+    assert rooms(now=100.0 + 121.0) == set()             # a watch not placed lately
+    assert rooms("cat_tag") == set()                     # a cat is read through walls
+    assert rooms("bag") == set()                         # nor a thing that does not place its owner
+    states["sensor.watch_battery_state"] = NS(state="charging")
+    assert rooms() == set()                              # a watch on its charger was put there
+    states.clear()
+    worn["watch"] = False
+    assert rooms() == set()                              # so was one off a wrist
+    worn["watch"] = None
+    layout["thing_charging_entity"]["phone"] = "sensor.phone_battery_state"
+    states["sensor.phone_battery_state"] = NS(state="charging")
+    assert rooms() == set()                              # nor a phone on its own charger
+    states.clear()
+    sextant._outside_state["watch"] = {"outside": True}
+    assert rooms() == set()                              # a watch out in the garden vouches for no room
+    sextant._outside_state.pop("watch")
+    sextant._zone_state["watch"]["entering"] = True
+    assert rooms() == set()                              # a watch just up the stairs has no room yet
+    sextant._zone_state.clear()
+
+
 def test_an_open_room_challenges_when_a_shut_one_has_more_evidence(monkeypatch):
     """Codex review: 55% in a shut room, 45% in an open one, 0% where the thing was."""
     sextant._zone_state.clear()
